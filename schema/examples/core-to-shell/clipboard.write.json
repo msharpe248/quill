@@ -1,0 +1,7 @@
+{
+  "jsonrpc": "2.0",
+  "method": "clipboard.write",
+  "params": {
+    "text": "Are you free on Thursday?\nThe usual place, 12:30."
+  }
+}

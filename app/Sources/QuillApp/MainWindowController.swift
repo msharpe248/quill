@@ -25,6 +25,32 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     /// run replaces it, so that a check opens nothing.
     var linkOpener: (URL) -> Void = { NSWorkspace.shared.open($0) }
 
+    /// Puts text on the system clipboard. A scripted run replaces it, so
+    /// that a check leaves the user's clipboard as it was.
+    var clipboardWriter: (String) -> Void = { text in
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    /// Asks the user for files and hands them to the completion; an empty
+    /// list means they chose none. A scripted run replaces it, so that a
+    /// check never waits on a panel.
+    var filePicker: (NSWindow?, @escaping ([URL]) -> Void) -> Void = { window, done in
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.resolvesAliases = true
+        let finish: (NSApplication.ModalResponse) -> Void = { response in
+            done(response == .OK ? panel.urls : [])
+        }
+        if let window {
+            panel.beginSheetModal(for: window, completionHandler: finish)
+        } else {
+            finish(panel.runModal())
+        }
+    }
+
     private(set) var coreIsRunning = false
     /// The app asked the core to stop, so its exit is not a failure.
     private var stopping = false
@@ -68,6 +94,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         // A link clicked in the terminal.
         surface.onOpenLink = { [weak self] address in
             self?.openLink(address)
+        }
+        // Files dropped on the terminal go to the core as files, which it
+        // can read, not as paths, which inside the sandbox it cannot.
+        surface.onDropFiles = { [weak self] files in
+            self?.deliver(files: files)
         }
         // esc in the preview pane closes it. The terminal handles its own esc.
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -145,7 +176,55 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             closePreview()
         case let .linkOpen(open):
             openLink(open.url)
+        case let .clipboardWrite(text):
+            clipboardWriter(text)
+        case .filesPick:
+            filePicker(window) { [weak self] files in
+                self?.deliver(files: files)
+                self?.surface.focus()
+            }
         }
+    }
+
+    /// Gives the core files the user chose or dropped.
+    ///
+    /// The user's choice lets this process read them; the core, a separate
+    /// process in the same sandbox, was given no such leave. So each file is
+    /// copied into the app's own temporary folder, which both can reach, and
+    /// the core removes the copy once it has read it. What the files are for
+    /// is the core's business.
+    func deliver(files: [URL]) {
+        let folder = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("files-\(UUID().uuidString.prefix(8))")
+        var copies: [String] = []
+        for file in files where file.isFileURL {
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: file.path, isDirectory: &isDirectory),
+                !isDirectory.boolValue
+            else {
+                NSLog("Quill: left out something that is not a file")
+                continue
+            }
+            do {
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                // Two files of one name from different folders both go.
+                var copy = folder.appendingPathComponent(file.lastPathComponent)
+                var attempt = 1
+                while FileManager.default.fileExists(atPath: copy.path) {
+                    attempt += 1
+                    copy = folder.appendingPathComponent("\(attempt)")
+                        .appendingPathComponent(file.lastPathComponent)
+                    try FileManager.default.createDirectory(
+                        at: copy.deletingLastPathComponent(), withIntermediateDirectories: true)
+                }
+                try FileManager.default.copyItem(at: file, to: copy)
+                copies.append(copy.path)
+            } catch {
+                NSLog("Quill: a file could not be handed over: %@", String(describing: error))
+            }
+        }
+        guard let message = FilesDropped(paths: copies, temporary: true) else { return }
+        bridge?.send(.filesDropped(message))
     }
 
     /// Opens a web or mail address the way the user's Mac opens them.
@@ -313,6 +392,34 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     @objc func closePreviewPane(_: Any?) {
         closePreview()
+    }
+
+    // MARK: - Edit menu
+
+    // The core edits text of its own inside the terminal, with a selection
+    // the terminal view knows nothing about. While the core says one of
+    // these commands applies, the menu item runs it there. Otherwise the
+    // item does what it does in any Mac app, on the view with the focus:
+    // text selected with the mouse in the terminal, or the preview pane.
+
+    @objc func editCut(_ sender: Any?) {
+        runInCoreOrFocusedView("edit.cut", #selector(NSText.cut(_:)), sender)
+    }
+
+    @objc func editCopy(_ sender: Any?) {
+        runInCoreOrFocusedView("edit.copy", #selector(NSText.copy(_:)), sender)
+    }
+
+    @objc func editSelectAll(_ sender: Any?) {
+        runInCoreOrFocusedView("edit.select_all", #selector(NSText.selectAll(_:)), sender)
+    }
+
+    private func runInCoreOrFocusedView(_ command: String, _ native: Selector, _ sender: Any?) {
+        if !previewHasFocus, commands.isEnabled(command) {
+            commands.run(named: command)
+        } else {
+            NSApp.sendAction(native, to: nil, from: sender)
+        }
     }
 
     // MARK: - For the debug script

@@ -4,7 +4,9 @@ Read `Quill Terminal Email Client Spec.md` at the start of every session. It is 
 
 The owner asked on 2026-11-15 for unattended work through M10 without waiting between milestones; acceptance steps that need them (real accounts, a developer account, App Review) are recorded in `DECISIONS.md` as not verified and passed over. While they are away, never run Quill against `~/Library/Application Support/Quill` (their real account and mail): use `--demo`, or scratch `--config-dir` and `--data-dir`.
 
-M0 (core skeleton), M1 (shell spike, App Store validation deferred to the end because it needs an Apple Developer account; do not ask for one before then) and M2 (IMAP read) are built. HTML-to-styled-text from M4 was pulled forward at the owner's request (`quill_mime::html`). M3 (compose and send) is next; `quill-smtp` and `quill-pop3` exist as crates ahead of the UI that uses them.
+M0 (core skeleton), M1 (shell spike, App Store validation deferred to the end because it needs an Apple Developer account; do not ask for one before then), M2 (IMAP read) and M3 (compose and send) are built. HTML-to-styled-text from M4 was pulled forward at the owner's request (`quill_mime::html`). The rest of M4 (attachments in, media panes, remote content) is next; `quill-pop3` exists as a crate ahead of the engine support that uses it. What each milestone left undone is listed under it in `DECISIONS.md`.
+
+Each milestone has its own branch off the last (`m3-compose-send`, ...). `main` is where the owner last accepted the work; leave it for them to move.
 
 Commit finished, checked work as you go. There is no remote.
 
@@ -25,7 +27,10 @@ For anything visible in the app, also build it and look: `app/build-app.sh`, the
 ## This machine
 
 - Rust comes from Homebrew's keg-only `rustup`; if `cargo` is not found, put `/opt/homebrew/opt/rustup/bin` on `PATH`.
-- A scratch local mail server for trying things by hand: see how `crates/quill-imap/tests/common/mod.rs` starts Dovecot unprivileged. Always stop it and remove its Keychain entry afterwards.
+- A scratch local mail server for trying things by hand: see how `crates/quill-imap/tests/common/mod.rs` starts Dovecot unprivileged. Its directory needs a short path (sockets). Always stop it and remove its Keychain entry afterwards (`security delete-generic-password -s Quill -a "imap:USER@HOST"`).
+- No SMTP server is installed. To try sending by hand, a few lines of Python that accept one SMTP conversation and write the message to a file are enough, with `tls = "none"` on `127.0.0.1`. Never point a scratch account at a real server.
+- A Keychain item belongs to the build that made it. After any rebuild, a `quill` or `Quill.app` that reads an item an older build saved makes macOS put a dialog on the owner's screen, and Quill waits on it silently. For a scratch run: delete the scratch item, then save it again (or add the account again) with the build you are about to run, and do not rebuild in between.
+- Scratch files for the sandboxed app go in `~/Library/Containers/dev.quill.Quill/Data/tmp/`, which the app can read; point it at them with `--core-env QUILL_CONFIG_DIR=...`.
 - The IMAP tests need Dovecot (`brew install dovecot`, already installed here). They start their own server per test; nothing runs in the background.
 - `xcodebuild` fails with "failed to load a required plug-in" until the user runs `xcodebuild -runFirstLaunch`. `swift build` and `swift test` do not need it.
 - If a build ever stops with "You have not agreed to the Xcode license agreements", that needs the user (`sudo xcodebuild -license`); `export DEVELOPER_DIR=/Library/Developer/CommandLineTools` builds meanwhile.
@@ -46,6 +51,11 @@ For anything visible in the app, also build it and look: `app/build-app.sh`, the
 - Where there is typing to do (`Context::Setup`), a key goes to the field first and to a command only if the field has no use for it. A new typing context follows the same rule in `State::on_key`.
 - The UI adds accounts through a service it is handed (`AccountsLink`, implemented in `quill-cli/src/service.rs`); it reaches no server, Keychain or config file itself.
 - `config.toml` is changed for the user only through `quill-cli/src/config_edit.rs`, which keeps their comments and refuses to write a file Quill could not read back.
+- While a message is written, keys go to `Compose::key` first; a compose command needs a `ctrl` key as well as a `cmd` one, because a terminal keeps `cmd` for itself. Hints come from `Env::hint_key`, which names the key that works where Quill is running.
+- The app's Edit menu items Cut, Copy and Select All run the core's `edit.*` commands while those are enabled and act on the focused view otherwise. A shell menu item that should always work needs an explicit target: a disabled item still swallows its key.
+- The embedded terminal has no key bindings of its own (`keybind = clear` in `GhosttySurface`). Keep it so, or libghostty takes `cmd` keys before the menus and the core.
+- Files reach the core from the shell as `files.dropped` with copies in the app's temporary folder; the core deletes each copy once read. The clipboard is written through `Host::copy_text`.
+- A scripted app run must never show a panel, open a browser or touch the clipboard: `DebugScript` replaces `filePicker`, `linkOpener` and `clipboardWriter` with recorders. Add a recorder with anything new that reaches outside the window.
 - Images are placed by the run loop, not drawn by views. A view leaves cells empty and returns an `ImagePlacement`.
 - UI changes show up in the insta snapshots under `crates/quill-tui/tests/snapshots/`. Regenerate with `INSTA_UPDATE=always cargo test -p quill-tui`, then read the diff.
 - Fixtures use invented people at example.com. Never real mail, never real addresses.

@@ -109,13 +109,14 @@ In the message list, `>` marks the cursor, `*` an unread message, `r` one you ha
 | `tab` / `shift-tab` | Next, previous field. `enter` and the arrows move between the header fields too |
 | `cmd-enter` or `ctrl-x` | Send |
 | `cmd-s` or `ctrl-s` | Save as a draft and keep writing |
-| `cmd-shift-a` or `ctrl-t` | Attach a file: type or paste its path |
+| `cmd-shift-a` or `ctrl-t` | Attach a file. The app shows its file panel; a terminal asks for the path, typed or pasted |
 | `cmd-shift-b` or `ctrl-o` | Add blind copies (Bcc) |
 | `esc` | Close. What you wrote is kept in Drafts |
 
 The `cmd` keys work in the app; a terminal keeps `cmd` for itself, so there the `ctrl` keys are the ones shown.
 
 - **Addresses.** As you type in To, Cc or Bcc, people you have had mail from or written to are offered under the field. `↓`/`↑` choose, `enter` or `tab` takes one, `esc` declines. Separate several with commas.
+- **Files.** In the app, files dropped on the window are attached to the message being written, or start a new one.
 - **From.** With more than one account, `shift-tab` up to From and `←`/`→` choose which one sends.
 - **The body** follows macOS text keys: arrows, `opt-←`/`opt-→` by word, `cmd-←`/`cmd-→` to the ends of the line, `cmd-↑`/`cmd-↓` to the ends of the message, shift with any of them to select, `cmd-a`, `cmd-c`, `cmd-x`, `cmd-z` and `cmd-shift-z` to undo and redo. `ctrl-a`, `ctrl-e`, `ctrl-k`, `ctrl-w` and the other Emacs-style keys of macOS text fields work as well, and are the ones to use in a terminal.
 - **Markdown.** The body is written as Markdown and sent as plain text with an HTML version beside it. `format = "plain"` under `[compose]` sends plain text only.

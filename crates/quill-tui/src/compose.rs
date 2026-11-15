@@ -276,7 +276,9 @@ impl Compose {
         self.touched = true;
     }
 
-    pub fn paste(&mut self, text: &str) {
+    /// Pasted text goes where the cursor is. In an address field what is
+    /// now being typed is looked up, as if it had been typed.
+    pub fn paste(&mut self, text: &str) -> Did {
         self.error = None;
         self.doubts.clear();
         if let Some(path) = &mut self.attaching {
@@ -284,9 +286,24 @@ impl Compose {
         } else if self.field == Field::Body {
             self.body.insert(text);
         } else if let Some(input) = self.input_mut() {
-            input.insert(text);
+            // A header field is one line.
+            input.insert(&text.replace(['\r', '\n'], " "));
             self.touched = true;
+            match self.address_in_progress() {
+                Some(typed) if !typed.is_empty() => return Did::Lookup(typed.to_owned()),
+                _ => self.completion = None,
+            }
         }
+        Did::Handled
+    }
+
+    /// Adds a file to the message. It is part of what has been written: a
+    /// message with a file on it is worth keeping, and worth checking again.
+    pub fn attach(&mut self, attachment: DraftAttachment) {
+        self.attachments.push(attachment);
+        self.touched = true;
+        self.doubts.clear();
+        self.error = None;
     }
 
     /// Starts or stops asking for a file to attach.

@@ -29,6 +29,9 @@ pub const SOCKET_VARIABLE: &str = "QUILL_SHELL_SOCKET";
 pub enum HostEvent {
     /// Run the command with this name: a menu item or toolbar button was used.
     RunCommand(String),
+    /// Files the user chose or dropped on the window. `temporary`: they
+    /// are copies made for the core, to remove once read.
+    Files { paths: Vec<String>, temporary: bool },
     /// The app is quitting: flush and exit cleanly.
     WillQuit,
     /// The shell has gone. There is nothing left to draw for.
@@ -64,6 +67,19 @@ pub trait Host: Send + Sync {
 
     fn close_pane(&self) {
         self.send(CoreToShell::PaneClose(NoParams {}));
+    }
+
+    /// Asks the user to choose files with the native open panel. Their
+    /// choice arrives as [`HostEvent::Files`]. Only a shell has a panel.
+    fn pick_files(&self) {
+        self.send(CoreToShell::FilesPick(NoParams {}));
+    }
+
+    /// Puts text on the system clipboard, if this host can. Returns
+    /// whether it took it; a terminal is asked instead when it did not.
+    fn copy_text(&self, text: &str) -> bool {
+        let _ = text;
+        false
     }
 
     /// Opens a web or mail address in the user's browser or mail program.

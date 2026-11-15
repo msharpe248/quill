@@ -724,6 +724,69 @@ fn copying_in_the_body_reaches_the_clipboard() {
 }
 
 #[test]
+fn the_apps_edit_menu_reaches_the_editor_as_commands() {
+    use quill_tui::command::CommandId;
+    let enabled = |harness: &Harness, id| harness.state.is_enabled(&harness.env, id);
+    let mut harness = wide();
+    // Nothing being written: Copy is the terminal's own.
+    assert!(!enabled(&harness, CommandId::EditCopy));
+    assert!(!enabled(&harness, CommandId::EditSelectAll));
+
+    write_to_priya(&mut harness);
+    // In the body, with nothing selected: all can be selected, and until
+    // something is, Copy and Cut are still the terminal's.
+    assert!(enabled(&harness, CommandId::EditSelectAll));
+    assert!(!enabled(&harness, CommandId::EditCopy));
+    harness.act(Action::Command(CommandId::EditSelectAll));
+    assert!(enabled(&harness, CommandId::EditCopy) && enabled(&harness, CommandId::EditCut));
+    harness.act(Action::Command(CommandId::EditCopy));
+    assert_eq!(
+        harness.host_requests,
+        [HostRequest::Copy("Are you free on *Thursday*?".to_owned())]
+    );
+    harness.act(Action::Command(CommandId::EditCut));
+    assert_eq!(harness.host_requests.len(), 2);
+    assert_eq!(harness.state.compose.as_ref().unwrap().content().body, "");
+    // Undo in the editor brings it back.
+    harness.keys("cmd-z");
+    assert_eq!(
+        harness.state.compose.as_ref().unwrap().content().body,
+        "Are you free on *Thursday*?"
+    );
+
+    // In a header field the menu's Copy is the terminal's again.
+    harness.keys("shift-tab");
+    assert!(!enabled(&harness, CommandId::EditSelectAll));
+    assert!(!enabled(&harness, CommandId::EditCopy));
+}
+
+#[test]
+fn a_pasted_name_is_looked_up_like_a_typed_one() {
+    let mut harness = wide();
+    harness.keys("c");
+    harness.act(Action::Paste("pri".to_owned()));
+    assert!(
+        harness
+            .screen()
+            .contains("> Priya Nair <priya.nair@example.com>"),
+        "{}",
+        harness.screen()
+    );
+    harness.keys("enter");
+    assert_eq!(
+        harness.state.compose.as_ref().unwrap().content().to,
+        "Priya Nair <priya.nair@example.com>, "
+    );
+    // A whole address pasted with a line break stays one line.
+    harness.act(Action::Paste("sam.lee@example.com\n".to_owned()));
+    harness.keys("escape");
+    assert_eq!(
+        harness.state.compose.as_ref().unwrap().content().to,
+        "Priya Nair <priya.nair@example.com>, sam.lee@example.com "
+    );
+}
+
+#[test]
 fn pasting_goes_where_the_cursor_is() {
     let mut harness = wide();
     harness.keys("c tab tab");
@@ -868,4 +931,85 @@ fn quitting_keeps_what_was_being_written() {
     let drafts = harness.store.drafts().unwrap();
     assert_eq!(drafts.len(), 1);
     assert!(drafts[0].content.body.starts_with("Half a thought"));
+}
+
+#[test]
+fn in_the_app_files_are_chosen_in_its_own_panel() {
+    let mut harness = wide();
+    harness.env.file_panel = true;
+    write_to_priya(&mut harness);
+    harness.keys("cmd-A");
+    // No path is asked for: the host is asked to show its panel.
+    assert!(!harness.screen().contains("Attach the file at:"));
+    assert_eq!(harness.host_requests, [HostRequest::PickFiles]);
+
+    // What was chosen comes back as copies made for Quill. A name a shell
+    // would have to escape is taken exactly as it is.
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("files-1");
+    std::fs::create_dir(&folder).unwrap();
+    let first = folder.join("Q4 'notes'.txt");
+    let second = folder.join("plan.pdf");
+    std::fs::write(&first, "notes").unwrap();
+    std::fs::write(&second, "%PDF-1.7").unwrap();
+    harness.act(Action::Files {
+        paths: vec![
+            first.to_str().unwrap().to_owned(),
+            second.to_str().unwrap().to_owned(),
+        ],
+        temporary: true,
+    });
+    let row = harness.row_with("Attach:");
+    assert!(row.contains("Q4 'notes'.txt (5 bytes)"), "{row}");
+    assert!(row.contains("plan.pdf (8 bytes)"), "{row}");
+    // The copies and their folder are gone; the files are in the message.
+    assert!(!folder.exists());
+    harness.keys("cmd-enter");
+    let (_, raw) = outgoing(&mut harness);
+    assert!(raw.contains("plan.pdf"), "{raw}");
+    assert!(raw.contains("application/pdf"), "{raw}");
+}
+
+#[test]
+fn files_dropped_with_nothing_being_written_start_a_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("photo.png");
+    std::fs::write(&path, [0x89, b'P', b'N', b'G']).unwrap();
+
+    let mut harness = wide();
+    harness.act(Action::Files {
+        paths: vec![path.to_str().unwrap().to_owned()],
+        temporary: false,
+    });
+    assert_eq!(harness.state.context(), Context::Compose);
+    assert!(harness.screen().contains("[3] New message"));
+    assert!(harness.row_with("Attach:").contains("photo.png (4 bytes)"));
+    // The user's own file is left where it was.
+    assert!(path.exists());
+    // A file is something written: closing keeps the draft.
+    harness.keys("escape");
+    assert_eq!(harness.store.drafts().unwrap().len(), 1);
+}
+
+#[test]
+fn a_dropped_file_that_cannot_be_read_says_so_by_name_and_is_cleared_away() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("files-2");
+    std::fs::create_dir(&folder).unwrap();
+    // A folder, not a file.
+    let inner = folder.join("Holiday photos");
+    std::fs::create_dir(&inner).unwrap();
+    let missing = folder.join("gone.txt");
+
+    let mut harness = wide();
+    harness.keys("c");
+    harness.act(Action::Files {
+        paths: vec![missing.to_str().unwrap().to_owned()],
+        temporary: true,
+    });
+    let screen = harness.screen();
+    assert!(screen.contains("gone.txt cannot be attached"), "{screen}");
+    // The name, not where the copy was put.
+    assert!(!screen.contains("files-2"), "{screen}");
+    assert!(!harness.screen().contains("Attach:"));
 }

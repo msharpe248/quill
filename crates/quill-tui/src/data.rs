@@ -54,9 +54,12 @@ pub enum DataRequest {
         announce: bool,
     },
     Send(Box<SendRequest>),
-    /// Read the file at this path, to attach it.
+    /// Read the file at this path, to attach it. `handed`: the host
+    /// supplied the path, which is then exact, and says what to do with
+    /// the file afterwards. `None`: the user typed or pasted it.
     Attach {
         path: String,
+        handed: Option<outgoing::Handed>,
     },
     /// Start a reply to, or a forward of, a message.
     Respond {
@@ -171,7 +174,7 @@ fn run(store: &mut Store, request: &DataRequest) -> quill_store::Result<Vec<Data
             announce,
         } => outgoing::save_draft(store, draft, account, &content, announce)?,
         DataRequest::Send(request) => outgoing::send(store, &request)?,
-        DataRequest::Attach { path } => outgoing::attach(store, &path),
+        DataRequest::Attach { path, handed } => outgoing::attach(store, &path, handed),
         DataRequest::Respond {
             id,
             how,

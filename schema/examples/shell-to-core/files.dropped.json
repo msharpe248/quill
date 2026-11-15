@@ -1,0 +1,11 @@
+{
+  "jsonrpc": "2.0",
+  "method": "files.dropped",
+  "params": {
+    "paths": [
+      "/Users/robin/Library/Containers/dev.quill.Quill/Data/tmp/files-1F3A/roadmap.pdf",
+      "/Users/robin/Library/Containers/dev.quill.Quill/Data/tmp/files-1F3A/Q4 notes.txt"
+    ],
+    "temporary": true
+  }
+}

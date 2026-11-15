@@ -239,10 +239,12 @@ impl Io<'_> {
             match request {
                 HostRequest::PreviewSample => self.preview_sample(),
                 HostRequest::OpenUrl(url) => self.host.open_url(&url),
+                HostRequest::PickFiles => self.host.pick_files(),
+                // Quill's own shell takes the text itself. Anywhere else
+                // the terminal owns the clipboard and is asked to take it
+                // (OSC 52), which the terminals Quill is meant for do.
+                HostRequest::Copy(text) if self.host.copy_text(&text) => {}
                 HostRequest::Copy(text) => {
-                    // The terminal owns the clipboard: it is asked to take
-                    // the text (OSC 52). Quill's own shell and the
-                    // terminals it runs in for development both do.
                     let encoded = base64::engine::general_purpose::STANDARD.encode(text);
                     let mut out = stdout();
                     let _ = queue!(out, Print(format!("\x1b]52;c;{encoded}\x1b\\")));
@@ -418,6 +420,9 @@ async fn event_loop(
                         "The app asked for an unknown command \"{name}\"."
                     ))),
                 }),
+                HostEvent::Files { paths, temporary } => {
+                    Some(Action::Files { paths, temporary })
+                }
                 // Either way there is nothing left to draw for.
                 HostEvent::WillQuit | HostEvent::Disconnected => break,
                 HostEvent::Problem(text) => Some(Action::Notify(Notice::error(text))),
@@ -484,6 +489,7 @@ mod tests {
             images: false,
             accounts: false,
             cmd_keys: true,
+            file_panel: false,
             compose: crate::state::ComposeSettings::default(),
             identities: std::collections::HashMap::new(),
         }

@@ -20,7 +20,7 @@ use crate::editor::Editor;
 use crate::input::LineInput;
 use crate::keymap::{Key, KeyChord, Keymap, Mods, Resolution};
 use crate::layout::{self, LayoutMode};
-use crate::outgoing::{Response, SendRequest};
+use crate::outgoing::{Handed, Response, SendRequest};
 use crate::setup::{AccountEvent, AccountRequest, CertificatePrompt, Outcome, Setup};
 use crate::theme::Styles;
 use crate::{text, view};
@@ -42,6 +42,9 @@ pub struct Env {
     /// Whether keys held with `cmd` can arrive: they do from Quill's own
     /// window, and a terminal program keeps them for itself.
     pub cmd_keys: bool,
+    /// Whether the host has a panel to choose files in. Without one a
+    /// file to attach is named by its path.
+    pub file_panel: bool,
     /// How mail is written and sent, from the config.
     pub compose: ComposeSettings,
     /// Who the user is on each account, by the account's name.
@@ -104,6 +107,12 @@ pub enum Action {
     Account(AccountEvent),
     /// Text pasted into the terminal.
     Paste(String),
+    /// Files the user chose in the host's panel or dropped on its window.
+    /// `temporary`: they are copies made for Quill, to remove once read.
+    Files {
+        paths: Vec<String>,
+        temporary: bool,
+    },
 }
 
 /// What an action asks of the world outside the state: queries and writes
@@ -136,6 +145,8 @@ pub enum HostRequest {
     OpenUrl(String),
     /// Put text on the system clipboard.
     Copy(String),
+    /// Ask the user to choose files with the host's own panel.
+    PickFiles,
 }
 
 /// What the app shell mirrors: enough to enable menu items, badge the Dock
@@ -533,12 +544,36 @@ impl State {
                     }
                 }
                 Context::Compose => {
-                    if let Some(compose) = &mut self.compose {
-                        compose.paste(&text);
+                    if let Some(compose) = &mut self.compose
+                        && let Did::Lookup(typed) = compose.paste(&text)
+                    {
+                        out.data.push(DataRequest::Contacts { typed });
                     }
                 }
                 _ => {}
             },
+            Action::Files { paths, temporary } => {
+                // Files are for a message: the one being written, or a new
+                // one started for them.
+                if self.compose.is_none() && self.context() != Context::Setup {
+                    self.start_composing(env);
+                }
+                if let Some(compose) = &mut self.compose {
+                    compose.attaching = None;
+                }
+                let handed = Some(if temporary {
+                    Handed::Temporary
+                } else {
+                    Handed::Kept
+                });
+                // Asked for even with no message to put them on, so that
+                // copies made for Quill are cleared away.
+                out.data.extend(
+                    paths
+                        .into_iter()
+                        .map(|path| DataRequest::Attach { path, handed }),
+                );
+            }
         }
         if let Some(prefill) = self.compose_pending.take() {
             self.open_compose(env, *prefill);
@@ -576,7 +611,7 @@ impl State {
                             return;
                         }
                         Did::Attach(path) => {
-                            out.data.push(DataRequest::Attach { path });
+                            out.data.push(DataRequest::Attach { path, handed: None });
                             return;
                         }
                     }
@@ -737,8 +772,36 @@ impl State {
                     compose.show_bcc();
                 }
             }
-            CommandId::ComposeAttach => {
+            // From the app's Edit menu, which takes these keys before the
+            // editor can. Typed in a terminal they reach the editor itself.
+            CommandId::EditCopy => {
+                if let Some(text) = self
+                    .compose
+                    .as_ref()
+                    .and_then(|compose| compose.body.copy())
+                {
+                    out.host.push(HostRequest::Copy(text));
+                }
+            }
+            CommandId::EditCut => {
+                if let Some(compose) = &mut self.compose
+                    && let Some(text) = compose.body.cut()
+                {
+                    compose.doubts.clear();
+                    out.host.push(HostRequest::Copy(text));
+                }
+            }
+            CommandId::EditSelectAll => {
                 if let Some(compose) = &mut self.compose {
+                    compose.body.select_all();
+                }
+            }
+            CommandId::ComposeAttach => {
+                if env.file_panel {
+                    // The host's own panel: the files come back as
+                    // `Action::Files`.
+                    out.host.push(HostRequest::PickFiles);
+                } else if let Some(compose) = &mut self.compose {
                     compose.ask_for_attachment();
                 }
             }
@@ -805,6 +868,18 @@ impl State {
                 .compose
                 .as_ref()
                 .is_some_and(|compose| !compose.sending),
+            // Only where the body's own selection is the one meant.
+            CommandId::EditCopy | CommandId::EditCut => {
+                self.compose.as_ref().is_some_and(|compose| {
+                    compose.field == Field::Body
+                        && compose.attaching.is_none()
+                        && !compose.sending
+                        && compose.body.selection().is_some()
+                })
+            }
+            CommandId::EditSelectAll => self.compose.as_ref().is_some_and(|compose| {
+                compose.field == Field::Body && compose.attaching.is_none() && !compose.sending
+            }),
             // A draft is in no folder of any server: it can be thrown away,
             // not filed or flagged.
             CommandId::MessageArchive | CommandId::MessageMove => self
@@ -1559,7 +1634,7 @@ impl State {
             }
             DataEvent::Attached(attachment) => {
                 if let Some(compose) = &mut self.compose {
-                    compose.attachments.push(attachment);
+                    compose.attach(attachment);
                 }
             }
             DataEvent::AttachFailed(reason) => {

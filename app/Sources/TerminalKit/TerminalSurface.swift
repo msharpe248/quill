@@ -76,6 +76,11 @@ public protocol TerminalSurface: AnyObject {
     /// this is set and opens it.
     var onOpenLink: ((String) -> Void)? { get set }
 
+    /// Called on the main actor when files are dropped on the terminal.
+    /// While it is unset a dropped file is pasted as its path, as a
+    /// terminal does.
+    var onDropFiles: (([URL]) -> Void)? { get set }
+
     /// Starts the program. A surface runs one program in its lifetime.
     func start(_ command: TerminalCommand)
 

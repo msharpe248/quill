@@ -92,6 +92,8 @@ impl Harness {
             accounts,
             // As in Quill's own window.
             cmd_keys: true,
+            // Tests name files by path unless they say otherwise.
+            file_panel: false,
             compose: quill_tui::state::ComposeSettings::default(),
             identities: std::collections::HashMap::new(),
         };

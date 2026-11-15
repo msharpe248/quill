@@ -18,12 +18,19 @@ public enum CoreToShell: Equatable, Sendable {
     case paneClose
     /// Open a web or mail address in the user's browser or mail program.
     case linkOpen(LinkOpen)
+    /// Ask the user to choose files with the native open panel. What they
+    /// choose goes back as `filesDropped`.
+    case filesPick
+    /// Put text on the system clipboard.
+    case clipboardWrite(text: String)
 }
 
 /// A message the shell sends to the core.
 public enum ShellToCore: Equatable, Sendable {
     /// A menu item, toolbar button or notification action was used.
     case commandRun(name: String)
+    /// The user chose files in the open panel or dropped them on the window.
+    case filesDropped(FilesDropped)
     /// The app is quitting: flush and exit cleanly.
     case appWillQuit
 }
@@ -107,6 +114,24 @@ public enum Links {
     public static func openable(_ url: String) -> URL? {
         isOpenable(url) ? URL(string: url) : nil
     }
+}
+
+/// Files handed to the core: at least one, each by an absolute path the
+/// core can read.
+public struct FilesDropped: Equatable, Sendable, Codable {
+    public var paths: [String]
+    /// The files are copies the shell made for the core, which removes each
+    /// once it has read it.
+    public var temporary: Bool
+
+    /// `nil` unless there is at least one path and every one is absolute.
+    public init?(paths: [String], temporary: Bool) {
+        guard !paths.isEmpty, paths.allSatisfy({ $0.hasPrefix("/") }) else { return nil }
+        self.paths = paths
+        self.temporary = temporary
+    }
+
+    static let allowedKeys: Set<String> = ["paths", "temporary"]
 }
 
 public struct PanePreview: Equatable, Sendable, Codable {

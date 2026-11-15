@@ -33,8 +33,8 @@ private enum Examples {
         let examples = try Examples.load("core-to-shell")
         #expect(
             examples.map(\.name) == [
-                "commands.list.json", "link.open.json", "pane.close.json", "pane.preview.json",
-                "state.update.json",
+                "clipboard.write.json", "commands.list.json", "files.pick.json", "link.open.json",
+                "pane.close.json", "pane.preview.json", "state.update.json",
             ])
         for (name, text) in examples {
             let message = try CoreToShell(line: text)
@@ -47,7 +47,7 @@ private enum Examples {
 
     @Test func shellToCoreExamplesRoundTrip() throws {
         let examples = try Examples.load("shell-to-core")
-        #expect(examples.map(\.name) == ["app.will_quit.json", "command.run.json"])
+        #expect(examples.map(\.name) == ["app.will_quit.json", "command.run.json", "files.dropped.json"])
         for (name, text) in examples {
             let message = try ShellToCore(line: text)
             #expect(try Examples.value(message.line) == Examples.value(text), "\(name) does not round-trip")
@@ -95,6 +95,27 @@ private enum Examples {
                         title: "Inbox (unified) - 12 unread"
                     )))
         #expect(try CoreToShell(line: examples["pane.close.json"]!) == .paneClose)
+        #expect(try CoreToShell(line: examples["files.pick.json"]!) == .filesPick)
+        #expect(
+            try CoreToShell(line: examples["clipboard.write.json"]!)
+                == .clipboardWrite(text: "Are you free on Thursday?\nThe usual place, 12:30."))
+    }
+
+    @Test func droppedFilesAreAbsolutePathsAndAtLeastOne() throws {
+        let examples = try Dictionary(uniqueKeysWithValues: Examples.load("shell-to-core").map { ($0.name, $0.text) })
+        guard case let .filesDropped(files) = try ShellToCore(line: examples["files.dropped.json"]!) else {
+            Issue.record("not a files.dropped")
+            return
+        }
+        #expect(files.paths.count == 2)
+        #expect(files.paths[1].hasSuffix("/Q4 notes.txt"))
+        #expect(files.temporary)
+
+        // It cannot be built holding anything the core would refuse.
+        #expect(FilesDropped(paths: [], temporary: true) == nil)
+        #expect(FilesDropped(paths: ["notes.txt"], temporary: false) == nil)
+        #expect(FilesDropped(paths: ["/tmp/a", "b"], temporary: false) == nil)
+        #expect(FilesDropped(paths: ["/tmp/a b.txt"], temporary: false)?.paths == ["/tmp/a b.txt"])
     }
 
     @Test func errorsSayWhatIsWrong() {

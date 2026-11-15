@@ -33,6 +33,22 @@ final class CommandCenter: NSObject {
         }
     }
 
+    /// Whether the core says the command of this name would do something
+    /// right now.
+    func isEnabled(_ name: String) -> Bool {
+        enabled.contains(name)
+    }
+
+    /// The names of the commands the core says apply right now, sorted.
+    var enabledNames: [String] {
+        enabled.sorted()
+    }
+
+    /// Asks the core to run the command of this name.
+    func run(named name: String) {
+        send?(.commandRun(name: name))
+    }
+
     /// The commands that carry a symbol, in the order the core listed them.
     var toolbarCommands: [CommandInfo] {
         commands.filter { $0.symbol != nil }

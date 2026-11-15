@@ -40,9 +40,13 @@ impl Host for StandaloneHost {
         match message {
             // There are no menus, toolbar or Dock badge to keep up to date,
             // and no pane to close: `qlmanage` owns its own window.
+            // And no file panel: the UI asks for a path instead. The
+            // clipboard is the terminal's, and is asked for there.
             CoreToShell::CommandsList(_)
             | CoreToShell::StateUpdate(_)
-            | CoreToShell::PaneClose(_) => {}
+            | CoreToShell::PaneClose(_)
+            | CoreToShell::FilesPick(_)
+            | CoreToShell::ClipboardWrite(_) => {}
             CoreToShell::LinkOpen(open) => {
                 let events = self.events.clone();
                 let opener = self.opener.clone();

@@ -122,6 +122,16 @@ private struct CommandRunParams: Codable {
     var name: String
 }
 
+/// `files.dropped` as it is on the wire, before its paths are checked.
+private struct FilesDroppedParams: Codable {
+    var paths: [String]
+    var temporary: Bool
+}
+
+private struct ClipboardWriteParams: Codable {
+    var text: String
+}
+
 private struct NoParams: Codable {}
 
 private struct Outgoing<Params: Encodable>: Encodable {
@@ -178,6 +188,12 @@ public extension CoreToShell {
                 throw BridgeError.malformed("link.open: not an http, https or mailto address")
             }
             self = .linkOpen(open)
+        case "files.pick":
+            try envelope.requireOnly([])
+            self = .filesPick
+        case "clipboard.write":
+            let params = try envelope.decode(ClipboardWriteParams.self, allowing: ["text"])
+            self = .clipboardWrite(text: params.text)
         default:
             throw BridgeError.unknownMethod(envelope.method)
         }
@@ -195,6 +211,10 @@ public extension CoreToShell {
             encodeLine(method: "pane.close", params: NoParams())
         case let .linkOpen(open):
             encodeLine(method: "link.open", params: open)
+        case .filesPick:
+            encodeLine(method: "files.pick", params: NoParams())
+        case let .clipboardWrite(text):
+            encodeLine(method: "clipboard.write", params: ClipboardWriteParams(text: text))
         }
     }
 }
@@ -209,6 +229,12 @@ public extension ShellToCore {
                 throw BridgeError.malformed("command.run: name is empty")
             }
             self = .commandRun(name: params.name)
+        case "files.dropped":
+            let params = try envelope.decode(FilesDroppedParams.self, allowing: FilesDropped.allowedKeys)
+            guard let files = FilesDropped(paths: params.paths, temporary: params.temporary) else {
+                throw BridgeError.malformed("files.dropped: paths must be absolute, and there must be one")
+            }
+            self = .filesDropped(files)
         case "app.will_quit":
             try envelope.requireOnly([])
             self = .appWillQuit
@@ -221,6 +247,10 @@ public extension ShellToCore {
         switch self {
         case let .commandRun(name):
             encodeLine(method: "command.run", params: CommandRunParams(name: name))
+        case let .filesDropped(files):
+            encodeLine(
+                method: "files.dropped",
+                params: FilesDroppedParams(paths: files.paths, temporary: files.temporary))
         case .appWillQuit:
             encodeLine(method: "app.will_quit", params: NoParams())
         }

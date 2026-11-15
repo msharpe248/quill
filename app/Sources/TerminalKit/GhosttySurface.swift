@@ -10,7 +10,7 @@ import GhosttyTerminal
 /// closure and go to the PTY.
 @MainActor
 final class GhosttySurface: TerminalSurface {
-    private let terminalView: TerminalView
+    private let terminalView: DropAwareTerminalView
     private let controller: TerminalController
     private let session: InMemoryTerminalSession
     private let link: Link
@@ -29,6 +29,11 @@ final class GhosttySurface: TerminalSurface {
         set { delegateProxy.onOpenLink = newValue }
     }
 
+    var onDropFiles: (([URL]) -> Void)? {
+        get { terminalView.onDropFiles }
+        set { terminalView.onDropFiles = newValue }
+    }
+
     var view: NSView { terminalView }
 
     init(appearance: TerminalAppearance) {
@@ -41,7 +46,7 @@ final class GhosttySurface: TerminalSurface {
             suppressesPixelOnlyResizes: true
         )
         controller = TerminalController(configuration: Self.configuration(for: appearance))
-        terminalView = TerminalView(frame: .zero)
+        terminalView = DropAwareTerminalView(frame: .zero)
         terminalView.delegate = delegateProxy
         terminalView.controller = controller
         terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
@@ -117,7 +122,32 @@ final class GhosttySurface: TerminalSurface {
             builder.withForeground(appearance.foreground)
             builder.withWindowPaddingX(0)
             builder.withWindowPaddingY(0)
+            // Ghostty's own shortcuts (cmd-c, cmd-a, cmd-z, cmd-enter and the
+            // rest) would be taken here, before the app's menus or the
+            // program could see them. The program inside is the whole app:
+            // every key is its or the menus', so the terminal keeps none.
+            builder.withCustom("keybind", "clear")
         }
+    }
+}
+
+/// The terminal view, except that dropped files can be claimed by whoever
+/// owns the surface instead of being pasted as paths. Text, links and
+/// pictures without a file of their own drop as libghostty has them.
+private final class DropAwareTerminalView: TerminalView {
+    var onDropFiles: (([URL]) -> Void)?
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        let files =
+            (sender.draggingPasteboard.readObjects(
+                forClasses: [NSURL.self],
+                options: [.urlReadingFileURLsOnly: true]
+            ) as? [URL]) ?? []
+        guard let onDropFiles, !files.isEmpty else {
+            return super.performDragOperation(sender)
+        }
+        onDropFiles(files)
+        return true
     }
 }
 

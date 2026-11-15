@@ -64,6 +64,7 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
         images: false,
         accounts: false,
         cmd_keys: false,
+        file_panel: false,
         compose: ComposeSettings {
             markdown: config.compose.format == ComposeFormat::Markdown,
             reply_above: config.compose.reply_position == ReplyPosition::Above,

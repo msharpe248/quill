@@ -100,6 +100,9 @@ pub enum CommandId {
     ComposeSave,
     ComposeAttach,
     ComposeBcc,
+    EditCopy,
+    EditCut,
+    EditSelectAll,
     EditUndo,
     AccountAdd,
     DebugPreviewSample,
@@ -469,6 +472,33 @@ impl Registry {
                     "Add blind copies (Bcc)",
                     Message,
                     Some(Menu::Message),
+                    COMPOSE,
+                ),
+                // The three below have no menu items of their own. The app's
+                // Copy, Cut and Select All run them while they are enabled,
+                // and act on the terminal's own selection otherwise.
+                spec(
+                    EditCopy,
+                    "edit.copy",
+                    "Copy what is selected in the message being written",
+                    General,
+                    None,
+                    COMPOSE,
+                ),
+                spec(
+                    EditCut,
+                    "edit.cut",
+                    "Cut what is selected in the message being written",
+                    General,
+                    None,
+                    COMPOSE,
+                ),
+                spec(
+                    EditSelectAll,
+                    "edit.select_all",
+                    "Select all of the message being written",
+                    General,
+                    None,
                     COMPOSE,
                 ),
                 spec(

@@ -209,22 +209,51 @@ pub fn send(store: &mut Store, request: &SendRequest) -> quill_store::Result<Vec
 }
 
 /// Reads a file and files it among the blobs, ready to attach.
-pub fn attach(store: &Store, path: &str) -> Vec<DataEvent> {
+pub fn attach(store: &Store, path: &str, handed: Option<Handed>) -> Vec<DataEvent> {
+    let events = read_attachment(store, path, handed.is_some());
+    // A copy the host made for Quill has served its purpose, whether or
+    // not it could be attached. Its folder goes with the last file in it.
+    if handed == Some(Handed::Temporary) {
+        let file = std::path::Path::new(path);
+        let _ = std::fs::remove_file(file);
+        if let Some(folder) = file.parent() {
+            let _ = std::fs::remove_dir(folder);
+        }
+    }
+    events
+}
+
+/// How a file the host handed over is to be treated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Handed {
+    /// The user's own file: read and left alone.
+    Kept,
+    /// A copy made for Quill: removed once read.
+    Temporary,
+}
+
+fn read_attachment(store: &Store, path: &str, exact: bool) -> Vec<DataEvent> {
     let failed = |why: String| vec![DataEvent::AttachFailed(why)];
-    // A pasted or dropped path may be quoted or escaped the way a shell
-    // would write it.
-    let cleaned = path
-        .trim()
-        .trim_matches(|c| c == '"' || c == '\'')
-        .replace("\\ ", " ");
+    // A path that was typed or pasted may be quoted or escaped the way a
+    // shell would write it. One the host handed over is exactly the path.
+    let cleaned = if exact {
+        path.to_owned()
+    } else {
+        path.trim()
+            .trim_matches(|c| c == '"' || c == '\'')
+            .replace("\\ ", " ")
+    };
     let expanded = match (cleaned.strip_prefix("~/"), std::env::var_os("HOME")) {
-        (Some(rest), Some(home)) => std::path::Path::new(&home).join(rest),
+        (Some(rest), Some(home)) if !exact => std::path::Path::new(&home).join(rest),
         _ => std::path::PathBuf::from(&cleaned),
     };
     let name = expanded
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
+    // A handed-over file is named by its name: where the host put its copy
+    // means nothing to the user.
+    let cleaned = if exact { name.clone() } else { cleaned };
     let size = match std::fs::metadata(&expanded) {
         Ok(metadata) if metadata.is_file() => metadata.len(),
         Ok(_) => return failed(format!("{cleaned} is not a file.")),

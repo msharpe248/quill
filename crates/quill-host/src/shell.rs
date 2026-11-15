@@ -46,6 +46,13 @@ impl Host for ShellHost {
     fn is_shell(&self) -> bool {
         true
     }
+
+    fn copy_text(&self, text: &str) -> bool {
+        self.send(CoreToShell::ClipboardWrite(bridge::ClipboardWrite {
+            text: text.to_owned(),
+        }));
+        true
+    }
 }
 
 fn write_loop(mut stream: UnixStream, queue: mpsc::Receiver<CoreToShell>) {
@@ -68,6 +75,10 @@ fn read_loop(stream: UnixStream, events: UnboundedSender<HostEvent>) {
         }
         let event = match bridge::decode::<ShellToCore>(&line) {
             Ok(ShellToCore::CommandRun(run)) => HostEvent::RunCommand(run.name),
+            Ok(ShellToCore::FilesDropped(files)) => HostEvent::Files {
+                paths: files.paths().to_vec(),
+                temporary: files.temporary(),
+            },
             Ok(ShellToCore::AppWillQuit(_)) => HostEvent::WillQuit,
             Err(err) => HostEvent::Problem(format!("bridge: {err}")),
         };

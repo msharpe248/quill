@@ -183,6 +183,8 @@ async fn tui(args: TuiArgs) -> anyhow::Result<()> {
     env.accounts = !args.demo;
     // A terminal program keeps cmd for itself; the shell passes it on.
     env.cmd_keys = attached.host.is_shell();
+    // And it has a panel to choose files in.
+    env.file_panel = attached.host.is_shell();
     env.images = attached.host.is_shell()
         || quill_media::kitty::supported_by_environment(|name| std::env::var(name).ok());
     app::run(store, env, notices, attached, sync, accounts)

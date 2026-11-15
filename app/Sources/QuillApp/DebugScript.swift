@@ -15,6 +15,10 @@ import Bridge
 /// - `menu:COMMAND`   choose the menu item of a core command, by its name
 /// - `resize:WxH`     resize the window, in points
 /// - `toolbar:COMMAND` click the toolbar button of a core command
+/// - `item:TITLE`     choose one of the shell's own menu items, by its title
+/// - `choose:PATH,PATH` what the open panel answers when the core next asks
+///   for files; no panel is ever shown to a script
+/// - `drop:PATH,PATH`  hand files over as if dropped on the window
 ///
 /// With `--dump-screen`, the terminal's text and the shell's state are
 /// written to the file afterwards and the app quits.
@@ -26,6 +30,14 @@ enum DebugScript {
         // A check must not open the user's browser. What would have been
         // opened is written to the dump instead.
         controller.linkOpener = { url in opened.append(url.absoluteString) }
+        // Nor change what is on the user's clipboard.
+        controller.clipboardWriter = { text in copied.append(text) }
+        // Nor wait on a panel nobody is there to answer. The files named by
+        // the last `choose:` step are what the user is taken to have chosen.
+        controller.filePicker = { _, done in
+            panelsAsked += 1
+            done(chosen)
+        }
         Task { @MainActor in
             for step in steps {
                 await perform(step, on: controller)
@@ -76,6 +88,32 @@ enum DebugScript {
                 note("no enabled toolbar item for \(argument)")
             }
             try? await Task.sleep(for: .milliseconds(150))
+        case "item":
+            // A menu item of the shell's own, by its title.
+            var found = false
+            for top in NSApp.mainMenu?.items ?? [] {
+                guard let menu = top.submenu,
+                    let index = menu.items.firstIndex(where: { $0.title == argument })
+                else { continue }
+                menu.update()
+                if menu.items[index].isEnabled {
+                    menu.performActionForItem(at: index)
+                } else {
+                    note("\(argument) is disabled")
+                }
+                found = true
+                break
+            }
+            if !found {
+                note("no menu item titled \(argument)")
+            }
+            try? await Task.sleep(for: .milliseconds(150))
+        case "choose":
+            // What the open panel will answer when it is next asked for.
+            chosen = paths(argument)
+        case "drop":
+            controller.deliver(files: paths(argument))
+            try? await Task.sleep(for: .milliseconds(300))
         default:
             note("unknown step \(step)")
         }
@@ -88,6 +126,14 @@ enum DebugScript {
 
     private static var notes: [String] = []
     private static var opened: [String] = []
+    private static var copied: [String] = []
+    private static var chosen: [URL] = []
+    private static var panelsAsked = 0
+
+    /// Paths separated by commas.
+    private static func paths(_ argument: String) -> [URL] {
+        argument.split(separator: ",").map { URL(fileURLWithPath: String($0)) }
+    }
 
     private static func note(_ text: String) {
         notes.append(text)
@@ -173,6 +219,9 @@ enum DebugScript {
         let responder = controller.window?.firstResponder.map { String(describing: type(of: $0)) }
         lines.append("keys go to: \(responder ?? "nothing")")
         lines.append("opened: \(opened.joined(separator: " "))")
+        lines.append("enabled: \(controller.commands.enabledNames.joined(separator: " "))")
+        lines.append("file panels asked for: \(panelsAsked)")
+        lines.append("copied: \(copied.map { $0.debugDescription }.joined(separator: " "))")
         let toolbar = (controller.window?.toolbar?.items ?? [])
             .filter { $0.itemIdentifier != .flexibleSpace }
             .map { "\($0.isEnabled ? "+" : "-")\($0.itemIdentifier.rawValue)" }

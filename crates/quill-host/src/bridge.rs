@@ -26,6 +26,13 @@ pub enum CoreToShell {
     /// Open a web or mail address in the user's browser or mail program.
     #[serde(rename = "link.open")]
     LinkOpen(LinkOpen),
+    /// Ask the user to choose files with the native open panel. What they
+    /// choose arrives as `files.dropped`.
+    #[serde(rename = "files.pick")]
+    FilesPick(NoParams),
+    /// Put text on the system clipboard.
+    #[serde(rename = "clipboard.write")]
+    ClipboardWrite(ClipboardWrite),
 }
 
 /// A message the shell sends to the core.
@@ -35,6 +42,9 @@ pub enum ShellToCore {
     /// A menu item, toolbar button or notification action was used.
     #[serde(rename = "command.run")]
     CommandRun(CommandRun),
+    /// The user chose files in the open panel or dropped them on the window.
+    #[serde(rename = "files.dropped")]
+    FilesDropped(FilesDropped),
     /// The app is quitting: flush and exit cleanly.
     #[serde(rename = "app.will_quit")]
     AppWillQuit(NoParams),
@@ -161,6 +171,62 @@ pub struct PanePreview {
 #[serde(deny_unknown_fields)]
 pub struct CommandRun {
     pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClipboardWrite {
+    pub text: String,
+}
+
+/// Files handed to the core: at least one, each by an absolute path. It
+/// cannot be built or decoded holding anything else.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "FilesDroppedParams", into = "FilesDroppedParams")]
+pub struct FilesDropped {
+    paths: Vec<String>,
+    temporary: bool,
+}
+
+impl FilesDropped {
+    pub fn new(paths: Vec<String>, temporary: bool) -> Option<Self> {
+        let valid = !paths.is_empty() && paths.iter().all(|path| path.starts_with('/'));
+        valid.then_some(Self { paths, temporary })
+    }
+
+    pub fn paths(&self) -> &[String] {
+        &self.paths
+    }
+
+    /// The files are copies made for the core, to remove once read.
+    pub fn temporary(&self) -> bool {
+        self.temporary
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FilesDroppedParams {
+    paths: Vec<String>,
+    temporary: bool,
+}
+
+impl TryFrom<FilesDroppedParams> for FilesDropped {
+    type Error = String;
+
+    fn try_from(params: FilesDroppedParams) -> Result<Self, Self::Error> {
+        Self::new(params.paths, params.temporary)
+            .ok_or_else(|| "paths must be absolute, and there must be one".to_owned())
+    }
+}
+
+impl From<FilesDropped> for FilesDroppedParams {
+    fn from(files: FilesDropped) -> Self {
+        Self {
+            paths: files.paths,
+            temporary: files.temporary,
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

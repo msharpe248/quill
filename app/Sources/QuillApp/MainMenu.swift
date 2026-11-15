@@ -30,9 +30,20 @@ enum MainMenu {
         // Edit
         let edit = submenu(of: bar, title: "Edit")
         append(commands.makeMenuItems(for: .edit), to: edit, thenSeparator: true)
-        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        // Cut, Copy and Select All are the core's while it is editing text
+        // and the focused view's otherwise; the window decides which. They
+        // are sent to it by name: an item with nobody to answer for it is
+        // disabled, and a disabled item still takes its key.
+        let cut = edit.addItem(
+            withTitle: "Cut", action: #selector(MainWindowController.editCut(_:)), keyEquivalent: "x")
+        cut.target = panes
+        let copy = edit.addItem(
+            withTitle: "Copy", action: #selector(MainWindowController.editCopy(_:)), keyEquivalent: "c")
+        copy.target = panes
         edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        let selectAll = edit.addItem(
+            withTitle: "Select All", action: #selector(MainWindowController.editSelectAll(_:)), keyEquivalent: "a")
+        selectAll.target = panes
 
         // View
         let view = submenu(of: bar, title: "View")
