@@ -362,6 +362,24 @@ Built and tested against a local stand-in (`wiremock` on 127.0.0.1) only. Nothin
 - **Not built:** the answered mark (sync always reports it unset, and the next delta for a message clears the local one), server search, conversation threads, certificate prompts or pinning for Graph.
 - **Believed, to check first with the owner's account:** that Bcc in a MIME `sendMail` is honoured and stripped; the size limit for a MIME send (about 4 MB is remembered, nothing is enforced here, a 413 is a refusal); that `$orderby=receivedDateTime desc` is accepted on `messages/delta`; that `DELETE` on a message is a soft delete; that a flag write with only the status leaves its dates alone.
 
+### OAuth
+
+Built in `quill-auth` and tested against a local stand-in. No real provider was contacted, no browser opened, and the Keychain was not touched. What is remembered from the providers' documentation rather than confirmed is listed last.
+
+- **In-house, not the `oauth2` crate** the spec's table names: the flows are three form posts and one listener, and they share the HTTP client, TLS settings and error type the rest of Quill uses.
+- **The browser flow listens on 127.0.0.1 only**, on a port the system picks, for one redirect. The state is compared in constant time. The first request carrying a code, a state or an error settles the sign-in, so a wrong state fails it at once rather than waiting for a right one: another program on the Mac that guesses the port can spoil a sign-in but cannot complete one. The page shown afterwards is fixed text; nothing from the request is echoed.
+- **Microsoft is sent to `http://localhost:PORT` and Google to `http://127.0.0.1:PORT`**, which is what each accepts from a public desktop client without registering a port.
+- **Scopes.** Microsoft: `Mail.ReadWrite`, `Mail.Send` and `User.Read` on Graph, written in full, and `offline_access`. Google: `https://mail.google.com/`, the one scope IMAP and SMTP accept.
+- **The device-code flow is Microsoft's only.** Google does not offer it for the mail scope; a Gmail account set up over SSH needs an app password.
+- **A client secret, where a provider wants one (Google's desktop clients do), goes in the form body**, never in a URL and never to the browser. It is not a secret in any real sense for a desktop app, and Google says as much; it lives in config with the client id.
+- **The refresh token is in the Keychain and nowhere else** (`oauth:<provider>:<address>`), read at each renewal and not held in memory between them. It is named by the mail address, not the account's name, so renaming an account does not orphan it.
+- **Access tokens renew a minute before they run out**, by the wall clock as well as the monotonic one, which stops while the Mac sleeps. Renewal runs on its own task, so a caller that stops waiting cannot lose a rotated refresh token between the provider's answer and the Keychain. A rotated token that cannot be stored fails the renewal.
+- **`invalid_grant` removes the stored token and asks for sign-in again.** Other refusals keep it. Network trouble and 5xx are temporary.
+- **Nothing in the module logs**, and a provider that quotes a secret back in its error text has it cut out before the words are used.
+- **OAuth endpoints are `https`**, or `http` to this machine only (for tests). No redirect is followed and no proxy is used, as for mail connections; that will not suit someone behind a corporate HTTPS proxy, and is the owner's call.
+- **Not built:** checking that the account signed in is the address typed; revoking the token at the provider when an account is removed; honouring `Retry-After` on the token endpoint.
+- **Remembered, to confirm with real registrations:** the endpoints; that a public client registered with `http://localhost` is accepted on any port; that the exchange and refresh work without a `scope` field; that Google's token endpoint wants the client secret alongside PKCE; that Google refresh tokens for an app in testing expire after seven days, which would look like a weekly request to sign in again.
+
 ## M7, POP3 (the protocol crate; the rest of the milestone follows M6)
 
 - **`quill-pop3` is a small in-house client**, as the spec says: CAPA, STLS, USER/PASS (AUTH PLAIN where that is all a server offers), STAT, UIDL, LIST, TOP, RETR, DELE, with pipelining when advertised. Built ahead of its milestone because it stands alone.
