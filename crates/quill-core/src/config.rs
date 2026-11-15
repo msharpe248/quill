@@ -35,6 +35,8 @@ pub struct UiConfig {
     pub mouse: bool,
     /// Say when new mail arrives, where the host can (Quill's own window).
     pub notifications: bool,
+    /// List the messages of a conversation together.
+    pub threads: bool,
 }
 
 impl Default for UiConfig {
@@ -48,6 +50,7 @@ impl Default for UiConfig {
             font_size: 13.0,
             mouse: true,
             notifications: true,
+            threads: true,
         }
     }
 }

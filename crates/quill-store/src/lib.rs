@@ -9,6 +9,7 @@ mod local;
 mod migrations;
 mod queue;
 mod search;
+mod threads;
 
 pub use blobs::BlobStore;
 pub use contacts::Contact;
@@ -87,6 +88,10 @@ pub struct MessageRow {
     pub headers: Headers,
     pub flags: Flags,
     pub has_attachments: bool,
+    /// The conversation the message belongs to. Messages with the same
+    /// number belong together; one that is alone has a number nothing else
+    /// has.
+    pub thread: i64,
 }
 
 /// Where a message lives on its server.
@@ -267,8 +272,9 @@ impl Store {
                     OR flagged <> excluded.flagged OR answered <> {answered}
                     OR draft <> excluded.draft OR has_attachments <> excluded.has_attachments"
             ))?;
-            let mut known =
-                tx.prepare("SELECT 1 FROM messages WHERE folder_id = ?1 AND remote_id = ?2")?;
+            let mut known = tx.prepare(
+                "SELECT id, thread_id FROM messages WHERE folder_id = ?1 AND remote_id = ?2",
+            )?;
             // A message moved out of this folder here, which the server
             // has not been told about yet, is still listed by the server.
             // It is not brought back.
@@ -287,10 +293,42 @@ impl Store {
                 }
                 // A backend may report a message again when it changes.
                 // Its people are counted the first time only.
-                let is_new = !known.exists(params![folder.0, message.id.0])?;
+                let find = |known: &mut rusqlite::Statement<'_>| {
+                    known
+                        .query_row(params![folder.0, message.id.0], |row| {
+                            Ok((row.get::<_, i64>(0)?, row.get::<_, Option<i64>>(1)?))
+                        })
+                        .optional()
+                };
+                let before = find(&mut known)?;
                 touched += insert_message(&mut insert, folder, message)?;
-                if is_new {
+                if before.is_none() {
                     contacts::harvest(&tx, &message.headers, sent_folder)?;
+                }
+                // Its place in a conversation, the first time anything is
+                // known of it: when it is new, or was listed before
+                // conversations were kept.
+                let has_ids = message.headers.message_id.is_some() || !message.thread.is_empty();
+                match before {
+                    None => {
+                        if let Some((id, _)) = find(&mut known)? {
+                            threads::assign(
+                                &tx,
+                                id,
+                                message.headers.message_id.as_deref(),
+                                &message.thread,
+                            )?;
+                        }
+                    }
+                    Some((id, None)) if has_ids => {
+                        threads::assign(
+                            &tx,
+                            id,
+                            message.headers.message_id.as_deref(),
+                            &message.thread,
+                        )?;
+                    }
+                    Some(_) => {}
                 }
             }
             let mut update = tx.prepare(
@@ -472,7 +510,7 @@ impl Store {
     pub fn messages(&self, mailbox: Mailbox) -> Result<Vec<MessageRow>> {
         const COLUMNS: &str = "m.id, m.folder_id, f.account_id, m.message_id, m.subject,
              m.from_addrs, m.to_addrs, m.cc_addrs, m.date, m.seen, m.flagged, m.answered,
-             m.draft, m.has_attachments";
+             m.draft, m.has_attachments, COALESCE(m.thread_id, -m.id)";
         const ORDER: &str = "ORDER BY m.date DESC, m.id DESC";
         let rows = match mailbox {
             Mailbox::Unified => {
@@ -505,7 +543,7 @@ impl Store {
         let mut statement = self.conn.prepare(
             "SELECT m.id, m.folder_id, f.account_id, m.message_id, m.subject,
                     m.from_addrs, m.to_addrs, m.cc_addrs, m.date, m.seen, m.flagged, m.answered,
-                    m.draft, m.has_attachments
+                    m.draft, m.has_attachments, COALESCE(m.thread_id, -m.id)
              FROM messages m JOIN folders f ON f.id = m.folder_id
              WHERE m.id = ?1 AND m.hidden = 0",
         )?;
@@ -717,6 +755,7 @@ fn message_row(row: &Row<'_>) -> rusqlite::Result<MessageRow> {
             draft: row.get(12)?,
         },
         has_attachments: row.get(13)?,
+        thread: row.get(14)?,
     })
 }
 

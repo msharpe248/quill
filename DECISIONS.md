@@ -430,6 +430,17 @@ Built in `quill-auth` and tested against a local stand-in. No real provider was 
 - **Graph has no push**: its notifications need a public web address to call. Those accounts are polled.
 - **Store transactions take the write lock when they begin** (`BEGIN IMMEDIATE`). With two connections, the UI's and the engine's, one that read first and wrote later was refused outright with "database is locked" when the other had written in between; the busy timeout does not apply to that case. Found as a test that failed one run in six.
 
+### Conversations
+
+- **A message's conversation is found from the Message-IDs it names**: its own, and those in its `References` and `In-Reply-To`. Every id seen is filed under a thread; a message joins the thread of any id it names, and one that names ids of two threads makes them one. Order of arrival does not matter, and a reply to a message that never arrives still threads with its siblings.
+- **Never from subjects.** Strangers share subjects; two messages called "Hello" are not a conversation.
+- **Threads are across folders and accounts**, since ids are. The list shows the part of a conversation that is in the mailbox on show: a reply in the inbox whose original is in Sent is, in the inbox, a conversation of one.
+- **IMAP and POP3 report what a message follows from its headers.** Graph does not hand those over in a listing, but says which conversation a message is in; that, written as an id no message has, ties its messages together the same way. When a message's whole copy is downloaded its real headers are read too, which joins the two kinds of evidence.
+- **Mail listed before this existed has no thread until its ids are known.** At startup the engine reads the ids out of every downloaded message that has none, oldest first, two hundred at a time. Mail that was never downloaded stays a conversation of one until it is. The loop is tested through its parts (`Store::unthreaded`, `Store::thread_message`), not as a whole.
+- **In the list a conversation sits where its newest message would**, so new mail is still at the top, and runs oldest to newest within. A row that carries on the conversation above is marked `└` before its subject: one level, however deep the replies really nest. `T` groups and ungroups; `threads` under `[ui]` sets the default.
+- **A command acts on the message under the cursor, not the conversation.** Selecting or collapsing a whole conversation is not built.
+- **At most 64 ids of one message are filed**, the newest of its references among them.
+
 ### Notifications
 
 - **New unread mail in an inbox is announced** through the shell (`notify.post`), with the sender, the subject and, with more than one account, which account. Up to three at once are announced one by one, each with Archive, Mark as Read and Reply; more than three are one line ("5 new messages").

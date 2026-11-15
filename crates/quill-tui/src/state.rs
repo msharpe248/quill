@@ -79,6 +79,9 @@ pub struct Env {
     pub remote_never: bool,
     /// Say when new mail arrives.
     pub notifications: bool,
+    /// List the messages of a conversation together, unless the user
+    /// switches that off for the run.
+    pub threads: bool,
 }
 
 impl Env {
@@ -360,6 +363,9 @@ pub struct MessageList {
     pub offset: usize,
     /// The rows are those of the current mailbox, not a mailbox just left.
     pub loaded: bool,
+    /// For each row, whether it carries on the conversation of the row
+    /// above. Empty when conversations are not grouped.
+    pub follows: Vec<bool>,
     /// Messages selected to be acted on together.
     pub marked: BTreeSet<LocalMessageId>,
     /// Where a range being selected began. Every row from there to the
@@ -636,6 +642,9 @@ pub struct State {
     compose_pending: Option<Box<Prefill>>,
     /// A reply or forward waiting for its message to be downloaded.
     respond_pending: Option<(LocalMessageId, DataRequest)>,
+    /// The user has switched grouping by conversation the other way from
+    /// what the config says, for this run.
+    ungrouped: bool,
     /// A message to go to once the list that has it is loaded, and
     /// whether to start a reply to it: what a notification asked for.
     go_to: Option<(LocalMessageId, bool)>,
@@ -687,6 +696,7 @@ impl State {
             compose: None,
             compose_pending: None,
             respond_pending: None,
+            ungrouped: false,
             go_to: None,
             announced: BTreeSet::new(),
             flash: None,
@@ -1230,6 +1240,19 @@ impl State {
             CommandId::FocusNext => self.set_focus(self.focus.next()),
             CommandId::FocusPrev => self.set_focus(self.focus.prev()),
             CommandId::ViewZoom => self.zoomed = !self.zoomed,
+            CommandId::ViewThreads => {
+                self.ungrouped = !self.ungrouped;
+                self.flash = Some((
+                    if self.ungrouped == env.threads {
+                        "Messages are listed one by one, newest first."
+                    } else {
+                        "Conversations are listed together."
+                    }
+                    .to_owned(),
+                    false,
+                ));
+                self.reload(env, out);
+            }
             CommandId::MessageToggleUnread => self.toggle_unread(out),
             CommandId::MessageToggleStar => self.toggle_star(out),
             CommandId::MessageToggleHtml => {
@@ -2643,6 +2666,9 @@ impl State {
                     search.found = Some(rows.len());
                     search.more = more;
                 }
+                // What a search finds is a list of messages, not of
+                // conversations.
+                self.list.follows.clear();
                 self.list.rows = rows;
                 self.list.loaded = true;
                 self.list.keep_listed_marks();
@@ -2655,6 +2681,12 @@ impl State {
                     return;
                 }
                 rows.iter_mut().for_each(sanitize_row);
+                let (rows, follows) = if env.threads != self.ungrouped {
+                    by_conversation(rows)
+                } else {
+                    (rows, Vec::new())
+                };
+                self.list.follows = follows;
                 let keep = self
                     .list
                     .loaded
@@ -3162,6 +3194,39 @@ fn scroll(current: usize, motion: Motion, page: usize) -> usize {
         Motion::PageDown => current.saturating_add(page),
         Motion::PageUp => current.saturating_sub(page),
     }
+}
+
+/// Lists the messages of each conversation together. Conversations stay in
+/// the order of their newest message, newest first, so new mail is still
+/// at the top; within one, messages run in the order they were written.
+/// Returns, beside the rows, which of them carry on the conversation of
+/// the row above.
+fn by_conversation(rows: Vec<MessageRow>) -> (Vec<MessageRow>, Vec<bool>) {
+    // The rows come newest first: a conversation's place is where its
+    // newest message was.
+    let mut order: Vec<i64> = Vec::new();
+    let mut groups: HashMap<i64, Vec<MessageRow>> = HashMap::new();
+    for row in rows {
+        let group = groups.entry(row.thread).or_default();
+        if group.is_empty() {
+            order.push(row.thread);
+        }
+        group.push(row);
+    }
+    let mut arranged = Vec::new();
+    let mut follows = Vec::new();
+    for thread in order {
+        let Some(mut group) = groups.remove(&thread) else {
+            continue;
+        };
+        // Oldest first within the conversation.
+        group.reverse();
+        for (index, row) in group.into_iter().enumerate() {
+            follows.push(index > 0);
+            arranged.push(row);
+        }
+    }
+    (arranged, follows)
 }
 
 /// A body laid out `width` columns wide, and where its links lead: its

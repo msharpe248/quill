@@ -150,6 +150,12 @@ impl Store {
             None => {
                 insert_message_row(&tx, folder, message)?;
                 let id = tx.last_insert_rowid();
+                crate::threads::assign(
+                    &tx,
+                    id,
+                    message.headers.message_id.as_deref(),
+                    &message.thread,
+                )?;
                 // Mail the user sent: its recipients are people they write
                 // to.
                 contacts::harvest(&tx, &message.headers, true)?;

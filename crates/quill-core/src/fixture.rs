@@ -643,7 +643,21 @@ impl Backend for FixtureBackend {
                 },
                 size: self.raw(seed, index)?.len() as u64,
                 has_attachments: seed.attachments,
-                thread: Vec::new(),
+                // A reply follows the message it is a reply to, wherever
+                // in the account that is.
+                thread: seed
+                    .subject
+                    .strip_prefix("Re: ")
+                    .and_then(|original| {
+                        self.account
+                            .seeds()
+                            .iter()
+                            .enumerate()
+                            .find(|(_, other)| other.subject == original)
+                    })
+                    .and_then(|(at, original)| self.headers(original, at).message_id)
+                    .into_iter()
+                    .collect(),
             });
         }
         Ok(delta)

@@ -125,6 +125,9 @@ impl DraftRow {
                 cc: people(&self.content.cc),
                 date: self.send_after.unwrap_or(self.updated),
             },
+            // A conversation of its own: no stored message's thread is
+            // this far below zero.
+            thread: i64::MIN / 2 + self.id.as_message_id().0.rem_euclid(i64::MAX / 4),
             flags: Flags {
                 seen: true,
                 draft: true,

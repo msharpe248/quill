@@ -231,6 +231,22 @@ pub fn spawn(
     for account in accounts {
         Engine::set_account(&engine, account);
     }
+    // Mail downloaded before conversations were kept is put into them.
+    // The engine is held weakly: this must not keep it alive.
+    tokio::spawn({
+        let engine = Arc::downgrade(&engine);
+        async move {
+            loop {
+                let Some(engine) = engine.upgrade() else {
+                    return;
+                };
+                match engine.thread_some().await {
+                    Ok(0) | Err(_) => return,
+                    Ok(_) => engine.emit(SyncEvent::Changed),
+                }
+            }
+        }
+    });
     let server = tokio::spawn(serve(Arc::clone(&engine), queue));
     SyncHandle {
         requests,
@@ -765,9 +781,13 @@ impl Engine {
         date: i64,
         raw: bytes::Bytes,
     ) -> Result<(), FetchFailure> {
-        let text = quill_mime::parse(&raw, date)
-            .map(|parsed| parsed.body)
-            .unwrap_or_default();
+        let parsed = quill_mime::parse(&raw, date);
+        // The whole message says what it follows, where a listing may not
+        // have: its place in a conversation is settled from it.
+        let ids = parsed
+            .as_ref()
+            .map(|parsed| (parsed.headers.message_id.clone(), parsed.thread()));
+        let text = parsed.map(|parsed| parsed.body).unwrap_or_default();
         let blobs = self.blobs.clone();
         let hash = tokio::task::spawn_blocking(move || match blobs {
             Some(blobs) => blobs.put(&raw).map(Some),
@@ -776,9 +796,15 @@ impl Engine {
         .await
         .map_err(|err| FetchFailure::Other(err.to_string()))?
         .map_err(|err| FetchFailure::Other(format!("cannot save the message: {err}")))?;
-        self.db(move |store| match hash {
-            Some(hash) => store.put_downloaded(id, &text, &hash),
-            None => store.put_body(id, &text),
+        self.db(move |store| {
+            match hash {
+                Some(hash) => store.put_downloaded(id, &text, &hash)?,
+                None => store.put_body(id, &text)?,
+            }
+            if let Some((own, follows)) = ids {
+                store.thread_message(id, own.as_deref(), &follows)?;
+            }
+            Ok(())
         })
         .await
         .map_err(FetchFailure::Other)
@@ -1001,6 +1027,34 @@ impl Engine {
         }
     }
 
+    /// Finds the conversations of a batch of downloaded messages that have
+    /// none yet, from their own copies. Returns how many it dealt with.
+    async fn thread_some(&self) -> Result<usize, String> {
+        let blobs = self.blobs.clone();
+        self.db(move |store| {
+            let waiting = store.unthreaded(200)?;
+            for id in &waiting {
+                let raw = match (&blobs, store.blob_hash(*id)?) {
+                    (Some(blobs), Some(hash)) => blobs.get(&hash).ok().flatten(),
+                    _ => None,
+                };
+                let parsed = raw.and_then(|raw| quill_mime::parse(&raw, 0));
+                // One that cannot be read is a conversation of its own:
+                // it is settled either way, and not looked at again.
+                match parsed {
+                    Some(parsed) => store.thread_message(
+                        *id,
+                        parsed.headers.message_id.as_deref(),
+                        &parsed.thread(),
+                    )?,
+                    None => store.thread_message(*id, None, &[])?,
+                };
+            }
+            Ok(waiting.len())
+        })
+        .await
+    }
+
     /// Files a copy of a message in a folder that exists only here: the
     /// sent copy, for an account whose server keeps none.
     async fn keep_copy(
@@ -1030,11 +1084,11 @@ impl Engine {
             // Named by its content: saving the same message again, after a
             // crash, files it once.
             id: RemoteId(format!("{KEPT}{blob_hash}")),
+            thread: parsed.thread(),
             headers: parsed.headers,
             flags,
             size: u64::try_from(raw.len()).unwrap_or(u64::MAX),
             has_attachments: !parsed.attachments.is_empty(),
-            thread: Vec::new(),
         };
         let text = parsed.body;
         self.db(move |store| store.keep_message(folder, &message, &text, Some(&blob_hash)))

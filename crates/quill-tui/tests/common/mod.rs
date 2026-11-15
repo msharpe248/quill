@@ -142,6 +142,7 @@ impl Harness {
             identities: std::collections::HashMap::new(),
             remote_never: false,
             notifications: true,
+            threads: true,
         };
         adjust(&mut env);
         let scratch = tempfile::tempdir().unwrap();

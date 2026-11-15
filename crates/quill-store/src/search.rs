@@ -86,7 +86,7 @@ impl Store {
         let sql = format!(
             "SELECT m.id, m.folder_id, f.account_id, m.message_id, m.subject,
                     m.from_addrs, m.to_addrs, m.cc_addrs, m.date, m.seen, m.flagged, m.answered,
-                    m.draft, m.has_attachments
+                    m.draft, m.has_attachments, COALESCE(m.thread_id, -m.id)
                FROM messages m
                JOIN folders f ON f.id = m.folder_id
                JOIN accounts a ON a.id = f.account_id

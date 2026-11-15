@@ -102,6 +102,7 @@ pub enum CommandId {
     FocusNext,
     FocusPrev,
     ViewZoom,
+    ViewThreads,
     MessageToggleUnread,
     MessageToggleStar,
     MessageToggleHtml,
@@ -351,6 +352,14 @@ impl Registry {
                         PANES_AND_COMPOSE,
                     ),
                     "arrow.up.left.and.arrow.down.right",
+                ),
+                spec(
+                    ViewThreads,
+                    "view.threads",
+                    "Group or ungroup conversations",
+                    Panes,
+                    Some(Menu::View),
+                    PANES,
                 ),
                 with_symbol(
                     spec(

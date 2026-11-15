@@ -144,7 +144,7 @@ Press `?` at any time for the keys that apply where you are. The bottom bar show
 | `f` | Forward | `e` | Archive |
 | `d` | Delete (to Trash; from Trash, for good) | `m` | Move to a folder |
 | `U` | Undo the last move, deletion or send | `A` | Add an account |
-| `S` | Sign in to an account (Microsoft, Google) | | |
+| `S` | Sign in to an account (Microsoft, Google) | `T` | Group or ungroup conversations |
 | `/` | Search | `a` | List a message's attachments |
 | `v` | View the message as a web page | `B` | Open that page in the browser |
 | `i` | Load remote pictures for this message | `I` | Always load them from this sender |
@@ -159,6 +159,8 @@ Set `keymap = "mutt"` in the config for mutt-flavoured keys.
 The mouse works too. A click selects, a second click on what is selected opens it, and the wheel scrolls whatever is under the pointer. Links in a message and the line naming its files can be clicked, and in a message being written a click places the cursor and a drag selects. While Quill has the mouse, selecting text the terminal's own way needs `shift` held; `mouse = false` under `[ui]` gives the mouse back to the terminal.
 
 In the message list, `>` marks the cursor, `+` a selected message, `*` an unread one, `r` one you have answered, `!` a starred one and `@` one with attachments.
+
+The messages of a conversation are listed together, where the newest of them would be, in the order they were written; a reply hangs from the message above it with `└`. `T` switches that off and on, and `threads = false` under `[ui]` makes off the default. What a search finds is always listed message by message.
 
 To act on several messages at once, select them first: `x` on each, or `V`, move, and `V` again for a run of them; `ctrl-a` selects everything listed. Archive, delete, move, read and star then apply to all of them, and one `U` takes the whole lot back. `esc` lets the selection go. From the reader, a command is always about the message being read.
 
@@ -290,6 +292,7 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `focus.sidebar`, `focus.list`, `focus.reader` | Focus a pane |
 | `focus.next`, `focus.prev` | Cycle the panes |
 | `view.zoom` | Zoom the focused pane |
+| `view.threads` | List conversations together, or every message by itself |
 | `message.toggle_unread`, `message.toggle_star` | Change a message's flags |
 | `message.toggle_html` | Switch a message between its HTML and its plain text |
 | `message.open_link` | List the message's links, to open one in the browser |

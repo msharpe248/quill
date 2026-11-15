@@ -123,6 +123,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
                 message,
                 selected,
                 is_marked(index, message),
+                state.list.follows.get(index).copied().unwrap_or(false),
                 &columns,
                 recipients,
                 state,
@@ -140,6 +141,7 @@ fn line<'a>(
     message: &MessageRow,
     selected: bool,
     marked: bool,
+    follows: bool,
     columns: &Columns,
     recipients: bool,
     state: &State,
@@ -200,8 +202,13 @@ fn line<'a>(
     spans.extend([
         Span::styled(text::fit(&who, columns.from), row_style),
         Span::raw(" "),
+        // A message that carries on the conversation above hangs from it.
         Span::styled(
-            text::fit(&message.headers.subject, columns.subject),
+            if follows {
+                text::fit(&format!("└ {}", message.headers.subject), columns.subject)
+            } else {
+                text::fit(&message.headers.subject, columns.subject)
+            },
             row_style,
         ),
         Span::raw(" "),
