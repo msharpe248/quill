@@ -98,6 +98,10 @@ Arrow keys, `home`, `end`, `pageup` and `pagedown` work too. `ctrl-d` also pages
 
 Set `keymap = "mutt"` in the config for mutt-flavoured keys.
 
+`:` or `ctrl-k` opens the command palette: type a few letters of a command or a mailbox and press `enter`. Each command is listed with its key.
+
+The mouse works too. A click selects, a second click on what is selected opens it, and the wheel scrolls whatever is under the pointer. Links in a message and the line naming its files can be clicked, and in a message being written a click places the cursor and a drag selects. While Quill has the mouse, selecting text the terminal's own way needs `shift` held; `mouse = false` under `[ui]` gives the mouse back to the terminal.
+
 In the message list, `>` marks the cursor, `*` an unread message, `r` one you have answered, `!` a starred one and `@` one with attachments.
 
 ## Searching
@@ -217,6 +221,7 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `compose.attach`, `compose.bcc` | Attach a file; add blind copies |
 | `edit.undo` | Undo the last move, deletion or send |
 | `search.start` | Search |
+| `palette.open` | The command palette |
 | `message.attachments` | List the message's attachments |
 | `attachment.save`, `attachment.open` | Save the chosen attachment, or open it in its application |
 | `edit.copy`, `edit.cut`, `edit.select_all` | The app's Edit menu, while a message is being written |

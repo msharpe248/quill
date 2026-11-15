@@ -24,9 +24,12 @@ use crate::keymap::{Key, KeyChord, Keymap, Mods, Resolution};
 use crate::layout::{self, LayoutMode};
 use crate::outgoing::{Handed, Response, SendRequest};
 use crate::palette::{self, Item, Palette, What};
+
+mod mouse;
 use crate::setup::{AccountEvent, AccountRequest, CertificatePrompt, Outcome, Setup};
 use crate::theme::Styles;
 use crate::{text, view};
+pub use mouse::{Mouse, MouseKind};
 
 /// Everything fixed for the life of the run: what `update` and the views
 /// consult but never change.
@@ -48,6 +51,8 @@ pub struct Env {
     /// Whether the host can make a picture of a file Quill cannot decode
     /// itself: a HEIC photo, the first page of a PDF, a frame of a video.
     pub thumbnails: bool,
+    /// Take the mouse: clicks select and open, the wheel scrolls.
+    pub mouse: bool,
     /// Whether the host has a panel to choose files in. Without one a
     /// file to attach is named by its path.
     pub file_panel: bool,
@@ -122,6 +127,8 @@ pub enum Action {
         paths: Vec<String>,
         temporary: bool,
     },
+    /// The mouse did something over the terminal.
+    Mouse(Mouse),
     /// The host's save panel has been answered.
     FileSaved {
         name: String,
@@ -486,7 +493,7 @@ pub struct Help {
     pub scroll: usize,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Motion {
     Next,
     Prev,
@@ -631,6 +638,11 @@ impl State {
             Action::Command(id) => self.run(env, id, &mut out),
             Action::Resize(width, height) => self.size = (width, height),
             Action::Data(event) => self.on_data(env, event, &mut out),
+            Action::Mouse(mouse) => {
+                // What the last key did has been seen.
+                self.flash = None;
+                self.on_mouse(env, mouse, &mut out);
+            }
             Action::PictureLoaded { id, size } => {
                 if let Some(picture) = &mut self.reader.picture
                     && picture.id == id

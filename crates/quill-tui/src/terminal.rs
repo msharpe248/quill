@@ -15,8 +15,8 @@ use ratatui::DefaultTerminal;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{
-    DisableBracketedPaste, EnableBracketedPaste, KeyboardEnhancementFlags,
-    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
@@ -29,12 +29,13 @@ use rustix::termios::LocalModes;
 static OWNS_RAW_MODE: AtomicBool = AtomicBool::new(false);
 static ENHANCED_KEYBOARD: AtomicBool = AtomicBool::new(false);
 static BRACKETED_PASTE: AtomicBool = AtomicBool::new(false);
+static MOUSE: AtomicBool = AtomicBool::new(false);
 static ON_ALTERNATE_SCREEN: AtomicBool = AtomicBool::new(false);
 static PANIC_HOOK: Once = Once::new();
 
 /// Raw mode, the alternate screen and, where offered, the Kitty keyboard
 /// protocol. Undo with [`leave`]; a panic undoes it too.
-pub fn enter() -> io::Result<DefaultTerminal> {
+pub fn enter(mouse: bool) -> io::Result<DefaultTerminal> {
     let owns_raw_mode = match enable_raw_mode() {
         Ok(()) => true,
         Err(_) if host_made_it_raw() => false,
@@ -68,6 +69,12 @@ pub fn enter() -> io::Result<DefaultTerminal> {
         // Pasted text arrives as one event, not as keys to act on.
         execute!(stdout(), EnableBracketedPaste)?;
         BRACKETED_PASTE.store(true, Ordering::SeqCst);
+        // Clicks, drags and the wheel are reported instead of being the
+        // terminal's own to select text and scroll back with.
+        if mouse {
+            execute!(stdout(), EnableMouseCapture)?;
+            MOUSE.store(true, Ordering::SeqCst);
+        }
         Terminal::new(CrosstermBackend::new(stdout()))
     })();
     if result.is_err() {
@@ -78,6 +85,9 @@ pub fn enter() -> io::Result<DefaultTerminal> {
 
 /// Puts the terminal back as [`enter`] found it. Safe to call twice.
 pub fn leave() {
+    if MOUSE.swap(false, Ordering::SeqCst) {
+        let _ = execute!(stdout(), DisableMouseCapture);
+    }
     if BRACKETED_PASTE.swap(false, Ordering::SeqCst) {
         let _ = execute!(stdout(), DisableBracketedPaste);
     }

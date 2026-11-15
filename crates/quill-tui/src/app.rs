@@ -20,7 +20,7 @@ use quill_sync::{SyncEvent, SyncHandle, SyncRequest};
 use ratatui::DefaultTerminal;
 use ratatui::backend::IntoCrossterm;
 use ratatui::crossterm::cursor::MoveTo;
-use ratatui::crossterm::event::{Event, EventStream};
+use ratatui::crossterm::event::{Event, EventStream, MouseButton, MouseEventKind};
 use ratatui::crossterm::queue;
 use ratatui::crossterm::style::{Attribute, ContentStyle, Print, SetAttribute, SetStyle};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -30,7 +30,7 @@ use crate::data::{self, DataEvent, DataHandle};
 use crate::files::Files;
 use crate::keymap::KeyChord;
 use crate::setup::{AccountEvent, AccountRequest};
-use crate::state::{Action, Effects, Env, HostRequest, HostState, Notice, State};
+use crate::state::{Action, Effects, Env, HostRequest, HostState, Mouse, MouseKind, Notice, State};
 use crate::view::{ImagePlacement, LinkPlacement};
 use crate::{hyperlink, terminal, view};
 
@@ -103,7 +103,7 @@ pub async fn run(
     } = attached;
     notices.extend(problem.map(Notice::error));
 
-    let mut screen = step("cannot take over the terminal", terminal::enter())?;
+    let mut screen = step("cannot take over the terminal", terminal::enter(env.mouse))?;
     let (injected_tx, injected) = unbounded_channel();
     let SyncLink {
         handle: sync_handle,
@@ -578,6 +578,22 @@ fn translate(event: Event) -> Option<Action> {
         Event::Key(key) => KeyChord::from_event(&key).map(Action::Key),
         Event::Resize(width, height) => Some(Action::Resize(width, height)),
         Event::Paste(text) => Some(Action::Paste(text)),
+        Event::Mouse(mouse) => {
+            let kind = match mouse.kind {
+                MouseEventKind::Down(MouseButton::Left) => MouseKind::Press,
+                MouseEventKind::Drag(MouseButton::Left) => MouseKind::Drag,
+                MouseEventKind::ScrollUp => MouseKind::WheelUp,
+                MouseEventKind::ScrollDown => MouseKind::WheelDown,
+                // Other buttons, releases and plain movement mean nothing
+                // here.
+                _ => return None,
+            };
+            Some(Action::Mouse(Mouse {
+                kind,
+                column: mouse.column,
+                row: mouse.row,
+            }))
+        }
         _ => None,
     }
 }
@@ -607,6 +623,7 @@ mod tests {
             images: false,
             accounts: false,
             cmd_keys: true,
+            mouse: false,
             file_panel: false,
             thumbnails: false,
             downloads: None,

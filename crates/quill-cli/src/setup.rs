@@ -64,6 +64,7 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
         images: false,
         accounts: false,
         cmd_keys: false,
+        mouse: config.ui.mouse,
         file_panel: false,
         thumbnails: false,
         // The usual place for what is downloaded. Inside the app's sandbox

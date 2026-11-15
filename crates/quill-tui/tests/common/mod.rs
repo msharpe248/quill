@@ -134,6 +134,7 @@ impl Harness {
             // As in Quill's own window.
             cmd_keys: true,
             // Tests name files by path unless they say otherwise.
+            mouse: true,
             file_panel: false,
             thumbnails: false,
             downloads: None,

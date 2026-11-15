@@ -30,6 +30,9 @@ pub struct UiConfig {
     /// Terminal font for the app shell. `None` leaves the shell's default.
     pub font: Option<String>,
     pub font_size: f32,
+    /// Take the mouse: click to select and open, wheel to scroll. While it
+    /// is on, selecting text in the terminal needs shift held.
+    pub mouse: bool,
 }
 
 impl Default for UiConfig {
@@ -41,6 +44,7 @@ impl Default for UiConfig {
             toolbar: true,
             font: None,
             font_size: 13.0,
+            mouse: true,
         }
     }
 }
