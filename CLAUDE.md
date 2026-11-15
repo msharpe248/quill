@@ -4,14 +4,15 @@ Read `Quill Terminal Email Client Spec.md` at the start of every session. It is 
 
 The owner asked on 2026-11-15 for unattended work through M10 without waiting between milestones; acceptance steps that need them (real accounts, a developer account, App Review) are recorded in `DECISIONS.md` as not verified and passed over. While they are away, never run Quill against `~/Library/Application Support/Quill` (their real account and mail): use `--demo`, or scratch `--config-dir` and `--data-dir`.
 
-M0 (core skeleton), M1 (shell spike, App Store validation deferred to the end because it needs an Apple Developer account; do not ask for one before then), M2 (IMAP read), M3 (compose and send) and M7 (POP3) are built and accepted. The others are part built, working in whatever order nothing was waiting on:
+M0 (core skeleton), M1 (shell spike, App Store validation deferred to the end because it needs an Apple Developer account; do not ask for one before then), M2 (IMAP read), M3 (compose and send), M4 (rendering and media) and M7 (POP3) are built and accepted. The rest is built as far as it can be without the owner, and says in `DECISIONS.md` what was not verified:
 
-- M4 (rendering and media): attachments, inline pictures and the three panes are in. Still to wire into the reader: the sanitized HTML view (`v`), remote content (`i`, `I`), plain-text rendering.
-- M5 (OAuth and Graph): built and tested against stand-ins only. A real sign-in and a real Microsoft 365 mailbox need the owner; never contact a real provider while they are away.
-- M6 (daily driver): search, the palette, the mouse, IDLE push and bulk actions are in. Threading, notifications, the dock badge, `mailto:`, spell check and the performance budgets are not.
-- M8 to M10: not started.
+- M5 (OAuth and Graph): built, tested against stand-ins only. A real sign-in and a real Microsoft 365 or Gmail mailbox need the owner; never contact a real provider while they are away.
+- M6 (daily driver): search, the palette, the mouse, IDLE push, bulk actions, conversations, notifications, `mailto:`, spell check and the performance budgets are in. App Store submission waits for the developer account.
+- M8 (P1 features): the headless CLI, saved searches, snooze, send later, rules, unsubscribe, templates and invitations are in. Hooks are being built.
+- M9 (Vim): the draft file, the plugin and the shell's pane are in; the core's side is being built. `app/build-vim.sh` has NOT been run and must not be run unattended: it downloads and compiles Vim. Until the owner runs it the app has no Vim in it and the pane is unseen.
+- M10 (EWS): built, tested against a stand-in only.
 
-What each milestone left undone, and what is not verified, is listed under it in `DECISIONS.md`.
+What each milestone left undone is listed under it in `DECISIONS.md`.
 
 Each milestone had its own branch off the last up to `m4-rendering-media`, which now carries everything since: the milestones overlapped too much to keep apart. `main` is where the owner last accepted the work; leave it for them to move.
 
@@ -71,4 +72,9 @@ For anything visible in the app, also build it and look: `app/build-app.sh`, the
 - The sync engine goes by `Backend::capabilities`, not by account type. A backend with no folders (POP3) has its mail kept in the store: local folders with ids starting `kept:`, local moves and marks, every body downloaded, and nothing deleted from the server that is not filed here in full.
 - An action on several messages is one `DataRequest::Many`, and its queued operations are grouped (`Store::group_operations`) so one undo takes them all back.
 - Run tests with `--no-fail-fast`: a failure in one test binary otherwise hides stale snapshots in the next.
+- A question drawn over the panes (sign-in, a time, unsubscribe, a picker) is a `Context` of its own with its state in an `Option` on `State`; the bridge has fewer contexts, so `app.rs` maps a new one onto the nearest existing one. Movement commands apply only where there is something to move in.
+- Things that wait on the user or the network for long (a sign-in, a one-click unsubscribe) run in the accounts service beside its other requests, and report back as `AccountEvent`s.
+- New mail is announced from `SyncEvent::Arrived`; rules for arriving mail run in the engine (`quill-sync/src/rules.rs`) and act through the same queue as the user.
+- A scripted run of the app never asks for notification permission, never posts a notification and never shows an alert: recorders stand in (see `DebugScript`).
+- When two sessions or agents edit the tree at once: per-crate `cargo fmt -p`, never `--all`; stage by path; and a bridge change is committed with both of its sides.
 - Fixtures use invented people at example.com. Never real mail, never real addresses.
