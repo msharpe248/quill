@@ -1,0 +1,25 @@
+[package]
+name = "quill-ews"
+description = "Exchange Web Services for Quill: reading, filing and sending mail on an on-premises Exchange server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+quill-core.workspace = true
+quill-net.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+bytes.workspace = true
+jiff.workspace = true
+quick-xml.workspace = true
+reqwest.workspace = true
+tokio = { workspace = true, features = ["sync", "time"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "test-util", "time"] }
+wiremock.workspace = true
