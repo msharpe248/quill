@@ -244,6 +244,7 @@ fn add_message(
             flags: Flags::default(),
             size: 0,
             has_attachments: false,
+            thread: Vec::new(),
         }],
         changed: Vec::new(),
         removed: Vec::new(),
@@ -995,7 +996,11 @@ fn html_cannot_smuggle_escape_sequences_onto_the_screen() {
             line.text()
         );
     }
-    assert!(harness.screen().contains("before[2Jafter go[1]"));
+    // The escape sequence is gone whole, not just its first byte: what was
+    // left of it would otherwise read as text.
+    let screen = harness.screen();
+    assert!(screen.contains("beforeafter go[1]"), "{screen}");
+    assert!(!screen.contains("[2J"));
 }
 
 #[test]
@@ -1443,6 +1448,7 @@ fn a_large_unread_count_is_shown_whole() {
             flags: Flags::default(),
             size: 1,
             has_attachments: false,
+            thread: Vec::new(),
         })
         .collect();
     harness

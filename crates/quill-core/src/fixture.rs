@@ -643,6 +643,7 @@ impl Backend for FixtureBackend {
                 },
                 size: self.raw(seed, index)?.len() as u64,
                 has_attachments: seed.attachments,
+                thread: Vec::new(),
             });
         }
         Ok(delta)

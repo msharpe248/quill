@@ -9,17 +9,17 @@ expression: harness.screen()
 │    Dra┃   Reply to all                                             R ┃  04:30┃
 │    Sen┃   Focus the reader                                         3 ┃    Fri┃
 │    Arc┃   Mark read or unread                                      u ┃    Fri┃
-│    Tra┃   Select a range                                           V ┃    Fri┃
-│  Perso┃   Focus the previous pane or field                 shift-tab ┃    Thu┃
-│    Inb┃   Archive                                                  e ┃    Thu┃
-│    Dra┃   Go to Work / Sent                                          ┃    Wed┃
-│    Sen┃   Select or unselect                                       x ┃    Tue┃
-│    Arc┃   Write a new message                                      c ┃    Mon┃
-│    Tra┃   Go to Work / Archive                                       ┃    Sun┃
-│       ┃   Help for this context                                    ? ┃ Nov 06┃
-│       ┃   Go to Personal / Sent                                      ┃ Nov 02┃
-│       ┃   Go to Personal / Archive                                   ┃ Oct 25┃
-│       ┃   Select every message listed                         ctrl-a ┃ct 2025┃
+│    Tra┃   Load remote pictures for this message                    i ┃    Fri┃
+│  Perso┃   Always load remote pictures from this sender             I ┃    Thu┃
+│    Inb┃   Select a range                                           V ┃    Thu┃
+│    Dra┃   Focus the previous pane or field                 shift-tab ┃    Wed┃
+│    Sen┃   Archive                                                  e ┃    Tue┃
+│    Arc┃   Go to Work / Sent                                          ┃    Mon┃
+│    Tra┃   Select or unselect                                       x ┃    Sun┃
+│       ┃   Open in the browser                                      B ┃ Nov 06┃
+│       ┃   Write a new message                                      c ┃ Nov 02┃
+│       ┃   Go to Work / Archive                                       ┃ Oct 25┃
+│       ┃   Help for this context                                    ? ┃ct 2025┃
 │       ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛       ┃
 │                │┃                                                            ┃
 │                │┃                                                            ┃

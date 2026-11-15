@@ -37,6 +37,7 @@ fn message(id: &str, from: (&str, &str), to: &[(&str, &str)], date: i64) -> Remo
         flags: Flags::default(),
         size: 100,
         has_attachments: false,
+        thread: Vec::new(),
     }
 }
 

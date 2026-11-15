@@ -203,6 +203,7 @@ impl Backend for MemoryBackend {
                 flags: item.flags,
                 size: item.body.len() as u64,
                 has_attachments: false,
+                thread: Vec::new(),
             }
         };
         let next: Vec<String> = still
@@ -837,6 +838,70 @@ async fn a_server_that_cannot_push_is_asked_once() {
         rig.pass().await;
     }
     assert_eq!(rig.backend.with(|server| server.watches), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn new_unread_mail_in_the_inbox_is_announced_and_nothing_else_is() {
+    // Small batches: the first sync of the inbox takes several rounds, and
+    // none of what it finds is news.
+    let backend = MemoryBackend::new(2);
+    for n in 1..=5 {
+        backend.add("INBOX", &n.to_string(), &format!("Old {n}"), NOW_ISH + n);
+    }
+    backend.add("Archive", "1", "Filed", NOW_ISH);
+    let mut rig = Rig::start(backend);
+    let events = rig.pass().await;
+    assert_eq!(rig.subjects("INBOX").len(), 5);
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, SyncEvent::Arrived { .. }))
+    );
+
+    // One new unread message in the inbox, one that arrives already read,
+    // and one in another folder.
+    rig.backend.add("INBOX", "6", "News", NOW_ISH + 10);
+    rig.backend
+        .add("INBOX", "7", "Read elsewhere", NOW_ISH + 11);
+    rig.backend.with(|server| {
+        server
+            .folders
+            .get_mut("INBOX")
+            .unwrap()
+            .get_mut("7")
+            .unwrap()
+            .flags
+            .seen = true;
+    });
+    rig.backend.add("Archive", "2", "Filed too", NOW_ISH + 12);
+    let events = rig.sync_now().await;
+    let arrived: Vec<LocalMessageId> = events
+        .iter()
+        .filter_map(|event| match event {
+            SyncEvent::Arrived { account, messages } => {
+                assert_eq!(*account, rig.account);
+                Some(messages.clone())
+            }
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    let subjects: Vec<String> = rig
+        .store
+        .message_rows(&arrived)
+        .unwrap()
+        .into_iter()
+        .map(|row| row.headers.subject)
+        .collect();
+    assert_eq!(subjects, ["News"]);
+
+    // Nothing new, nothing said.
+    let events = rig.sync_now().await;
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, SyncEvent::Arrived { .. }))
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

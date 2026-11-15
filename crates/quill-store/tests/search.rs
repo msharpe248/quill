@@ -89,6 +89,7 @@ fn store() -> Store {
                 flags: mail.flags,
                 size: 100,
                 has_attachments: mail.attachments,
+                thread: Vec::new(),
             })
             .collect();
         store

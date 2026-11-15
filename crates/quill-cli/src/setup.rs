@@ -90,6 +90,8 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
                 )
             })
             .collect(),
+        remote_never: config.privacy.remote_images == quill_core::config::RemoteImages::Never,
+        notifications: config.ui.notifications,
     };
     Loaded {
         config,

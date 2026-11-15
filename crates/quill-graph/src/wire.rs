@@ -12,7 +12,8 @@ use serde::de::IgnoredAny;
 /// The properties of a message a folder sync asks for: enough for a row in
 /// the list, and no body.
 pub(crate) const SUMMARY: &str = "id,subject,from,toRecipients,ccRecipients,receivedDateTime,\
-                                  sentDateTime,internetMessageId,isRead,flag,hasAttachments,isDraft";
+                                  sentDateTime,internetMessageId,isRead,flag,hasAttachments,isDraft,\
+                                  conversationId";
 
 /// The folders Graph knows by a fixed name whatever they are called in the
 /// user's language, and what each is for.
@@ -66,6 +67,7 @@ pub(crate) struct Message {
     received_date_time: Option<String>,
     sent_date_time: Option<String>,
     internet_message_id: Option<String>,
+    conversation_id: Option<String>,
     pub is_read: Option<bool>,
     flag: Option<FollowUp>,
     has_attachments: Option<bool>,
@@ -147,6 +149,17 @@ impl Message {
             // The message resource does not say how large it is.
             size: 0,
             has_attachments: self.has_attachments.unwrap_or(false),
+            // Graph does not hand over `References`. It does say which
+            // conversation a message belongs to, and that, written as an
+            // id no message has, ties its messages together just as well.
+            thread: self
+                .conversation_id
+                .as_deref()
+                .map(clean)
+                .filter(|id| !id.is_empty())
+                .map(|id| format!("<{id}@conversation.graph>"))
+                .into_iter()
+                .collect(),
         }
     }
 }

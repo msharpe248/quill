@@ -51,7 +51,8 @@ const RANGES_PER_COMMAND: usize = 200;
 /// and no body. The named headers go through the same parser as whole
 /// messages, so encodings are handled in one place.
 const SUMMARY: &str = "(UID FLAGS RFC822.SIZE INTERNALDATE BODYSTRUCTURE \
-                       BODY.PEEK[HEADER.FIELDS (DATE SUBJECT FROM TO CC MESSAGE-ID)])";
+                       BODY.PEEK[HEADER.FIELDS (DATE SUBJECT FROM TO CC MESSAGE-ID \
+                       IN-REPLY-TO REFERENCES)])";
 
 /// What is known of whether the server pushes: nothing until a sign-in has
 /// asked it.
@@ -787,26 +788,31 @@ fn internal_date(text: &str) -> Option<i64> {
 }
 
 fn summary(item: &Fetched<'_>, id: RemoteId, flags: Flags, received: i64) -> RemoteMessage {
-    let headers = item
+    let parsed = item
         .header()
-        .and_then(|raw| quill_mime::parse(raw, received))
-        .map_or_else(
-            || Headers {
-                message_id: None,
-                subject: String::new(),
-                from: Vec::new(),
-                to: Vec::new(),
-                cc: Vec::new(),
-                date: received,
-            },
-            |parsed| parsed.headers,
-        );
+        .and_then(|raw| quill_mime::parse(raw, received));
+    let thread = parsed
+        .as_ref()
+        .map(quill_mime::Parsed::thread)
+        .unwrap_or_default();
+    let headers = parsed.map_or_else(
+        || Headers {
+            message_id: None,
+            subject: String::new(),
+            from: Vec::new(),
+            to: Vec::new(),
+            cc: Vec::new(),
+            date: received,
+        },
+        |parsed| parsed.headers,
+    );
     RemoteMessage {
         id,
         headers,
         flags,
         size: u64::from(item.size().unwrap_or(0)),
         has_attachments: item.structure().is_some_and(has_attachments),
+        thread,
     }
 }
 

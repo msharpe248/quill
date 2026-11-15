@@ -140,6 +140,8 @@ impl Harness {
             downloads: None,
             compose: quill_tui::state::ComposeSettings::default(),
             identities: std::collections::HashMap::new(),
+            remote_never: false,
+            notifications: true,
         };
         adjust(&mut env);
         let scratch = tempfile::tempdir().unwrap();

@@ -499,6 +499,23 @@ impl Store {
         Ok(rows)
     }
 
+    /// These messages, in the order asked for, leaving out any that are no
+    /// longer here.
+    pub fn message_rows(&self, ids: &[LocalMessageId]) -> Result<Vec<MessageRow>> {
+        let mut statement = self.conn.prepare(
+            "SELECT m.id, m.folder_id, f.account_id, m.message_id, m.subject,
+                    m.from_addrs, m.to_addrs, m.cc_addrs, m.date, m.seen, m.flagged, m.answered,
+                    m.draft, m.has_attachments
+             FROM messages m JOIN folders f ON f.id = m.folder_id
+             WHERE m.id = ?1 AND m.hidden = 0",
+        )?;
+        let mut rows = Vec::with_capacity(ids.len());
+        for id in ids {
+            rows.extend(statement.query_row([id.0], message_row).optional()?);
+        }
+        Ok(rows)
+    }
+
     /// Marks a message read or unread. Returns whether the message exists.
     pub fn set_seen(&mut self, message: LocalMessageId, seen: bool) -> Result<bool> {
         let changed = self.conn.execute(
@@ -740,6 +757,7 @@ mod tests {
             },
             size: 100,
             has_attachments: false,
+            thread: Vec::new(),
         }
     }
 
@@ -1081,6 +1099,7 @@ mod reset_tests {
             flags: Flags::default(),
             size: 1,
             has_attachments: false,
+            thread: Vec::new(),
         };
         let delta = |reset, ids: &[&str], cursor: &str| SyncDelta {
             reset,
@@ -1162,6 +1181,7 @@ mod sync_support_tests {
                     flags: Flags::default(),
                     size: 1,
                     has_attachments: false,
+                    thread: Vec::new(),
                 })
                 .collect();
             store
@@ -1381,6 +1401,7 @@ mod change_detection_tests {
             flags,
             size: 1,
             has_attachments: false,
+            thread: Vec::new(),
         }
     }
 
@@ -1539,6 +1560,7 @@ mod change_detection_tests {
             flags: Flags::default(),
             size: 1,
             has_attachments: false,
+            thread: Vec::new(),
         };
         let delta =
             |added: Vec<RemoteMessage>, changed: Vec<FlagChange>, removed: Vec<RemoteId>| {

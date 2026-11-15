@@ -16,8 +16,9 @@ use quill_sync::{SyncEvent, SyncRequest};
 
 use crate::command::{CommandId, Context, Registry};
 use crate::compose::{Compose, Did, Field, Prefill};
-use crate::data::{Bulk, DataEvent, DataRequest, FileUse, LoadedBody};
+use crate::data::{Bulk, DataEvent, DataRequest, FileUse, LoadedBody, PageUse};
 use crate::editor::Editor;
+use crate::files::RemoteContent;
 use crate::files::{AttachedFile, ExtractedFile};
 use crate::input::LineInput;
 use crate::keymap::{Key, KeyChord, Keymap, Mods, Resolution};
@@ -32,6 +33,14 @@ use crate::setup::{
 use crate::theme::Styles;
 use crate::{text, view};
 pub use mouse::{Mouse, MouseKind};
+
+/// What a notification about one message is called: this and the message's
+/// id in the store.
+const MESSAGE_NOTIFICATION: &str = "message:";
+/// What the notification about several messages at once is called.
+const SEVERAL_NOTIFICATION: &str = "arrived";
+/// More new messages than this at once are announced together.
+const MOST_ANNOUNCED_SINGLY: usize = 3;
 
 /// Everything fixed for the life of the run: what `update` and the views
 /// consult but never change.
@@ -65,6 +74,11 @@ pub struct Env {
     pub compose: ComposeSettings,
     /// Who the user is on each account, by the account's name.
     pub identities: HashMap<String, Identity>,
+    /// Remote content is never loaded, whoever sent the message and
+    /// whatever is pressed (`remote_images = "never"`).
+    pub remote_never: bool,
+    /// Say when new mail arrives.
+    pub notifications: bool,
 }
 
 impl Env {
@@ -136,6 +150,14 @@ pub enum Action {
         name: String,
         saved: bool,
     },
+    /// The Mac asked Quill to write to a `mailto:` address.
+    Mailto(String),
+    /// The user clicked a notification (`action` is `None`) or one of its
+    /// buttons.
+    Notification {
+        id: String,
+        action: Option<String>,
+    },
     /// A picture asked for with [`HostRequest::LoadPicture`] is ready to be
     /// drawn, at this many pixels, or could not be made.
     PictureLoaded {
@@ -185,6 +207,25 @@ pub enum HostRequest {
     /// Open a file in the application the Mac opens its kind with. Only
     /// ever on the user's own key press.
     OpenFile(PathBuf),
+    /// Show a message's sanitized page beside the terminal. `remote`: it
+    /// may load remote content.
+    Web {
+        path: PathBuf,
+        title: String,
+        remote: bool,
+    },
+    /// Tell the user about new mail. `actions` are a name, a title and
+    /// whether using it should bring Quill forward; the name of the one
+    /// chosen comes back in [`Action::Notification`].
+    Notify {
+        id: String,
+        title: String,
+        subtitle: Option<String>,
+        body: String,
+        actions: Vec<(&'static str, &'static str, bool)>,
+    },
+    /// Take notifications down: their mail has been dealt with.
+    ClearNotifications(Vec<String>),
     /// Ask the user where to save a copy of a file, with the host's panel.
     SaveFile { path: PathBuf, name: String },
     /// Get a picture ready to draw under `id`: decode the file at `path`,
@@ -518,6 +559,11 @@ pub struct Reader {
     pub scroll: usize,
     /// The picture drawn above the text, when the message has one.
     pub picture: Option<Picture>,
+    /// The user asked for this message's remote content.
+    pub remote: bool,
+    /// Where this message's page was last shown, so that loading its
+    /// remote content shows it there again.
+    pub page: Option<PageUse>,
 }
 
 impl Reader {
@@ -590,6 +636,11 @@ pub struct State {
     compose_pending: Option<Box<Prefill>>,
     /// A reply or forward waiting for its message to be downloaded.
     respond_pending: Option<(LocalMessageId, DataRequest)>,
+    /// A message to go to once the list that has it is loaded, and
+    /// whether to start a reply to it: what a notification asked for.
+    go_to: Option<(LocalMessageId, bool)>,
+    /// The messages a notification is up for.
+    announced: BTreeSet<LocalMessageId>,
     /// What was just done, in a few words, shown until the next key, and
     /// whether the undo command would take it back.
     pub flash: Option<(String, bool)>,
@@ -636,6 +687,8 @@ impl State {
             compose: None,
             compose_pending: None,
             respond_pending: None,
+            go_to: None,
+            announced: BTreeSet::new(),
             flash: None,
             setup: None,
             sign_in: None,
@@ -782,6 +835,10 @@ impl State {
                 }
                 _ => {}
             },
+            Action::Mailto(url) => self.on_mailto(env, &url),
+            Action::Notification { id, action } => {
+                self.on_notification(env, &id, action.as_deref(), &mut out);
+            }
             Action::FileSaved { name, saved } => {
                 self.flash = Some((
                     if saved {
@@ -818,6 +875,7 @@ impl State {
         if let Some(prefill) = self.compose_pending.take() {
             self.open_compose(env, *prefill);
         }
+        self.settle_notifications(&mut out);
         // With no accounts there is nothing to read: offer to add one,
         // once, instead of an empty window.
         if env.accounts && self.accounts_known && self.accounts.is_empty() && !self.setup_offered {
@@ -1221,6 +1279,32 @@ impl State {
             CommandId::MessageAttachments => {
                 self.attachments = Some(AttachmentPicker::default());
             }
+            CommandId::MessageViewHtml => self.show_page(env, PageUse::Pane, out),
+            CommandId::MessageOpenInBrowser => self.show_page(env, PageUse::Browser, out),
+            CommandId::MessageLoadRemote => {
+                self.reader.remote = true;
+                self.show_page(env, self.reader.page.unwrap_or(PageUse::Pane), out);
+            }
+            CommandId::SenderAlwaysRemote => {
+                let sender = self
+                    .reader
+                    .row
+                    .as_ref()
+                    .and_then(|row| row.headers.from.first())
+                    .map(|from| from.email.clone());
+                if let Some(address) = sender {
+                    self.flash = Some((
+                        format!(
+                            "Mail from {} loads remote pictures from now on.",
+                            text::sanitize_line(&address)
+                        ),
+                        false,
+                    ));
+                    out.data.push(DataRequest::AllowRemote { address });
+                    self.reader.remote = true;
+                    self.show_page(env, self.reader.page.unwrap_or(PageUse::Pane), out);
+                }
+            }
             CommandId::AttachmentOpen => self.use_attachment(FileUse::Open, out),
             CommandId::AttachmentSave => {
                 if env.file_panel {
@@ -1313,6 +1397,12 @@ impl State {
             }
             CommandId::AttachmentOpen | CommandId::AttachmentSave => {
                 self.chosen_attachment().is_some()
+            }
+            CommandId::MessageViewHtml | CommandId::MessageOpenInBrowser => {
+                self.page_message(context).is_some()
+            }
+            CommandId::MessageLoadRemote | CommandId::SenderAlwaysRemote => {
+                !env.remote_never && self.page_message(context).is_some()
             }
             CommandId::NavBack => {
                 self.help.is_some()
@@ -2003,6 +2093,254 @@ impl State {
         })
     }
 
+    /// Starts a message to the people a `mailto:` address names.
+    fn on_mailto(&mut self, env: &Env, url: &str) {
+        let Some(mailto) = quill_core::links::parse_mailto(url) else {
+            return;
+        };
+        if self.compose.is_some() {
+            self.notices.push_back(Notice::info(
+                "A message is already being written. Send or close it, then follow the link again.",
+            ));
+            return;
+        }
+        let Some(account) = self.accounts.first().map(|account| account.id) else {
+            self.notices.push_back(Notice::info(
+                "Add an account first; then a mail link can start a message.",
+            ));
+            return;
+        };
+        let clean = |list: &[String]| -> String {
+            list.iter()
+                .map(|address| text::sanitize_line(address))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let content = DraftContent {
+            to: clean(&mailto.to),
+            cc: clean(&mailto.cc),
+            bcc: clean(&mailto.bcc),
+            subject: text::sanitize_line(&mailto.subject),
+            body: text::sanitize_body(&mailto.body),
+            ..DraftContent::default()
+        };
+        // Start where there is still something to fill in.
+        let focus = if content.to.is_empty() {
+            Field::To
+        } else if content.subject.is_empty() {
+            Field::Subject
+        } else {
+            Field::Body
+        };
+        // A link's words are a start: the cursor goes after them.
+        let cursor = content.body.len();
+        self.setup = None;
+        self.palette = None;
+        self.open_compose(
+            env,
+            Prefill {
+                draft: None,
+                account,
+                content,
+                cursor,
+                focus,
+                title: "New message",
+                note: None,
+            },
+        );
+    }
+
+    /// Does what a notification was clicked for: goes to its message, or
+    /// archives it, marks it read or starts a reply.
+    fn on_notification(&mut self, env: &Env, id: &str, action: Option<&str>, out: &mut Effects) {
+        let Some(message) = id
+            .strip_prefix(MESSAGE_NOTIFICATION)
+            .and_then(|number| number.parse().ok())
+            .map(LocalMessageId)
+        else {
+            // The one about several messages: the inbox is where they are.
+            if id == SEVERAL_NOTIFICATION && action.is_none() && self.compose.is_none() {
+                self.show_mailbox(Mailbox::Unified, out);
+                self.set_focus(Pane::List);
+            }
+            return;
+        };
+        match action {
+            Some("archive") => out.data.push(DataRequest::Archive(message)),
+            Some("read") => out.data.push(DataRequest::SetSeen {
+                id: message,
+                seen: true,
+            }),
+            Some("reply") | None => {
+                self.go_to = Some((message, action.is_some()));
+                // The unified inbox has every account's new mail.
+                if self.mailbox != Mailbox::Unified || self.search.is_some() {
+                    self.show_mailbox(Mailbox::Unified, out);
+                } else {
+                    self.go_to_pending(env, out);
+                }
+            }
+            Some(_) => {}
+        }
+    }
+
+    /// Goes to the message a notification asked for, if the list has it.
+    fn go_to_pending(&mut self, env: &Env, out: &mut Effects) {
+        let Some((message, reply)) = self.go_to.take() else {
+            return;
+        };
+        let Some(index) = self.list.rows.iter().position(|row| row.id == message) else {
+            return;
+        };
+        // What is being written is not put aside for it.
+        if self.compose.is_some() {
+            self.list.selected = index;
+            return;
+        }
+        self.help = None;
+        self.palette = None;
+        self.links = None;
+        self.attachments = None;
+        self.folders = None;
+        self.list.selected = index;
+        self.set_focus(Pane::List);
+        self.open(out);
+        if reply {
+            self.run(env, CommandId::MessageReply, out);
+        }
+    }
+
+    /// Tells the user about mail that has just arrived: each message by
+    /// itself when there are a few, one line for them all when many.
+    fn announce(&mut self, env: &Env, mut rows: Vec<MessageRow>, out: &mut Effects) {
+        rows.iter_mut().for_each(sanitize_row);
+        rows.retain(|row| !row.flags.seen);
+        if !env.notifications || rows.is_empty() {
+            return;
+        }
+        let who = |row: &MessageRow| {
+            row.headers.from.first().map_or_else(
+                || "Someone".to_owned(),
+                |from| from.display_name().to_owned(),
+            )
+        };
+        if rows.len() > MOST_ANNOUNCED_SINGLY {
+            let mut people: Vec<String> = Vec::new();
+            for row in &rows {
+                let name = who(row);
+                if !people.contains(&name) {
+                    people.push(name);
+                }
+            }
+            let named = people
+                .iter()
+                .take(3)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            let body = if people.len() > 3 {
+                format!("From {named} and others")
+            } else {
+                format!("From {named}")
+            };
+            out.host.push(HostRequest::Notify {
+                id: SEVERAL_NOTIFICATION.to_owned(),
+                title: format!("{} new messages", rows.len()),
+                subtitle: None,
+                body,
+                actions: Vec::new(),
+            });
+            return;
+        }
+        for row in rows {
+            // Which account, when there is more than one to tell apart.
+            let subtitle = (self.accounts.len() > 1)
+                .then(|| {
+                    self.accounts
+                        .iter()
+                        .find(|account| account.id == row.account)
+                })
+                .flatten()
+                .map(|account| account.name.clone());
+            self.announced.insert(row.id);
+            out.host.push(HostRequest::Notify {
+                id: format!("{MESSAGE_NOTIFICATION}{}", row.id.0),
+                title: who(&row),
+                subtitle,
+                body: if row.headers.subject.is_empty() {
+                    "(no subject)".to_owned()
+                } else {
+                    row.headers.subject.clone()
+                },
+                actions: vec![
+                    ("archive", "Archive", false),
+                    ("read", "Mark as Read", false),
+                    // A reply is written in the window.
+                    ("reply", "Reply", true),
+                ],
+            });
+        }
+    }
+
+    /// Takes down the notifications of messages the user has just dealt
+    /// with: read, archived, deleted or moved.
+    fn settle_notifications(&mut self, out: &mut Effects) {
+        if self.announced.is_empty() {
+            return;
+        }
+        let mut dealt_with = Vec::new();
+        for request in &out.data {
+            match request {
+                DataRequest::SetSeen { id, seen: true }
+                | DataRequest::Archive(id)
+                | DataRequest::Delete(id)
+                | DataRequest::MoveTo { id, .. } => dealt_with.push(*id),
+                DataRequest::Many { ids, what } if !matches!(what, Bulk::Seen(false)) => {
+                    dealt_with.extend(ids.iter().copied());
+                }
+                _ => {}
+            }
+        }
+        let ids: Vec<String> = dealt_with
+            .into_iter()
+            .filter(|id| self.announced.remove(id))
+            .map(|id| format!("{MESSAGE_NOTIFICATION}{}", id.0))
+            .collect();
+        if !ids.is_empty() {
+            out.host.push(HostRequest::ClearNotifications(ids));
+        }
+    }
+
+    /// The message whose page can be shown: the one in the reader, once it
+    /// is here in full, when it is the one the user is on.
+    fn page_message(&self, context: Context) -> Option<LocalMessageId> {
+        let row = self.reader.row.as_ref()?;
+        let on_it =
+            context == Context::Reader || self.target_row().map(|row| row.id) == Some(row.id);
+        (on_it && matches!(self.reader.body, Body::Loaded(_))).then_some(row.id)
+    }
+
+    /// Asks for the message's page, to show in the pane or the browser.
+    /// Whether it may load remote content is decided here, from what the
+    /// user has said, and written into the page.
+    fn show_page(&mut self, env: &Env, then: PageUse, out: &mut Effects) {
+        let Some(message) = self.page_message(self.context()) else {
+            return;
+        };
+        let remote = if env.remote_never {
+            RemoteContent::Never
+        } else if self.reader.remote {
+            RemoteContent::Allowed
+        } else {
+            RemoteContent::IfSenderAllowed
+        };
+        out.data.push(DataRequest::WebPage {
+            message,
+            remote,
+            then,
+        });
+    }
+
     /// The messages a filing or marking command acts on: those selected
     /// in the list, when there are any and the list is where the user is;
     /// otherwise the one [`State::target_row`] names.
@@ -2161,6 +2499,11 @@ impl State {
                 });
             }
             SyncEvent::Sent { .. } => self.flash = Some(("Sent.".to_owned(), false)),
+            SyncEvent::Arrived { messages, .. } => {
+                if env.notifications {
+                    out.data.push(DataRequest::Announce(messages));
+                }
+            }
             SyncEvent::BodyReady(id) => {
                 if reading(self, id) {
                     out.data.push(DataRequest::LoadBody(id));
@@ -2328,6 +2671,9 @@ impl State {
                 self.list.loaded = true;
                 self.list.keep_listed_marks();
                 self.sync_reader(out);
+                // Where a notification asked to go, now that the list is
+                // here to go in.
+                self.go_to_pending(env, out);
             }
             DataEvent::BodyLoaded { id, body } => {
                 if self.reader.row.as_ref().is_some_and(|row| row.id == id) {
@@ -2465,6 +2811,44 @@ impl State {
                     out.sync.push(SyncRequest::FetchBody(id));
                     self.flash = Some(("Downloading the message…".to_owned(), false));
                 }
+            }
+            DataEvent::Arrived(rows) => self.announce(env, rows, out),
+            DataEvent::PageReady {
+                message,
+                page,
+                then,
+            } => {
+                // A page for a message the user has left is not shown.
+                if self.reader.row.as_ref().map(|row| row.id) != Some(message) {
+                    return;
+                }
+                self.reader.page = Some(then);
+                if page.blocked > 0 && !page.remote {
+                    let pictures = if page.blocked == 1 {
+                        "1 remote picture was left out".to_owned()
+                    } else {
+                        format!("{} remote pictures were left out", page.blocked)
+                    };
+                    let how = match (
+                        env.remote_never,
+                        env.hint_key(CommandId::MessageLoadRemote),
+                        env.hint_key(CommandId::SenderAlwaysRemote),
+                    ) {
+                        (false, Some(once), Some(always)) => {
+                            format!(". {once} loads them, {always} always for this sender")
+                        }
+                        _ => String::new(),
+                    };
+                    self.flash = Some((format!("{pictures}{how}."), false));
+                }
+                out.host.push(match then {
+                    PageUse::Pane => HostRequest::Web {
+                        path: page.path,
+                        title: text::sanitize_line(&page.title),
+                        remote: page.remote,
+                    },
+                    PageUse::Browser => HostRequest::OpenFile(page.path),
+                });
             }
             DataEvent::Error(message) => self.notices.push_back(Notice::error(message)),
         }
@@ -2790,8 +3174,11 @@ fn body_lines(body: &LoadedBody, showing: Showing, width: usize) -> (Vec<Line>, 
             .as_deref()
             .and_then(|html| quill_mime::html::render(html, width)),
         Showing::Plain => None,
-    };
-    match rendered {
+    }
+    // Plain text is laid out too: quotes marked, links found, a signature
+    // set apart.
+    .unwrap_or_else(|| quill_mime::plain::render(&body.text, width));
+    match Some(rendered) {
         Some(mut rendered) => {
             // What a stranger's HTML says is as untrusted as anything else.
             for line in &mut rendered.lines {
@@ -2805,13 +3192,7 @@ fn body_lines(body: &LoadedBody, showing: Showing, width: usize) -> (Vec<Line>, 
             }
             (rendered.lines, rendered.links)
         }
-        None => (
-            text::wrap(&body.text, width)
-                .into_iter()
-                .map(Line::plain)
-                .collect(),
-            quill_mime::links::find(&body.text),
-        ),
+        None => (Vec::new(), Vec::new()),
     }
 }
 

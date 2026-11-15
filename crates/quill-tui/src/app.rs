@@ -302,6 +302,30 @@ impl Io<'_> {
                 }
                 HostRequest::Play { path, title } => self.host.play(&path, &title),
                 HostRequest::OpenFile(path) => self.host.open_file(&path),
+                HostRequest::Web {
+                    path,
+                    title,
+                    remote,
+                } => self.host.web(&path, &title, remote),
+                HostRequest::Notify {
+                    id,
+                    title,
+                    subtitle,
+                    body,
+                    actions,
+                } => {
+                    // One that cannot be said (an empty title) is not.
+                    if let Some(notification) = quill_host::bridge::Notification::new(
+                        &id,
+                        &title,
+                        subtitle.as_deref(),
+                        &body,
+                        &actions,
+                    ) {
+                        self.host.notify(notification);
+                    }
+                }
+                HostRequest::ClearNotifications(ids) => self.host.clear_notifications(ids),
                 HostRequest::LoadPicture {
                     id,
                     path,
@@ -539,6 +563,10 @@ async fn event_loop(
                     Some(Action::Files { paths, temporary })
                 }
                 HostEvent::Saved { name, saved } => Some(Action::FileSaved { name, saved }),
+                HostEvent::OpenMailto(url) => Some(Action::Mailto(url)),
+                HostEvent::NotificationUsed { id, action } => {
+                    Some(Action::Notification { id, action })
+                }
                 HostEvent::Thumbnail { id, ok } => {
                     io.thumbnail_made(id, ok);
                     None
@@ -631,6 +659,8 @@ mod tests {
             downloads: None,
             compose: crate::state::ComposeSettings::default(),
             identities: std::collections::HashMap::new(),
+            remote_never: false,
+            notifications: true,
         }
     }
 

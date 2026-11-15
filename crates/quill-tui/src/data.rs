@@ -16,8 +16,17 @@ use quill_store::{
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::compose::Prefill;
-use crate::files::{self, AttachedFile, ExtractedFile, Files};
+use crate::files::{self, AttachedFile, ExtractedFile, Files, RemoteContent, WebPage};
 use crate::outgoing::{self, Response, SendRequest};
+
+/// What a message's page is wanted for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PageUse {
+    /// The web view pane beside the terminal.
+    Pane,
+    /// The user's browser.
+    Browser,
+}
 
 /// What [`DataRequest::Many`] does to each of its messages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +65,18 @@ pub enum DataRequest {
         ids: Vec<LocalMessageId>,
         what: Bulk,
     },
+    /// Write the message's HTML out as a safe page, to show or to open.
+    WebPage {
+        message: LocalMessageId,
+        remote: RemoteContent,
+        then: PageUse,
+    },
+    /// Let this sender's mail load remote content from now on.
+    AllowRemote {
+        address: String,
+    },
+    /// Look up mail that has just arrived, to tell the user about it.
+    Announce(Vec<LocalMessageId>),
     /// Take back the last change that still can be.
     Undo,
     /// People whose name or address starts with what was typed.
@@ -168,6 +189,14 @@ pub enum DataEvent {
     AttachFailed(String),
     /// A message to start writing: a reply, a forward, or a draft.
     ComposeReady(Box<Prefill>),
+    /// Mail that has just arrived, as far as it is still here.
+    Arrived(Vec<MessageRow>),
+    /// A message's page is written and ready to show.
+    PageReady {
+        message: LocalMessageId,
+        page: WebPage,
+        then: PageUse,
+    },
     /// What a search found, newest first. `more`: there were more than are
     /// shown.
     SearchLoaded {
@@ -331,6 +360,9 @@ fn run(
         DataRequest::SetFlagged { id, flagged } => {
             set_flags(store, id, |flags| Flags { flagged, ..flags })?
         }
+        // A message that has gone since it was asked about (from a
+        // notification, say) is nothing to complain of.
+        DataRequest::Archive(id) if store.message_location(id)?.is_none() => Vec::new(),
         DataRequest::Archive(id) => match folder_with_role(store, id, FolderRole::Archive)? {
             Some(archive) => moved(store, id, archive, "Archived")?,
             None => vec![DataEvent::Error(
@@ -367,6 +399,23 @@ fn run(
         }
         DataRequest::MoveTo { id, folder } => moved(store, id, folder, "Moved")?,
         DataRequest::Many { ids, what } => many(store, &ids, what)?,
+        DataRequest::WebPage {
+            message,
+            remote,
+            then,
+        } => match files::web_page(store, files, message, remote) {
+            Ok(page) => vec![DataEvent::PageReady {
+                message,
+                page,
+                then,
+            }],
+            Err(problem) => vec![flash(&problem.0)],
+        },
+        DataRequest::AllowRemote { address } => {
+            store.allow_remote_content(&address, now())?;
+            Vec::new()
+        }
+        DataRequest::Announce(ids) => vec![DataEvent::Arrived(store.message_rows(&ids)?)],
         DataRequest::Extract {
             message,
             part,
@@ -745,6 +794,7 @@ mod tests {
                 flags: Flags::default(),
                 size: 10,
                 has_attachments: false,
+                thread: Vec::new(),
             }],
             changed: Vec::new(),
             removed: Vec::new(),

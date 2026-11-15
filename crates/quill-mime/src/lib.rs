@@ -60,6 +60,28 @@ pub struct Parsed {
     pub attachments: Vec<Attachment>,
 }
 
+/// The most earlier messages a message is taken to follow. A long
+/// conversation's `References` is cut to its newest: those are the ones
+/// that tie it to the mail already here.
+const MAX_THREAD: usize = 50;
+
+impl Parsed {
+    /// The messages this one follows in its conversation: its `References`,
+    /// oldest first, then the one it answers, each named once. Empty for a
+    /// message that starts a conversation.
+    pub fn thread(&self) -> Vec<String> {
+        let mut thread: Vec<String> = Vec::new();
+        for id in self.references.iter().chain(&self.in_reply_to) {
+            if !thread.contains(id) {
+                thread.push(id.clone());
+            }
+        }
+        let extra = thread.len().saturating_sub(MAX_THREAD);
+        thread.drain(..extra);
+        thread
+    }
+}
+
 /// A file attached to a message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Attachment {

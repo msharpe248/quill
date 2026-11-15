@@ -146,6 +146,8 @@ Press `?` at any time for the keys that apply where you are. The bottom bar show
 | `U` | Undo the last move, deletion or send | `A` | Add an account |
 | `S` | Sign in to an account (Microsoft, Google) | | |
 | `/` | Search | `a` | List a message's attachments |
+| `v` | View the message as a web page | `B` | Open that page in the browser |
+| `i` | Load remote pictures for this message | `I` | Always load them from this sender |
 | `x` | Select or unselect, and move on | `V` | Start or end a range |
 
 Arrow keys, `home`, `end`, `pageup` and `pagedown` work too. `ctrl-d` also pages down and `ctrl-c` also quits.
@@ -159,6 +161,27 @@ The mouse works too. A click selects, a second click on what is selected opens i
 In the message list, `>` marks the cursor, `+` a selected message, `*` an unread one, `r` one you have answered, `!` a starred one and `@` one with attachments.
 
 To act on several messages at once, select them first: `x` on each, or `V`, move, and `V` again for a run of them; `ctrl-a` selects everything listed. Archive, delete, move, read and star then apply to all of them, and one `U` takes the whole lot back. `esc` lets the selection go. From the reader, a command is always about the message being read.
+
+## HTML mail, and what it is allowed to do
+
+The reader shows a message's HTML as styled text, and fetches nothing. For the message as its sender laid it out, `v` opens it as a web page in a pane beside the reader (in a terminal, in your browser; `B` does that from the app too).
+
+That page is never the message's own HTML. Quill writes a copy with scripts, forms, frames and anything that would fetch taken out, and tells the page it may load nothing from the web. Pictures the message carries with it are shown. Pictures it only points at are not: loading one tells the sender that you opened the message, when, and from where. Where one would be, the page shows its description, and the status line says how many were left out.
+
+`i` loads them for the message in front of you. `I` says mail from that sender may always load them. In the config:
+
+```toml
+[privacy]
+remote_images = "ask"     # or "never": i and I do nothing
+```
+
+A link whose text names one site and whose target is another is flagged in the reader, on the line below it.
+
+## New mail, and mail links
+
+In the app, new mail in an inbox is announced with a notification: who it is from and its subject, with buttons to archive it, mark it read or reply. Clicking it goes to the message. macOS asks whether Quill may show notifications the first time there is one to show. `notifications = false` under `[ui]` turns them off.
+
+Quill can be your default mail program: choose it in Mail, Settings, General, "Default email reader". A mail link clicked anywhere then starts a new message in Quill, to the people the link names. A link can fill in recipients, a subject and some opening words, and nothing else.
 
 ## Searching
 
@@ -280,6 +303,8 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `search.start` | Search |
 | `palette.open` | The command palette |
 | `message.attachments` | List the message's attachments |
+| `message.view_html`, `message.open_in_browser` | Show the message as a web page, beside the reader or in the browser |
+| `message.load_remote`, `sender.always_remote` | Let this message, or this sender's mail, load remote pictures |
 | `attachment.save`, `attachment.open` | Save the chosen attachment, or open it in its application |
 | `edit.copy`, `edit.cut`, `edit.select_all` | The app's Edit menu, while a message is being written |
 | `account.add` | Add an account |

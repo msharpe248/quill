@@ -337,7 +337,44 @@ Not verified, because it needs the owner: sending through a real provider. Not b
 - **Checked end to end against a scratch Dovecot and a local SMTP sink** that writes what it is given to a file and delivers nothing: reply, new message with a completed address and an attachment, undo send, reopening from Drafts and from the Outbox, the copy in Sent and the answered flag on the server. In a terminal and again in the sandboxed `Quill.app`, where the account was added through the form (both servers signed in to), a file was attached through the panel's path with its temporary copy removed, a message was sent with `cmd-enter`, and cut, copy, select all and undo reached the editor. A scripted run never shows a panel or touches the clipboard: it records what would have been chosen and copied. Dropping a file with the mouse is not checked; it shares the panel's path from the point the files are known. Not checked against any real provider: the owner's accounts are not touched while they are away.
 - **Keychain reads block.** The engine reads a password with a synchronous call, and macOS can hold that call while it asks the user about a rebuilt binary. Mail stops until it is answered and nothing says why. To fix with the credential rework in M5.
 
-## M4, rendering and media (in progress)
+## M4, rendering and media
+
+Accepted 2026-11-15, with what was not verified listed below.
+
+- **The MIME corpus renders without panics**: 71 messages in `crates/quill-mime/tests/corpus`, each parsed, laid out as text at several widths, sanitized, cut short at fifty places and corrupted two hundred ways, with a time bound per file; and a fixed-seed fuzz of 5,000 generated documents (`tests/corpus.rs`). `tests/corpus/make.py` wrote the files.
+- **A video plays in the pane**: a Swift test plays a generated H.264 clip in the player pane's own player and sees time advance; in the app the player pane was checked with the demo's sound file. Not checked: a video in the real window.
+- **The web view makes zero network requests while remote content is blocked**: a Swift test loads a page with remote pictures, styles and frames into the pane with remote content blocked and counts no connections to a local server that would have served them. In the app, the demo newsletter was opened as a page: the pane reports "remote content blocked", and the status line says what was left out.
+
+Not verified: against real mail (the owner's is not read while they are away). Not built: calendar invitations as cards (M8), more than the first frame of an animated GIF, and a picture among the text where the message puts it (the first picture is drawn above the text; the rest are in the list).
+
+### Attachments and pictures
+
+- **The files of a message are listed with `a`** and are viewed (Quick Look in the app, `qlmanage` in a terminal), played, opened in their application or saved. Nothing opens without a key press on that file. A file's name is made safe before it is a path: no directories, no leading dot, no reordering characters, an extension that matches what the file is.
+- **Files for viewing go in a folder of this run's own, private to the user**, one folder per message, removed when Quill quits. Saved files carry the quarantine attribute, as a download does.
+- **The first picture of a message is drawn above its text** where the terminal draws pictures (Kitty graphics). PNG, JPEG, GIF and WebP are decoded here, within limits on size; HEIC, PDF pages and video frames are pictured by the shell (`thumbnail.make`).
+
+### The message as a web page
+
+- **`v` shows the message's HTML in the web view pane; `B` opens the same page in the browser.** It is never the message's own HTML that is shown: `quill_mime::sanitize` writes a page with scripts, forms, frames and anything that fetches taken out, and a content security policy that lets it fetch nothing, as a second line. A message with no HTML gets its text as a page.
+- **The page is a file in a folder of its own**, with the pictures the message carries for it (`cid:`) beside it under names made here, not names from the message. A page can only name what is beside it, and nothing else is.
+- **Remote content is blocked until the user says otherwise.** `i` loads it for the message in front of them; `I` says this sender's mail may always load it (`remote_senders` in the store). Whether a page may fetch is decided when it is written and is part of the page: there are two pages, one of each kind, never one page that changes its mind. `remote_images = "never"` turns both keys off. `"ask"` and `"allowlist"` are the same thing so far: blocked, with the two keys.
+- **Blocked pictures are named where they would be** (their alt text), and counted in the status line; a picture with no alt text, which is what a tracking pixel is, simply is not there.
+- **In a terminal there is no pane**, and `v` opens the page in the browser, as `B` does.
+- **The message's own `<body>` attributes are lost** in the page, because the sanitizer works on a fragment. Mail that sets light text and relies on a dark body background could read badly.
+
+### Text in the reader
+
+- **Plain text is laid out, not just wrapped**: quoted lines keep their `>` on every row and are dimmed, a signature is dimmed, and links are found and underlined. Quoting is carried by the `>`, never by colour alone.
+- **A link whose text names one place and whose target is another is flagged** on the row below it ("goes to evil.example, not www.mybank.example"), in both renderings.
+- **Everything the mail parser and the renderers return is free of control characters, escape sequences and bidi overrides.** An escape sequence is removed whole, not just its first byte. The UI still strips what it draws: mail is untrusted at every layer.
+- **Legacy charsets are decoded** (Shift_JIS, ISO-2022-JP, EUC-KR, Big5, GBK, GB18030) through the mail parser's `full_encoding` feature and `encoding_rs`.
+- **Width is counted with a small table of the crate's own that errs wide**, so a row can come out a cell short and never long. `unicode-width` would be exact; left for later.
+
+### Guarding the parsers
+
+- **HTML that makes the parsers quadratic is cut off by a deadline**: deeply nested elements, unclosed formatting tags that multiply, and long runs of entities each took seconds to hours. Small documents are parsed without the clock and always give the same answer; a large one that runs out of time falls back to its plain text. The deadline is wall-clock, so a legitimate two-megabyte message on a very busy Mac could fall back too.
+- **What made `html2text` panic is removed before it sees the document**: `rowspan`, huge `colspan` and list starts, and `<style>` blocks (its selector code has unchecked arithmetic). The cost: class-based hiding does not work in the text view, and row-spanning table cells lose their alignment there.
+- **Memory is bounded only by that deadline.** A crafted message can build a large tree before it is cut off; estimated at hundreds of megabytes for two megabytes of input, not measured.
 
 ### Dependencies
 
@@ -392,6 +429,24 @@ Built in `quill-auth` and tested against a local stand-in. No real provider was 
 - **The idle is renewed every five minutes.** That is also the longest a connection that died without a word goes unnoticed. Restarting the watch when the Mac wakes would be quicker and is not built.
 - **Graph has no push**: its notifications need a public web address to call. Those accounts are polled.
 - **Store transactions take the write lock when they begin** (`BEGIN IMMEDIATE`). With two connections, the UI's and the engine's, one that read first and wrote later was refused outright with "database is locked" when the other had written in between; the busy timeout does not apply to that case. Found as a test that failed one run in six.
+
+### Notifications
+
+- **New unread mail in an inbox is announced** through the shell (`notify.post`), with the sender, the subject and, with more than one account, which account. Up to three at once are announced one by one, each with Archive, Mark as Read and Reply; more than three are one line ("5 new messages").
+- **What a folder holds when it is first synced is not news**, and neither is a message a backend lists again because it changed. An interrupted first sync that resumes can announce old mail; the one-line form keeps that to a single banner.
+- **The shell knows nothing about mail**: it is handed words and names, and hands back the notification's id and the name of the button used (`notify.used`). An action can ask to bring the window forward (`foreground`), which Reply does: a reply is written in the window.
+- **Clicking a notification goes to its message** in the unified inbox, from wherever the user was, without putting aside a message being written. Reading, archiving, deleting or moving a message takes its notification down (`notify.clear`).
+- **Permission is asked the first time there is something to announce**, never at launch, and a refusal is honoured silently. While Quill is frontmost there is no banner or sound; the notification is still in Notification Centre.
+- **A scripted run of the app never asks for permission and never posts**: a recorder stands in, as for panels and the clipboard.
+- **A terminal has no notifications.** `notifications = false` under `[ui]` turns them off in the app.
+- **Not verified:** the permission prompt, delivery, the buttons and clearing in a real run, and whether an ad-hoc-signed build may post at all. These need the owner present.
+
+### Mail links
+
+- **Quill declares itself able to handle `mailto:`** in `Info.plist`, so it can be chosen as the default mail program in Mail's settings. It never makes itself the default.
+- **The shell passes on only `mailto:` addresses** (`url.open`), and the core reads only recipients, a subject and a body from one. A link cannot attach a file, set the sender or add a header, whatever it asks for; a subject or address cannot carry a line break; the body is cut at 16 KiB.
+- **A link starts a new message and does not put aside one being written**: with one open, it says so and does nothing else.
+- **Checked in the app with a scripted link.** The Mac actually handing Quill a link needs Quill to be the default mail program, which is the owner's to choose.
 
 ### Acting on several messages
 

@@ -121,6 +121,7 @@ impl Backend for Mailbox1 {
                     flags: Flags::default(),
                     size: raw.len() as u64,
                     has_attachments: false,
+                    thread: Vec::new(),
                 }
             })
             .collect();

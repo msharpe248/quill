@@ -275,6 +275,127 @@ pub fn save(
 }
 
 /// A folder only the user can enter.
+/// Whether a message's page may load pictures and the like from the web.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RemoteContent {
+    /// Never, whoever sent it.
+    Never,
+    /// Only if its sender is one the user has said always may.
+    IfSenderAllowed,
+    /// Yes: the user asked for it, for this message.
+    Allowed,
+}
+
+/// A message's HTML made safe and written out as a page of its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebPage {
+    pub path: PathBuf,
+    /// The message's subject.
+    pub title: String,
+    /// The page may load remote content.
+    pub remote: bool,
+    /// How many remote things were left out of it. Always 0 when `remote`.
+    pub blocked: usize,
+    /// Who sent the message, to offer "always from this sender".
+    pub sender: Option<String>,
+}
+
+/// Writes a message's HTML, sanitized, as a page in a folder of its own,
+/// with the pictures the message carries for it beside it. A message with
+/// no HTML gets its plain text as a page. Nothing here fetches anything:
+/// whether the page may is decided now and written into it.
+pub fn web_page(
+    store: &Store,
+    files: &Files,
+    message: LocalMessageId,
+    remote: RemoteContent,
+) -> Result<WebPage, FileProblem> {
+    let Some(view_dir) = &files.view_dir else {
+        return Err(FileProblem(
+            "There is nowhere to put files for viewing.".to_owned(),
+        ));
+    };
+    let raw = store.raw(message)?.ok_or_else(|| {
+        FileProblem("That message has not been downloaded yet. Open it first.".to_owned())
+    })?;
+    let parsed = quill_mime::parse(&raw, 0)
+        .ok_or_else(|| FileProblem("That message cannot be read.".to_owned()))?;
+    let sender = parsed.headers.from.first().map(|from| from.email.clone());
+    let remote = match remote {
+        RemoteContent::Never => false,
+        RemoteContent::Allowed => true,
+        RemoteContent::IfSenderAllowed => match &sender {
+            Some(address) => store.allows_remote_content(address)?,
+            None => false,
+        },
+    };
+    let html = match &parsed.html {
+        Some(html) => html.clone(),
+        None => format!("<pre>{}</pre>", escape_html(&parsed.body)),
+    };
+
+    // Pictures the message carries for its own page (`cid:` addresses) are
+    // written beside the page under names made here, never names from the
+    // message.
+    let pictures = std::cell::RefCell::new(Vec::<(String, Vec<u8>)>::new());
+    let cid_file = |content_id: &str| -> Option<String> {
+        let (content_type, bytes) = quill_mime::part_by_content_id(&raw, content_id)?;
+        if !content_type.starts_with("image/") || content_type == "image/svg+xml" {
+            return None;
+        }
+        let mut pictures = pictures.borrow_mut();
+        let name = format!(
+            "picture-{}.{}",
+            pictures.len() + 1,
+            extension_for(&content_type)
+        );
+        pictures.push((name.clone(), bytes));
+        Some(name)
+    };
+    let sanitized = quill_mime::sanitize::sanitize(
+        &html,
+        &quill_mime::sanitize::Options {
+            remote,
+            cid_file: &cid_file,
+            title: &parsed.headers.subject,
+        },
+    );
+
+    // A folder for the page alone: a page can only ever name what is
+    // beside it, and nothing else is.
+    let folder = view_dir.join(format!("m{}", message.0));
+    let page_dir = folder.join(if remote { "page-remote" } else { "page" });
+    private_dir(view_dir)?;
+    private_dir(&folder)?;
+    private_dir(&page_dir)?;
+    let cannot = |err: std::io::Error| FileProblem(format!("The page cannot be written: {err}."));
+    for (name, bytes) in pictures.into_inner() {
+        write_private(&page_dir.join(name), &bytes).map_err(cannot)?;
+    }
+    let path = page_dir.join("message.html");
+    write_private(&path, sanitized.html.as_bytes()).map_err(cannot)?;
+    Ok(WebPage {
+        path,
+        title: parsed.headers.subject,
+        remote,
+        blocked: sanitized.blocked,
+        sender,
+    })
+}
+
+fn escape_html(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 fn private_dir(path: &Path) -> Result<(), FileProblem> {
     match fs::DirBuilder::new().mode(0o700).create(path) {
         Ok(()) => Ok(()),

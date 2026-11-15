@@ -33,6 +33,8 @@ pub struct UiConfig {
     /// Take the mouse: click to select and open, wheel to scroll. While it
     /// is on, selecting text in the terminal needs shift held.
     pub mouse: bool,
+    /// Say when new mail arrives, where the host can (Quill's own window).
+    pub notifications: bool,
 }
 
 impl Default for UiConfig {
@@ -45,6 +47,7 @@ impl Default for UiConfig {
             font: None,
             font_size: 13.0,
             mouse: true,
+            notifications: true,
         }
     }
 }
@@ -410,7 +413,10 @@ smtp = { host = "smtp.fastmail.com", port = 465, tls = "implicit" }
         };
         let policy = |line: &str| pop(line).unwrap().accounts[0].delete_from_server;
         assert_eq!(policy(""), DeleteFromServer::Never);
-        assert_eq!(policy("delete_from_server = \"never\""), DeleteFromServer::Never);
+        assert_eq!(
+            policy("delete_from_server = \"never\""),
+            DeleteFromServer::Never
+        );
         assert_eq!(
             policy("delete_from_server = \"downloaded\""),
             DeleteFromServer::Downloaded
@@ -419,8 +425,14 @@ smtp = { host = "smtp.fastmail.com", port = 465, tls = "implicit" }
             policy("delete_from_server = 14"),
             DeleteFromServer::AfterDays(14)
         );
-        assert_eq!(policy("delete_from_server = 0"), DeleteFromServer::Downloaded);
-        for bad in ["delete_from_server = \"sometimes\"", "delete_from_server = -1"] {
+        assert_eq!(
+            policy("delete_from_server = 0"),
+            DeleteFromServer::Downloaded
+        );
+        for bad in [
+            "delete_from_server = \"sometimes\"",
+            "delete_from_server = -1",
+        ] {
             let err = pop(bad).unwrap_err().to_string();
             assert!(err.contains("a number of days such as 14"), "{err}");
         }

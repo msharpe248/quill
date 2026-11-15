@@ -220,7 +220,8 @@ pub fn render(
 /// How a piece of a message body is drawn. Every distinction is carried by
 /// a text attribute, so it survives a terminal without colour.
 fn body_style(style: quill_mime::html::Style, styles: &Styles) -> Style {
-    let mut drawn = if style.dim {
+    // Quoted text steps back; its `>` says so without colour.
+    let mut drawn = if style.dim || style.quote > 0 {
         styles.dim()
     } else if style.code {
         styles.accent()

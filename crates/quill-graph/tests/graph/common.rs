@@ -24,7 +24,7 @@ use wiremock::{Mock, MockBuilder, MockServer, Request, ResponseTemplate};
 
 /// What a folder sync asks for about each message.
 pub const SUMMARY: &str = "id,subject,from,toRecipients,ccRecipients,receivedDateTime,\
-                           sentDateTime,internetMessageId,isRead,flag,hasAttachments,isDraft";
+                           sentDateTime,internetMessageId,isRead,flag,hasAttachments,isDraft,conversationId";
 
 /// What every request must say about ids.
 pub const IMMUTABLE_IDS: &str = "IdType=\"ImmutableId\"";

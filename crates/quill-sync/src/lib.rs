@@ -127,6 +127,12 @@ pub enum SyncEvent {
         account: LocalAccountId,
         active: bool,
     },
+    /// New, unread mail came into an inbox since the last look. Not said
+    /// for the mail found the first time a folder is synced.
+    Arrived {
+        account: LocalAccountId,
+        messages: Vec<LocalMessageId>,
+    },
     /// A body that was asked for is now in the store.
     BodyReady(LocalMessageId),
     /// A body that was asked for could not be fetched.
@@ -543,13 +549,16 @@ impl Engine {
             FolderRole::Archive => 2,
             FolderRole::Junk | FolderRole::Trash => 3,
         });
-        for (local, remote, _) in folders {
+        for (local, remote, role) in folders {
             if remote.0.starts_with(KEPT) {
                 // Nothing on any server to compare it with.
                 continue;
             }
+            // What a folder holds when it is first synced is not news.
+            let mut first_look = None;
             loop {
                 let cursor = self.db(move |store| store.sync_cursor(local)).await?;
+                let first_look = *first_look.get_or_insert(cursor.is_none());
                 let mut delta = account
                     .backend
                     .sync_folder(&remote, cursor)
@@ -581,9 +590,37 @@ impl Engine {
                     delta.added.retain(|message| !known.contains(&message.id));
                     changed = dropped;
                 }
-                changed |= self
-                    .db(move |store| store.apply_delta(local, &delta))
+                // Unread mail the inbox did not have before is announced.
+                let unread: Vec<RemoteId> = if role == FolderRole::Inbox && !first_look {
+                    delta
+                        .added
+                        .iter()
+                        .filter(|message| !message.flags.seen)
+                        .map(|message| message.id.clone())
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                let (applied, arrived) = self
+                    .db(move |store| {
+                        // A backend may list a message again because it
+                        // changed; that is not an arrival.
+                        let known = store.known_remote_ids(account_id, &unread)?;
+                        let applied = store.apply_delta(local, &delta)?;
+                        let mut arrived = Vec::new();
+                        for id in unread.iter().filter(|id| !known.contains(id)) {
+                            arrived.extend(store.local_message_id(local, id)?);
+                        }
+                        Ok((applied, arrived))
+                    })
                     .await?;
+                changed |= applied;
+                if !arrived.is_empty() {
+                    self.emit(SyncEvent::Arrived {
+                        account: account_id,
+                        messages: arrived,
+                    });
+                }
                 if changed {
                     self.emit(SyncEvent::Changed);
                 }
@@ -997,6 +1034,7 @@ impl Engine {
             flags,
             size: u64::try_from(raw.len()).unwrap_or(u64::MAX),
             has_attachments: !parsed.attachments.is_empty(),
+            thread: Vec::new(),
         };
         let text = parsed.body;
         self.db(move |store| store.keep_message(folder, &message, &text, Some(&blob_hash)))

@@ -364,7 +364,12 @@ fn now() -> i64 {
 /// when the message has none: POP3 does not say when a message arrived, so
 /// the best that can be said is when Quill first saw it.
 fn summary(id: &str, headers: &[u8], size: u64, received: i64) -> RemoteMessage {
-    let parsed = quill_mime::parse(headers, received).map_or_else(
+    let read = quill_mime::parse(headers, received);
+    let thread = read
+        .as_ref()
+        .map(quill_mime::Parsed::thread)
+        .unwrap_or_default();
+    let parsed = read.map_or_else(
         || Headers {
             message_id: None,
             subject: String::new(),
@@ -382,6 +387,7 @@ fn summary(id: &str, headers: &[u8], size: u64, received: i64) -> RemoteMessage 
         flags: Flags::default(),
         size,
         has_attachments: looks_attached(headers),
+        thread,
     }
 }
 

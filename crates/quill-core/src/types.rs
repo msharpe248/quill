@@ -155,6 +155,13 @@ pub struct RemoteMessage {
     pub flags: Flags,
     pub size: u64,
     pub has_attachments: bool,
+    /// The messages this one follows in its conversation, by Message-ID
+    /// with angle brackets: its `References`, oldest first, then its
+    /// `In-Reply-To`. A backend that knows conversations some other way
+    /// (Microsoft Graph) puts a name of its own for the conversation here.
+    /// Empty for a message that starts one, or when the backend cannot
+    /// say.
+    pub thread: Vec<String>,
 }
 
 /// New flags for a message that already exists locally.
