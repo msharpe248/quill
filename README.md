@@ -384,6 +384,17 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `help.toggle` | Show or hide help |
 | `app.quit` | Quit |
 
+### Disk space
+
+Messages you have opened, and recent ones, are kept on this Mac so they read offline. They may take up to 5 GB; past that the oldest copies are let go and fetched again when you next open them. The list of your mail and its text for searching are always kept.
+
+```toml
+[storage]
+cache_gb = 5      # 0 for no limit
+```
+
+Mail of a POP3 account is never cleared this way: this Mac may have the only copy.
+
 ### Themes
 
 Three themes ship: `dark` (the default), `light`, and `terminal`, which uses only your terminal's own sixteen colours. To make your own, copy [`dark.toml`](crates/quill-tui/themes/dark.toml) into `themes/` under a new name and edit it. Colours you leave out come from the `terminal` theme.

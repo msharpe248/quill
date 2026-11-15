@@ -593,3 +593,16 @@ async fn a_copy_of_sent_mail_is_filed_here() {
     assert!(rig.subjects(FolderRole::Sent).is_empty());
     assert!(rig.server.with(|server| server.deleted.is_empty()));
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mail_kept_here_is_never_let_go_to_make_room() {
+    // The messages are dated long ago, and the budget is nothing at all.
+    let mut rig = Rig::start(three(), ServerCopies::DeleteWhenDownloaded);
+    rig.pass().await;
+    assert!(rig.server.on_server().is_empty());
+    assert_eq!(rig.handle.trim_cache(0).await.unwrap(), 0);
+    for subject in ["One", "Two", "Three"] {
+        let id = rig.id(FolderRole::Inbox, subject);
+        assert!(rig.store.raw(id).unwrap().is_some(), "{subject}");
+    }
+}

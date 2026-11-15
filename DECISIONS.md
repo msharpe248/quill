@@ -242,6 +242,14 @@ The UI stayed usable throughout, which is the acceptance. This was a server on t
 - **An account Quill cannot use yet (POP3, Graph, EWS, or IMAP with no server set) is a notice**, never a failure to start.
 - **The UI's store worker retries when the database is momentarily busy**, since the sync engine writes through its own connection.
 
+### The cache budget (added later, with M8's work)
+
+- **Downloaded messages may take 5 GB** (`cache_gb` under `[storage]`; 0 is no limit). Past that the engine lets the oldest copies go until what is left is a tenth under the limit, so the next message does not start it again. It looks two minutes after starting and every six hours.
+- **What is let go is the raw message, not the message**: its row, its marks and its text stay, so it is still listed and still found by a search. Opening it fetches it again.
+- **Never the only copy.** Mail of an account whose mail is kept here (POP3), a sent copy the server never had, and a copy still waiting to be saved to a server are not candidates, whatever the budget. Nor is mail from the last 45 days, which the next pass would only download again.
+- **The store forgets a copy before the file is removed**, so a crash between the two leaves a file nothing points to, not a message that says it has a copy it does not.
+- **Not done yet:** the reader does not fetch a let-go message's copy by itself when it is opened; it shows the text and has no HTML or attachments until the message is fetched. Attachments of drafts are not counted or cleared.
+
 ## M3, compose and send
 
 Built and accepted on 2026-11-15 against the spec's three tests, with the owner away:

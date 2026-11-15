@@ -127,6 +127,47 @@ impl Store {
         Ok(removed > 0)
     }
 
+    /// Downloaded messages whose copies may be let go to make room, oldest
+    /// first: each a message and the hash its copy is stored under. Only
+    /// mail dated before `before`, and only mail whose server still has
+    /// it to download again: never an account's whose mail is kept here,
+    /// never a copy the server never had, and never a copy still waiting
+    /// to be saved to a server.
+    pub fn evictable(&self, before: i64, limit: usize) -> Result<Vec<(LocalMessageId, String)>> {
+        let mut statement = self.conn.prepare(
+            "SELECT m.id, m.blob_hash FROM messages m
+             JOIN folders f ON f.id = m.folder_id
+             JOIN accounts a ON a.id = f.account_id
+             WHERE m.blob_hash IS NOT NULL AND m.date < ?1
+               AND a.kind <> 'pop3'
+               AND m.remote_id NOT LIKE 'kept:%' AND m.remote_id NOT LIKE 'local:op%'
+               AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.blob_hash = m.blob_hash)
+               AND NOT EXISTS (
+                   SELECT 1 FROM messages k
+                   JOIN folders kf ON kf.id = k.folder_id
+                   JOIN accounts ka ON ka.id = kf.account_id
+                   WHERE k.blob_hash = m.blob_hash
+                     AND (ka.kind = 'pop3' OR k.remote_id LIKE 'kept:%'
+                          OR k.remote_id LIKE 'local:op%' OR k.date >= ?1))
+             ORDER BY m.date, m.id LIMIT ?2",
+        )?;
+        let rows = statement.query_map(
+            params![before, i64::try_from(limit).unwrap_or(i64::MAX)],
+            |row| Ok((LocalMessageId(row.get(0)?), row.get(1)?)),
+        )?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Records that the copy stored under `hash` has been let go: every
+    /// message that had it is as if not downloaded, to be fetched again
+    /// when it is next opened. Their text stays, for searching.
+    pub fn forget_blob(&mut self, hash: &str) -> Result<usize> {
+        Ok(self.conn.execute(
+            "UPDATE messages SET blob_hash = NULL WHERE blob_hash = ?1",
+            [hash],
+        )?)
+    }
+
     /// Files a whole message in a folder that exists only here: a copy of
     /// mail sent from an account whose server keeps none. Returns the
     /// message's id; filing the same message twice gives the same one.

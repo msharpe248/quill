@@ -24,11 +24,7 @@ impl Store {
     /// Which of `among` match `query`, newest first. For asking the
     /// question of a handful of messages, such as those that have just
     /// arrived, without searching the whole store for it.
-    pub fn search_among(
-        &self,
-        query: &Query,
-        among: &[LocalMessageId],
-    ) -> Result<Vec<MessageRow>> {
+    pub fn search_among(&self, query: &Query, among: &[LocalMessageId]) -> Result<Vec<MessageRow>> {
         if among.is_empty() {
             return Ok(Vec::new());
         }

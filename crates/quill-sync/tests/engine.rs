@@ -1074,6 +1074,74 @@ async fn a_rule_can_be_for_one_account_and_says_when_it_cannot_do_its_work() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn old_downloaded_mail_is_let_go_to_keep_within_a_budget_and_comes_back_when_opened() {
+    let backend = MemoryBackend::new(100);
+    let day = 24 * 60 * 60;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    // Three old messages and one from today, each downloaded.
+    for (id, age) in [("1", 400), ("2", 300), ("3", 200)] {
+        backend.add("INBOX", id, &format!("Old {id}"), now - age * day);
+    }
+    backend.add("INBOX", "4", "Today", now - 60);
+    let mut rig = Rig::start(backend);
+    rig.pass().await;
+    let rows = rig.store.messages(Mailbox::Unified).unwrap();
+    for row in &rows {
+        rig.handle.send(SyncRequest::FetchBody(row.id));
+    }
+    for _ in &rows {
+        rig.until(|event| matches!(event, SyncEvent::BodyReady(_)))
+            .await;
+    }
+    let has_copy = |rig: &Rig, subject: &str| {
+        let row = rig
+            .store
+            .messages(Mailbox::Unified)
+            .unwrap()
+            .into_iter()
+            .find(|row| row.headers.subject == subject)
+            .unwrap();
+        rig.blobs
+            .get(&rig.store.blob_hash(row.id).unwrap().unwrap_or_default())
+            .unwrap()
+            .is_some()
+    };
+    assert!(
+        ["Old 1", "Old 2", "Old 3", "Today"]
+            .iter()
+            .all(|s| has_copy(&rig, s))
+    );
+
+    // Plenty of room: nothing goes.
+    assert_eq!(rig.handle.trim_cache(1_000_000).await.unwrap(), 0);
+    // No room at all: everything old goes, oldest first, and what is
+    // recent stays whatever the budget says.
+    let freed = rig.handle.trim_cache(0).await.unwrap();
+    assert!(freed > 0);
+    assert!(!has_copy(&rig, "Old 1") && !has_copy(&rig, "Old 2") && !has_copy(&rig, "Old 3"));
+    assert!(has_copy(&rig, "Today"));
+    // The text is still here to search, and nothing was lost from the list.
+    let old = rig
+        .store
+        .messages(Mailbox::Unified)
+        .unwrap()
+        .into_iter()
+        .find(|row| row.headers.subject == "Old 1")
+        .unwrap();
+    assert!(rig.store.body(old.id).unwrap().is_some());
+    assert_eq!(rig.store.messages(Mailbox::Unified).unwrap().len(), 4);
+
+    // Opened again, it is fetched again.
+    rig.handle.send(SyncRequest::FetchBody(old.id));
+    rig.until(|event| matches!(event, SyncEvent::BodyReady(_)))
+        .await;
+    assert!(has_copy(&rig, "Old 1"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn dropping_the_handle_stops_the_engine() {
     let backend = MemoryBackend::new(100);
     backend.add("INBOX", "1", "Only", NOW_ISH);

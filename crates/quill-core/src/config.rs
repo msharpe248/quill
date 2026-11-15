@@ -14,6 +14,7 @@ pub struct Config {
     pub ui: UiConfig,
     pub compose: ComposeConfig,
     pub privacy: PrivacyConfig,
+    pub storage: StorageConfig,
     #[serde(rename = "account")]
     pub accounts: Vec<AccountConfig>,
     /// Searches kept in the sidebar, each a mailbox of whatever it finds.
@@ -149,6 +150,32 @@ pub enum ReplyPosition {
     #[default]
     Above,
     Below,
+}
+
+/// How much of this Mac's disk downloaded mail may take.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct StorageConfig {
+    /// The most downloaded messages may come to, in gigabytes. Past it
+    /// the oldest are let go and fetched again when next opened. 0 is no
+    /// limit.
+    pub cache_gb: f64,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self { cache_gb: 5.0 }
+    }
+}
+
+impl StorageConfig {
+    /// The limit in bytes; `None` for no limit.
+    pub fn cache_bytes(&self) -> Option<u64> {
+        // Whole megabytes are plenty exact, and keep the arithmetic in
+        // integers.
+        let megabytes = (self.cache_gb * 1024.0).round();
+        (megabytes >= 1.0 && megabytes.is_finite()).then(|| megabytes as u64 * 1024 * 1024)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
@@ -373,6 +400,11 @@ impl Config {
                 self.ui.reader_width
             )));
         }
+        if !self.storage.cache_gb.is_finite() || self.storage.cache_gb < 0.0 {
+            return Err(ConfigError::Invalid(
+                "storage.cache_gb must be 0 (no limit) or more".to_owned(),
+            ));
+        }
         for (index, rule) in self.rules.iter().enumerate() {
             let named = rule
                 .name
@@ -511,6 +543,19 @@ smtp = { host = "smtp.fastmail.com", port = 465, tls = "implicit" }
         .unwrap_err()
         .to_string();
         assert!(err.contains("is for pop3 accounts"), "{err}");
+    }
+
+    #[test]
+    fn the_cache_has_five_gigabytes_unless_told_otherwise() {
+        assert_eq!(
+            Config::default().storage.cache_bytes(),
+            Some(5 * 1024 * 1024 * 1024)
+        );
+        let half = Config::parse("[storage]\ncache_gb = 0.5\n").unwrap();
+        assert_eq!(half.storage.cache_bytes(), Some(512 * 1024 * 1024));
+        let unlimited = Config::parse("[storage]\ncache_gb = 0\n").unwrap();
+        assert_eq!(unlimited.storage.cache_bytes(), None);
+        assert!(Config::parse("[storage]\ncache_gb = -1\n").is_err());
     }
 
     #[test]

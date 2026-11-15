@@ -108,6 +108,74 @@ impl BlobStore {
     }
 }
 
+impl BlobStore {
+    /// Removes what is stored under `hash` and returns how many bytes that
+    /// freed. Removing what is not there frees nothing and is not an error.
+    pub fn remove(&self, hash: &str) -> io::Result<u64> {
+        let root = match &self.place {
+            Place::Disk(root) => root,
+            Place::Memory(blobs) => {
+                return Ok(blobs
+                    .lock()
+                    .map_err(|_| io::Error::other("the blob store was poisoned"))?
+                    .remove(hash)
+                    .map_or(0, |bytes| bytes.len() as u64));
+            }
+        };
+        let Some(path) = Self::path(root, hash) else {
+            return Ok(0);
+        };
+        let size = match fs::metadata(&path) {
+            Ok(file) => file.len(),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(0),
+            Err(err) => return Err(err),
+        };
+        match fs::remove_file(&path) {
+            Ok(()) => Ok(size),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(0),
+            Err(err) => Err(err),
+        }
+    }
+
+    /// How many bytes everything stored comes to.
+    pub fn total(&self) -> io::Result<u64> {
+        let root = match &self.place {
+            Place::Disk(root) => root,
+            Place::Memory(blobs) => {
+                return Ok(blobs
+                    .lock()
+                    .map_err(|_| io::Error::other("the blob store was poisoned"))?
+                    .values()
+                    .map(|bytes| bytes.len() as u64)
+                    .sum());
+            }
+        };
+        let mut total = 0;
+        let shelves = match fs::read_dir(root) {
+            Ok(shelves) => shelves,
+            // Nothing has been stored yet.
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(0),
+            Err(err) => return Err(err),
+        };
+        for shelf in shelves {
+            let shelf = shelf?;
+            if !shelf.file_type()?.is_dir() {
+                continue;
+            }
+            for blob in fs::read_dir(shelf.path())? {
+                let blob = blob?;
+                // A file being written has a dot in front; it is counted
+                // when it has its name.
+                if blob.file_name().to_string_lossy().starts_with('.') {
+                    continue;
+                }
+                total += blob.metadata()?.len();
+            }
+        }
+        Ok(total)
+    }
+}
+
 fn create_private_dir(dir: &Path) -> io::Result<()> {
     let mut builder = fs::DirBuilder::new();
     builder.recursive(true);

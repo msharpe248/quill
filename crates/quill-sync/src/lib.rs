@@ -193,7 +193,46 @@ impl SyncHandle {
     pub fn remove_account(&self, id: LocalAccountId) {
         self.engine.remove_account(id);
     }
+
+    /// Sets how many bytes downloaded mail may take, and has the engine
+    /// keep to it from now on: soon after this is called, and every few
+    /// hours after. Must be called on the engine's Tokio runtime.
+    pub fn keep_cache_within(&self, bytes: u64) {
+        let engine = Arc::downgrade(&self.engine);
+        tokio::spawn(async move {
+            // After the first pass has had its turn at the disk.
+            tokio::time::sleep(CACHE_FIRST_LOOK).await;
+            loop {
+                let Some(engine) = engine.upgrade() else {
+                    return;
+                };
+                if let Err(problem) = engine.trim_cache(bytes).await {
+                    engine.emit(SyncEvent::Problem {
+                        account: "Storage".to_owned(),
+                        message: format!("Old downloaded mail could not be cleared: {problem}"),
+                    });
+                }
+                drop(engine);
+                tokio::time::sleep(CACHE_LOOK_EVERY).await;
+            }
+        });
+    }
+
+    /// Lets downloaded copies go, oldest first, until they come to no more
+    /// than `bytes`. Returns how many bytes were freed. What is let go is
+    /// fetched again when it is next opened.
+    pub async fn trim_cache(&self, bytes: u64) -> Result<u64, String> {
+        self.engine.trim_cache(bytes).await
+    }
 }
+
+/// How long after starting the cache is first measured.
+const CACHE_FIRST_LOOK: Duration = Duration::from_secs(120);
+/// And how often after that.
+const CACHE_LOOK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
+/// Mail newer than this is never let go: it would only be fetched again by
+/// the next pass, which keeps recent mail readable offline.
+const CACHE_KEEPS_DAYS: i64 = 45;
 
 impl Drop for SyncHandle {
     fn drop(&mut self) {
@@ -1066,6 +1105,49 @@ impl Engine {
                 None
             }
         }
+    }
+
+    /// Lets downloaded copies go, oldest first, until what is stored comes
+    /// to no more than `budget` bytes, and a little under, so that the
+    /// next message does not start it again.
+    async fn trim_cache(&self, budget: u64) -> Result<u64, String> {
+        let Some(blobs) = self.blobs.clone() else {
+            return Ok(0);
+        };
+        let measured = Arc::clone(&blobs);
+        let total = tokio::task::spawn_blocking(move || measured.total())
+            .await
+            .map_err(|err| err.to_string())?
+            .map_err(|err| err.to_string())?;
+        if total <= budget {
+            return Ok(0);
+        }
+        let aim = budget - budget / 10;
+        let before = now() - CACHE_KEEPS_DAYS.max(self.options.prefetch_days) * 24 * 60 * 60;
+        let mut freed = 0;
+        while total - freed > aim {
+            let batch = self.db(move |store| store.evictable(before, 200)).await?;
+            if batch.is_empty() {
+                // Everything left is recent, or is the only copy there is.
+                break;
+            }
+            for (_, hash) in batch {
+                if total - freed <= aim {
+                    break;
+                }
+                // The store forgets first: a message that says it has a
+                // copy it does not have is worse than a file nothing
+                // points to.
+                let forgotten = hash.clone();
+                self.db(move |store| store.forget_blob(&forgotten)).await?;
+                let blobs = Arc::clone(&blobs);
+                freed += tokio::task::spawn_blocking(move || blobs.remove(&hash))
+                    .await
+                    .map_err(|err| err.to_string())?
+                    .map_err(|err| err.to_string())?;
+            }
+        }
+        Ok(freed)
     }
 
     /// Finds the conversations of a batch of downloaded messages that have

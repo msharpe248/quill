@@ -338,6 +338,10 @@ async fn tui(args: TuiArgs) -> anyhow::Result<()> {
             rules::from_config(&loaded.config),
             events_tx,
         ));
+        // Downloaded mail is kept within the room the config gives it.
+        if let Some(bytes) = loaded.config.storage.cache_bytes() {
+            handle.keep_cache_within(bytes);
+        }
         let accounts = service::spawn(service::Service {
             config_file: paths.config_file(),
             secrets,
