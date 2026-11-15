@@ -380,6 +380,27 @@ Built in `quill-auth` and tested against a local stand-in. No real provider was 
 - **Not built:** checking that the account signed in is the address typed; revoking the token at the provider when an account is removed; honouring `Retry-After` on the token endpoint.
 - **Remembered, to confirm with real registrations:** the endpoints; that a public client registered with `http://localhost` is accepted on any port; that the exchange and refresh work without a `scope` field; that Google's token endpoint wants the client secret alongside PKCE; that Google refresh tokens for an app in testing expire after seven days, which would look like a weekly request to sign in again.
 
+## M6, daily driver (in progress)
+
+### Push
+
+- **The engine runs a third task per account that calls the backend's `watch`** and wakes a pass on each report. The interval goes on regardless: push hurries a sync, and nothing rests on it for correctness. A backend that returns at once has no push and is not asked again; one that fails is tried again with the same lengthening waits as everything else (from `retry`, doubling, to half an hour).
+- **IMAP idles on a second connection**, in the inbox only, opened read-only. One connection per watched folder with a cap per account, as the spec has it, needs a way to say which folders and is not built; other folders are seen at the interval.
+- **A report is sent once things have been quiet for a quarter of a second**, so a burst of lines about one delivery is one sync. New counts, expunges and flag changes count as a change; the server's keep-alive chatter does not.
+- **One report is sent as soon as the idle is in place**, before anything has changed. Mail that arrived while the connection was being made, or was down, is reported by nobody; one sync at that moment closes the gap, and is why a dropped connection loses nothing. The cost is one extra look at the inbox per connection.
+- **The idle is renewed every five minutes.** That is also the longest a connection that died without a word goes unnoticed. Restarting the watch when the Mac wakes would be quicker and is not built.
+- **Graph has no push**: its notifications need a public web address to call. Those accounts are polled.
+- **Store transactions take the write lock when they begin** (`BEGIN IMMEDIATE`). With two connections, the UI's and the engine's, one that read first and wrote later was refused outright with "database is locked" when the other had written in between; the busy timeout does not apply to that case. Found as a test that failed one run in six.
+
+### Acting on several messages
+
+- **`x` selects and moves on, `V` starts and ends a range, `ctrl-a` selects everything listed, `esc` lets go.** The same keys in both presets. A range follows the cursor until it is ended, and adds to what is already selected.
+- **Selected rows carry a `+`** beside the cursor mark, and the list's title counts them, so the selection does not depend on colour.
+- **From the reader a command is about the message being read**, selection or no. Otherwise archive, delete, move, read and star apply to every selected message. Read and star set them all the same way: all read if any is unread, otherwise all unread.
+- **Each message is filed in its own account.** Moving offers the folders of the first selected message's account, and messages of other accounts stay where they are; the status line says how many moved.
+- **One undo takes back the whole action.** The operations made by one action share a batch (the `batch` column, migration 0006), and undoing the newest of them undoes them all.
+- **Filing clears the selection; marking keeps it**, to go on with.
+
 ## M7, POP3 (the protocol crate; the rest of the milestone follows M6)
 
 - **`quill-pop3` is a small in-house client**, as the spec says: CAPA, STLS, USER/PASS (AUTH PLAIN where that is all a server offers), STAT, UIDL, LIST, TOP, RETR, DELE, with pipelining when advertised. Built ahead of its milestone because it stands alone.
