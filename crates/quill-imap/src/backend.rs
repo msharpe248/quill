@@ -246,19 +246,28 @@ async fn list_folders(session: &mut Session<Stream>) -> Result<Vec<RemoteFolder>
         .try_collect()
         .await
         .map_err(failed)?;
-    let mut folders: Vec<RemoteFolder> = names
+    // Servers list in no particular order, and may list a folder twice.
+    let mut listed: Vec<names::Listed<'_>> = names
         .iter()
         // A name that only holds other folders has no messages to sync.
         .filter(|name| !name.attributes().contains(&NameAttribute::NoSelect))
-        .map(|name| RemoteFolder {
-            id: FolderId(name.name().to_owned()),
-            name: names::decode_utf7(name.name()),
-            role: names::role(name.name(), name.attributes()),
+        .map(|name| names::Listed {
+            raw: name.name(),
+            delimiter: name.delimiter(),
+            attributes: name.attributes(),
         })
         .collect();
-    // Servers list in no particular order, and may list a folder twice.
-    folders.sort_by(|a, b| a.id.0.cmp(&b.id.0));
-    folders.dedup_by(|a, b| a.id == b.id);
+    listed.sort_by(|a, b| a.raw.cmp(b.raw));
+    listed.dedup_by(|a, b| a.raw == b.raw);
+    let folders = listed
+        .iter()
+        .zip(names::folders(&listed))
+        .map(|(listed, (name, role))| RemoteFolder {
+            id: FolderId(listed.raw.to_owned()),
+            name,
+            role,
+        })
+        .collect();
     Ok(folders)
 }
 

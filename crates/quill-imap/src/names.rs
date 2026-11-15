@@ -46,24 +46,120 @@ fn decode_run(encoded: &str) -> Option<String> {
     String::from_utf16(&units).ok()
 }
 
-/// What a folder is for: from the server's SPECIAL-USE attributes when it
-/// gives them, otherwise from the names servers commonly use.
-pub(crate) fn role(name: &str, attributes: &[NameAttribute<'_>]) -> FolderRole {
-    if name.eq_ignore_ascii_case("INBOX") {
-        return FolderRole::Inbox;
-    }
-    for attribute in attributes {
-        let role = match attribute {
-            NameAttribute::Sent => FolderRole::Sent,
-            NameAttribute::Drafts => FolderRole::Drafts,
-            NameAttribute::Trash => FolderRole::Trash,
-            NameAttribute::Archive | NameAttribute::All => FolderRole::Archive,
-            NameAttribute::Junk => FolderRole::Junk,
-            _ => continue,
-        };
-        return role;
-    }
-    // Only a top-level folder is guessed at: "Projects/Sent" is not Sent.
+/// A mailbox as the server lists it.
+pub(crate) struct Listed<'a> {
+    /// The name as the server writes it: what every later command uses.
+    pub raw: &'a str,
+    /// What separates the levels of the server's folder tree, if it has one.
+    pub delimiter: Option<&'a str>,
+    pub attributes: &'a [NameAttribute<'a>],
+}
+
+/// Turns the server's list into folders to show: a readable name and a role
+/// for each. The order follows `listed`.
+///
+/// Some servers (Courier, and Dovecot set up the same way) keep every folder
+/// inside the inbox, so the list reads `INBOX`, `INBOX.Sent`, `INBOX.Trash`.
+/// That prefix is where the server keeps mail, not something the user named,
+/// so it is left out of the names shown.
+pub(crate) fn folders(listed: &[Listed<'_>]) -> Vec<(String, FolderRole)> {
+    let prefix = inbox_prefix(listed);
+    let shown: Vec<(String, Option<FolderRole>, FolderRole)> = listed
+        .iter()
+        .map(|folder| {
+            if folder.raw.eq_ignore_ascii_case("INBOX") {
+                return (
+                    "Inbox".to_owned(),
+                    Some(FolderRole::Inbox),
+                    FolderRole::Other,
+                );
+            }
+            let path = prefix
+                .as_deref()
+                .and_then(|prefix| strip_prefix_ignoring_case(folder.raw, prefix))
+                .unwrap_or(folder.raw);
+            let top_level = folder
+                .delimiter
+                .is_none_or(|delimiter| delimiter.is_empty() || !path.contains(delimiter));
+            let name = match folder.delimiter {
+                Some(delimiter) if !delimiter.is_empty() && delimiter != "/" => {
+                    decode_utf7(path).replace(delimiter, "/")
+                }
+                _ => decode_utf7(path),
+            };
+            // Only a top-level folder is guessed at: "Projects/Sent" is not Sent.
+            let guessed = if top_level {
+                role_from_name(path)
+            } else {
+                FolderRole::Other
+            };
+            (name, declared_role(folder.attributes), guessed)
+        })
+        .collect();
+
+    // What the server declares always stands. A guess from a name stands only
+    // where the server declared no folder for that role, and only for the
+    // first such name: one "Junk" beside a declared junk folder, or a "Spam"
+    // beside a "Junk", is an ordinary folder.
+    let mut taken: Vec<FolderRole> = shown
+        .iter()
+        .filter_map(|(_, declared, _)| *declared)
+        .collect();
+    shown
+        .into_iter()
+        .map(|(name, declared, guessed)| {
+            let role = match declared {
+                Some(role) => role,
+                None if guessed != FolderRole::Other && !taken.contains(&guessed) => {
+                    taken.push(guessed);
+                    guessed
+                }
+                None => FolderRole::Other,
+            };
+            (name, role)
+        })
+        .collect()
+}
+
+/// `INBOX` and its delimiter, when every folder but the inbox lives under it.
+fn inbox_prefix(listed: &[Listed<'_>]) -> Option<String> {
+    let inbox = listed
+        .iter()
+        .find(|folder| folder.raw.eq_ignore_ascii_case("INBOX"))?;
+    let delimiter = inbox.delimiter.filter(|delimiter| !delimiter.is_empty())?;
+    let prefix = format!("{}{delimiter}", inbox.raw);
+    let mut others = listed
+        .iter()
+        .filter(|folder| !folder.raw.eq_ignore_ascii_case("INBOX"))
+        .peekable();
+    others.peek()?;
+    others
+        .all(|folder| {
+            strip_prefix_ignoring_case(folder.raw, &prefix).is_some_and(|rest| !rest.is_empty())
+        })
+        .then_some(prefix)
+}
+
+fn strip_prefix_ignoring_case<'a>(name: &'a str, prefix: &str) -> Option<&'a str> {
+    let head = name.get(..prefix.len())?;
+    head.eq_ignore_ascii_case(prefix)
+        .then(|| &name[prefix.len()..])
+}
+
+/// The role the server's SPECIAL-USE attributes give a folder, if any.
+fn declared_role(attributes: &[NameAttribute<'_>]) -> Option<FolderRole> {
+    attributes.iter().find_map(|attribute| match attribute {
+        NameAttribute::Sent => Some(FolderRole::Sent),
+        NameAttribute::Drafts => Some(FolderRole::Drafts),
+        NameAttribute::Trash => Some(FolderRole::Trash),
+        NameAttribute::Archive | NameAttribute::All => Some(FolderRole::Archive),
+        NameAttribute::Junk => Some(FolderRole::Junk),
+        _ => None,
+    })
+}
+
+/// The role a folder's name suggests, from the names servers commonly use.
+fn role_from_name(name: &str) -> FolderRole {
     match name.to_ascii_lowercase().as_str() {
         "sent" | "sent items" | "sent messages" | "sent mail" => FolderRole::Sent,
         "drafts" | "draft" => FolderRole::Drafts,
@@ -108,37 +204,127 @@ mod tests {
         assert_eq!(decode_utf7("&2D0-x"), "&2D0-x");
     }
 
+    fn listed<'a>(
+        raw: &'a str,
+        delimiter: &'a str,
+        attributes: &'a [NameAttribute<'a>],
+    ) -> Listed<'a> {
+        Listed {
+            raw,
+            delimiter: Some(delimiter),
+            attributes,
+        }
+    }
+
+    fn plain<'a>(names: &[&'a str], delimiter: &'a str) -> Vec<(String, FolderRole)> {
+        let listed: Vec<_> = names
+            .iter()
+            .map(|name| listed(name, delimiter, &[]))
+            .collect();
+        folders(&listed)
+    }
+
+    fn one(name: &str, attributes: &[NameAttribute<'_>]) -> FolderRole {
+        folders(&[listed(name, "/", attributes)])[0].1
+    }
+
     #[test]
     fn special_use_attributes_decide_the_role() {
-        assert_eq!(role("Gesendet", &[NameAttribute::Sent]), FolderRole::Sent);
+        assert_eq!(one("Gesendet", &[NameAttribute::Sent]), FolderRole::Sent);
         assert_eq!(
-            role("Papierkorb", &[NameAttribute::Trash]),
+            one("Papierkorb", &[NameAttribute::Trash]),
             FolderRole::Trash
         );
         assert_eq!(
-            role("[Gmail]/All Mail", &[NameAttribute::All]),
+            one("[Gmail]/All Mail", &[NameAttribute::All]),
             FolderRole::Archive
         );
         assert_eq!(
-            role(
+            one(
                 "Whatever",
                 &[NameAttribute::NoInferiors, NameAttribute::Junk]
             ),
             FolderRole::Junk
         );
         // INBOX is the inbox whatever else the server says about it.
-        assert_eq!(role("inbox", &[NameAttribute::Sent]), FolderRole::Inbox);
+        assert_eq!(one("inbox", &[NameAttribute::Sent]), FolderRole::Inbox);
+        // An attribute beats a name.
+        assert_eq!(one("Sent", &[NameAttribute::Trash]), FolderRole::Trash);
     }
 
     #[test]
     fn common_names_are_the_fallback() {
-        assert_eq!(role("Sent Items", &[]), FolderRole::Sent);
-        assert_eq!(role("Deleted Items", &[]), FolderRole::Trash);
-        assert_eq!(role("Spam", &[]), FolderRole::Junk);
-        assert_eq!(role("Drafts", &[]), FolderRole::Drafts);
-        assert_eq!(role("Projects/Sent", &[]), FolderRole::Other);
-        assert_eq!(role("Receipts", &[]), FolderRole::Other);
-        // An attribute beats a name.
-        assert_eq!(role("Sent", &[NameAttribute::Trash]), FolderRole::Trash);
+        assert_eq!(one("Sent Items", &[]), FolderRole::Sent);
+        assert_eq!(one("Deleted Items", &[]), FolderRole::Trash);
+        assert_eq!(one("Spam", &[]), FolderRole::Junk);
+        assert_eq!(one("Drafts", &[]), FolderRole::Drafts);
+        assert_eq!(one("Projects/Sent", &[]), FolderRole::Other);
+        assert_eq!(one("Receipts", &[]), FolderRole::Other);
+    }
+
+    #[test]
+    fn the_inbox_is_called_inbox() {
+        assert_eq!(
+            plain(&["INBOX", "Sent"], "/"),
+            [
+                ("Inbox".to_owned(), FolderRole::Inbox),
+                ("Sent".to_owned(), FolderRole::Sent)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_server_that_keeps_everything_inside_the_inbox_loses_the_prefix() {
+        let sent = [NameAttribute::Sent];
+        let junk = [NameAttribute::Junk];
+        let listed = [
+            listed("INBOX", ".", &[]),
+            listed("INBOX.Archive", ".", &[]),
+            listed("INBOX.Junk", ".", &[]),
+            listed("INBOX.Sent", ".", &sent),
+            listed("INBOX.spam", ".", &junk),
+            listed("INBOX.Projects.2026", ".", &[]),
+            listed("INBOX.Projects.Sent", ".", &[]),
+            listed("INBOX.Entw&APw-rfe", ".", &[]),
+        ];
+        assert_eq!(
+            folders(&listed),
+            [
+                ("Inbox".to_owned(), FolderRole::Inbox),
+                ("Archive".to_owned(), FolderRole::Archive),
+                // The server says which folder is for junk, so a folder that
+                // is merely called Junk is an ordinary one.
+                ("Junk".to_owned(), FolderRole::Other),
+                ("Sent".to_owned(), FolderRole::Sent),
+                ("spam".to_owned(), FolderRole::Junk),
+                ("Projects/2026".to_owned(), FolderRole::Other),
+                ("Projects/Sent".to_owned(), FolderRole::Other),
+                ("Entwürfe".to_owned(), FolderRole::Other),
+            ]
+        );
+    }
+
+    #[test]
+    fn folders_inside_the_inbox_keep_their_path_when_others_live_beside_it() {
+        assert_eq!(
+            plain(&["INBOX", "INBOX/Receipts", "Sent"], "/"),
+            [
+                ("Inbox".to_owned(), FolderRole::Inbox),
+                ("INBOX/Receipts".to_owned(), FolderRole::Other),
+                ("Sent".to_owned(), FolderRole::Sent),
+            ]
+        );
+    }
+
+    #[test]
+    fn only_the_first_guess_at_a_role_stands() {
+        assert_eq!(
+            plain(&["INBOX", "Junk", "Spam"], "/"),
+            [
+                ("Inbox".to_owned(), FolderRole::Inbox),
+                ("Junk".to_owned(), FolderRole::Junk),
+                ("Spam".to_owned(), FolderRole::Other),
+            ]
+        );
     }
 }
