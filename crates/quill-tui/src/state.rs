@@ -401,6 +401,20 @@ fn is_picturable(content_type: &str, thumbnails: bool) -> bool {
                 || content_type == "application/pdf"))
 }
 
+/// A search in progress: what has been typed, and whether typing is still
+/// going on. While there is one, the list shows what it found.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Search {
+    pub input: LineInput,
+    /// The keys go to the box. Otherwise they go to the panes, and the
+    /// results are a list like any other.
+    pub typing: bool,
+    /// How many were found, once an answer for what is typed has come.
+    pub found: Option<usize>,
+    /// There are more than the list shows.
+    pub more: bool,
+}
+
 /// The list of a message's attachments, open to choose one from.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AttachmentPicker {
@@ -494,6 +508,7 @@ pub struct State {
     pub help: Option<Help>,
     pub links: Option<LinkPicker>,
     pub attachments: Option<AttachmentPicker>,
+    pub search: Option<Search>,
     pub folders: Option<FolderPicker>,
     /// The message being written, in the reader's place.
     pub compose: Option<Compose>,
@@ -540,6 +555,7 @@ impl State {
             help: None,
             links: None,
             attachments: None,
+            search: None,
             folders: None,
             compose: None,
             compose_pending: None,
@@ -590,6 +606,9 @@ impl State {
         if self.compose.is_some() {
             return Context::Compose;
         }
+        if self.search.as_ref().is_some_and(|search| search.typing) {
+            return Context::Search;
+        }
         match self.focus {
             Pane::Sidebar => Context::Sidebar,
             Pane::List => Context::List,
@@ -638,7 +657,7 @@ impl State {
                 }
             }
             Action::Notify(notice) => self.notices.push_back(notice),
-            Action::Sync(event) => self.on_sync(event, &mut out),
+            Action::Sync(event) => self.on_sync(env, event, &mut out),
             Action::Account(event) => self.on_account(event, &mut out),
             Action::Paste(text) => match self.context() {
                 Context::Setup => {
@@ -651,6 +670,13 @@ impl State {
                         picker.filter.insert(&text);
                         picker.selected = 0;
                     }
+                }
+                Context::Search => {
+                    if let Some(search) = &mut self.search {
+                        // One line: a pasted line break is a space.
+                        search.input.insert(&text.replace(['\r', '\n'], " "));
+                    }
+                    self.run_search(env, &mut out);
                 }
                 Context::Compose => {
                     if let Some(compose) = &mut self.compose
@@ -746,6 +772,17 @@ impl State {
                     return;
                 }
             }
+            Context::Search => {
+                let before = self.search_text();
+                if let Some(search) = &mut self.search
+                    && search.input.key(chord)
+                {
+                    if self.search_text() != before {
+                        self.run_search(env, out);
+                    }
+                    return;
+                }
+            }
             Context::Setup => {
                 if let Some(requests) = self.setup.as_mut().and_then(|setup| setup.key(chord)) {
                     out.accounts.extend(requests);
@@ -829,6 +866,14 @@ impl State {
             CommandId::NavPageDown => self.navigate(env, Motion::PageDown, out),
             CommandId::NavPageUp => self.navigate(env, Motion::PageUp, out),
             CommandId::NavOpen if context == Context::Links => self.open_selected_link(out),
+            CommandId::NavOpen if context == Context::Search => {
+                // To the results, if there are any to go to.
+                if let Some(search) = &mut self.search
+                    && !self.list.rows.is_empty()
+                {
+                    search.typing = false;
+                }
+            }
             CommandId::NavOpen if context == Context::Attachments => {
                 self.use_attachment(FileUse::View, out);
             }
@@ -951,6 +996,22 @@ impl State {
                 }
             }
             CommandId::MessageOpenLink => self.links = Some(LinkPicker::default()),
+            CommandId::SearchStart => {
+                // Again, to change what is being searched for.
+                match &mut self.search {
+                    Some(search) => search.typing = true,
+                    None => {
+                        self.search = Some(Search {
+                            typing: true,
+                            ..Search::default()
+                        });
+                        self.list = MessageList::default();
+                        self.list.loaded = true;
+                    }
+                }
+                // The results are in the list: bring it into view.
+                self.set_focus(Pane::List);
+            }
             CommandId::MessageAttachments => {
                 self.attachments = Some(AttachmentPicker::default());
             }
@@ -992,6 +1053,7 @@ impl State {
                 self.chosen_attachment().is_some()
             }
             CommandId::NavOpen if context == Context::Setup => true,
+            CommandId::NavOpen if context == Context::Search => !self.list.rows.is_empty(),
             CommandId::NavOpen if context == Context::Folders => self
                 .folders
                 .as_ref()
@@ -1042,6 +1104,7 @@ impl State {
             }
             CommandId::NavBack => {
                 self.help.is_some()
+                    || self.search.is_some()
                     || self.links.is_some()
                     || self.attachments.is_some()
                     || self.folders.is_some()
@@ -1180,7 +1243,10 @@ impl State {
     }
 
     fn show_mailbox(&mut self, mailbox: Mailbox, out: &mut Effects) {
-        if self.mailbox == mailbox {
+        // Choosing a mailbox is leaving the search, even for the mailbox
+        // the search was started from.
+        let searching = self.search.take().is_some();
+        if self.mailbox == mailbox && !searching {
             return;
         }
         self.mailbox = mailbox;
@@ -1190,7 +1256,15 @@ impl State {
 
     fn open(&mut self, out: &mut Effects) {
         match self.focus {
-            Pane::Sidebar => self.set_focus(Pane::List),
+            Pane::Sidebar => {
+                // Choosing a mailbox is leaving the search, even for the
+                // mailbox the search was started from.
+                if self.search.take().is_some() {
+                    self.list = MessageList::default();
+                    out.data.push(DataRequest::LoadMessages(self.mailbox));
+                }
+                self.set_focus(Pane::List);
+            }
             Pane::List => {
                 let Some(row) = self.list.rows.get(self.list.selected) else {
                     return;
@@ -1249,6 +1323,11 @@ impl State {
             self.set_focus(Pane::List);
         } else if self.notices.pop_front().is_some() {
             // One notice dismissed per press.
+        } else if self.search.is_some() && self.focus != Pane::Reader {
+            // Out of the search, back to the mailbox it was started from.
+            self.search = None;
+            self.list = MessageList::default();
+            out.data.push(DataRequest::LoadMessages(self.mailbox));
         } else {
             match self.focus {
                 Pane::Reader => self.set_focus(Pane::List),
@@ -1643,10 +1722,10 @@ impl State {
         }
     }
 
-    fn on_sync(&mut self, event: SyncEvent, out: &mut Effects) {
+    fn on_sync(&mut self, env: &Env, event: SyncEvent, out: &mut Effects) {
         let reading = |state: &Self, id| state.reader.row.as_ref().is_some_and(|row| row.id == id);
         match event {
-            SyncEvent::Changed => self.reload(out),
+            SyncEvent::Changed => self.reload(env, out),
             SyncEvent::Syncing { account, active } => {
                 if active {
                     self.syncing.insert(account);
@@ -1709,9 +1788,58 @@ impl State {
     }
 
     /// Asks the store again for everything on screen that it holds.
-    fn reload(&self, out: &mut Effects) {
+    fn reload(&self, env: &Env, out: &mut Effects) {
         out.data.push(DataRequest::LoadSidebar);
-        out.data.push(DataRequest::LoadMessages(self.mailbox));
+        match self.search_request(env) {
+            // While searching the list is what was found, and what was
+            // found may have changed too.
+            Some(request) if self.search.is_some() => out.data.push(request),
+            _ if self.search.is_some() => {}
+            _ => out.data.push(DataRequest::LoadMessages(self.mailbox)),
+        }
+    }
+
+    /// What is typed in the search box, if there is one.
+    fn search_text(&self) -> Option<String> {
+        self.search
+            .as_ref()
+            .map(|search| search.input.text().to_owned())
+    }
+
+    /// The request that finds what is typed, or `None` when nothing is.
+    fn search_request(&self, env: &Env) -> Option<DataRequest> {
+        let text = self.search_text()?;
+        let tz = env.tz.clone();
+        let query = quill_core::search::parse(&text, |year, month, day| {
+            let date = jiff::civil::Date::new(
+                i16::try_from(year).ok()?,
+                i8::try_from(month).ok()?,
+                i8::try_from(day).ok()?,
+            )
+            .ok()?;
+            Some(date.to_zoned(tz.clone()).ok()?.timestamp().as_second())
+        });
+        (!query.is_empty()).then(|| DataRequest::Search {
+            text,
+            query: Box::new(query),
+        })
+    }
+
+    /// Asks for what is typed to be found. With nothing typed there is
+    /// nothing found, and nothing to ask.
+    fn run_search(&mut self, env: &Env, out: &mut Effects) {
+        match self.search_request(env) {
+            Some(request) => out.data.push(request),
+            None => {
+                self.list = MessageList::default();
+                self.list.loaded = true;
+                if let Some(search) = &mut self.search {
+                    search.found = None;
+                    search.more = false;
+                }
+                self.sync_reader(out);
+            }
+        }
     }
 
     fn on_data(&mut self, env: &Env, event: DataEvent, out: &mut Effects) {
@@ -1740,9 +1868,35 @@ impl State {
                     }
                 }
             }
+            DataEvent::SearchLoaded {
+                text,
+                mut rows,
+                more,
+            } => {
+                // An answer for something typed over since is dropped.
+                if self.search_text().as_deref() != Some(text.as_str()) {
+                    return;
+                }
+                rows.iter_mut().for_each(sanitize_row);
+                // The message under the cursor stays under it if it is
+                // still found; otherwise the newest is.
+                let keep = self.list.rows.get(self.list.selected).map(|row| row.id);
+                self.list.selected = keep
+                    .and_then(|id| rows.iter().position(|row| row.id == id))
+                    .unwrap_or(0);
+                self.list.offset = 0;
+                if let Some(search) = &mut self.search {
+                    search.found = Some(rows.len());
+                    search.more = more;
+                }
+                self.list.rows = rows;
+                self.list.loaded = true;
+                self.sync_reader(out);
+            }
             DataEvent::MessagesLoaded { mailbox, mut rows } => {
-                if mailbox != self.mailbox {
-                    // An answer for a mailbox the user has already left.
+                if mailbox != self.mailbox || self.search.is_some() {
+                    // An answer for a mailbox the user has already left,
+                    // or one that arrives while a search has the list.
                     return;
                 }
                 rows.iter_mut().for_each(sanitize_row);
@@ -1802,7 +1956,7 @@ impl State {
                     }
                 }
             }
-            DataEvent::StoreChanged => self.reload(out),
+            DataEvent::StoreChanged => self.reload(env, out),
             // The change is written down: the engine can take it from there.
             DataEvent::Queued => out.sync.push(SyncRequest::Queue),
             DataEvent::Flash { text, undoable } => self.flash = Some((text, undoable)),

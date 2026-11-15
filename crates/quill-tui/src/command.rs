@@ -21,6 +21,8 @@ pub enum Context {
     Folders,
     /// Writing a message. Typing goes into the field with the cursor.
     Compose,
+    /// Typing what to search for. The list shows what is found so far.
+    Search,
 }
 
 impl Context {
@@ -36,6 +38,7 @@ impl Context {
             Self::Certificate => "Certificate",
             Self::Folders => "Move to a folder",
             Self::Compose => "Writing a message",
+            Self::Search => "Search",
         }
     }
 }
@@ -52,6 +55,7 @@ const EVERYWHERE: &[Context] = &[
     Context::Certificate,
     Context::Folders,
     Context::Compose,
+    Context::Search,
 ];
 /// The panes, and the form whose fields `tab` moves between.
 const PANES_AND_FORMS: &[Context] = &[
@@ -97,6 +101,7 @@ pub enum CommandId {
     MessageArchive,
     MessageDelete,
     MessageMove,
+    SearchStart,
     MessageAttachments,
     AttachmentSave,
     AttachmentOpen,
@@ -262,6 +267,7 @@ impl Registry {
                         Context::Attachments,
                         Context::Setup,
                         Context::Folders,
+                        Context::Search,
                     ],
                 ),
                 // Before nav.back, so that a key bound to both quits from a
@@ -404,6 +410,17 @@ impl Registry {
                         MESSAGE,
                     ),
                     "folder",
+                ),
+                with_symbol(
+                    spec(
+                        SearchStart,
+                        "search.start",
+                        "Search",
+                        Navigation,
+                        Some(Menu::Mailbox),
+                        PANES,
+                    ),
+                    "magnifyingglass",
                 ),
                 spec(
                     MessageAttachments,
@@ -604,6 +621,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
     const LIST: &[Hint] = &[
         hint(&[NavNext, NavPrev], "move"),
         hint(&[NavOpen], "open"),
+        hint(&[SearchStart], "search"),
         hint(&[MessageCompose], "write"),
         hint(&[MessageReply], "reply"),
         hint(&[MessageArchive], "archive"),
@@ -642,6 +660,10 @@ pub fn hints(context: Context) -> &'static [Hint] {
         hint(&[AttachmentOpen], "open in its app"),
         hint(&[NavBack], "close"),
     ];
+    const SEARCHING: &[Hint] = &[
+        hint(&[NavOpen], "to the results"),
+        hint(&[NavBack], "stop searching"),
+    ];
     const LINKS: &[Hint] = &[
         hint(&[NavNext, NavPrev], "move"),
         hint(&[NavOpen], "open in browser"),
@@ -667,6 +689,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         Context::Setup => SETUP,
         Context::Certificate => CERTIFICATE,
         Context::Links => LINKS,
+        Context::Search => SEARCHING,
         Context::Attachments => ATTACHED,
         Context::Sidebar => SIDEBAR,
         Context::List => LIST,

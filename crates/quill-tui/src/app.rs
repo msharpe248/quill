@@ -369,6 +369,7 @@ impl Io<'_> {
                 Context::Certificate => bridge::Context::Certificate,
                 Context::Folders => bridge::Context::Folders,
                 Context::Compose => bridge::Context::Compose,
+                Context::Search => bridge::Context::Search,
             },
             enabled: current
                 .enabled

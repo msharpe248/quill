@@ -80,12 +80,22 @@ pub enum DataRequest {
         part: u32,
         then: FileUse,
     },
+    /// Find mail. `text` is what was typed, to tell this answer from the
+    /// answer to what was typed before it; `query` is that text, read.
+    Search {
+        text: String,
+        query: Box<quill_core::search::Query>,
+    },
     /// Save one attachment in the Downloads folder.
     SaveAttachment {
         message: LocalMessageId,
         part: u32,
     },
 }
+
+/// The most messages a search shows. Past this the thing to do is to say
+/// more of what is wanted.
+pub const SEARCH_LIMIT: usize = 500;
 
 /// What a file taken out of a message is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,6 +153,13 @@ pub enum DataEvent {
     AttachFailed(String),
     /// A message to start writing: a reply, a forward, or a draft.
     ComposeReady(Box<Prefill>),
+    /// What a search found, newest first. `more`: there were more than are
+    /// shown.
+    SearchLoaded {
+        text: String,
+        rows: Vec<MessageRow>,
+        more: bool,
+    },
     /// Files are out of the message and readable. `index` is the one that
     /// was asked for.
     Extracted {
@@ -350,6 +367,13 @@ fn run(
                 }],
                 Err(problem) => vec![flash(&problem.0)],
             }
+        }
+        DataRequest::Search { text, query } => {
+            // One more than is shown, to know whether there are more.
+            let mut rows = store.search(&query, SEARCH_LIMIT + 1)?;
+            let more = rows.len() > SEARCH_LIMIT;
+            rows.truncate(SEARCH_LIMIT);
+            vec![DataEvent::SearchLoaded { text, rows, more }]
         }
         DataRequest::SaveAttachment { message, part } => {
             match files::save(store, files, message, part) {

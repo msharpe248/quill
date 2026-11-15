@@ -37,7 +37,7 @@ open target/app/Quill.app
 
 The script builds the Rust core and the Swift shell, assembles `target/app/Quill.app`, and signs it ad hoc with the App Sandbox on. The app opens your own mail, and the form for adding an account when there is none; `Quill.app/Contents/MacOS/Quill --demo` opens the demo mailbox instead. The app keeps its config and mail in its own container, apart from those of `quill` run in a terminal.
 
-Around the terminal the app adds a menu bar and toolbar built from the core's commands, the mailbox name and unread count in the title bar, the unread count on the Dock icon, and a second pane for previews. Press `P` (or the eye in the toolbar) to preview a sample file; `esc` closes the pane, and `cmd-]` moves focus between the panes. Press `I` to show a sample image in the reader.
+Around the terminal the app adds a menu bar and toolbar built from the core's commands, the mailbox name and unread count in the title bar, the unread count on the Dock icon, and a second pane beside the terminal for looking at attachments, playing sound and video, and showing a message's HTML. `esc` closes the pane, and `cmd-]` moves focus between the panes.
 
 `SANDBOX=0 app/build-app.sh` signs without the sandbox, to tell a sandbox denial from an ordinary bug.
 
@@ -92,13 +92,44 @@ Press `?` at any time for the keys that apply where you are. The bottom bar show
 | `f` | Forward | `e` | Archive |
 | `d` | Delete (to Trash; from Trash, for good) | `m` | Move to a folder |
 | `U` | Undo the last move, deletion or send | `A` | Add an account |
-| `P` | Preview a sample file | `I` | Show a sample image |
+| `/` | Search | `a` | List a message's attachments |
 
 Arrow keys, `home`, `end`, `pageup` and `pagedown` work too. `ctrl-d` also pages down and `ctrl-c` also quits.
 
 Set `keymap = "mutt"` in the config for mutt-flavoured keys.
 
 In the message list, `>` marks the cursor, `*` an unread message, `r` one you have answered, `!` a starred one and `@` one with attachments.
+
+## Searching
+
+`/` opens a search box in the title of the message list, and the list shows what is found as you type, from every account and folder. `enter` moves to the results, which are a list like any other: open, reply, archive. `/` again changes the search; `esc` leaves it.
+
+| Typed | Finds mail |
+|---|---|
+| `roadmap q4` | with both words, in the subject, the people or the text |
+| `"draft roadmap"` | with those words together |
+| `from:ana` `to:sam` `subject:invoice` | with the word in that place. `from:"Ana Ruiz"` for a phrase |
+| `is:unread` `is:read` `is:starred` `is:answered` | in that state |
+| `has:attachment` | with files attached |
+| `after:2026-10-01` `before:2026-11` | dated on or after, or before, a day, a month or a year |
+| `in:work` `in:sent` `in:work/inbox` | in an account, a folder, or a folder of an account |
+
+Words match whatever their case or accents, and the word you are still typing matches words that start with it. A message's text is searchable once it has been downloaded; its subject and people are from the moment it is listed. The search runs against the mail on this Mac; asking the server as well is not built yet.
+
+## Attachments and pictures
+
+A message's files are named in its header, and `a` lists them with what each is and how big.
+
+| Key in the list | Action |
+|---|---|
+| `enter` | Look at the file: Quick Look beside the terminal in the app, with `←`/`→` stepping through the message's other files. Sound and video play in a player pane |
+| `O` | Open it in the application your Mac opens that kind of file with |
+| `s` | Save it. The app asks where; in a terminal it goes to Downloads, never over a file already there |
+| `esc` | Close the list. In the app, `esc` in a pane closes the pane |
+
+The first picture among a message's files is drawn above its text, in the app and in terminals that draw pictures (Ghostty, Kitty). In the app that includes kinds only macOS can read: a HEIC photo, the first page of a PDF, a frame of a video.
+
+Files are written to a private folder that is removed when Quill quits, under names cleaned of anything that could place them elsewhere or disguise what they are, and marked as downloaded, so macOS checks them before running anything. Nothing is opened until you press a key for it.
 
 ## Writing mail
 
@@ -185,9 +216,11 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `compose.send`, `compose.save` | Send the message being written, or save it as a draft |
 | `compose.attach`, `compose.bcc` | Attach a file; add blind copies |
 | `edit.undo` | Undo the last move, deletion or send |
+| `search.start` | Search |
+| `message.attachments` | List the message's attachments |
+| `attachment.save`, `attachment.open` | Save the chosen attachment, or open it in its application |
+| `edit.copy`, `edit.cut`, `edit.select_all` | The app's Edit menu, while a message is being written |
 | `account.add` | Add an account |
-| `debug.preview_sample` | Preview a sample file (temporary) |
-| `debug.image_sample` | Show a sample image in the reader (temporary) |
 | `help.toggle` | Show or hide help |
 | `app.quit` | Quit |
 

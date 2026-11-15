@@ -660,7 +660,7 @@ fn the_status_bar_shows_the_keys_of_the_focused_context() {
             .lines()
             .last()
             .unwrap()
-            .starts_with(" j/k move  enter open  c write  r reply  e archive  d delete  u unread")
+            .starts_with(" j/k move  enter open  / search  c write  r reply  e archive  d delete")
     );
     harness.keys("1");
     let bar = harness.screen().lines().last().unwrap().to_owned();
@@ -700,7 +700,7 @@ fn the_mutt_preset_drives_the_same_commands_with_mutt_keys() {
             .lines()
             .last()
             .unwrap()
-            .contains("m write  r reply  e archive  d delete  N unread")
+            .contains("/ search  m write  r reply  e archive  d delete")
     );
 }
 
@@ -717,7 +717,7 @@ fn overridden_keys_show_up_in_the_hints_and_in_help() {
     let bar = harness.screen().lines().last().unwrap().to_owned();
     assert!(
         bar.starts_with(
-            " n/p move  enter open  c write  r reply  e archive  d delete  u unread  tab next pane"
+            " n/p move  enter open  / search  c write  r reply  e archive  d delete  u unread  tab next pane"
         ),
         "{bar}"
     );

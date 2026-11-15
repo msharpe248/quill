@@ -1,0 +1,28 @@
+---
+source: crates/quill-tui/tests/search.rs
+expression: harness.screen()
+---
+┌ [1] Accounts ──┐┏ [2] Search: from:ana road - 1 found ━━━━━━━━━━━━━━━━━━━━━━━┓
+│> Unified    12 │┃> * @ W Ana Ruiz        Q4 roadmap                     09:14┃
+│  Work          │┃                                                            ┃
+│    Inbox     8 │┃                                                            ┃
+│    Drafts      │┃                                                            ┃
+│    Sent        │┃                                                            ┃
+│    Archive     │┃                                                            ┃
+│    Trash       │┃                                                            ┃
+│  Personal      │┃                                                            ┃
+│    Inbox     4 │┃                                                            ┃
+│    Drafts      │┃                                                            ┃
+│    Sent        │┃                                                            ┃
+│    Archive     │┃                                                            ┃
+│    Trash       │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+└────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+ enter to the results  esc stop searching

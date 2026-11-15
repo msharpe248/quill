@@ -25,4 +25,4 @@ expression: harness.screen()
 ┃                                                                              ┃
 ┃                                                                              ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
- j/k move  enter open  c write  r reply  e archive  d delete  u unread  ? help
+ j/k move  enter open  / search  c write  r reply  e archive  d delete  ? help

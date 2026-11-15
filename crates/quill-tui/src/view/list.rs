@@ -39,16 +39,51 @@ impl Columns {
 pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
     let styles = &env.styles;
     let focused = state.focus == Pane::List;
-    let title = match state.mailbox_unread() {
-        0 => state.mailbox_title(),
-        unread => format!("{} - {unread} unread", state.mailbox_title()),
+    // While searching, the title is the search: what is typed, and how
+    // much it finds.
+    let title = match &state.search {
+        Some(search) => {
+            let found = match (search.found, search.more) {
+                (Some(count), true) => format!(" - {count}+ found"),
+                (Some(1), false) => " - 1 found".to_owned(),
+                (Some(count), false) => format!(" - {count} found"),
+                (None, _) => String::new(),
+            };
+            // The box follows its cursor within the room the border has.
+            let room = usize::from(area.width).saturating_sub(16 + text::width(&found));
+            let (typed, _) = search.input.view(room.max(4));
+            format!("Search: {typed}{found}")
+        }
+        None => match state.mailbox_unread() {
+            0 => state.mailbox_title(),
+            unread => format!("{} - {unread} unread", state.mailbox_title()),
+        },
     };
     let block = pane_block(2, &title, focused, styles);
     let inner = block.inner(area);
     frame.render_widget(block, area);
+    if let Some(search) = &state.search
+        && search.typing
+    {
+        // The cursor sits in the title, after what has been typed: past
+        // the corner, the space, "[2] " and "Search: ".
+        let room = usize::from(area.width).saturating_sub(16);
+        let (_, column) = search.input.view(room.max(4));
+        let x = area.x + 2 + 4 + 8 + column as u16;
+        if x < area.x + area.width.saturating_sub(1) {
+            frame.set_cursor_position(ratatui::layout::Position::new(x, area.y));
+        }
+    }
     if state.list.rows.is_empty() {
         if state.list.loaded {
-            placeholder(frame, inner, "No messages", styles);
+            let words = match &state.search {
+                Some(search) if search.input.is_empty() => {
+                    "Words, \"a phrase\", from:ana, is:unread, in:work/sent"
+                }
+                Some(_) => "Nothing found",
+                None => "No messages",
+            };
+            placeholder(frame, inner, words, styles);
         }
         return;
     }

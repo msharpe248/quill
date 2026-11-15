@@ -21,7 +21,7 @@ impl Store {
         }
         let mut conditions = vec!["m.hidden = 0".to_owned()];
         let mut values: Vec<Value> = Vec::new();
-        let mut bind = |value: Value, values: &mut Vec<Value>| -> String {
+        let bind = |value: Value, values: &mut Vec<Value>| -> String {
             values.push(value);
             format!("?{}", values.len())
         };
