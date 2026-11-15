@@ -5,7 +5,7 @@
 //! every week and is never who a new message is for.
 
 use quill_core::types::Headers;
-use rusqlite::{Transaction, params};
+use rusqlite::{OptionalExtension, Transaction, params};
 
 use crate::{Result, Store};
 
@@ -56,6 +56,43 @@ pub(crate) fn harvest(tx: &Transaction<'_>, headers: &Headers, sent_by_user: boo
 }
 
 impl Store {
+    /// Lets mail from `address` load remote content from now on. Returns
+    /// whether that is news.
+    pub fn allow_remote_content(&mut self, address: &str, now: i64) -> Result<bool> {
+        let address = address.trim().to_lowercase();
+        if address.is_empty() {
+            return Ok(false);
+        }
+        let added = self.conn.execute(
+            "INSERT OR IGNORE INTO remote_senders (address, added) VALUES (?1, ?2)",
+            rusqlite::params![address, now],
+        )?;
+        Ok(added > 0)
+    }
+
+    /// Stops mail from `address` loading remote content unasked. Returns
+    /// whether it was allowed before.
+    pub fn block_remote_content(&mut self, address: &str) -> Result<bool> {
+        let removed = self.conn.execute(
+            "DELETE FROM remote_senders WHERE address = ?1",
+            [address.trim().to_lowercase()],
+        )?;
+        Ok(removed > 0)
+    }
+
+    /// Whether mail from `address` may load remote content unasked.
+    pub fn allows_remote_content(&self, address: &str) -> Result<bool> {
+        let found: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT 1 FROM remote_senders WHERE address = ?1",
+                [address.trim().to_lowercase()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(found.is_some())
+    }
+
     /// People whose name or address has a part starting with `typed` (a
     /// word of the name, or what follows a dot or the @ of the address),
     /// best first: those written to most, then most recently.

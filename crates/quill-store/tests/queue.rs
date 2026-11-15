@@ -1119,3 +1119,26 @@ fn a_contact_is_one_person_and_keeps_a_name() {
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].name, "Ana Ruiz");
 }
+
+#[test]
+fn senders_allowed_remote_content_are_remembered_by_address() {
+    let mut store = Store::open_in_memory().unwrap();
+    assert!(!store.allows_remote_content("news@example.com").unwrap());
+    assert!(
+        store
+            .allow_remote_content("News@Example.com ", 100)
+            .unwrap()
+    );
+    // The same sender however the address is written, and no one else.
+    assert!(store.allows_remote_content("news@example.com").unwrap());
+    assert!(store.allows_remote_content(" NEWS@EXAMPLE.COM").unwrap());
+    assert!(!store.allows_remote_content("other@example.com").unwrap());
+    assert!(!store.allows_remote_content("").unwrap());
+    // Allowing twice is not news; nobody is allowed by an empty address.
+    assert!(!store.allow_remote_content("news@example.com", 200).unwrap());
+    assert!(!store.allow_remote_content("  ", 200).unwrap());
+    // And it can be taken back.
+    assert!(store.block_remote_content("news@example.com").unwrap());
+    assert!(!store.block_remote_content("news@example.com").unwrap());
+    assert!(!store.allows_remote_content("news@example.com").unwrap());
+}
