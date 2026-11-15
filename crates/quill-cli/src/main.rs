@@ -8,6 +8,7 @@ mod headless;
 mod oauth;
 mod password;
 mod paths;
+mod rules;
 mod service;
 mod setup;
 mod signin;
@@ -329,11 +330,12 @@ async fn tui(args: TuiArgs) -> anyhow::Result<()> {
         // The engine runs even with no accounts, so that one added from the
         // setup flow starts syncing at once. It has a connection of its
         // own; the UI keeps this one.
-        let handle = Arc::new(quill_sync::spawn(
+        let handle = Arc::new(quill_sync::spawn_with_rules(
             open()?,
             Some(paths.data_dir.join("blobs")),
             prepared.accounts,
             SyncOptions::default(),
+            rules::from_config(&loaded.config),
             events_tx,
         ));
         let accounts = service::spawn(service::Service {

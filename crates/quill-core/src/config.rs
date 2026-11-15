@@ -19,6 +19,36 @@ pub struct Config {
     /// Searches kept in the sidebar, each a mailbox of whatever it finds.
     #[serde(rename = "search")]
     pub searches: Vec<SavedSearch>,
+    /// What to do with mail as it arrives, in the order written.
+    #[serde(rename = "rule")]
+    pub rules: Vec<RuleConfig>,
+}
+
+/// Something to do with arriving mail that matches a search.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuleConfig {
+    /// What the rule is called when Quill has something to say about it.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Which mail it is for, in the search box's words: `from:buildbot`.
+    #[serde(rename = "match")]
+    pub matching: String,
+    /// Only mail of this account. Every account's, without it.
+    #[serde(default)]
+    pub account: Option<String>,
+    /// File it in this folder of its account: a folder's name, or what a
+    /// folder is for (`archive`, `trash`, `junk`).
+    #[serde(default)]
+    pub move_to: Option<String>,
+    #[serde(default)]
+    pub mark_read: bool,
+    #[serde(default)]
+    pub star: bool,
+    /// Whether to announce it. Left out: announced if it stays in the
+    /// inbox, not if the rule files it elsewhere.
+    #[serde(default)]
+    pub notify: Option<bool>,
 }
 
 /// A search with a name, shown in the sidebar.
@@ -342,6 +372,22 @@ impl Config {
                 "ui.reader_width must be between 0.2 and 0.8, got {}",
                 self.ui.reader_width
             )));
+        }
+        for (index, rule) in self.rules.iter().enumerate() {
+            let named = rule
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("rule {}", index + 1));
+            if rule.matching.trim().is_empty() {
+                return Err(ConfigError::Invalid(format!(
+                    "{named} has nothing to match. Give it `match = \"from:someone\"`"
+                )));
+            }
+            if rule.move_to.is_none() && !rule.mark_read && !rule.star && rule.notify.is_none() {
+                return Err(ConfigError::Invalid(format!(
+                    "{named} does nothing. Give it one of move_to, mark_read, star or notify"
+                )));
+            }
         }
         for search in &self.searches {
             if search.name.trim().is_empty() || search.query.trim().is_empty() {

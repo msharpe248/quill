@@ -373,7 +373,7 @@ pub async fn sync(
     let mut waiting: Vec<_> = prepared.accounts.iter().map(|account| account.id).collect();
     let synced = waiting.len();
     let (events_tx, mut events) = tokio::sync::mpsc::unbounded_channel();
-    let handle = quill_sync::spawn(
+    let handle = quill_sync::spawn_with_rules(
         open()?,
         Some(blobs),
         prepared.accounts,
@@ -382,6 +382,7 @@ pub async fn sync(
             interval: Duration::from_secs(24 * 60 * 60),
             ..SyncOptions::default()
         },
+        crate::rules::from_config(config),
         events_tx,
     );
     let mut sent = 0usize;

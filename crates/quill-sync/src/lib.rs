@@ -13,6 +13,8 @@
 //!
 //! Nothing here knows which protocol an account speaks.
 
+pub mod rules;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
@@ -27,6 +29,8 @@ use quill_store::{BlobStore, Outgoing, QueuedKind, QueuedOperation, Store};
 use tokio::sync::Notify;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::task::JoinHandle;
+
+pub use crate::rules::Rule;
 
 /// An account for the engine to keep in sync.
 pub struct SyncAccount {
@@ -209,11 +213,25 @@ pub fn spawn(
     options: SyncOptions,
     events: UnboundedSender<SyncEvent>,
 ) -> SyncHandle {
+    spawn_with_rules(store, blobs, accounts, options, Vec::new(), events)
+}
+
+/// As [`spawn`], with rules for mail as it arrives. They are there from
+/// the first pass: mail is never looked at before its rules are known.
+pub fn spawn_with_rules(
+    store: Store,
+    blobs: Option<PathBuf>,
+    accounts: Vec<SyncAccount>,
+    options: SyncOptions,
+    rules: Vec<Rule>,
+    events: UnboundedSender<SyncEvent>,
+) -> SyncHandle {
     let (requests, queue) = unbounded_channel();
     let engine = Arc::new(Engine {
         store: Arc::new(Mutex::new(store)),
         blobs: blobs.map(|root| Arc::new(BlobStore::new(root))),
         options,
+        rules,
         events,
         accounts: RwLock::new(HashMap::new()),
     });
@@ -286,6 +304,8 @@ struct Engine {
     /// settings change.
     accounts: RwLock<HashMap<LocalAccountId, Arc<Running>>>,
     options: SyncOptions,
+    /// What to do with mail as it arrives.
+    rules: Vec<Rule>,
     events: UnboundedSender<SyncEvent>,
 }
 
@@ -606,31 +626,52 @@ impl Engine {
                     delta.added.retain(|message| !known.contains(&message.id));
                     changed = dropped;
                 }
-                // Unread mail the inbox did not have before is announced.
-                let unread: Vec<RemoteId> = if role == FolderRole::Inbox && !first_look {
+                // Mail the inbox did not have before is put to the rules,
+                // and what of it is unread is announced.
+                let listed: Vec<(RemoteId, bool)> = if role == FolderRole::Inbox && !first_look {
                     delta
                         .added
                         .iter()
-                        .filter(|message| !message.flags.seen)
-                        .map(|message| message.id.clone())
+                        .map(|message| (message.id.clone(), message.flags.seen))
                         .collect()
                 } else {
                     Vec::new()
                 };
-                let (applied, arrived) = self
+                let rules = self.rules.clone();
+                let account_name = account.name.clone();
+                let (applied, mut arrived, ruled) = self
                     .db(move |store| {
                         // A backend may list a message again because it
                         // changed; that is not an arrival.
-                        let known = store.known_remote_ids(account_id, &unread)?;
+                        let ids: Vec<RemoteId> = listed.iter().map(|(id, _)| id.clone()).collect();
+                        let known = store.known_remote_ids(account_id, &ids)?;
                         let applied = store.apply_delta(local, &delta)?;
-                        let mut arrived = Vec::new();
-                        for id in unread.iter().filter(|id| !known.contains(id)) {
-                            arrived.extend(store.local_message_id(local, id)?);
+                        let mut new = Vec::new();
+                        let mut unread = Vec::new();
+                        for (id, seen) in listed.iter().filter(|(id, _)| !known.contains(id)) {
+                            if let Some(message) = store.local_message_id(local, id)? {
+                                new.push(message);
+                                if !seen {
+                                    unread.push(message);
+                                }
+                            }
                         }
-                        Ok((applied, arrived))
+                        let ruled =
+                            rules::apply(store, &rules, account_id, &account_name, &new, now())?;
+                        Ok((applied, unread, ruled))
                     })
                     .await?;
-                changed |= applied;
+                changed |= applied | ruled.queued;
+                if ruled.queued {
+                    // What the rules decided goes to the server now.
+                    if let Some(running) = self.account(account_id) {
+                        running.queue.notify_one();
+                    }
+                }
+                for problem in ruled.problems {
+                    self.problem(account, problem);
+                }
+                arrived.retain(|id| !ruled.quiet.contains(id));
                 if !arrived.is_empty() {
                     self.emit(SyncEvent::Arrived {
                         account: account_id,

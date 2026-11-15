@@ -279,6 +279,31 @@ The SMTP server is signed in to with the same name and password as the IMAP serv
 
 `ctrl-l` (or `cmd-L` in the app) in a message being written asks when to send it, in the same words as a snooze: `tomorrow 8`, `mon`, `2h`. The message waits in the Outbox, which shows when it will go, and `U` or opening it from the Outbox takes it back. It is sent at that time if Quill is running then, and otherwise when Quill next runs: nothing on a server holds it.
 
+## Rules for arriving mail
+
+A rule does something with mail as it arrives in an inbox: files it, marks it, or keeps quiet about it. Rules are written in the config and asked in order.
+
+```toml
+[[rule]]
+match = "from:buildbot"          # the search box's words
+move_to = "archive"              # a folder's name, or archive, trash, junk
+mark_read = true
+
+[[rule]]
+name = "Invoices"
+match = "subject:invoice has:attachment"
+account = "Work"                 # only this account's mail
+star = true
+
+[[rule]]
+match = "from:newsletter"
+notify = false                   # stays in the inbox, with no notification
+```
+
+A rule needs `match` and at least one thing to do. Every rule that matches marks the message; the first that files it is the one that files it. Mail a rule files out of the inbox is not announced unless the rule says `notify = true`.
+
+What a rule does is done on the server as well, the same way as when you do it yourself. Rules see who a message is from and to, its subject, its marks and whether it has attachments; the words of its body are not known when it arrives. They apply to mail arriving from now on, not to mail already there, and only while Quill is running or when `quill sync` runs.
+
 ## From a shell
 
 Quill's mail can be read and sent without its screen, for scripts and for a quick look. Each command takes `--json`.

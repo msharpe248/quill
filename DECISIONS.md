@@ -548,3 +548,15 @@ Accepted 2026-11-15: repeated polls never duplicate or lose a message under each
 - **`now` in the prompt brings a snoozed message back at once.**
 - **Send later is the undo-send delay with a longer wait**: the message goes into the Outbox with the time it is due, and the engine sends it when that comes, as it does any other. It can be taken back the same ways. Nothing holds it on a server, so it goes only when Quill is running at or after that time, and the prompt and the confirmation both say so.
 
+### Rules
+
+- **A `[[rule]]` is a search and something to do with what it finds**: `move_to`, `mark_read`, `star`, `notify`. A rule with nothing to match or nothing to do is a config error, said at startup, not a rule that silently never fires.
+- **Rules are asked about mail new to an inbox, as it arrives**, in the order written, by the sync engine. Not about what a folder holds when it is first synced: a rule is not a way to reorganise a mailbox, and a mistake in one should not refile fifty thousand messages.
+- **What a rule does goes through the same queue as what the user does**, so it reaches the server the same way, survives a restart and is safe to repeat. There is no undo window: nobody is watching.
+- **Every matching rule's marks are made; the first rule that files a message files it.**
+- **A rule sees the envelope**: sender, recipients, subject, marks, attachments, dates. The body is not downloaded when rules are asked, so a word that is only in the body does not match. Asking again once the body is here would have a message move minutes after arriving; not done.
+- **Mail a rule files out of the inbox is not announced** unless the rule says `notify = true`; mail it leaves there is, unless it says `notify = false`.
+- **`move_to` names a folder of the message's own account**, by the folder's name first and then by what a folder is for (`archive`, `trash`, `junk`). An account with no such folder gets a notice naming the rule, and the message stays put.
+- **No labels.** The spec lists "label" among a rule's actions; Quill has folders (Gmail's labels appear as folders), so filing is the action.
+- **Rules run only while Quill does**, in the app or in `quill sync`. They are not server-side rules (Sieve, Graph inbox rules), which are on the P2 list.
+

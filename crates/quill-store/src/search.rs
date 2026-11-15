@@ -9,6 +9,8 @@
 use quill_core::search::{Query, Term};
 use rusqlite::types::Value;
 
+use quill_core::types::LocalMessageId;
+
 use crate::{MessageRow, Result, Store, message_row};
 
 impl Store {
@@ -16,10 +18,39 @@ impl Store {
     /// empty query matches nothing: a search box with nothing in it is not
     /// a request for every message there is.
     pub fn search(&self, query: &Query, limit: usize) -> Result<Vec<MessageRow>> {
+        self.search_within(query, None, limit)
+    }
+
+    /// Which of `among` match `query`, newest first. For asking the
+    /// question of a handful of messages, such as those that have just
+    /// arrived, without searching the whole store for it.
+    pub fn search_among(
+        &self,
+        query: &Query,
+        among: &[LocalMessageId],
+    ) -> Result<Vec<MessageRow>> {
+        if among.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.search_within(query, Some(among), among.len())
+    }
+
+    fn search_within(
+        &self,
+        query: &Query,
+        among: Option<&[LocalMessageId]>,
+        limit: usize,
+    ) -> Result<Vec<MessageRow>> {
         if query.is_empty() {
             return Ok(Vec::new());
         }
         let mut conditions = vec!["m.hidden = 0".to_owned()];
+        if let Some(among) = among {
+            // Ids are numbers of the store's own making: written in, not
+            // bound, so any number of them fits.
+            let ids: Vec<String> = among.iter().map(|id| id.0.to_string()).collect();
+            conditions.push(format!("m.id IN ({})", ids.join(",")));
+        }
         let mut values: Vec<Value> = Vec::new();
         let bind = |value: Value, values: &mut Vec<Value>| -> String {
             values.push(value);

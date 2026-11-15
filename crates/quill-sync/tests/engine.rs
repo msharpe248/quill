@@ -374,6 +374,15 @@ impl Rig {
     }
 
     fn start_with(backend: MemoryBackend, options: SyncOptions) -> Self {
+        Self::start_ruled(backend, options, Vec::new())
+    }
+
+    /// With rules for mail as it arrives.
+    fn start_ruled(
+        backend: MemoryBackend,
+        options: SyncOptions,
+        rules: Vec<quill_sync::Rule>,
+    ) -> Self {
         let post = Outgoing::default();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("quill.db");
@@ -382,7 +391,7 @@ impl Rig {
             .upsert_account("Work", "robin@example.com", "imap")
             .unwrap();
         let (events_tx, events) = unbounded_channel();
-        let handle = quill_sync::spawn(
+        let handle = quill_sync::spawn_with_rules(
             Store::open(&path).unwrap(),
             Some(dir.path().join("blobs")),
             vec![SyncAccount {
@@ -394,6 +403,7 @@ impl Rig {
                 server_copies: quill_sync::ServerCopies::Keep,
             }],
             options,
+            rules,
             events_tx,
         );
         Self {
@@ -902,6 +912,165 @@ async fn new_unread_mail_in_the_inbox_is_announced_and_nothing_else_is() {
             .iter()
             .any(|event| matches!(event, SyncEvent::Arrived { .. }))
     );
+}
+
+fn rule(matching: &str) -> quill_sync::Rule {
+    quill_sync::Rule {
+        name: matching.to_owned(),
+        query: quill_core::search::parse(matching, |_, _, _| None),
+        account: None,
+        move_to: None,
+        mark_read: false,
+        star: false,
+        notify: None,
+    }
+}
+
+fn hour_long() -> SyncOptions {
+    SyncOptions {
+        interval: Duration::from_secs(3600),
+        retry: Duration::from_secs(1),
+        prefetch_days: 30,
+        prefetch_limit: 100,
+    }
+}
+
+/// The subjects announced in these events.
+fn announced(rig: &Rig, events: &[SyncEvent]) -> Vec<String> {
+    let ids: Vec<LocalMessageId> = events
+        .iter()
+        .filter_map(|event| match event {
+            SyncEvent::Arrived { messages, .. } => Some(messages.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    rig.store
+        .message_rows(&ids)
+        .unwrap()
+        .into_iter()
+        .map(|row| row.headers.subject)
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rules_file_and_mark_arriving_mail_on_the_server_too() {
+    let backend = MemoryBackend::new(100);
+    backend.add("INBOX", "1", "Already here: build passed", NOW_ISH);
+    backend.add("Archive", "1", "Old", NOW_ISH);
+    let rules = vec![
+        quill_sync::Rule {
+            move_to: Some("archive".to_owned()),
+            mark_read: true,
+            ..rule("subject:build")
+        },
+        quill_sync::Rule {
+            star: true,
+            ..rule("subject:invoice")
+        },
+        quill_sync::Rule {
+            notify: Some(false),
+            ..rule("subject:digest")
+        },
+    ];
+    let mut rig = Rig::start_ruled(backend, hour_long(), rules);
+    rig.pass().await;
+    // What was there before the rules were is left alone: a rule is for
+    // mail as it arrives, not a way to reorganise a mailbox.
+    assert_eq!(rig.subjects("INBOX"), ["Already here: build passed"]);
+
+    rig.backend.add("INBOX", "2", "Build failed", NOW_ISH + 1);
+    rig.backend.add("INBOX", "3", "Invoice 114", NOW_ISH + 2);
+    rig.backend.add("INBOX", "4", "Daily digest", NOW_ISH + 3);
+    rig.backend.add("INBOX", "5", "Lunch?", NOW_ISH + 4);
+    let events = rig.sync_now().await;
+    rig.queue_empty().await;
+
+    // Filed and read, here and on the server.
+    assert!(rig.subjects("Archive").contains(&"Build failed".to_owned()));
+    assert!(!rig.subjects("INBOX").contains(&"Build failed".to_owned()));
+    rig.backend.with(|server| {
+        assert!(!server.folders["INBOX"].contains_key("2"));
+        assert!(
+            server.folders["Archive"]
+                .values()
+                .any(|mail| mail.subject == "Build failed")
+        );
+    });
+    // Starred, and still in the inbox.
+    let starred = rig
+        .store
+        .messages(Mailbox::Unified)
+        .unwrap()
+        .into_iter()
+        .find(|row| row.headers.subject == "Invoice 114")
+        .unwrap();
+    assert!(starred.flags.flagged);
+    rig.backend
+        .with(|server| assert!(server.folders["INBOX"]["3"].flags.flagged));
+
+    // Announced: what stays in the inbox, but not what a rule filed
+    // elsewhere or was told to keep quiet about.
+    let mut said = announced(&rig, &events);
+    said.sort();
+    assert_eq!(said, ["Invoice 114", "Lunch?"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rule_can_be_for_one_account_and_says_when_it_cannot_do_its_work() {
+    let backend = MemoryBackend::new(100);
+    backend.add("INBOX", "1", "First", NOW_ISH);
+    let rules = vec![
+        // For another account: never asked.
+        quill_sync::Rule {
+            account: Some("Personal".to_owned()),
+            star: true,
+            ..rule("subject:hello")
+        },
+        // For this one, into a folder it does not have.
+        quill_sync::Rule {
+            account: Some("work".to_owned()),
+            move_to: Some("Receipts".to_owned()),
+            ..rule("subject:hello")
+        },
+        // Filed and still announced, because the rule says so.
+        quill_sync::Rule {
+            move_to: Some("trash".to_owned()),
+            notify: Some(true),
+            ..rule("subject:loud")
+        },
+    ];
+    backend.add("Trash", "1", "Old", NOW_ISH);
+    let mut rig = Rig::start_ruled(backend, hour_long(), rules);
+    rig.pass().await;
+    rig.backend.add("INBOX", "2", "Hello there", NOW_ISH + 1);
+    rig.backend.add("INBOX", "3", "Loud one", NOW_ISH + 2);
+    let events = rig.sync_now().await;
+    rig.queue_empty().await;
+
+    let hello = rig
+        .store
+        .messages(Mailbox::Unified)
+        .unwrap()
+        .into_iter()
+        .find(|row| row.headers.subject == "Hello there")
+        .unwrap();
+    assert!(!hello.flags.flagged);
+    let problem = events
+        .iter()
+        .find_map(|event| match event {
+            SyncEvent::Problem { message, .. } => Some(message.clone()),
+            _ => None,
+        })
+        .expect("the missing folder was not mentioned");
+    assert!(
+        problem.contains("files mail in \"Receipts\", and Work has no such folder"),
+        "{problem}"
+    );
+    assert!(rig.subjects("Trash").contains(&"Loud one".to_owned()));
+    let mut said = announced(&rig, &events);
+    said.sort();
+    assert_eq!(said, ["Hello there", "Loud one"]);
 }
 
 #[tokio::test(flavor = "multi_thread")]
