@@ -1,0 +1,28 @@
+---
+source: crates/quill-tui/tests/snapshots.rs
+expression: harness.screen()
+---
+┏ [1] Accounts ━━┓┌ [2] Personal / Inbox - 4 unread ───────────────────────────┐
+┃  Unified    12 ┃│> *   Peter Vale      Sunday dinner                    08:35│
+┃  Work          ┃│  *   Maya Okafor     Trail run Saturday               04:30│
+┃    Inbox     8 ┃│  *   Riverside Libr… Your hold is ready                 Fri│
+┃    Drafts      ┃│      Jo Park         Re: Book club pick                 Thu│
+┃    Sent        ┃│  *   Hillcrest Dent… Appointment reminder               Sun│
+┃    Archive     ┃│   !@ Maya Okafor     Recipe you asked for            Oct 25│
+┃    Trash       ┃│                                                            │
+┃  Personal      ┃│                                                            │
+┃>   Inbox     4 ┃│                                                            │
+┃    Drafts      ┃│                                                            │
+┃    Sent        ┃│                                                            │
+┃    Archive     ┃│                                                            │
+┃    Trash       ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┗━━━━━━━━━━━━━━━━┛└────────────────────────────────────────────────────────────┘
+ j/k move  enter open  tab next pane  z zoom  ? help  q quit

@@ -1,0 +1,27 @@
+# cargo-deny: licence, advisory and source checks. Run `cargo deny check`.
+
+[graph]
+all-features = true
+
+[advisories]
+yanked = "deny"
+
+[licenses]
+# Every dependency must offer at least one of these. Adding a licence here is
+# a decision: record it in DECISIONS.md.
+allow = ["MIT", "Apache-2.0", "Unicode-3.0", "Zlib"]
+confidence-threshold = 0.9
+
+[licenses.private]
+# Quill's own crates carry no licence until the open-source question in the
+# spec is settled. They are never published.
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

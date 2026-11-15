@@ -1,0 +1,21 @@
+[package]
+name = "quill-host"
+description = "What hosts Quill's core: the app shell over the bridge, or nothing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+
+[dev-dependencies]
+jsonschema.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "macros", "time"] }

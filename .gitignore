@@ -1,0 +1,5 @@
+/target
+/app/.build
+/app/.swiftpm
+*.snap.new
+.DS_Store

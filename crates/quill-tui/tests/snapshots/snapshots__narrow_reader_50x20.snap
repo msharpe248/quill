@@ -1,0 +1,24 @@
+---
+source: crates/quill-tui/tests/snapshots.rs
+expression: harness.screen()
+---
+┏ [3] Reader ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ From:    Build Bot <ci@example.com>            ┃
+┃ To:      Robin Vale <robin@example.com>        ┃
+┃ Date:    Sat 14 Nov 2026 08:51                 ┃
+┃ Subject: [quill] PR #42 passed                 ┃
+┃                                                ┃
+┃ All 214 checks passed for PR #42 (store:       ┃
+┃ forward-only migrations).                      ┃
+┃                                                ┃
+┃ fmt      ok                                    ┃
+┃ clippy   ok                                    ┃
+┃ test     ok   (212 passed, 2 ignored)          ┃
+┃ deny     ok                                    ┃
+┃                                                ┃
+┃ This message was sent by a robot. Replies go   ┃
+┃ nowhere.                                       ┃
+┃                                                ┃
+┃                                                ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+ j/k scroll  space page  esc back  ? help

@@ -1,0 +1,33 @@
+[package]
+name = "quill-tui"
+description = "Quill's terminal UI: state, views, keymap, themes and the command registry"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+quill-core.workspace = true
+quill-host.workspace = true
+quill-media.workspace = true
+quill-store.workspace = true
+# Named only to switch on `event-stream`; the code reaches crossterm through
+# `ratatui::crossterm` so the two can never disagree on a version.
+crossterm.workspace = true
+futures-util.workspace = true
+jiff.workspace = true
+ratatui.workspace = true
+rustix.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
+toml.workspace = true
+unicode-segmentation.workspace = true
+unicode-width.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }

@@ -1,0 +1,28 @@
+---
+source: crates/quill-tui/tests/snapshots.rs
+expression: harness.screen()
+---
+┏ [1] Accounts ━━┓┌ [2] Work / Trash ──────────────────────────────────────────┐
+┃  Unified    12 ┃│                                                            │
+┃  Work          ┃│                                                            │
+┃    Inbox     8 ┃│                                                            │
+┃    Drafts      ┃│                                                            │
+┃    Sent        ┃│                                                            │
+┃    Archive     ┃│                                                            │
+┃>   Trash       ┃│                                                            │
+┃  Personal      ┃│                                                            │
+┃    Inbox     4 ┃│                                                            │
+┃    Drafts      ┃│                                                            │
+┃    Sent        ┃│                         No messages                        │
+┃    Archive     ┃│                                                            │
+┃    Trash       ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┗━━━━━━━━━━━━━━━━┛└────────────────────────────────────────────────────────────┘
+ j/k move  enter open  tab next pane  z zoom  ? help  q quit

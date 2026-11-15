@@ -1,0 +1,28 @@
+---
+source: crates/quill-tui/tests/snapshots.rs
+expression: harness.screen()
+---
+┌ [1] Accounts ──┐┏ [3] Reader ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ attachment ┓
+│> Unified    11 │┃ From:    Ana Ruiz <ana.ruiz@example.com>                   ┃
+│  Work          │┃ To:      Robin Vale <robin@example.com>                    ┃
+│    Inbox     7 │┃ Date:    Sat 14 Nov 2026 09:14                             ┃
+│    Drafts      │┃ Subject: Q4 roadmap                                        ┃
+│    Sent        │┃                                                            ┃
+│    Archive     │┃ Hi Robin,                                                  ┃
+│    Trash       │┃                                                            ┃
+│  Personal      │┃ Here is the draft roadmap for Q4. The short version: we    ┃
+│    Inbox     4 │┃ ship the sync rewrite in October, spend November on        ┃
+│    Drafts      │┃ search, and keep December for whatever the first two       ┃
+│    Sent        │┃ months break.                                              ┃
+│    Archive     │┃                                                            ┃
+│    Trash       │┃ Three things I would like your eyes on before Thursday:    ┃
+│                │┃                                                            ┃
+│                │┃ 1. The search milestone assumes the index format is        ┃
+│                │┃ settled. Is it?                                            ┃
+│                │┃ 2. I have pencilled in two weeks for the offline queue.    ┃
+│                │┃ Tell me if that is fantasy.                                ┃
+│                │┃ 3. The on-call rota over the holidays is still empty.      ┃
+│                │┃                                                            ┃
+│                │┃ The PDF has the detail, including the dependency chart you ┃
+└────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1-16 of 25 ┛
+ j/k scroll  space page  esc back  u unread  s star  z zoom  ? help  q quit

@@ -1,0 +1,141 @@
+# Quill
+
+A keyboard-first mail client for macOS: a native app whose main surface is a terminal it creates itself. A Swift shell supplies the window, menus and media viewers; a Rust core draws the mail UI inside an embedded terminal and does all the mail work.
+
+The full design is in [the spec](Quill%20Terminal%20Email%20Client%20Spec.md). Choices that depart from it or fill a gap are in [DECISIONS.md](DECISIONS.md).
+
+## Status
+
+Milestone 0, the core skeleton, is in place: the Rust workspace, the local store with migrations, config loading, themes, keymaps, and a three-pane terminal UI over a demo mailbox.
+
+Milestone 1, the app shell, is in place too. `Quill.app` runs the core in its own libghostty terminal inside the App Sandbox, builds its menus and toolbar from the core's command list, shows files in a Quick Look pane beside the terminal, and draws images inline with the Kitty graphics protocol. App Store validation is deferred until there is a developer account to sign with.
+
+There is no real mail yet. Accounts, sync and sending arrive in later milestones.
+
+## Try it
+
+You need a stable Rust toolchain (1.89 or later; `rust-toolchain.toml` selects it). Standalone use is meant for Ghostty or Kitty, whose keyboard protocol Quill uses when it is offered; other terminals work with fewer key combinations.
+
+```sh
+cargo run --release -- tui --demo
+```
+
+`--demo` opens an invented mailbox held in memory. It reads your config, theme and keys if you have them, and writes nothing.
+
+Without `--demo`, `quill tui` opens (and creates) the real database, which is empty until account setup lands.
+
+## The app
+
+```sh
+app/build-app.sh
+open target/app/Quill.app
+```
+
+The script builds the Rust core and the Swift shell, assembles `target/app/Quill.app`, and signs it ad hoc with the App Sandbox on. Until accounts exist the app opens the demo mailbox.
+
+Around the terminal the app adds a menu bar and toolbar built from the core's commands, the mailbox name and unread count in the title bar, the unread count on the Dock icon, and a second pane for previews. Press `P` (or the eye in the toolbar) to preview a sample file; `esc` closes the pane, and `cmd-]` moves focus between the panes. Press `I` to show a sample image in the reader.
+
+`SANDBOX=0 app/build-app.sh` signs without the sandbox, to tell a sandbox denial from an ordinary bug.
+
+## Keys
+
+Press `?` at any time for the keys that apply where you are. The bottom bar shows the most useful ones.
+
+| Key | Action | Key | Action |
+|---|---|---|---|
+| `j` / `k` | Next, previous | `1` `2` `3` | Focus accounts, list, reader |
+| `g g` / `G` | Top, bottom | `tab` / `shift-tab` | Next, previous pane |
+| `space` / `ctrl-u` | Page down, up | `z` | Zoom the focused pane |
+| `enter` | Open | `u` | Mark read or unread |
+| `esc` | Back, close, dismiss | `s` | Star or unstar |
+| `?` | Help for this context | `q` | Quit |
+| `P` | Preview a sample file | `I` | Show a sample image |
+
+Arrow keys, `home`, `end`, `pageup` and `pagedown` work too. `ctrl-d` also pages down and `ctrl-c` also quits.
+
+Set `keymap = "mutt"` in the config for mutt-flavoured keys.
+
+In the message list, `>` marks the cursor, `*` an unread message, `!` a starred one and `@` one with attachments.
+
+## Configuration
+
+Quill looks in `~/Library/Application Support/Quill/config/`:
+
+| File | Purpose |
+|---|---|
+| `config.toml` | Settings. See the example in the spec. |
+| `keys.toml` | Key overrides, on top of the chosen preset. |
+| `themes/NAME.toml` | Your own themes, selected with `theme = "NAME"`. |
+
+Use `--config-dir` and `--data-dir`, or the `QUILL_CONFIG_DIR` and `QUILL_DATA_DIR` environment variables, to point elsewhere.
+
+A file Quill cannot use never stops it from starting. The problem is shown in the bottom bar and the defaults are used instead.
+
+### Keys
+
+`keys.toml` maps a command name to a key or a list of keys. The names are the ones the help overlay's commands go by:
+
+```toml
+"nav.next" = ["j", "down", "ctrl-n"]
+"view.zoom" = "Z"
+"message.toggle_star" = []   # unbind
+```
+
+Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ctrl-k`, `shift-tab`, `cmd-enter`, and `g g` for two keys in a row.
+
+| Command | Does |
+|---|---|
+| `nav.next`, `nav.prev` | Move down or up; scroll in the reader |
+| `nav.top`, `nav.bottom` | Jump to the first or last |
+| `nav.page_down`, `nav.page_up` | Move by a screenful |
+| `nav.open` | Open the message or mailbox |
+| `nav.back` | Go back, close help, dismiss a notice |
+| `focus.sidebar`, `focus.list`, `focus.reader` | Focus a pane |
+| `focus.next`, `focus.prev` | Cycle the panes |
+| `view.zoom` | Zoom the focused pane |
+| `message.toggle_unread`, `message.toggle_star` | Change a message's flags |
+| `debug.preview_sample` | Preview a sample file (temporary) |
+| `debug.image_sample` | Show a sample image in the reader (temporary) |
+| `help.toggle` | Show or hide help |
+| `app.quit` | Quit |
+
+### Themes
+
+Three themes ship: `dark` (the default), `light`, and `terminal`, which uses only your terminal's own sixteen colours. To make your own, copy [`dark.toml`](crates/quill-tui/themes/dark.toml) into `themes/` under a new name and edit it. Colours you leave out come from the `terminal` theme.
+
+Hex colours fall back to the nearest of 256 colours when the terminal does not report true colour. Setting `NO_COLOR` turns colour off; the cursor, focus and message state stay visible through markers, borders and text attributes.
+
+## Development
+
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+cargo deny check          # needs cargo-deny
+
+cd app
+swift test
+swift format lint --configuration .swift-format -r Sources Tests Package.swift
+```
+
+The shell and the core talk over a bridge defined in `schema/bridge.json`. The example messages in `schema/examples` are tested from both sides; change the schema, both sets of types and the examples together.
+
+The app can be driven without a person, for checks that need the real window: `Quill --script "wait:2;menu:message.toggle_star;press:cmd-j" --dump-screen out.txt` performs the steps, then writes the terminal's text, the shell's state and a picture of the window (`out.txt.png`). Inside the sandbox the file must be in the app's container. `app/Sources/QuillApp/DebugScript.swift` lists the steps.
+
+The UI is covered by snapshot tests of whole screens at 80x24 and 200x60 (`crates/quill-tui/tests/snapshots.rs`). When a change to the UI is intended, regenerate them with `INSTA_UPDATE=always cargo test -p quill-tui` or review them with `cargo insta review`, and read the diff before committing.
+
+Layout of the workspace:
+
+| Crate | Holds |
+|---|---|
+| `quill-core` | Domain types, the `Backend` trait, config, the fixture backend |
+| `quill-store` | The SQLite store: schema, migrations, queries |
+| `quill-tui` | The terminal UI: state, views, keymap, themes, command registry |
+| `quill-host` | What hosts the core: the app shell over the bridge, or nothing |
+| `quill-media` | Images: the Kitty graphics protocol |
+| `quill-cli` | The `quill` binary |
+| `app/Sources/TerminalKit` | The terminal surface. The only Swift module that imports libghostty |
+| `app/Sources/Bridge` | The shell's end of the bridge: message types and the socket server |
+| `app/Sources/QuillApp` | Windows, menus, toolbar and panes |
+
+Known limits: servers that only speak TLS 1.0 or 1.1 will not be supported in version 1.

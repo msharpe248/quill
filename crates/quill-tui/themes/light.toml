@@ -1,0 +1,18 @@
+# Quill's light theme. See dark.toml for the format.
+
+name = "light"
+
+[colors]
+background = "#fafafa"
+text = "#383a42"
+dim = "#8a8c93"
+border = "#c8c9cc"
+border_focused = "#2f5fd0"
+selection_fg = "#1d1f23"
+selection_bg = "#d5e1fb"
+unread = "#000000"
+starred = "#b76e00"
+accent = "#0b7285"
+key = "#8a3fc4"
+error = "#c4262e"
+accounts = ["#2f5fd0", "#2f7d32", "#b55a00", "#8a3fc4"]

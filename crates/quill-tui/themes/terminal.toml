@@ -1,0 +1,19 @@
+# Uses only the terminal's own sixteen colours, so it follows whatever palette
+# the terminal is set to. See dark.toml for the format.
+
+name = "terminal"
+
+[colors]
+background = "default"
+text = "default"
+dim = "bright-black"
+border = "bright-black"
+border_focused = "blue"
+selection_fg = "bright-white"
+selection_bg = "blue"
+unread = "default"
+starred = "yellow"
+accent = "cyan"
+key = "magenta"
+error = "red"
+accounts = ["blue", "green", "yellow", "magenta"]

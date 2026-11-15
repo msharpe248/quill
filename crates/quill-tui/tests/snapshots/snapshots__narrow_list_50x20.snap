@@ -1,0 +1,24 @@
+---
+source: crates/quill-tui/tests/snapshots.rs
+expression: harness.screen()
+---
+┏ [2] Inbox (unified) - 12 unread ━━━━━━━━━━━━━━━┓
+┃> * @ W Ana Ruiz     Q4 roadmap            09:14┃
+┃      W Build Bot    [quill] PR #42 pa…    08:51┃
+┃  *   P Peter Vale   Sunday dinner         08:35┃
+┃  *   P Maya Okafor  Trail run Saturday    04:30┃
+┃  * @ W Sam Lee      Photos from Sat         Fri┃
+┃  *   P Riverside L… Your hold is ready      Fri┃
+┃  *   W Priya Nair   Re: Offsite agenda      Fri┃
+┃  *!@ W Tomás Ortega Invoice 2026-114        Thu┃
+┃      P Jo Park      Re: Book club pick      Thu┃
+┃  *   W 陈静 Chen J… Design review not…      Wed┃
+┃      W IT Helpdesk  Scheduled mainten…      Tue┃
+┃  *   W Lena Fischer Lunch on Thursday?      Mon┃
+┃  *   P Hillcrest D… Appointment remin…      Sun┃
+┃  *!@ W Omar Haddad  Re: Contract redl…   Nov 06┃
+┃  *   W The Weekly … Issue 88: Parsing…   Nov 02┃
+┃   !@ P Maya Okafor  Recipe you asked …   Oct 25┃
+┃      W Ana Ruiz     Welcome to the te… Oct 2025┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+ j/k move  enter open  u unread  s star  ? help

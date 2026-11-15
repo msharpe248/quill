@@ -1,0 +1,177 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Quill shell-core bridge",
+  "description": "Messages between the Swift app shell and the Rust core. JSON-RPC 2.0 notifications, one JSON object per line, over a Unix domain socket whose path the shell passes to the core in QUILL_SHELL_SOCKET. The shell listens; the core connects. The shell knows command names, never mail semantics. Every message here has an example under schema/examples that both sides test against; change all three together.",
+  "oneOf": [
+    { "$ref": "#/$defs/coreToShell" },
+    { "$ref": "#/$defs/shellToCore" }
+  ],
+  "$defs": {
+    "coreToShell": {
+      "oneOf": [
+        { "$ref": "#/$defs/commands.list" },
+        { "$ref": "#/$defs/state.update" },
+        { "$ref": "#/$defs/pane.preview" },
+        { "$ref": "#/$defs/pane.close" }
+      ]
+    },
+    "shellToCore": {
+      "oneOf": [
+        { "$ref": "#/$defs/command.run" },
+        { "$ref": "#/$defs/app.will_quit" }
+      ]
+    },
+
+    "commands.list": {
+      "description": "Core to shell, once at startup. Every command, in the order menus should list them.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "commands.list" },
+        "params": {
+          "type": "object",
+          "required": ["commands"],
+          "additionalProperties": false,
+          "properties": {
+            "commands": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/command" }
+            }
+          }
+        }
+      }
+    },
+    "command": {
+      "type": "object",
+      "required": ["name", "title", "keys"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "The stable name, as used in keys.toml and command.run.",
+          "type": "string",
+          "pattern": "^[a-z]+(\\.[a-z_]+)+$"
+        },
+        "title": { "type": "string", "minLength": 1 },
+        "keys": {
+          "description": "Key sequences bound to the command, preferred first, in Quill's notation: \"j\", \"g g\", \"ctrl-k\", \"cmd-enter\".",
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "menu": {
+          "description": "The menu the command appears in. Absent for plain cursor movement, which has no menu item.",
+          "enum": ["app", "file", "edit", "view", "mailbox", "message", "window", "help"]
+        },
+        "symbol": {
+          "description": "An SF Symbol name. A command with one may be shown in the toolbar.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+
+    "state.update": {
+      "description": "Core to shell, whenever any of it changes. Always the whole state, never a delta.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "state.update" },
+        "params": {
+          "type": "object",
+          "required": ["context", "enabled", "unread", "title"],
+          "additionalProperties": false,
+          "properties": {
+            "context": {
+              "description": "Where the keyboard focus is inside the terminal UI.",
+              "enum": ["sidebar", "list", "reader", "help"]
+            },
+            "enabled": {
+              "description": "Names of the commands that would do something right now. Menu items and toolbar buttons for every other command are disabled.",
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "unread": {
+              "description": "Unread messages across all inboxes, for the Dock badge.",
+              "type": "integer",
+              "minimum": 0
+            },
+            "title": {
+              "description": "The window title.",
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+
+    "pane.preview": {
+      "description": "Core to shell. Show a file in a Quick Look pane beside the terminal.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "pane.preview" },
+        "params": {
+          "type": "object",
+          "required": ["path", "title"],
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "description": "Absolute path of a file the shell can read.",
+              "type": "string",
+              "pattern": "^/"
+            },
+            "title": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "pane.close": {
+      "description": "Core to shell. Close the second pane and return focus to the terminal.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "pane.close" },
+        "params": { "type": "object", "additionalProperties": false }
+      }
+    },
+
+    "command.run": {
+      "description": "Shell to core. A menu item, toolbar button or notification action was used.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "command.run" },
+        "params": {
+          "type": "object",
+          "required": ["name"],
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+
+    "app.will_quit": {
+      "description": "Shell to core. The app is quitting: flush and exit cleanly.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "app.will_quit" },
+        "params": { "type": "object", "additionalProperties": false }
+      }
+    }
+  }
+}

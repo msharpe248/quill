@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "method": "commands.list",
+  "params": {
+    "commands": [
+      { "name": "nav.next", "title": "Next item or line", "keys": ["j", "down"] },
+      { "name": "nav.top", "title": "Go to the top", "keys": ["g g", "home"] },
+      { "name": "view.zoom", "title": "Zoom the focused pane", "keys": ["z"], "menu": "view", "symbol": "arrow.up.left.and.arrow.down.right" },
+      { "name": "message.toggle_star", "title": "Star or unstar", "keys": [], "menu": "message", "symbol": "star" },
+      { "name": "app.quit", "title": "Quit", "keys": ["q", "ctrl-c"], "menu": "app" }
+    ]
+  }
+}

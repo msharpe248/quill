@@ -1,0 +1,24 @@
+---
+source: crates/quill-tui/tests/snapshots.rs
+expression: harness.screen()
+---
+┏ [3] Reader ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ ┏ Help: Reader ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ ┃
+┃ ┃ Navigation                                 ┃ ┃
+┃ ┃   j, down                Next item or line ┃ ┃
+┃ ┃   k, up                  Previous item or… ┃ ┃
+┃ ┃   g g, home              Go to the top     ┃ ┃
+┃ ┃   G, end                 Go to the bottom  ┃ ┃
+┃ ┃   space, ctrl-d, paged…  Page down         ┃ ┃
+┃ ┃   ctrl-u, pageup         Page up           ┃ ┃
+┃ ┃   esc, q                 Back, close or d… ┃ ┃
+┃ ┃                                            ┃ ┃
+┃ ┃ Panes                                      ┃ ┃
+┃ ┃   1                      Focus the accoun… ┃ ┃
+┃ ┃   2                      Focus the messag… ┃ ┃
+┃ ┃   3                      Focus the reader  ┃ ┃
+┃ ┃   tab                    Focus the next p… ┃ ┃
+┃ ┃   shift-tab              Focus the previo… ┃ ┃
+┃ ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1-15 of 26 ┛ ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+ j/k scroll  esc close

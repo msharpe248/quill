@@ -1,0 +1,28 @@
+---
+source: crates/quill-tui/tests/snapshots.rs
+expression: harness.screen()
+---
+┏ [1] Accounts ━━┓┌ [2] Work / Sent ───────────────────────────────────────────┐
+┃  Unified    12 ┃│>   @ To: Priya Nair  Offsite agenda                     Fri│
+┃  Work          ┃│    @ To: Omar Haddad Contract redlines               Nov 05│
+┃    Inbox     8 ┃│                                                            │
+┃    Drafts      ┃│                                                            │
+┃>   Sent        ┃│                                                            │
+┃    Archive     ┃│                                                            │
+┃    Trash       ┃│                                                            │
+┃  Personal      ┃│                                                            │
+┃    Inbox     4 ┃│                                                            │
+┃    Drafts      ┃│                                                            │
+┃    Sent        ┃│                                                            │
+┃    Archive     ┃│                                                            │
+┃    Trash       ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┗━━━━━━━━━━━━━━━━┛└────────────────────────────────────────────────────────────┘
+ j/k move  enter open  tab next pane  z zoom  ? help  q quit

@@ -1,0 +1,13 @@
+[package]
+name = "quill-media"
+description = "Images for Quill: the Kitty graphics protocol, and later decoding and thumbnails"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+base64.workspace = true

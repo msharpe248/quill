@@ -1,0 +1,28 @@
+---
+source: crates/quill-tui/tests/snapshots.rs
+expression: harness.screen()
+---
+┏ [1] Accounts ━━┓┌ [2] Inbox (unified) - 12 unread ───────────────────────────┐
+┃> Unifi┏ Help: Accounts ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓  09:14│
+┃  Work ┃ Navigation                                                   ┃  08:51│
+┃    Inb┃   j, down                  Next item or line                 ┃  08:35│
+┃    Dra┃   k, up                    Previous item or line             ┃  04:30│
+┃    Sen┃   g g, home                Go to the top                     ┃    Fri│
+┃    Arc┃   G, end                   Go to the bottom                  ┃    Fri│
+┃    Tra┃   space, ctrl-d, pagedown  Page down                         ┃    Fri│
+┃  Perso┃   ctrl-u, pageup           Page up                           ┃    Thu│
+┃    Inb┃   enter                    Open                              ┃    Thu│
+┃    Dra┃   esc, q                   Back, close or dismiss            ┃    Wed│
+┃    Sen┃                                                              ┃    Tue│
+┃    Arc┃ Panes                                                        ┃    Mon│
+┃    Tra┃   1                        Focus the accounts pane           ┃    Sun│
+┃       ┃   2                        Focus the message list            ┃ Nov 06│
+┃       ┃   3                        Focus the reader                  ┃ Nov 02│
+┃       ┃   tab                      Focus the next pane               ┃ Oct 25│
+┃       ┃   shift-tab                Focus the previous pane           ┃ct 2025│
+┃       ┃   z                        Zoom the focused pane             ┃       │
+┃       ┃                                                              ┃       │
+┃       ┃ General                                                      ┃       │
+┃       ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1-19 of 23 ┛       │
+┗━━━━━━━━━━━━━━━━┛└────────────────────────────────────────────────────────────┘
+ j/k scroll  esc close

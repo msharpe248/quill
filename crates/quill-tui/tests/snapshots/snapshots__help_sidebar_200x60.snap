@@ -1,0 +1,64 @@
+---
+source: crates/quill-tui/tests/snapshots.rs
+expression: harness.screen()
+---
+┏ [1] Accounts ━━━━━━━━━━━━┓┌ [2] Inbox (unified) - 12 unread ───────────────────────────────────────────────────┐┌ [3] Reader ──────────────────────────────────────────────────── unread, attachment ┐
+┃> Unified              12 ┃│> * @ W Ana Ruiz              Q4 roadma┏ Help: Accounts ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓z <ana.ruiz@example.com>                                           │
+┃  Work                    ┃│      W Build Bot             [quill] P┃ Navigation                                                   ┃ale <robin@example.com>                                            │
+┃    Inbox               8 ┃│  *   P Peter Vale            Sunday di┃   j, down                  Next item or line                 ┃Nov 2026 09:14                                                     │
+┃    Drafts                ┃│  *   P Maya Okafor           Trail run┃   k, up                    Previous item or line             ┃map                                                                │
+┃    Sent                  ┃│  * @ W Sam Lee               Photos fr┃   g g, home                Go to the top                     ┃                                                                   │
+┃    Archive               ┃│  *   P Riverside Library     Your hold┃   G, end                   Go to the bottom                  ┃                                                                   │
+┃    Trash                 ┃│  *   W Priya Nair            Re: Offsi┃   space, ctrl-d, pagedown  Page down                         ┃                                                                   │
+┃  Personal                ┃│  *!@ W Tomás Ortega          Invoice 2┃   ctrl-u, pageup           Page up                           ┃t roadmap for Q4. The short version: we ship the sync rewrite in   │
+┃    Inbox               4 ┃│      P Jo Park               Re: Book ┃   enter                    Open                              ┃ovember on search, and keep December for whatever the first two    │
+┃    Drafts                ┃│  *   W 陈静 Chen Jing        Design re┃   esc, q                   Back, close or dismiss            ┃                                                                   │
+┃    Sent                  ┃│      W IT Helpdesk           Scheduled┃                                                              ┃                                                                   │
+┃    Archive               ┃│  *   W Lena Fischer          Lunch on ┃ Panes                                                        ┃ould like your eyes on before Thursday:                            │
+┃    Trash                 ┃│  *   P Hillcrest Dental      Appointme┃   1                        Focus the accounts pane           ┃                                                                   │
+┃                          ┃│  *!@ W Omar Haddad           Re: Contr┃   2                        Focus the message list            ┃lestone assumes the index format is settled. Is it?                │
+┃                          ┃│  *   W The Weekly Parser     Issue 88:┃   3                        Focus the reader                  ┃led in two weeks for the offline queue. Tell me if that is         │
+┃                          ┃│   !@ P Maya Okafor           Recipe yo┃   tab                      Focus the next pane               ┃                                                                   │
+┃                          ┃│      W Ana Ruiz              Welcome t┃   shift-tab                Focus the previous pane           ┃ota over the holidays is still empty.                              │
+┃                          ┃│                                       ┃   z                        Zoom the focused pane             ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃detail, including the dependency chart you asked for. Comments in  │
+┃                          ┃│                                       ┃ General                                                      ┃ply, whichever is easier.                                          │
+┃                          ┃│                                       ┃   q, ctrl-c                Quit                              ┃                                                                   │
+┃                          ┃│                                       ┃   P                        Preview a sample file             ┃                                                                   │
+┃                          ┃│                                       ┃   I                        Show a sample image               ┃                                                                   │
+┃                          ┃│                                       ┃   ?                        Help for this context             ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃ Corp                                                              │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┃                                                              ┃                                                                   │
+┃                          ┃│                                       ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛                                                                   │
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━┛└────────────────────────────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────────────────────────────────────────┘
+ j/k scroll  esc close

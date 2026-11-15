@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  core:
+    name: Rust core
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Installs the toolchain and components named in rust-toolchain.toml.
+      - name: Install Rust
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Test
+        run: cargo test --workspace --locked
+      # The cargo-deny action is a Linux container, so on macOS it is
+      # installed with Homebrew instead.
+      - name: Licences and advisories
+        run: |
+          brew install cargo-deny
+          cargo deny check
+
+  shell:
+    name: Swift shell
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Test
+        working-directory: app
+        run: swift test
+      - name: Lint
+        working-directory: app
+        run: swift format lint --strict --configuration .swift-format -r Sources Tests Package.swift

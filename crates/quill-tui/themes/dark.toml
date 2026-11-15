@@ -1,0 +1,23 @@
+# Quill's default theme.
+#
+# A colour is "#rrggbb", an ANSI name ("blue", "bright-black"), a 256-colour
+# index, or "default" for the terminal's own colour. Colours left out are
+# taken from the terminal theme. Copy this file into the themes folder beside
+# config.toml under a new name to make your own.
+
+name = "dark"
+
+[colors]
+background = "#1a1b26"
+text = "#c0caf5"
+dim = "#737aa2"
+border = "#3b4261"
+border_focused = "#7aa2f7"
+selection_fg = "#ffffff"
+selection_bg = "#33467c"
+unread = "#ffffff"
+starred = "#e0af68"
+accent = "#7dcfff"
+key = "#bb9af7"
+error = "#f7768e"
+accounts = ["#7aa2f7", "#9ece6a", "#ff9e64", "#bb9af7"]
