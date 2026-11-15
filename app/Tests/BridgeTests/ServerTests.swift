@@ -103,13 +103,13 @@ private func startedServer() throws -> (BridgeServer, Inbox) {
             #"{"jsonrpc":"2.0","method":"state.update","params":{"context":"list","enabled":[],"unread":3,"title":"Inbox"}}"#
                 + "\n"
                 + #"{"jsonrpc":"2.0","method":"pane.pre"#)
-        core.send(#"view","params":{"path":"/tmp/a.pdf","title":"a.pdf"}}"# + "\n")
+        core.send(#"view","params":{"items":[{"path":"/tmp/a.pdf","title":"a.pdf"}],"index":0}}"# + "\n")
         try await inbox.wait { inbox.messages.count == 3 }
         #expect(
             inbox.messages == [
                 .paneClose,
                 .stateUpdate(StateUpdate(context: .list, enabled: [], unread: 3, title: "Inbox")),
-                .panePreview(PanePreview(path: "/tmp/a.pdf", title: "a.pdf")),
+                .panePreview(PanePreview(items: [PaneFile(path: "/tmp/a.pdf", title: "a.pdf")!], index: 0)!),
             ])
         #expect(inbox.problems.isEmpty)
     }

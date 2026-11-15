@@ -15,13 +15,20 @@
         { "$ref": "#/$defs/pane.close" },
         { "$ref": "#/$defs/link.open" },
         { "$ref": "#/$defs/files.pick" },
-        { "$ref": "#/$defs/clipboard.write" }
+        { "$ref": "#/$defs/clipboard.write" },
+        { "$ref": "#/$defs/pane.play" },
+        { "$ref": "#/$defs/pane.web" },
+        { "$ref": "#/$defs/thumbnail.make" },
+        { "$ref": "#/$defs/file.open" },
+        { "$ref": "#/$defs/files.save" }
       ]
     },
     "shellToCore": {
       "oneOf": [
         { "$ref": "#/$defs/command.run" },
         { "$ref": "#/$defs/files.dropped" },
+        { "$ref": "#/$defs/thumbnail.made" },
+        { "$ref": "#/$defs/files.saved" },
         { "$ref": "#/$defs/app.will_quit" }
       ]
     },
@@ -112,16 +119,83 @@
     },
 
     "pane.preview": {
-      "description": "Core to shell. Show a file in a Quick Look pane beside the terminal.",
+      "description": "Core to shell. Show files in a Quick Look pane beside the terminal: one at a time, starting with the one at `index`. The user steps through the rest with the arrow keys while the pane has the focus.",
       "type": "object",
-      "required": ["jsonrpc", "method", "params"],
+      "required": [
+        "jsonrpc",
+        "method",
+        "params"
+      ],
       "additionalProperties": false,
       "properties": {
-        "jsonrpc": { "const": "2.0" },
-        "method": { "const": "pane.preview" },
+        "jsonrpc": {
+          "const": "2.0"
+        },
+        "method": {
+          "const": "pane.preview"
+        },
         "params": {
           "type": "object",
-          "required": ["path", "title"],
+          "required": [
+            "items",
+            "index"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "items": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": [
+                  "path",
+                  "title"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "path": {
+                    "description": "Absolute path of a file the shell can read.",
+                    "type": "string",
+                    "pattern": "^/"
+                  },
+                  "title": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "index": {
+              "description": "Which of the items to show first, from 0. Less than the number of items.",
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+
+    "pane.play": {
+      "description": "Core to shell. Play a video or audio file in a player pane beside the terminal.",
+      "type": "object",
+      "required": [
+        "jsonrpc",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0"
+        },
+        "method": {
+          "const": "pane.play"
+        },
+        "params": {
+          "type": "object",
+          "required": [
+            "path",
+            "title"
+          ],
           "additionalProperties": false,
           "properties": {
             "path": {
@@ -129,7 +203,174 @@
               "type": "string",
               "pattern": "^/"
             },
-            "title": { "type": "string" }
+            "title": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+
+    "pane.web": {
+      "description": "Core to shell. Show an HTML file the core has already sanitized in a web view pane beside the terminal. Scripts never run. Nothing is loaded over the network unless `remote` is true; links open in the user's browser, never in the pane.",
+      "type": "object",
+      "required": [
+        "jsonrpc",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0"
+        },
+        "method": {
+          "const": "pane.web"
+        },
+        "params": {
+          "type": "object",
+          "required": [
+            "path",
+            "title",
+            "remote"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "description": "Absolute path of the HTML file. Files beside it in the same folder may be loaded by it.",
+              "type": "string",
+              "pattern": "^/"
+            },
+            "title": {
+              "type": "string"
+            },
+            "remote": {
+              "description": "The user has allowed this message to load remote content.",
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+
+    "thumbnail.make": {
+      "description": "Core to shell. Make a PNG thumbnail of a file (a picture the core cannot decode, the first page of a PDF, the poster frame of a video) and write it to `out`. Answered by thumbnail.made with the same id.",
+      "type": "object",
+      "required": [
+        "jsonrpc",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0"
+        },
+        "method": {
+          "const": "thumbnail.make"
+        },
+        "params": {
+          "type": "object",
+          "required": [
+            "id",
+            "path",
+            "out",
+            "size"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "path": {
+              "description": "Absolute path of the file to picture.",
+              "type": "string",
+              "pattern": "^/"
+            },
+            "out": {
+              "description": "Absolute path to write the PNG to.",
+              "type": "string",
+              "pattern": "^/"
+            },
+            "size": {
+              "description": "The longest side wanted, in pixels.",
+              "type": "integer",
+              "minimum": 16,
+              "maximum": 4096
+            }
+          }
+        }
+      }
+    },
+
+    "file.open": {
+      "description": "Core to shell. Open a file in the application the user's Mac opens its kind with. Only ever on an explicit key press by the user.",
+      "type": "object",
+      "required": [
+        "jsonrpc",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0"
+        },
+        "method": {
+          "const": "file.open"
+        },
+        "params": {
+          "type": "object",
+          "required": [
+            "path"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "description": "Absolute path of a file the shell can read.",
+              "type": "string",
+              "pattern": "^/"
+            }
+          }
+        }
+      }
+    },
+
+    "files.save": {
+      "description": "Core to shell. Ask the user where to save a copy of a file, with the native save panel, and save it there. Answered by files.saved.",
+      "type": "object",
+      "required": [
+        "jsonrpc",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0"
+        },
+        "method": {
+          "const": "files.save"
+        },
+        "params": {
+          "type": "object",
+          "required": [
+            "path",
+            "name"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "description": "Absolute path of the file to copy.",
+              "type": "string",
+              "pattern": "^/"
+            },
+            "name": {
+              "description": "The name to offer in the panel.",
+              "type": "string",
+              "minLength": 1
+            }
           }
         }
       }
@@ -243,6 +484,78 @@
           "additionalProperties": false,
           "properties": {
             "name": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+
+    "thumbnail.made": {
+      "description": "Shell to core. The answer to thumbnail.make: the PNG was written to the path asked for, or could not be made.",
+      "type": "object",
+      "required": [
+        "jsonrpc",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0"
+        },
+        "method": {
+          "const": "thumbnail.made"
+        },
+        "params": {
+          "type": "object",
+          "required": [
+            "id",
+            "ok"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "ok": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+
+    "files.saved": {
+      "description": "Shell to core. The answer to files.save: the copy was saved, or the user cancelled or it could not be written.",
+      "type": "object",
+      "required": [
+        "jsonrpc",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0"
+        },
+        "method": {
+          "const": "files.saved"
+        },
+        "params": {
+          "type": "object",
+          "required": [
+            "name",
+            "saved"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "description": "The name the file was saved under, or was offered under if it was not saved.",
+              "type": "string"
+            },
+            "saved": {
+              "type": "boolean"
+            }
           }
         }
       }

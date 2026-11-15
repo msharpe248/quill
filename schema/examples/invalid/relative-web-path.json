@@ -1,0 +1,9 @@
+{
+  "jsonrpc": "2.0",
+  "method": "pane.web",
+  "params": {
+    "path": "message.html",
+    "title": "Hello",
+    "remote": false
+  }
+}

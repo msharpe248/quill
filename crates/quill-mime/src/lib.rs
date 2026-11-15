@@ -54,11 +54,63 @@ pub struct Parsed {
 /// A file attached to a message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Attachment {
+    /// Which part of the message it is. The same raw message always gives
+    /// the same number; pass it to [`attachment_bytes`].
+    pub part: u32,
     pub name: Option<String>,
     /// The media type, such as `application/pdf`.
     pub content_type: String,
     /// The size once decoded, in bytes.
     pub size: usize,
+    /// Its `Content-ID`, without the angle brackets: what a `cid:` address
+    /// in the HTML refers to it by.
+    pub content_id: Option<String>,
+    /// The sender marked it to be shown in the body, not listed as a file.
+    pub inline: bool,
+}
+
+impl Attachment {
+    /// The name, media type and size: what a list of files shows.
+    pub fn summary(&self) -> (Option<&str>, &str, usize) {
+        (self.name.as_deref(), self.content_type.as_str(), self.size)
+    }
+}
+
+/// The decoded bytes of one part of a raw message: an attachment, by the
+/// number [`Attachment::part`] gave. `None` when the message has no such
+/// part.
+pub fn attachment_bytes(raw: &[u8], part: u32) -> Option<Vec<u8>> {
+    let message = MessageParser::default().parse(raw)?;
+    let part = message.part(part)?;
+    Some(part.decoded().into_owned())
+}
+
+/// The part a `cid:` address refers to: its media type and decoded bytes.
+/// `content_id` is the address without the `cid:`, with or without angle
+/// brackets.
+pub fn part_by_content_id(raw: &[u8], content_id: &str) -> Option<(String, Vec<u8>)> {
+    let wanted = content_id.trim().trim_matches(|c| c == '<' || c == '>');
+    if wanted.is_empty() {
+        return None;
+    }
+    let message = MessageParser::default().parse(raw)?;
+    let part = message.parts().find(|part| {
+        part.content_id()
+            .is_some_and(|id| id.trim().trim_matches(|c| c == '<' || c == '>') == wanted)
+    })?;
+    Some((media_type(&part), part.decoded().into_owned()))
+}
+
+/// A part's media type in lower case, such as `image/png`. A part that
+/// does not say is a file of unknown kind.
+fn media_type(part: &mail_parser::MessagePart<'_>) -> String {
+    part.content_type().map_or_else(
+        || "application/octet-stream".to_owned(),
+        |kind| match kind.subtype() {
+            Some(subtype) => format!("{}/{subtype}", kind.ctype()).to_ascii_lowercase(),
+            None => kind.ctype().to_ascii_lowercase(),
+        },
+    )
 }
 
 /// Reads a raw message. `received` (seconds since the Unix epoch) stands in
@@ -152,19 +204,19 @@ pub fn parse(raw: &[u8], received: i64) -> Option<Parsed> {
     let attachments = message
         .attachments()
         .map(|part| Attachment {
+            part: part.id(),
             name: part
                 .attachment_name()
                 .map(str::trim)
                 .filter(|name| !name.is_empty())
                 .map(str::to_owned),
-            content_type: part.content_type().map_or_else(
-                || "application/octet-stream".to_owned(),
-                |kind| match kind.subtype() {
-                    Some(subtype) => format!("{}/{subtype}", kind.ctype()).to_ascii_lowercase(),
-                    None => kind.ctype().to_ascii_lowercase(),
-                },
-            ),
+            content_type: media_type(&part),
             size: part.decoded_len(),
+            content_id: part
+                .content_id()
+                .map(|id| id.trim().trim_matches(|c| c == '<' || c == '>').to_owned())
+                .filter(|id| !id.is_empty()),
+            inline: part.is_inline(),
         })
         .collect();
 
@@ -466,8 +518,7 @@ mod tests {
 
     #[test]
     fn attachments_are_listed_with_name_type_and_decoded_size() {
-        let parsed = read(
-            "Subject: Invoice\n\
+        const MULTIPART_WITH_FILES: &str = "Subject: Invoice\n\
              Content-Type: multipart/mixed; boundary=\"b\"\n\
              \n\
              --b\n\
@@ -486,24 +537,30 @@ mod tests {
              Content-Transfer-Encoding: base64\n\
              \n\
              iVBORw0KGgo=\n\
-             --b--\n",
-        );
+             --b--\n";
+        let parsed = read(MULTIPART_WITH_FILES);
         assert_eq!(parsed.body.trim_end(), "Please find the invoice attached.");
+        let files: Vec<_> = parsed.attachments.iter().map(Attachment::summary).collect();
         assert_eq!(
-            parsed.attachments,
+            files,
             [
-                Attachment {
-                    name: Some("invoice 2026-114.pdf".to_owned()),
-                    content_type: "application/pdf".to_owned(),
-                    size: 9,
-                },
-                Attachment {
-                    name: Some("☕ photo.png".to_owned()),
-                    content_type: "image/png".to_owned(),
-                    size: 8,
-                },
+                (Some("invoice 2026-114.pdf"), "application/pdf", 9),
+                (Some("☕ photo.png"), "image/png", 8),
             ]
         );
+        // Each can be fetched by the part number it was listed with, and
+        // neither claims to belong in the body.
+        let raw = MULTIPART_WITH_FILES.as_bytes();
+        assert_eq!(
+            attachment_bytes(raw, parsed.attachments[0].part).as_deref(),
+            Some(&b"%PDF-1.4\n"[..])
+        );
+        assert_eq!(
+            attachment_bytes(raw, parsed.attachments[1].part).map(|bytes| bytes.len()),
+            Some(8)
+        );
+        assert!(parsed.attachments.iter().all(|file| !file.inline));
+        assert_eq!(attachment_bytes(raw, 99), None);
     }
 
     #[test]

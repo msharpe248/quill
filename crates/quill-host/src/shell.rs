@@ -18,6 +18,7 @@ use crate::{Host, HostEvent};
 /// [`HostEvent`]s.
 pub struct ShellHost {
     outgoing: mpsc::Sender<CoreToShell>,
+    events: UnboundedSender<HostEvent>,
 }
 
 impl ShellHost {
@@ -30,10 +31,11 @@ impl ShellHost {
         thread::Builder::new()
             .name("quill-bridge-write".to_owned())
             .spawn(move || write_loop(stream, queue))?;
+        let heard = events.clone();
         thread::Builder::new()
             .name("quill-bridge-read".to_owned())
-            .spawn(move || read_loop(reader, events))?;
-        Ok(Self { outgoing })
+            .spawn(move || read_loop(reader, heard))?;
+        Ok(Self { outgoing, events })
     }
 }
 
@@ -44,6 +46,24 @@ impl Host for ShellHost {
     }
 
     fn is_shell(&self) -> bool {
+        true
+    }
+
+    fn send_back(&self, event: HostEvent) {
+        let _ = self.events.send(event);
+    }
+
+    fn save_file(&self, path: &Path, name: &str) -> bool {
+        let save =
+            bridge::AbsolutePath::new(path).and_then(|path| bridge::FilesSave::new(path, name));
+        match save {
+            Some(save) => self.send(CoreToShell::FilesSave(save)),
+            // Nothing to ask about: said at once, as a save that failed.
+            None => self.send_back(HostEvent::Saved {
+                name: name.to_owned(),
+                saved: false,
+            }),
+        }
         true
     }
 
@@ -78,6 +98,14 @@ fn read_loop(stream: UnixStream, events: UnboundedSender<HostEvent>) {
             Ok(ShellToCore::FilesDropped(files)) => HostEvent::Files {
                 paths: files.paths().to_vec(),
                 temporary: files.temporary(),
+            },
+            Ok(ShellToCore::ThumbnailMade(made)) => HostEvent::Thumbnail {
+                id: made.id,
+                ok: made.ok,
+            },
+            Ok(ShellToCore::FilesSaved(saved)) => HostEvent::Saved {
+                name: saved.name,
+                saved: saved.saved,
             },
             Ok(ShellToCore::AppWillQuit(_)) => HostEvent::WillQuit,
             Err(err) => HostEvent::Problem(format!("bridge: {err}")),
@@ -206,6 +234,86 @@ mod tests {
             next(&mut events).await,
             HostEvent::RunCommand("nav.next".to_owned())
         );
+    }
+
+    #[tokio::test]
+    async fn files_are_shown_pictured_opened_and_saved_through_the_shell() {
+        let (host, mut events, mut shell) = connect();
+        let pdf = Path::new("/tmp/quill-view/road map.pdf");
+        let png = Path::new("/tmp/quill-view/chart.png");
+        let sent = |shell: &mut FakeShell| -> CoreToShell {
+            bridge::decode(&shell.lines.next().unwrap().unwrap()).unwrap()
+        };
+
+        host.preview(&[(pdf, "road map.pdf"), (png, "chart.png")], 1);
+        match sent(&mut shell) {
+            CoreToShell::PanePreview(preview) => {
+                assert_eq!(preview.index(), 1);
+                assert_eq!(preview.items().len(), 2);
+                assert_eq!(
+                    preview.items()[0].path.as_str(),
+                    "/tmp/quill-view/road map.pdf"
+                );
+                assert_eq!(preview.items()[1].title, "chart.png");
+            }
+            other => panic!("{other:?}"),
+        }
+        host.play(pdf, "a film");
+        assert!(matches!(sent(&mut shell), CoreToShell::PanePlay(file) if file.title == "a film"));
+        host.web(png, "a message", true);
+        assert!(matches!(sent(&mut shell), CoreToShell::PaneWeb(web) if web.remote));
+        host.open_file(pdf);
+        assert!(matches!(sent(&mut shell), CoreToShell::FileOpen(_)));
+        // The shell has a save panel, and is asked.
+        assert!(host.save_file(pdf, "road map.pdf"));
+        assert!(matches!(sent(&mut shell), CoreToShell::FilesSave(_)));
+        // A thumbnail is asked for at a size the shell will accept.
+        host.thumbnail(7, pdf, Path::new("/tmp/quill-view/thumb-7.png"), 1_000_000);
+        match sent(&mut shell) {
+            CoreToShell::ThumbnailMake(make) => assert_eq!(make.id(), 7),
+            other => panic!("{other:?}"),
+        }
+
+        // What cannot be asked is not sent, and what is owed an answer
+        // gets one from the host itself.
+        host.open_file(Path::new("notes.txt"));
+        host.preview(&[(pdf, "road map.pdf")], 1);
+        host.thumbnail(8, Path::new("a.heic"), Path::new("/tmp/t.png"), 64);
+        assert_eq!(
+            next(&mut events).await,
+            HostEvent::Thumbnail { id: 8, ok: false }
+        );
+        assert!(host.save_file(pdf, ""));
+        assert_eq!(
+            next(&mut events).await,
+            HostEvent::Saved {
+                name: String::new(),
+                saved: false
+            }
+        );
+
+        // The shell's answers arrive as events.
+        shell
+            .connection
+            .write_all(
+                b"{\"jsonrpc\":\"2.0\",\"method\":\"thumbnail.made\",\"params\":{\"id\":7,\"ok\":true}}\n\
+                  {\"jsonrpc\":\"2.0\",\"method\":\"files.saved\",\"params\":{\"name\":\"road map.pdf\",\"saved\":true}}\n",
+            )
+            .unwrap();
+        assert_eq!(
+            next(&mut events).await,
+            HostEvent::Thumbnail { id: 7, ok: true }
+        );
+        assert_eq!(
+            next(&mut events).await,
+            HostEvent::Saved {
+                name: "road map.pdf".to_owned(),
+                saved: true
+            }
+        );
+        // Nothing else was sent to the shell.
+        host.close_pane();
+        assert!(matches!(sent(&mut shell), CoreToShell::PaneClose(_)));
     }
 
     #[tokio::test]

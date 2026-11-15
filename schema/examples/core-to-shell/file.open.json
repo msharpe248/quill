@@ -1,0 +1,7 @@
+{
+  "jsonrpc": "2.0",
+  "method": "file.open",
+  "params": {
+    "path": "/Users/robin/Library/Containers/dev.quill.Quill/Data/tmp/quill-view-412/roadmap.pdf"
+  }
+}

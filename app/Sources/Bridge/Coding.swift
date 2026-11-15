@@ -128,6 +128,52 @@ private struct FilesDroppedParams: Codable {
     var temporary: Bool
 }
 
+// The messages below as they are on the wire, before what they hold is
+// checked: the types the rest of the app uses cannot hold a relative path,
+// an index past the end or an empty name.
+
+private struct PaneFileParams: Codable {
+    var path: String
+    var title: String
+}
+
+private struct PanePreviewParams: Codable {
+    var items: [PaneFileParams]
+    var index: Int
+}
+
+private struct PaneWebParams: Codable {
+    var path: String
+    var title: String
+    var remote: Bool
+}
+
+private struct ThumbnailMakeParams: Codable {
+    var id: Int
+    var path: String
+    var out: String
+    var size: Int
+}
+
+private struct FileOpenParams: Codable {
+    var path: String
+}
+
+private struct FilesSaveParams: Codable {
+    var path: String
+    var name: String
+}
+
+private struct ThumbnailMadeParams: Codable {
+    var id: Int
+    var ok: Bool
+}
+
+private struct FilesSavedParams: Codable {
+    var name: String
+    var saved: Bool
+}
+
 private struct ClipboardWriteParams: Codable {
     var text: String
 }
@@ -174,11 +220,59 @@ public extension CoreToShell {
             }
             self = .stateUpdate(state)
         case "pane.preview":
-            let preview = try envelope.decode(PanePreview.self, allowing: PanePreview.allowedKeys)
-            guard preview.path.hasPrefix("/") else {
-                throw BridgeError.malformed("pane.preview: path is not absolute")
+            let params = try envelope.decode(PanePreviewParams.self, allowing: PanePreview.allowedKeys)
+            // Each item is checked as strictly as the message itself.
+            if case let .array(items)? = envelope.params.object?["items"] {
+                for item in items {
+                    let extra = Set((item.object ?? [:]).keys).subtracting(PaneFile.allowedKeys)
+                    guard extra.isEmpty else {
+                        throw BridgeError.malformed(
+                            "pane.preview: unexpected \(extra.sorted().joined(separator: ", "))")
+                    }
+                }
+            }
+            let items = try params.items.map { item in
+                guard let file = PaneFile(path: item.path, title: item.title) else {
+                    throw BridgeError.malformed("pane.preview: path is not absolute")
+                }
+                return file
+            }
+            guard let preview = PanePreview(items: items, index: params.index) else {
+                throw BridgeError.malformed("pane.preview: index is not one of the items")
             }
             self = .panePreview(preview)
+        case "pane.play":
+            let params = try envelope.decode(PaneFileParams.self, allowing: PaneFile.allowedKeys)
+            guard let file = PaneFile(path: params.path, title: params.title) else {
+                throw BridgeError.malformed("pane.play: path is not absolute")
+            }
+            self = .panePlay(file)
+        case "pane.web":
+            let params = try envelope.decode(PaneWebParams.self, allowing: PaneWeb.allowedKeys)
+            guard let web = PaneWeb(path: params.path, title: params.title, remote: params.remote) else {
+                throw BridgeError.malformed("pane.web: path is not absolute")
+            }
+            self = .paneWeb(web)
+        case "thumbnail.make":
+            let params = try envelope.decode(ThumbnailMakeParams.self, allowing: ThumbnailMake.allowedKeys)
+            guard
+                let make = ThumbnailMake(id: params.id, path: params.path, out: params.out, size: params.size)
+            else {
+                throw BridgeError.malformed("thumbnail.make: paths must be absolute and the size from 16 to 4096")
+            }
+            self = .thumbnailMake(make)
+        case "file.open":
+            let params = try envelope.decode(FileOpenParams.self, allowing: ["path"])
+            guard params.path.hasPrefix("/") else {
+                throw BridgeError.malformed("file.open: path is not absolute")
+            }
+            self = .fileOpen(path: params.path)
+        case "files.save":
+            let params = try envelope.decode(FilesSaveParams.self, allowing: FilesSave.allowedKeys)
+            guard let save = FilesSave(path: params.path, name: params.name) else {
+                throw BridgeError.malformed("files.save: the path must be absolute and the name not empty")
+            }
+            self = .filesSave(save)
         case "pane.close":
             try envelope.requireOnly([])
             self = .paneClose
@@ -207,6 +301,16 @@ public extension CoreToShell {
             encodeLine(method: "state.update", params: state)
         case let .panePreview(preview):
             encodeLine(method: "pane.preview", params: preview)
+        case let .panePlay(file):
+            encodeLine(method: "pane.play", params: file)
+        case let .paneWeb(web):
+            encodeLine(method: "pane.web", params: web)
+        case let .thumbnailMake(make):
+            encodeLine(method: "thumbnail.make", params: make)
+        case let .fileOpen(path):
+            encodeLine(method: "file.open", params: FileOpenParams(path: path))
+        case let .filesSave(save):
+            encodeLine(method: "files.save", params: save)
         case .paneClose:
             encodeLine(method: "pane.close", params: NoParams())
         case let .linkOpen(open):
@@ -235,6 +339,15 @@ public extension ShellToCore {
                 throw BridgeError.malformed("files.dropped: paths must be absolute, and there must be one")
             }
             self = .filesDropped(files)
+        case "thumbnail.made":
+            let params = try envelope.decode(ThumbnailMadeParams.self, allowing: ["id", "ok"])
+            guard params.id >= 0 else {
+                throw BridgeError.malformed("thumbnail.made: id is negative")
+            }
+            self = .thumbnailMade(id: params.id, ok: params.ok)
+        case "files.saved":
+            let params = try envelope.decode(FilesSavedParams.self, allowing: ["name", "saved"])
+            self = .filesSaved(name: params.name, saved: params.saved)
         case "app.will_quit":
             try envelope.requireOnly([])
             self = .appWillQuit
@@ -251,6 +364,10 @@ public extension ShellToCore {
             encodeLine(
                 method: "files.dropped",
                 params: FilesDroppedParams(paths: files.paths, temporary: files.temporary))
+        case let .thumbnailMade(id, ok):
+            encodeLine(method: "thumbnail.made", params: ThumbnailMadeParams(id: id, ok: ok))
+        case let .filesSaved(name, saved):
+            encodeLine(method: "files.saved", params: FilesSavedParams(name: name, saved: saved))
         case .appWillQuit:
             encodeLine(method: "app.will_quit", params: NoParams())
         }

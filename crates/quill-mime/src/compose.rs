@@ -1263,13 +1263,12 @@ mod tests {
             );
             assert_eq!(parsed.body, "The files are attached.\n");
             assert_eq!(parsed.html.is_some(), format == BodyFormat::Markdown);
-            let listed = |name: &str, content_type: &str, size: usize| Attachment {
-                name: Some(name.to_owned()),
-                content_type: content_type.to_owned(),
-                size,
+            let listed = |name: &'static str, content_type: &'static str, size: usize| {
+                (Some(name), content_type, size)
             };
+            let files: Vec<_> = parsed.attachments.iter().map(Attachment::summary).collect();
             assert_eq!(
-                parsed.attachments,
+                files,
                 [
                     listed("notes.txt", "text/plain", notes.len()),
                     listed("every byte.bin", "application/octet-stream", 256),
@@ -1478,13 +1477,10 @@ mod tests {
 
         let parsed = parse(&raw, 0).expect("a message");
         assert_eq!(parsed.body, "See the message attached.\n");
+        let files: Vec<_> = parsed.attachments.iter().map(Attachment::summary).collect();
         assert_eq!(
-            parsed.attachments,
-            [Attachment {
-                name: Some("Contract.eml".to_owned()),
-                content_type: "message/rfc822".to_owned(),
-                size: INNER.len(),
-            }]
+            files,
+            [(Some("Contract.eml"), "message/rfc822", INNER.len())]
         );
         // The parser reads the message inside as a message.
         let outer = MessageParser::default().parse(&raw[..]).expect("a message");
@@ -1545,13 +1541,14 @@ mod tests {
                 "{what}"
             );
             let parsed = parse(&raw, 0).expect("a message");
+            let files: Vec<_> = parsed.attachments.iter().map(Attachment::summary).collect();
             assert_eq!(
-                parsed.attachments,
-                [Attachment {
-                    name: Some("Original.eml".to_owned()),
-                    content_type: "application/octet-stream".to_owned(),
-                    size: inner.len(),
-                }],
+                files,
+                [(
+                    Some("Original.eml"),
+                    "application/octet-stream",
+                    inner.len()
+                )],
                 "{what}"
             );
             // Not a byte of it changed.

@@ -1,0 +1,8 @@
+{
+  "jsonrpc": "2.0",
+  "method": "pane.preview",
+  "params": {
+    "items": [],
+    "index": 0
+  }
+}

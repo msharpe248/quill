@@ -16,8 +16,11 @@ pub struct StandaloneHost {
     /// Reports what goes wrong, and keeps the event channel open so the UI
     /// can wait on it forever.
     events: UnboundedSender<HostEvent>,
-    /// The program that opens an address in the user's browser.
+    /// The program that opens an address in the user's browser, and a
+    /// file in whatever the user's Mac opens its kind with.
     opener: PathBuf,
+    /// The program that shows a file in Quick Look.
+    previewer: PathBuf,
 }
 
 impl StandaloneHost {
@@ -31,6 +34,51 @@ impl StandaloneHost {
         Self {
             events,
             opener: opener.into(),
+            previewer: PathBuf::from("/usr/bin/qlmanage"),
+        }
+    }
+
+    /// As [`StandaloneHost::with_opener`], with a stand-in for Quick Look
+    /// too.
+    pub fn with_programs(
+        events: UnboundedSender<HostEvent>,
+        opener: impl Into<PathBuf>,
+        previewer: impl Into<PathBuf>,
+    ) -> Self {
+        Self {
+            events,
+            opener: opener.into(),
+            previewer: previewer.into(),
+        }
+    }
+}
+
+impl StandaloneHost {
+    /// Starts `program` on `arguments`, off the UI task, and reports it if
+    /// that goes wrong. Each argument is passed as itself, never through a
+    /// shell.
+    fn run(&self, program: PathBuf, arguments: Vec<String>, what: &'static str) {
+        let events = self.events.clone();
+        let spawned = thread::Builder::new()
+            .name("quill-open".to_owned())
+            .spawn(move || {
+                let result = Command::new(program)
+                    .args(arguments)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+                let problem = match result {
+                    Ok(status) if status.success() => return,
+                    Ok(_) => format!("The system could not {what}."),
+                    Err(err) => format!("Cannot {what}: {err}"),
+                };
+                let _ = events.send(HostEvent::Problem(problem));
+            });
+        if let Err(err) = spawned {
+            let _ = self
+                .events
+                .send(HostEvent::Problem(format!("Cannot {what}: {err}")));
         }
     }
 }
@@ -39,77 +87,60 @@ impl Host for StandaloneHost {
     fn send(&self, message: CoreToShell) {
         match message {
             // There are no menus, toolbar or Dock badge to keep up to date,
-            // and no pane to close: `qlmanage` owns its own window.
-            // And no file panel: the UI asks for a path instead. The
-            // clipboard is the terminal's, and is asked for there.
+            // and no pane to close: `qlmanage` owns its own window. Nor a
+            // file panel: the UI asks for a path instead. The clipboard is
+            // the terminal's, and is asked for there.
             CoreToShell::CommandsList(_)
             | CoreToShell::StateUpdate(_)
             | CoreToShell::PaneClose(_)
             | CoreToShell::FilesPick(_)
+            | CoreToShell::FilesSave(_)
             | CoreToShell::ClipboardWrite(_) => {}
-            CoreToShell::LinkOpen(open) => {
-                let events = self.events.clone();
-                let opener = self.opener.clone();
-                // `open` hands the address to the default browser or mail
-                // program. The address is one argument, never a shell
-                // command, and can only be http, https or mailto.
-                let spawned =
-                    thread::Builder::new()
-                        .name("quill-open".to_owned())
-                        .spawn(move || {
-                            let result = Command::new(opener)
-                                .arg(open.url.as_str())
-                                .stdin(Stdio::null())
-                                .stdout(Stdio::null())
-                                .stderr(Stdio::null())
-                                .status();
-                            match result {
-                                Ok(status) if status.success() => {}
-                                Ok(_) => {
-                                    let _ = events.send(HostEvent::Problem(
-                                        "The system could not open that link.".to_owned(),
-                                    ));
-                                }
-                                Err(err) => {
-                                    let _ = events.send(HostEvent::Problem(format!(
-                                        "Cannot open the link: {err}"
-                                    )));
-                                }
-                            }
-                        });
-                if let Err(err) = spawned {
-                    let _ = self
-                        .events
-                        .send(HostEvent::Problem(format!("Cannot open the link: {err}")));
-                }
-            }
+            // `open` hands the address to the default browser or mail
+            // program. It can only be http, https or mailto.
+            CoreToShell::LinkOpen(open) => self.run(
+                self.opener.clone(),
+                vec![open.url.as_str().to_owned()],
+                "open that link",
+            ),
+            // Quick Look in a window of its own, on the file asked for
+            // first. There is no stepping through the others.
             CoreToShell::PanePreview(preview) => {
-                let events = self.events.clone();
-                // Starting a process is not for the UI task.
-                let spawned = thread::Builder::new()
-                    .name("quill-preview".to_owned())
-                    .spawn(move || {
-                        let result = Command::new("/usr/bin/qlmanage")
-                            .arg("-p")
-                            .arg(&preview.path)
-                            .stdin(Stdio::null())
-                            .stdout(Stdio::null())
-                            .stderr(Stdio::null())
-                            .status();
-                        if let Err(err) = result {
-                            let _ = events.send(HostEvent::Problem(format!(
-                                "Cannot preview {}: {err}",
-                                preview.title
-                            )));
-                        }
-                    });
-                if let Err(err) = spawned {
-                    let _ = self
-                        .events
-                        .send(HostEvent::Problem(format!("Cannot preview: {err}")));
+                if let Some(file) = preview.items().get(preview.index()) {
+                    self.run(
+                        self.previewer.clone(),
+                        vec!["-p".to_owned(), file.path.as_str().to_owned()],
+                        "preview that file",
+                    );
                 }
             }
+            // With no pane to play or show in, the program the user's Mac
+            // has for the file does it.
+            CoreToShell::PanePlay(file) => self.run(
+                self.opener.clone(),
+                vec![file.path.as_str().to_owned()],
+                "play that file",
+            ),
+            CoreToShell::PaneWeb(web) => self.run(
+                self.opener.clone(),
+                vec![web.path.as_str().to_owned()],
+                "open that message in the browser",
+            ),
+            CoreToShell::FileOpen(open) => self.run(
+                self.opener.clone(),
+                vec![open.path.as_str().to_owned()],
+                "open that file",
+            ),
+            // Nothing here makes thumbnails. The answer is still owed.
+            CoreToShell::ThumbnailMake(make) => self.send_back(HostEvent::Thumbnail {
+                id: make.id(),
+                ok: false,
+            }),
         }
+    }
+
+    fn send_back(&self, event: HostEvent) {
+        let _ = self.events.send(event);
     }
 
     fn is_shell(&self) -> bool {
@@ -199,7 +230,7 @@ mod tests {
         loop {
             if let Ok(event) = received.try_recv() {
                 assert!(
-                    matches!(&event, HostEvent::Problem(text) if text.starts_with("Cannot open the link")),
+                    matches!(&event, HostEvent::Problem(text) if text.starts_with("Cannot open that link")),
                     "{event:?}"
                 );
                 break;
@@ -207,5 +238,55 @@ mod tests {
             assert!(Instant::now() < deadline, "no problem was reported");
             thread::sleep(Duration::from_millis(20));
         }
+    }
+
+    #[test]
+    fn files_go_to_quick_look_and_to_the_systems_own_programs() {
+        let dir = tempfile::tempdir().unwrap();
+        let (script, record) = recorder(dir.path());
+        let (events, mut received) = unbounded_channel();
+        let host = StandaloneHost::with_programs(events, script.clone(), script);
+        let pdf = dir.path().join("road map.pdf");
+        let png = dir.path().join("chart.png");
+
+        // Quick Look is given the one asked for first, as one argument
+        // whatever is in its name.
+        host.preview(
+            &[
+                (pdf.as_path(), "road map.pdf"),
+                (png.as_path(), "chart.png"),
+            ],
+            1,
+        );
+        assert_eq!(wait_for(&record), format!("-p\n{}\n", png.display()));
+        std::fs::remove_file(&record).unwrap();
+
+        // Playing, showing a message's HTML and opening a file all fall to
+        // whatever the Mac opens that kind of file with.
+        host.play(&pdf, "a film");
+        assert_eq!(wait_for(&record), format!("{}\n", pdf.display()));
+        std::fs::remove_file(&record).unwrap();
+        host.web(&png, "a message", false);
+        assert_eq!(wait_for(&record), format!("{}\n", png.display()));
+        std::fs::remove_file(&record).unwrap();
+        host.open_file(&pdf);
+        assert_eq!(wait_for(&record), format!("{}\n", pdf.display()));
+        std::fs::remove_file(&record).unwrap();
+
+        // A path that is not absolute, or an index past the end, goes
+        // nowhere at all.
+        host.open_file(std::path::Path::new("notes.txt"));
+        host.preview(&[(pdf.as_path(), "road map.pdf")], 3);
+        // There is no panel to save with, and nothing that makes
+        // thumbnails: the first is said by the return value, the second by
+        // an answer.
+        assert!(!host.save_file(&pdf, "road map.pdf"));
+        host.thumbnail(7, &pdf, &dir.path().join("thumb.png"), 320);
+        assert_eq!(
+            received.try_recv().ok(),
+            Some(HostEvent::Thumbnail { id: 7, ok: false })
+        );
+        thread::sleep(Duration::from_millis(200));
+        assert!(!record.exists(), "{:?}", std::fs::read_to_string(&record));
     }
 }

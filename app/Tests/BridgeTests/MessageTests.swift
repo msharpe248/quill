@@ -33,8 +33,9 @@ private enum Examples {
         let examples = try Examples.load("core-to-shell")
         #expect(
             examples.map(\.name) == [
-                "clipboard.write.json", "commands.list.json", "files.pick.json", "link.open.json",
-                "pane.close.json", "pane.preview.json", "state.update.json",
+                "clipboard.write.json", "commands.list.json", "file.open.json", "files.pick.json",
+                "files.save.json", "link.open.json", "pane.close.json", "pane.play.json", "pane.preview.json",
+                "pane.web.json", "state.update.json", "thumbnail.make.json",
             ])
         for (name, text) in examples {
             let message = try CoreToShell(line: text)
@@ -47,7 +48,11 @@ private enum Examples {
 
     @Test func shellToCoreExamplesRoundTrip() throws {
         let examples = try Examples.load("shell-to-core")
-        #expect(examples.map(\.name) == ["app.will_quit.json", "command.run.json", "files.dropped.json"])
+        #expect(
+            examples.map(\.name) == [
+                "app.will_quit.json", "command.run.json", "files.dropped.json", "files.saved.json",
+                "thumbnail.made.json",
+            ])
         for (name, text) in examples {
             let message = try ShellToCore(line: text)
             #expect(try Examples.value(message.line) == Examples.value(text), "\(name) does not round-trip")
@@ -101,6 +106,50 @@ private enum Examples {
                 == .clipboardWrite(text: "Are you free on Thursday?\nThe usual place, 12:30."))
     }
 
+    @Test func filesForThePanesDecodeToWhatTheySay() throws {
+        let examples = try Dictionary(uniqueKeysWithValues: Examples.load("core-to-shell").map { ($0.name, $0.text) })
+        let folder = "/Users/robin/Library/Containers/dev.quill.Quill/Data/tmp/quill-view-412"
+
+        guard case let .panePreview(preview) = try CoreToShell(line: examples["pane.preview.json"]!) else {
+            Issue.record("not a pane.preview")
+            return
+        }
+        #expect(preview.index == 1)
+        #expect(preview.items.map(\.title) == ["roadmap.pdf", "chart.png"])
+        #expect(preview.items[1].path == folder + "/chart.png")
+
+        #expect(
+            try CoreToShell(line: examples["pane.play.json"]!)
+                == .panePlay(PaneFile(path: folder + "/demo.mov", title: "demo.mov")!))
+        guard case let .paneWeb(web) = try CoreToShell(line: examples["pane.web.json"]!) else {
+            Issue.record("not a pane.web")
+            return
+        }
+        #expect(!web.remote)
+        #expect(web.path.hasSuffix("/message.html"))
+        #expect(
+            try CoreToShell(line: examples["thumbnail.make.json"]!)
+                == .thumbnailMake(
+                    ThumbnailMake(id: 7, path: folder + "/demo.mov", out: folder + "/thumb-7.png", size: 640)!))
+        #expect(try CoreToShell(line: examples["file.open.json"]!) == .fileOpen(path: folder + "/roadmap.pdf"))
+        #expect(
+            try CoreToShell(line: examples["files.save.json"]!)
+                == .filesSave(FilesSave(path: folder + "/roadmap.pdf", name: "roadmap.pdf")!))
+
+        // None of them can be built holding what the core would not send.
+        #expect(PaneFile(path: "demo.mov", title: "demo") == nil)
+        #expect(PanePreview(items: [], index: 0) == nil)
+        #expect(PaneWeb(path: "message.html", title: "", remote: true) == nil)
+        #expect(ThumbnailMake(id: 1, path: "/a", out: "/b", size: 8) == nil)
+        #expect(ThumbnailMake(id: -1, path: "/a", out: "/b", size: 64) == nil)
+        #expect(FilesSave(path: "/a", name: "") == nil)
+
+        let answers = try Dictionary(uniqueKeysWithValues: Examples.load("shell-to-core").map { ($0.name, $0.text) })
+        #expect(try ShellToCore(line: answers["thumbnail.made.json"]!) == .thumbnailMade(id: 7, ok: true))
+        #expect(
+            try ShellToCore(line: answers["files.saved.json"]!) == .filesSaved(name: "roadmap.pdf", saved: true))
+    }
+
     @Test func droppedFilesAreAbsolutePathsAndAtLeastOne() throws {
         let examples = try Dictionary(uniqueKeysWithValues: Examples.load("shell-to-core").map { ($0.name, $0.text) })
         guard case let .filesDropped(files) = try ShellToCore(line: examples["files.dropped.json"]!) else {
@@ -129,7 +178,22 @@ private enum Examples {
             try ShellToCore(line: "not json")
         }
         #expect(throws: BridgeError.malformed("pane.preview: path is not absolute")) {
-            try CoreToShell(line: #"{"jsonrpc":"2.0","method":"pane.preview","params":{"path":"a.pdf","title":"a"}}"#)
+            try CoreToShell(
+                line:
+                    #"{"jsonrpc":"2.0","method":"pane.preview","params":{"items":[{"path":"a.pdf","title":"a"}],"index":0}}"#
+            )
+        }
+        #expect(throws: BridgeError.malformed("pane.preview: index is not one of the items")) {
+            try CoreToShell(
+                line:
+                    #"{"jsonrpc":"2.0","method":"pane.preview","params":{"items":[{"path":"/a.pdf","title":"a"}],"index":1}}"#
+            )
+        }
+        #expect(throws: BridgeError.malformed("pane.preview: unexpected size")) {
+            try CoreToShell(
+                line:
+                    #"{"jsonrpc":"2.0","method":"pane.preview","params":{"items":[{"path":"/a.pdf","title":"a","size":3}],"index":0}}"#
+            )
         }
         #expect(throws: BridgeError.malformed("link.open: not an http, https or mailto address")) {
             try CoreToShell(line: #"{"jsonrpc":"2.0","method":"link.open","params":{"url":"file:///etc/passwd"}}"#)

@@ -171,7 +171,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             window?.subtitle = state.unread > 0 ? "\(state.unread) unread" : ""
             NSApp.dockTile.badgeLabel = state.unread > 0 ? String(state.unread) : nil
         case let .panePreview(preview):
-            showPreview(URL(fileURLWithPath: preview.path), title: preview.title)
+            let first = preview.items[preview.index]
+            showPreview(URL(fileURLWithPath: first.path), title: first.title)
+        case .panePlay, .paneWeb, .fileOpen:
+            // The panes for these arrive with the rest of M4.
+            NSLog("Quill: a pane the shell does not have yet was asked for")
+        case let .thumbnailMake(make):
+            bridge?.send(.thumbnailMade(id: make.id, ok: false))
+        case let .filesSave(save):
+            bridge?.send(.filesSaved(name: save.name, saved: false))
         case .paneClose:
             closePreview()
         case let .linkOpen(open):

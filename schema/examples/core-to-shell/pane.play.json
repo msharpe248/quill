@@ -1,0 +1,8 @@
+{
+  "jsonrpc": "2.0",
+  "method": "pane.play",
+  "params": {
+    "path": "/Users/robin/Library/Containers/dev.quill.Quill/Data/tmp/quill-view-412/demo.mov",
+    "title": "demo.mov"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "method": "thumbnail.make",
+  "params": {
+    "id": 7,
+    "path": "/Users/robin/Library/Containers/dev.quill.Quill/Data/tmp/quill-view-412/demo.mov",
+    "out": "/Users/robin/Library/Containers/dev.quill.Quill/Data/tmp/quill-view-412/thumb-7.png",
+    "size": 640
+  }
+}

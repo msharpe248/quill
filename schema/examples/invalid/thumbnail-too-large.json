@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "method": "thumbnail.make",
+  "params": {
+    "id": 1,
+    "path": "/Users/robin/Library/Containers/dev.quill.Quill/Data/tmp/quill-view-412/a.heic",
+    "out": "/Users/robin/Library/Containers/dev.quill.Quill/Data/tmp/quill-view-412/t.png",
+    "size": 100000
+  }
+}

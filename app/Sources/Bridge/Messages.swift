@@ -12,8 +12,19 @@ public enum CoreToShell: Equatable, Sendable {
     case commandsList([CommandInfo])
     /// The whole of what the shell mirrors, whenever any of it changes.
     case stateUpdate(StateUpdate)
-    /// Show a file in a Quick Look pane beside the terminal.
+    /// Show files in a Quick Look pane beside the terminal, one at a time.
     case panePreview(PanePreview)
+    /// Play a video or audio file in a player pane.
+    case panePlay(PaneFile)
+    /// Show sanitized HTML in a web view pane.
+    case paneWeb(PaneWeb)
+    /// Make a PNG thumbnail of a file. Answered by `thumbnailMade`.
+    case thumbnailMake(ThumbnailMake)
+    /// Open a file in the application the Mac opens its kind with.
+    case fileOpen(path: String)
+    /// Ask where to save a copy of a file, and save it. Answered by
+    /// `filesSaved`.
+    case filesSave(FilesSave)
     /// Close the second pane and return focus to the terminal.
     case paneClose
     /// Open a web or mail address in the user's browser or mail program.
@@ -31,6 +42,10 @@ public enum ShellToCore: Equatable, Sendable {
     case commandRun(name: String)
     /// The user chose files in the open panel or dropped them on the window.
     case filesDropped(FilesDropped)
+    /// The answer to `thumbnailMake`.
+    case thumbnailMade(id: Int, ok: Bool)
+    /// The answer to `filesSave`.
+    case filesSaved(name: String, saved: Bool)
     /// The app is quitting: flush and exit cleanly.
     case appWillQuit
 }
@@ -134,17 +149,92 @@ public struct FilesDropped: Equatable, Sendable, Codable {
     static let allowedKeys: Set<String> = ["paths", "temporary"]
 }
 
-public struct PanePreview: Equatable, Sendable, Codable {
-    /// Absolute path of a file the shell can read.
+/// A file to show in a pane, by absolute path, and what to call it.
+public struct PaneFile: Equatable, Sendable, Codable {
     public var path: String
     public var title: String
 
-    public init(path: String, title: String) {
+    /// `nil` unless the path is absolute.
+    public init?(path: String, title: String) {
+        guard path.hasPrefix("/") else { return nil }
         self.path = path
         self.title = title
     }
 
     static let allowedKeys: Set<String> = ["path", "title"]
+}
+
+/// Files for the Quick Look pane: at least one, and which to show first.
+public struct PanePreview: Equatable, Sendable, Codable {
+    public var items: [PaneFile]
+    public var index: Int
+
+    /// `nil` unless `index` is one of the items.
+    public init?(items: [PaneFile], index: Int) {
+        guard items.indices.contains(index) else { return nil }
+        self.items = items
+        self.index = index
+    }
+
+    static let allowedKeys: Set<String> = ["items", "index"]
+}
+
+public struct PaneWeb: Equatable, Sendable, Codable {
+    /// The sanitized HTML. Files beside it in its folder may be loaded.
+    public var path: String
+    public var title: String
+    /// The user has allowed this message to load remote content.
+    public var remote: Bool
+
+    /// `nil` unless the path is absolute.
+    public init?(path: String, title: String, remote: Bool) {
+        guard path.hasPrefix("/") else { return nil }
+        self.path = path
+        self.title = title
+        self.remote = remote
+    }
+
+    static let allowedKeys: Set<String> = ["path", "title", "remote"]
+}
+
+public struct ThumbnailMake: Equatable, Sendable, Codable {
+    public var id: Int
+    /// The file to picture.
+    public var path: String
+    /// Where to write the PNG.
+    public var out: String
+    /// The longest side wanted, in pixels.
+    public var size: Int
+
+    public static let sizes = 16...4096
+
+    /// `nil` unless both paths are absolute, the id is not negative and
+    /// the size is one that may be asked for.
+    public init?(id: Int, path: String, out: String, size: Int) {
+        guard id >= 0, path.hasPrefix("/"), out.hasPrefix("/"), Self.sizes.contains(size) else { return nil }
+        self.id = id
+        self.path = path
+        self.out = out
+        self.size = size
+    }
+
+    static let allowedKeys: Set<String> = ["id", "path", "out", "size"]
+}
+
+public struct FilesSave: Equatable, Sendable, Codable {
+    /// The file to copy.
+    public var path: String
+    /// The name to offer in the panel.
+    public var name: String
+
+    /// `nil` unless the path is absolute and there is a name.
+    public init?(path: String, name: String) {
+        guard path.hasPrefix("/"), !name.isEmpty else { return nil }
+        self.path = path
+        self.name = name
+    }
+
+    static let allowedKeys: Set<String> = ["path", "name"]
 }
 
 public enum BridgeError: Error, Equatable, CustomStringConvertible {

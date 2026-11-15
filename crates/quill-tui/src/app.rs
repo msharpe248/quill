@@ -318,7 +318,7 @@ impl Io<'_> {
         tokio::task::spawn_blocking(move || {
             let path = dir.join(sample::FILE_NAME);
             match sample::write(&dir, &path) {
-                Ok(()) => host.preview(&path, sample::FILE_NAME),
+                Ok(()) => host.preview(&[(path.as_path(), sample::FILE_NAME)], 0),
                 Err(err) => {
                     let _ = injected.send(Action::Notify(Notice::error(format!(
                         "Cannot write the sample file: {err}"
@@ -423,6 +423,9 @@ async fn event_loop(
                 HostEvent::Files { paths, temporary } => {
                     Some(Action::Files { paths, temporary })
                 }
+                // Until the reader shows attachments, nothing asks for
+                // either of these.
+                HostEvent::Thumbnail { .. } | HostEvent::Saved { .. } => None,
                 // Either way there is nothing left to draw for.
                 HostEvent::WillQuit | HostEvent::Disconnected => break,
                 HostEvent::Problem(text) => Some(Action::Notify(Notice::error(text))),

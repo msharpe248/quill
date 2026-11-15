@@ -17,9 +17,25 @@ pub enum CoreToShell {
     /// The whole of what the shell mirrors, whenever any of it changes.
     #[serde(rename = "state.update")]
     StateUpdate(StateUpdate),
-    /// Show a file in a Quick Look pane beside the terminal.
+    /// Show files in a Quick Look pane beside the terminal, one at a time.
     #[serde(rename = "pane.preview")]
     PanePreview(PanePreview),
+    /// Play a video or audio file in a player pane.
+    #[serde(rename = "pane.play")]
+    PanePlay(PaneFile),
+    /// Show sanitized HTML in a web view pane.
+    #[serde(rename = "pane.web")]
+    PaneWeb(PaneWeb),
+    /// Make a PNG thumbnail of a file. Answered by `thumbnail.made`.
+    #[serde(rename = "thumbnail.make")]
+    ThumbnailMake(ThumbnailMake),
+    /// Open a file in the application the Mac opens its kind with.
+    #[serde(rename = "file.open")]
+    FileOpen(FileOpen),
+    /// Ask where to save a copy of a file, and save it. Answered by
+    /// `files.saved`.
+    #[serde(rename = "files.save")]
+    FilesSave(FilesSave),
     /// Close the second pane and return focus to the terminal.
     #[serde(rename = "pane.close")]
     PaneClose(NoParams),
@@ -45,6 +61,12 @@ pub enum ShellToCore {
     /// The user chose files in the open panel or dropped them on the window.
     #[serde(rename = "files.dropped")]
     FilesDropped(FilesDropped),
+    /// The answer to `thumbnail.make`.
+    #[serde(rename = "thumbnail.made")]
+    ThumbnailMade(ThumbnailMade),
+    /// The answer to `files.save`.
+    #[serde(rename = "files.saved")]
+    FilesSaved(FilesSaved),
     /// The app is quitting: flush and exit cleanly.
     #[serde(rename = "app.will_quit")]
     AppWillQuit(NoParams),
@@ -159,12 +181,237 @@ impl From<OpenableUrl> for String {
     }
 }
 
+/// The absolute path of a file. It cannot be built or decoded holding a
+/// relative one: a path means the same to the core and the shell only when
+/// it does not depend on where either is running.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct AbsolutePath(String);
+
+impl AbsolutePath {
+    pub fn new(path: &std::path::Path) -> Option<Self> {
+        let text = path.to_str()?;
+        path.is_absolute().then(|| Self(text.to_owned()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for AbsolutePath {
+    type Error = String;
+
+    fn try_from(path: String) -> Result<Self, Self::Error> {
+        if path.starts_with('/') {
+            Ok(Self(path))
+        } else {
+            Err("not an absolute path".to_owned())
+        }
+    }
+}
+
+impl From<AbsolutePath> for String {
+    fn from(path: AbsolutePath) -> Self {
+        path.0
+    }
+}
+
+/// A file to show in a pane, and what to call it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PanePreview {
-    /// Absolute path of a file the shell can read.
-    pub path: String,
+pub struct PaneFile {
+    pub path: AbsolutePath,
     pub title: String,
+}
+
+/// Files for the Quick Look pane: at least one, and which to show first.
+/// It cannot be built or decoded with an index past the last of them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "PanePreviewParams", into = "PanePreviewParams")]
+pub struct PanePreview {
+    items: Vec<PaneFile>,
+    index: usize,
+}
+
+impl PanePreview {
+    pub fn new(items: Vec<PaneFile>, index: usize) -> Option<Self> {
+        (index < items.len()).then_some(Self { items, index })
+    }
+
+    pub fn items(&self) -> &[PaneFile] {
+        &self.items
+    }
+
+    pub fn index(&self) -> usize {
+        self.index
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PanePreviewParams {
+    items: Vec<PaneFile>,
+    index: usize,
+}
+
+impl TryFrom<PanePreviewParams> for PanePreview {
+    type Error = String;
+
+    fn try_from(params: PanePreviewParams) -> Result<Self, Self::Error> {
+        Self::new(params.items, params.index)
+            .ok_or_else(|| "index must be one of the items, and there must be one".to_owned())
+    }
+}
+
+impl From<PanePreview> for PanePreviewParams {
+    fn from(preview: PanePreview) -> Self {
+        Self {
+            items: preview.items,
+            index: preview.index,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PaneWeb {
+    /// The sanitized HTML. Files beside it in its folder may be loaded.
+    pub path: AbsolutePath,
+    pub title: String,
+    /// The user has allowed this message to load remote content.
+    pub remote: bool,
+}
+
+/// The longest side a thumbnail may be asked for, in pixels.
+pub const MAX_THUMBNAIL: u32 = 4096;
+/// The shortest.
+pub const MIN_THUMBNAIL: u32 = 16;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "ThumbnailMakeParams", into = "ThumbnailMakeParams")]
+pub struct ThumbnailMake {
+    id: u64,
+    path: AbsolutePath,
+    out: AbsolutePath,
+    size: u32,
+}
+
+impl ThumbnailMake {
+    /// `size` is brought within what may be asked for.
+    pub fn new(id: u64, path: AbsolutePath, out: AbsolutePath, size: u32) -> Self {
+        Self {
+            id,
+            path,
+            out,
+            size: size.clamp(MIN_THUMBNAIL, MAX_THUMBNAIL),
+        }
+    }
+
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ThumbnailMakeParams {
+    id: u64,
+    path: AbsolutePath,
+    out: AbsolutePath,
+    size: u32,
+}
+
+impl TryFrom<ThumbnailMakeParams> for ThumbnailMake {
+    type Error = String;
+
+    fn try_from(params: ThumbnailMakeParams) -> Result<Self, Self::Error> {
+        if (MIN_THUMBNAIL..=MAX_THUMBNAIL).contains(&params.size) {
+            Ok(Self {
+                id: params.id,
+                path: params.path,
+                out: params.out,
+                size: params.size,
+            })
+        } else {
+            Err(format!(
+                "size must be from {MIN_THUMBNAIL} to {MAX_THUMBNAIL}"
+            ))
+        }
+    }
+}
+
+impl From<ThumbnailMake> for ThumbnailMakeParams {
+    fn from(make: ThumbnailMake) -> Self {
+        Self {
+            id: make.id,
+            path: make.path,
+            out: make.out,
+            size: make.size,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileOpen {
+    pub path: AbsolutePath,
+}
+
+/// A file to save a copy of, and the name to offer. The name is never
+/// empty.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "FilesSaveParams", into = "FilesSaveParams")]
+pub struct FilesSave {
+    path: AbsolutePath,
+    name: String,
+}
+
+impl FilesSave {
+    pub fn new(path: AbsolutePath, name: &str) -> Option<Self> {
+        (!name.is_empty()).then(|| Self {
+            path,
+            name: name.to_owned(),
+        })
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FilesSaveParams {
+    path: AbsolutePath,
+    name: String,
+}
+
+impl TryFrom<FilesSaveParams> for FilesSave {
+    type Error = String;
+
+    fn try_from(params: FilesSaveParams) -> Result<Self, Self::Error> {
+        Self::new(params.path, &params.name).ok_or_else(|| "name is empty".to_owned())
+    }
+}
+
+impl From<FilesSave> for FilesSaveParams {
+    fn from(save: FilesSave) -> Self {
+        Self {
+            path: save.path,
+            name: save.name,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ThumbnailMade {
+    pub id: u64,
+    pub ok: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FilesSaved {
+    pub name: String,
+    pub saved: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -2,7 +2,16 @@
   "jsonrpc": "2.0",
   "method": "pane.preview",
   "params": {
-    "path": "/Users/robin/Library/Containers/dev.quill.Quill/Data/tmp/roadmap.pdf",
-    "title": "roadmap.pdf"
+    "items": [
+      {
+        "path": "/Users/robin/Library/Containers/dev.quill.Quill/Data/tmp/quill-view-412/roadmap.pdf",
+        "title": "roadmap.pdf"
+      },
+      {
+        "path": "/Users/robin/Library/Containers/dev.quill.Quill/Data/tmp/quill-view-412/chart.png",
+        "title": "chart.png"
+      }
+    ],
+    "index": 1
   }
 }

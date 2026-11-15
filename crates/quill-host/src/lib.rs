@@ -17,7 +17,9 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
-use crate::bridge::{CommandInfo, CoreToShell, NoParams, PanePreview, StateUpdate};
+use crate::bridge::{
+    AbsolutePath, CommandInfo, CoreToShell, NoParams, PaneFile, PanePreview, StateUpdate,
+};
 pub use crate::shell::ShellHost;
 pub use crate::standalone::StandaloneHost;
 
@@ -32,6 +34,11 @@ pub enum HostEvent {
     /// Files the user chose or dropped on the window. `temporary`: they
     /// are copies made for the core, to remove once read.
     Files { paths: Vec<String>, temporary: bool },
+    /// The answer to [`Host::thumbnail`]: the picture is at the path asked
+    /// for, or could not be made.
+    Thumbnail { id: u64, ok: bool },
+    /// The answer to [`Host::save_file`].
+    Saved { name: String, saved: bool },
     /// The app is quitting: flush and exit cleanly.
     WillQuit,
     /// The shell has gone. There is nothing left to draw for.
@@ -57,13 +64,69 @@ pub trait Host: Send + Sync {
         self.send(CoreToShell::StateUpdate(state));
     }
 
-    /// Shows a file in Quick Look.
-    fn preview(&self, path: &Path, title: &str) {
-        self.send(CoreToShell::PanePreview(PanePreview {
-            path: path.to_string_lossy().into_owned(),
-            title: title.to_owned(),
-        }));
+    /// Shows files in Quick Look, starting with the one at `index`. Each
+    /// is a path and what to call it. Nothing is shown for a path that is
+    /// not absolute or an index past the end.
+    fn preview(&self, files: &[(&Path, &str)], index: usize) {
+        let items: Option<Vec<PaneFile>> = files
+            .iter()
+            .map(|(path, title)| pane_file(path, title))
+            .collect();
+        if let Some(preview) = items.and_then(|items| PanePreview::new(items, index)) {
+            self.send(CoreToShell::PanePreview(preview));
+        }
     }
+
+    /// Plays a video or audio file.
+    fn play(&self, path: &Path, title: &str) {
+        if let Some(file) = pane_file(path, title) {
+            self.send(CoreToShell::PanePlay(file));
+        }
+    }
+
+    /// Shows an HTML file that has already been sanitized. `remote`: the
+    /// user has allowed it to load remote content.
+    fn web(&self, path: &Path, title: &str, remote: bool) {
+        if let Some(path) = AbsolutePath::new(path) {
+            self.send(CoreToShell::PaneWeb(bridge::PaneWeb {
+                path,
+                title: title.to_owned(),
+                remote,
+            }));
+        }
+    }
+
+    /// Asks for a PNG picture of `path` to be written to `out`. The answer
+    /// is [`HostEvent::Thumbnail`] with the same `id`, always: a host that
+    /// cannot make one says so.
+    fn thumbnail(&self, id: u64, path: &Path, out: &Path, size: u32) {
+        match (AbsolutePath::new(path), AbsolutePath::new(out)) {
+            (Some(path), Some(out)) => self.send(CoreToShell::ThumbnailMake(
+                bridge::ThumbnailMake::new(id, path, out, size),
+            )),
+            _ => self.send_back(HostEvent::Thumbnail { id, ok: false }),
+        }
+    }
+
+    /// Opens a file in the application the Mac opens its kind with.
+    fn open_file(&self, path: &Path) {
+        if let Some(path) = AbsolutePath::new(path) {
+            self.send(CoreToShell::FileOpen(bridge::FileOpen { path }));
+        }
+    }
+
+    /// Asks the user where to save a copy of `path`, offering `name`, if
+    /// this host has a panel for that. Returns whether it has: when not,
+    /// the caller asks for a place itself. The answer is
+    /// [`HostEvent::Saved`].
+    fn save_file(&self, path: &Path, name: &str) -> bool {
+        let _ = (path, name);
+        false
+    }
+
+    /// Hands an event straight back to the core, for a host that can
+    /// answer a request without anyone else's help.
+    fn send_back(&self, event: HostEvent);
 
     fn close_pane(&self) {
         self.send(CoreToShell::PaneClose(NoParams {}));
@@ -89,6 +152,13 @@ pub trait Host: Send + Sync {
             self.send(CoreToShell::LinkOpen(bridge::LinkOpen { url }));
         }
     }
+}
+
+fn pane_file(path: &Path, title: &str) -> Option<PaneFile> {
+    Some(PaneFile {
+        path: AbsolutePath::new(path)?,
+        title: title.to_owned(),
+    })
 }
 
 /// The host for this run, the events it will send, and a problem to show the
