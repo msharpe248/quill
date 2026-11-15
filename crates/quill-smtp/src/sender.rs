@@ -7,7 +7,7 @@ use quill_core::config::TlsMode;
 use quill_core::{Envelope, Error, RefusedRecipient, Result, Sender};
 use quill_net::Stream;
 
-use crate::auth::{self, CredentialProvider};
+use crate::auth::{self, Credential, CredentialProvider};
 use crate::capabilities::Capabilities;
 use crate::config::{SmtpAuth, SmtpConfig};
 use crate::connection::Connection;
@@ -128,7 +128,7 @@ impl SmtpSender {
             SmtpAuth::Mechanism(mechanism) => Some(mechanism),
             SmtpAuth::Automatic => None,
         };
-        let credential = (self.credential)()?;
+        let credential = self.credential.get().await?;
         let mechanism = match mechanism {
             Some(mechanism) => mechanism,
             None => auth::choose(offered, &credential).ok_or_else(|| {
@@ -144,7 +144,21 @@ impl SmtpSender {
                 })
             })?,
         };
-        auth::sign_in(connection, mechanism, &self.config, credential).await
+        let is_token = matches!(credential, Credential::OAuthToken(_));
+        match auth::sign_in(connection, mechanism, &self.config, credential.clone()).await {
+            // A token can be refused before its time: withdrawn, or the
+            // clocks disagree. One renewed token is tried before the
+            // account is said to need signing in to again.
+            Err(Error::Auth(reason)) if is_token => {
+                self.credential.refused().await;
+                let renewed = self.credential.get().await?;
+                if renewed == credential {
+                    return Err(Error::Auth(reason));
+                }
+                auth::sign_in(connection, mechanism, &self.config, renewed).await
+            }
+            outcome => outcome,
+        }
     }
 
     /// Everything after the connection is open: sign in, name the sender

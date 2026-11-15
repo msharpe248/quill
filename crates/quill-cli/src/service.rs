@@ -13,7 +13,7 @@ use quill_auth::SecretStore;
 use quill_core::config::{AccountConfig, Config};
 use quill_core::{Backend, Error};
 use quill_imap::{ImapBackend, ImapConfig, Trust};
-use quill_smtp::{Credential, SmtpAuth, SmtpConfig, SmtpSender};
+use quill_smtp::{SmtpAuth, SmtpConfig, SmtpSender};
 use quill_store::Store;
 use quill_sync::{SyncAccount, SyncHandle};
 use quill_tui::app::AccountsLink;
@@ -25,6 +25,7 @@ use tokio::sync::mpsc::unbounded_channel;
 use crate::accounts::{imap_config, imap_password_name, parse_fingerprint, sync_account};
 use crate::config_edit;
 use crate::discover::{self, Dns, Prober};
+use crate::oauth;
 
 pub struct Service {
     /// `config.toml`.
@@ -179,11 +180,13 @@ impl Service {
         if let Trusting::Once(fingerprint) = trusting {
             imap.trust.pinned_sha256 = Some(parse_fingerprint(fingerprint)?);
         }
+        // An account added here signs in with the password just typed.
         Ok(sync_account(
             self.register(account)?,
             account,
             imap,
             &self.secrets,
+            None,
         ))
     }
 
@@ -242,7 +245,8 @@ impl Service {
                 .hurry_sends(id, now())
                 .map_err(|err| err.to_string())?;
         }
-        Ok(sync_account(id, &account, imap, &self.secrets))
+        let tokens = oauth::tokens(&account, &self.secrets, &mut None)?;
+        Ok(sync_account(id, &account, imap, &self.secrets, tokens))
     }
 }
 
@@ -275,8 +279,7 @@ async fn verify(
             pinned_sha256,
         },
     };
-    let reading = password.clone();
-    let backend = ImapBackend::new(config, Arc::new(move || Ok(reading.clone())));
+    let backend = ImapBackend::new(config, quill_core::credentials::password(password.clone()));
     match backend.list_folders().await {
         Ok(_) => {}
         Err(Error::Auth(reason)) => return Err(VerifyProblem::Auth(reason)),
@@ -298,7 +301,7 @@ async fn verify(
             auth: SmtpAuth::Automatic,
             hello_name: quill_smtp::DEFAULT_HELLO_NAME.to_owned(),
         },
-        Arc::new(move || Ok(Credential::Password(password.clone()))),
+        quill_core::credentials::password(password),
     );
     match sender.check().await {
         Ok(()) => Ok(()),

@@ -2,11 +2,12 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use quill_auth::{OAuthHttp, SecretStore, password_name};
 use quill_core::config::{AccountConfig, AccountType, Config, TlsMode};
-use quill_core::{Backend, Error, Sender};
+use quill_core::{Backend, Credential, Credentials, Error, Sender, TokenSource};
 use quill_imap::{ImapBackend, ImapConfig, Trust};
-use quill_smtp::{Credential, SmtpAuth, SmtpConfig, SmtpSender};
+use quill_smtp::{SmtpAuth, SmtpConfig, SmtpSender};
 use quill_store::Store;
 use quill_sync::SyncAccount;
 use quill_tui::state::Notice;
@@ -78,36 +79,89 @@ pub fn imap_backend(
     name: &str,
     secrets: &Arc<dyn SecretStore>,
 ) -> Arc<dyn Backend> {
-    let key = imap_password_name(&imap);
-    let secrets = Arc::clone(secrets);
-    let hint = format!("no password is saved; run: quill account password \"{name}\"");
-    let password = Arc::new(move || match secrets.get(&key) {
-        Ok(Some(password)) => Ok(password),
-        Ok(None) => Err(Error::Auth(hint.clone())),
-        Err(err) => Err(Error::Auth(err.to_string())),
+    let password = Arc::new(SavedPassword {
+        secrets: Arc::clone(secrets),
+        names: vec![imap_password_name(&imap)],
+        account: name.to_owned(),
     });
     Arc::new(ImapBackend::new(imap, password))
 }
 
+/// A password kept in the Keychain, read again at every sign-in.
+struct SavedPassword {
+    secrets: Arc<dyn SecretStore>,
+    /// The names it may be saved under; the first one found is used.
+    names: Vec<String>,
+    /// The account's name, to say which one has no password.
+    account: String,
+}
+
+#[async_trait]
+impl Credentials for SavedPassword {
+    async fn get(&self) -> quill_core::Result<Credential> {
+        let secrets = Arc::clone(&self.secrets);
+        let names = self.names.clone();
+        let account = self.account.clone();
+        // The Keychain blocks, and for as long as it likes when macOS
+        // stops to ask the user about it. Mail for other accounts, and the
+        // screen, carry on meanwhile.
+        tokio::task::spawn_blocking(move || {
+            for name in &names {
+                match secrets.get(name) {
+                    Ok(Some(password)) => return Ok(Credential::Password(password)),
+                    Ok(None) => {}
+                    Err(err) => return Err(Error::Auth(err.to_string())),
+                }
+            }
+            Err(Error::Auth(format!(
+                "no password is saved; run: quill account password \"{account}\""
+            )))
+        })
+        .await
+        .map_err(|err| Error::Backend(err.to_string()))?
+    }
+}
+
+/// An account's OAuth tokens, as what it signs in to its mail servers
+/// with.
+struct Tokens(Arc<dyn TokenSource>);
+
+#[async_trait]
+impl Credentials for Tokens {
+    async fn get(&self) -> quill_core::Result<Credential> {
+        Ok(Credential::OAuthToken(self.0.access_token().await?))
+    }
+
+    async fn refused(&self) {
+        self.0.invalidate().await;
+    }
+}
+
 /// Everything the sync engine needs for one IMAP account: how to read its
-/// mail and, when it has an SMTP server, how to send.
+/// mail and, when it has an SMTP server, how to send. With `tokens` it
+/// signs in to both servers with an OAuth token, not a saved password.
 pub fn sync_account(
     id: quill_core::types::LocalAccountId,
     account: &AccountConfig,
     imap: ImapConfig,
     secrets: &Arc<dyn SecretStore>,
+    tokens: Option<Arc<dyn TokenSource>>,
 ) -> SyncAccount {
-    let sender = smtp_sender(account, &imap, secrets);
+    let sender = smtp_sender(account, &imap, secrets, tokens.as_ref());
     // Gmail files everything sent through its SMTP server in Sent Mail by
     // itself; a copy saved by Quill would be a second one.
     let server_saves_sent = account.smtp.as_ref().is_some_and(|smtp| {
         let host = smtp.host.to_ascii_lowercase();
         host.ends_with(".gmail.com") || host.ends_with(".googlemail.com")
     });
+    let backend = match tokens {
+        Some(tokens) => Arc::new(ImapBackend::new(imap, Arc::new(Tokens(tokens)))),
+        None => imap_backend(imap, &account.name, secrets),
+    };
     SyncAccount {
         id,
         name: account.name.clone(),
-        backend: imap_backend(imap, &account.name, secrets),
+        backend,
         sender,
         server_saves_sent,
     }
@@ -120,6 +174,7 @@ fn smtp_sender(
     account: &AccountConfig,
     imap: &ImapConfig,
     secrets: &Arc<dyn SecretStore>,
+    tokens: Option<&Arc<dyn TokenSource>>,
 ) -> Option<Arc<dyn Sender>> {
     let server = account.smtp.as_ref()?;
     let pinned_sha256 = match server.fingerprint.as_deref().map(parse_fingerprint) {
@@ -144,24 +199,20 @@ fn smtp_sender(
         auth: SmtpAuth::Automatic,
         hello_name: quill_smtp::DEFAULT_HELLO_NAME.to_owned(),
     };
-    // A password saved for sending wins; otherwise the one for reading,
-    // which is the same password at nearly every provider.
-    let own = password_name("smtp", &username, &server.host);
-    let shared = imap_password_name(imap);
-    let secrets = Arc::clone(secrets);
-    let name = account.name.clone();
-    let credential = Arc::new(move || {
-        for key in [&own, &shared] {
-            match secrets.get(key) {
-                Ok(Some(password)) => return Ok(Credential::Password(password)),
-                Ok(None) => {}
-                Err(err) => return Err(Error::Auth(err.to_string())),
-            }
-        }
-        Err(Error::Auth(format!(
-            "no password is saved; run: quill account password \"{name}\""
-        )))
-    });
+    let credential: Arc<dyn Credentials> = match tokens {
+        // One sign-in serves reading and sending.
+        Some(tokens) => Arc::new(Tokens(Arc::clone(tokens))),
+        // A password saved for sending wins; otherwise the one for
+        // reading, which is the same password at nearly every provider.
+        None => Arc::new(SavedPassword {
+            secrets: Arc::clone(secrets),
+            names: vec![
+                password_name("smtp", &username, &server.host),
+                imap_password_name(imap),
+            ],
+            account: account.name.clone(),
+        }),
+    };
     Some(Arc::new(SmtpSender::new(config, credential)))
 }
 
@@ -185,19 +236,13 @@ pub fn prepare(
     for account in &config.accounts {
         let name = &account.name;
         if account.kind == AccountType::Graph {
-            let http = match &oauth_http {
-                Some(http) => Ok(http.clone()),
-                None => OAuthHttp::new(&Trust::default()).map_err(|err| err.to_string()),
-            };
-            let built = http.and_then(|http| {
-                oauth_http = Some(http.clone());
-                let setup = oauth::setup(account)?
-                    .ok_or_else(|| "it does not sign in with OAuth".to_owned())?;
+            let built = oauth::tokens(account, secrets, &mut oauth_http).and_then(|tokens| {
+                let tokens = tokens.ok_or_else(|| "it does not sign in with OAuth".to_owned())?;
                 // Registered only once it is known to be usable.
                 let id = store
                     .upsert_account(name, &account.address, account.kind.as_str())
                     .map_err(|err| err.to_string())?;
-                oauth::graph_account(id, account, setup, &http, secrets)
+                oauth::graph_account(id, account, tokens)
             });
             match built {
                 Ok(account) => accounts.push(account),
@@ -214,12 +259,6 @@ pub fn prepare(
             )));
             continue;
         }
-        if oauth::wanted(account) {
-            notices.push(Notice::info(format!(
-                "{name}: signing in to a mail server with OAuth is not supported yet. An app password works meanwhile."
-            )));
-            continue;
-        }
         let imap = match imap_config(account) {
             Ok(imap) => imap,
             Err(reason) => {
@@ -232,8 +271,16 @@ pub fn prepare(
                 "{name} connects without encryption. Its password and mail cross the network in the clear."
             )));
         }
+        // A mail server that takes a token in place of a password.
+        let tokens = match oauth::tokens(account, secrets, &mut oauth_http) {
+            Ok(tokens) => tokens,
+            Err(reason) => {
+                notices.push(Notice::error(format!("{name} cannot sync: {reason}.")));
+                continue;
+            }
+        };
         let id = store.upsert_account(name, &account.address, account.kind.as_str())?;
-        accounts.push(sync_account(id, account, imap, secrets));
+        accounts.push(sync_account(id, account, imap, secrets, tokens));
     }
     if prune {
         let keep: Vec<&str> = config
@@ -331,6 +378,84 @@ address = "robin@example.org"
         assert_eq!(
             (stored[0].name.as_str(), stored[0].kind.as_str()),
             ("Work", "graph")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_mail_server_account_can_sign_in_with_oauth_in_place_of_a_password() {
+        let mut store = Store::open_in_memory().unwrap();
+        let text = r#"
+[[account]]
+name = "Mail"
+type = "imap"
+address = "robin@example.com"
+auth = "oauth"
+oauth_client_id = "app-2"
+oauth_client_secret = "not-really"
+imap = { host = "127.0.0.1", port = 1, tls = "none" }
+smtp = { host = "127.0.0.1", port = 1, tls = "none" }
+
+[[account]]
+name = "No App"
+type = "imap"
+address = "robin@example.org"
+auth = "oauth"
+imap = { host = "imap.example.org" }
+"#;
+        let prepared = prepare(&config(text), &mut store, &secrets(), true).unwrap();
+        assert_eq!(prepared.accounts.len(), 1);
+        assert_eq!(prepared.accounts[0].name, "Mail");
+        assert!(prepared.accounts[0].sender.is_some());
+        assert!(
+            prepared.notices.iter().any(|notice| notice
+                .text
+                .starts_with("No App cannot sync: it has no `oauth_client_id`")),
+            "{:?}",
+            prepared.notices
+        );
+        // Nobody has signed in, and it is not a password that is missing.
+        // (Nothing listens on port 1, so the connection is what fails
+        // first; the sender is asked directly.)
+        let sender = prepared.accounts[0].sender.clone().unwrap();
+        let envelope = quill_core::Envelope {
+            from: "robin@example.com".to_owned(),
+            to: vec!["ana@example.com".to_owned()],
+        };
+        assert!(matches!(
+            sender.send(b"Subject: x\r\n\r\n", &envelope).await,
+            Err(Error::Connection(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_saved_password_is_looked_for_under_each_name_in_turn() {
+        let secrets = secrets();
+        let saved = SavedPassword {
+            secrets: Arc::clone(&secrets),
+            names: vec![
+                "smtp:a@example.com".to_owned(),
+                "imap:a@example.com".to_owned(),
+            ],
+            account: "Personal".to_owned(),
+        };
+        match saved.get().await {
+            Err(Error::Auth(reason)) => {
+                assert!(
+                    reason.contains("quill account password \"Personal\""),
+                    "{reason}"
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+        secrets.set("imap:a@example.com", "for-reading").unwrap();
+        assert_eq!(
+            saved.get().await.unwrap(),
+            Credential::Password("for-reading".to_owned())
+        );
+        secrets.set("smtp:a@example.com", "for-sending").unwrap();
+        assert_eq!(
+            saved.get().await.unwrap(),
+            Credential::Password("for-sending".to_owned())
         );
     }
 

@@ -179,21 +179,43 @@ impl TokenSource for AccountTokens {
     }
 }
 
+/// The account's tokens, as something its backends can ask: `None` for an
+/// account that signs in with a password.
+///
+/// `http` is what the sign-in service is reached with. It is made when the
+/// first account needs it and shared by the rest.
+pub fn tokens(
+    account: &AccountConfig,
+    secrets: &Arc<dyn SecretStore>,
+    http: &mut Option<OAuthHttp>,
+) -> Result<Option<Arc<dyn TokenSource>>, String> {
+    let Some(setup) = setup(account)? else {
+        return Ok(None);
+    };
+    let http = match http {
+        Some(http) => http.clone(),
+        None => {
+            let made =
+                OAuthHttp::new(&quill_net::Trust::default()).map_err(|err| err.to_string())?;
+            *http = Some(made.clone());
+            made
+        }
+    };
+    Ok(Some(Arc::new(AccountTokens::new(
+        http,
+        setup,
+        Arc::clone(secrets),
+        account,
+    ))))
+}
+
 /// Everything the sync engine needs for a Microsoft 365 account: Graph
 /// reads the mail and sends it.
 pub fn graph_account(
     id: LocalAccountId,
     account: &AccountConfig,
-    setup: OAuthSetup,
-    http: &OAuthHttp,
-    secrets: &Arc<dyn SecretStore>,
+    tokens: Arc<dyn TokenSource>,
 ) -> Result<SyncAccount, String> {
-    let tokens: Arc<dyn TokenSource> = Arc::new(AccountTokens::new(
-        http.clone(),
-        setup,
-        Arc::clone(secrets),
-        account,
-    ));
     let address = account
         .oauth
         .as_ref()
@@ -248,7 +270,6 @@ pub async fn sign_in(
 mod tests {
     use quill_auth::MemorySecrets;
     use quill_core::config::Config;
-    use quill_net::Trust;
     use wiremock::matchers::{body_string_contains, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -343,9 +364,8 @@ mod tests {
     }
 
     fn built(account: &AccountConfig, secrets: &Arc<dyn SecretStore>) -> SyncAccount {
-        let http = OAuthHttp::new(&Trust::default()).unwrap();
-        let setup = setup(account).unwrap().unwrap();
-        graph_account(LocalAccountId(1), account, setup, &http, secrets).unwrap()
+        let tokens = tokens(account, secrets, &mut None).unwrap().unwrap();
+        graph_account(LocalAccountId(1), account, tokens).unwrap()
     }
 
     #[tokio::test]
@@ -415,11 +435,10 @@ mod tests {
     #[test]
     fn graph_is_reached_over_https_or_not_at_all() {
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecrets::default());
-        let http = OAuthHttp::new(&Trust::default()).unwrap();
         let elsewhere = account(&format!(
             "{GRAPH}\n[account.oauth]\ngraph_url = \"http://graph.example.com/v1.0\"\n"
         ));
-        let setup = setup(&elsewhere).unwrap().unwrap();
-        assert!(graph_account(LocalAccountId(1), &elsewhere, setup, &http, &secrets).is_err());
+        let tokens = tokens(&elsewhere, &secrets, &mut None).unwrap().unwrap();
+        assert!(graph_account(LocalAccountId(1), &elsewhere, tokens).is_err());
     }
 }

@@ -549,6 +549,39 @@ async fn a_wrong_token_is_an_auth_error_after_hearing_the_server_out() {
     }
 }
 
+/// A token that has gone stale, and a good one once it is said to be.
+struct Renewing(std::sync::atomic::AtomicBool);
+
+#[async_trait::async_trait]
+impl quill_core::Credentials for Renewing {
+    async fn get(&self) -> quill_core::Result<Credential> {
+        Ok(Credential::OAuthToken(if self.0.load(Ordering::Relaxed) {
+            TOKEN.to_owned()
+        } else {
+            "expired-token".to_owned()
+        }))
+    }
+
+    async fn refused(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
+#[tokio::test]
+async fn a_refused_token_is_renewed_and_the_message_still_goes() {
+    for mechanism in [Mechanism::Xoauth2, Mechanism::OAuthBearer] {
+        let server = Server::start(TlsMode::Implicit, Script::default()).await;
+        let mut config = server.config();
+        config.auth = SmtpAuth::Mechanism(mechanism);
+        let sender = SmtpSender::new(config, Arc::new(Renewing(false.into())));
+        send(&sender, &hello(), &to_robin()).await.unwrap();
+        let log = server.log();
+        // Signed in on the second go, on the same connection, and sent once.
+        assert_eq!(log.signed_in.len(), 1, "{mechanism:?}");
+        assert_eq!(log.delivered.len(), 1, "{mechanism:?}");
+    }
+}
+
 #[tokio::test]
 async fn a_server_that_cannot_prove_it_knows_the_password_is_refused() {
     for scram in [Scram::Forging, Scram::NotSigning] {

@@ -1,6 +1,5 @@
 //! Signing in: which mechanism, and its exchange with the server.
 
-use std::fmt;
 use std::sync::Arc;
 
 use base64::Engine as _;
@@ -42,29 +41,12 @@ impl Mechanism {
     }
 }
 
-/// The secret an account signs in with.
-#[derive(Clone, PartialEq, Eq)]
-pub enum Credential {
-    Password(String),
-    /// An OAuth access token, already fresh. Refreshing is the provider's
-    /// business.
-    OAuthToken(String),
-}
+pub use quill_core::Credential;
 
-impl fmt::Debug for Credential {
-    /// Never the secret itself: this ends up in logs.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Password(_) => "Password(..)",
-            Self::OAuthToken(_) => "OAuthToken(..)",
-        })
-    }
-}
-
-/// Where the secret comes from: the Keychain in the app, a constant in
-/// tests. Asked for at each sign-in, once the channel is secure, and never
-/// kept.
-pub type CredentialProvider = Arc<dyn Fn() -> Result<Credential> + Send + Sync>;
+/// Where the secret comes from: the Keychain or an OAuth provider in the
+/// app, a constant in tests. Asked for at each sign-in, once the channel is
+/// secure, and never kept.
+pub type CredentialProvider = Arc<dyn quill_core::Credentials>;
 
 /// The strongest mechanism among those `offered` that works with
 /// `credential`. Mechanism names are compared in upper case.

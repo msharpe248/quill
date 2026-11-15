@@ -440,7 +440,7 @@ async fn upgrade(
 }
 
 pub fn backend(config: ImapConfig, password: &'static str) -> ImapBackend {
-    ImapBackend::new(config, Arc::new(move || Ok(password.to_owned())))
+    ImapBackend::new(config, quill_core::credentials::password(password))
 }
 
 /// A plain-text message from an invented sender.

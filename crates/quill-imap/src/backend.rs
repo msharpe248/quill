@@ -21,7 +21,7 @@ use quill_core::types::{
     Capabilities, FlagChange, Flags, FolderId, Headers, Operation, RemoteEvent, RemoteFolder,
     RemoteId, RemoteMessage, SyncCursor, SyncDelta,
 };
-use quill_core::{Backend, Error, Result};
+use quill_core::{Backend, Credential, Credentials, Error, Result};
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::Sender;
 
@@ -36,9 +36,10 @@ use crate::names;
 use crate::uidset::UidSet;
 use crate::wait::Bounded;
 
-/// Where the password comes from: the Keychain in the app, a constant in
-/// tests. Asked for at each sign-in and never kept.
-pub type PasswordProvider = Arc<dyn Fn() -> Result<String> + Send + Sync>;
+/// Where the account's secret comes from: the Keychain or an OAuth
+/// provider in the app, a constant in tests. Asked for at each sign-in and
+/// never kept.
+pub type PasswordProvider = Arc<dyn Credentials>;
 
 /// How many messages one `sync_folder` call brings in.
 const DEFAULT_BATCH: usize = 500;
@@ -71,6 +72,79 @@ pub struct ImapBackend {
     /// Kept apart from the connection because `capabilities` is asked
     /// without one and cannot wait for a lock.
     push: AtomicU8,
+}
+
+/// Signs in on a connection that has just been made, with whatever the
+/// account signs in with: `LOGIN` for a password, `AUTHENTICATE XOAUTH2`
+/// for a token.
+async fn authenticate<T>(
+    client: async_imap::Client<T>,
+    user: &str,
+    credentials: &dyn Credentials,
+) -> Result<Session<T>>
+where
+    T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + std::fmt::Debug + Send,
+{
+    let refused = |err| match err {
+        async_imap::error::Error::No(text) | async_imap::error::Error::Bad(text) => {
+            Error::Auth(text)
+        }
+        async_imap::error::Error::Io(err) => Error::Connection(err.to_string()),
+        other => Error::Connection(other.to_string()),
+    };
+    match credentials.get().await? {
+        Credential::Password(password) => client
+            .login(user, password)
+            .await
+            .map_err(|(err, _)| refused(err)),
+        Credential::OAuthToken(token) => {
+            match client
+                .authenticate("XOAUTH2", XOAuth2::new(user, &token))
+                .await
+            {
+                Ok(session) => Ok(session),
+                // A token can be refused before its time: withdrawn, or the
+                // clocks disagree. One renewed token is tried before the
+                // account is said to need signing in to again.
+                Err((async_imap::error::Error::No(text), client)) => {
+                    credentials.refused().await;
+                    match credentials.get().await? {
+                        Credential::OAuthToken(renewed) if renewed != token => client
+                            .authenticate("XOAUTH2", XOAuth2::new(user, &renewed))
+                            .await
+                            .map_err(|(err, _)| refused(err)),
+                        _ => Err(Error::Auth(text)),
+                    }
+                }
+                Err((err, _)) => Err(refused(err)),
+            }
+        }
+    }
+}
+
+/// Signing in with an OAuth token, the way Gmail's and Microsoft's mail
+/// servers take one.
+struct XOAuth2 {
+    /// What to answer the server's first, empty, challenge with.
+    first: Option<String>,
+}
+
+impl XOAuth2 {
+    fn new(user: &str, token: &str) -> Self {
+        Self {
+            first: Some(quill_core::credentials::xoauth2(user, token)),
+        }
+    }
+}
+
+impl async_imap::Authenticator for XOAuth2 {
+    type Response = String;
+
+    /// A server that refuses the token says why in a second challenge, and
+    /// wants an empty line back before it gives its real answer.
+    fn process(&mut self, _challenge: &[u8]) -> String {
+        self.first.take().unwrap_or_default()
+    }
 }
 
 /// A signed-in connection and what its server can do. The two are kept
@@ -145,17 +219,7 @@ impl ImapBackend {
 
     async fn sign_in(&self) -> Result<Open> {
         let client = connect::connect(&self.config, self.patience).await?;
-        let password = (self.password)()?;
-        let mut session = client
-            .login(&self.config.username, password)
-            .await
-            .map_err(|(err, _)| match err {
-                async_imap::error::Error::No(text) | async_imap::error::Error::Bad(text) => {
-                    Error::Auth(text)
-                }
-                async_imap::error::Error::Io(err) => Error::Connection(err.to_string()),
-                other => Error::Connection(other.to_string()),
-            })?;
+        let mut session = authenticate(client, &self.config.username, &*self.password).await?;
         let extensions = Extensions::ask(&mut session).await?;
         let push = if extensions.idle { PUSH_YES } else { PUSH_NO };
         self.push.store(push, Ordering::Relaxed);
@@ -848,6 +912,135 @@ mod tests {
 
     fn inbox() -> FolderId {
         FolderId("INBOX".to_owned())
+    }
+
+    /// Plays the server's side of a sign-in: for each line expected (after
+    /// the tag, where there is one), what to answer, with `{tag}` standing
+    /// for the tag last seen.
+    async fn signing_in(
+        script: &'static [(&'static str, &'static str)],
+        credentials: std::sync::Arc<dyn Credentials>,
+    ) -> Result<()> {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        let (ours, theirs) = tokio::io::duplex(8 * 1024);
+        let server = tokio::spawn(async move {
+            let (read, mut write) = tokio::io::split(theirs);
+            let mut lines = BufReader::new(read);
+            let mut tag = String::new();
+            for (expect, answer) in script {
+                let mut line = String::new();
+                lines.read_line(&mut line).await.unwrap();
+                let line = line.trim_end_matches("\r\n");
+                let said = match line.split_once(' ') {
+                    Some((theirs, rest)) if theirs.starts_with('A') => {
+                        tag = theirs.to_owned();
+                        rest
+                    }
+                    _ => line,
+                };
+                assert_eq!(said, *expect);
+                write
+                    .write_all(answer.replace("{tag}", &tag).as_bytes())
+                    .await
+                    .unwrap();
+            }
+        });
+        let client = async_imap::Client::new(Bounded::new(ours, std::time::Duration::from_secs(5)));
+        let outcome = authenticate(client, "robin@example.com", &*credentials)
+            .await
+            .map(|_| ());
+        server.await.unwrap();
+        outcome
+    }
+
+    /// Tokens that are renewed when one is refused: `first`, then `second`.
+    struct Renewing {
+        refused: std::sync::atomic::AtomicBool,
+        second: &'static str,
+    }
+
+    #[async_trait]
+    impl Credentials for Renewing {
+        async fn get(&self) -> Result<Credential> {
+            Ok(Credential::OAuthToken(
+                if self.refused.load(Ordering::Relaxed) {
+                    self.second.to_owned()
+                } else {
+                    "first".to_owned()
+                },
+            ))
+        }
+
+        async fn refused(&self) {
+            self.refused.store(true, Ordering::Relaxed);
+        }
+    }
+
+    // base64 of "user=robin@example.com^Aauth=Bearer first^A^A", and of
+    // the same with "second".
+    const FIRST: &str = "dXNlcj1yb2JpbkBleGFtcGxlLmNvbQFhdXRoPUJlYXJlciBmaXJzdAEB";
+    const SECOND: &str = "dXNlcj1yb2JpbkBleGFtcGxlLmNvbQFhdXRoPUJlYXJlciBzZWNvbmQBAQ==";
+
+    #[tokio::test]
+    async fn a_token_signs_in_with_xoauth2() {
+        let token: std::sync::Arc<dyn Credentials> =
+            std::sync::Arc::new(|| Ok(Credential::OAuthToken("first".to_owned())));
+        signing_in(
+            &[
+                ("AUTHENTICATE XOAUTH2", "+ \r\n"),
+                (FIRST, "{tag} OK Welcome\r\n"),
+            ],
+            token,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_refused_token_is_renewed_and_tried_once_more() {
+        // The server says why in a challenge and wants an empty line back
+        // before it refuses.
+        const REFUSAL: &[(&str, &str)] = &[
+            ("AUTHENTICATE XOAUTH2", "+ \r\n"),
+            (FIRST, "+ eyJzdGF0dXMiOiI0MDEifQ==\r\n"),
+            ("", "{tag} NO Invalid credentials\r\n"),
+            ("AUTHENTICATE XOAUTH2", "+ \r\n"),
+            (SECOND, "{tag} OK Welcome\r\n"),
+        ];
+        let renewing = std::sync::Arc::new(Renewing {
+            refused: false.into(),
+            second: "second",
+        });
+        signing_in(REFUSAL, renewing).await.unwrap();
+
+        // When renewing gives the same token again, that is the answer.
+        let stuck = std::sync::Arc::new(Renewing {
+            refused: false.into(),
+            second: "first",
+        });
+        match signing_in(&REFUSAL[..3], stuck).await {
+            Err(Error::Auth(text)) => assert!(text.contains("Invalid credentials"), "{text}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_password_signs_in_with_login_and_a_refusal_is_final() {
+        signing_in(
+            &[("LOGIN \"robin@example.com\" \"secret\"", "{tag} OK\r\n")],
+            quill_core::credentials::password("secret"),
+        )
+        .await
+        .unwrap();
+        let refused = signing_in(
+            &[(
+                "LOGIN \"robin@example.com\" \"wrong\"",
+                "{tag} NO Authentication failed\r\n",
+            )],
+            quill_core::credentials::password("wrong"),
+        )
+        .await;
+        assert!(matches!(refused, Err(Error::Auth(_))), "{refused:?}");
     }
 
     fn message(uid: u32) -> MessageRef {
