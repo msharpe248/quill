@@ -115,6 +115,7 @@ What this leaves open, knowingly:
 |---|---|
 | `com.apple.security.app-sandbox` | Required for the Mac App Store. |
 | `com.apple.security.network.client` | Mail servers and OAuth endpoints. Outgoing only. |
+| `com.apple.security.network.server` | Added in M5. An OAuth sign-in in the browser ends with the provider sending the browser back to a port on this Mac, which Quill listens on, as the spec asks ("receive the redirect on a loopback port"). The sandbox refuses the listener without this ("Operation not permitted", seen in the sandboxed app). Quill listens on 127.0.0.1 only, on a port the system picks, for one redirect, and only while a sign-in is under way. Nothing is reachable from another computer. |
 | `com.apple.security.files.user-selected.read-write` | Attaching and saving files through open and save panels. |
 | Helper: `app-sandbox` + `inherit` | The core runs inside the app's own sandbox. A helper may hold only these two. |
 
@@ -400,6 +401,19 @@ Built in `quill-auth` and tested against a local stand-in. No real provider was 
 - **Each message is filed in its own account.** Moving offers the folders of the first selected message's account, and messages of other accounts stay where they are; the status line says how many moved.
 - **One undo takes back the whole action.** The operations made by one action share a batch (the `batch` column, migration 0006), and undoing the newest of them undoes them all.
 - **Filing clears the selection; marking keeps it**, to go on with.
+
+### Accounts that sign in with a provider
+
+- **A `graph` account, or an `imap` account with `auth = "oauth"`, is written into `config.toml` by hand** with the id of an application the owner registers (`docs/oauth.md`). The form for adding an account still makes password accounts only; it says so for Microsoft addresses.
+- **An account's tokens are looked for in the Keychain when first wanted**, not when Quill starts. An account nobody has signed in to is listed, empty, and says how to sign in; a sign-in made while Quill runs is picked up at the next sync without a restart, and so is one made again after the provider ended the old one.
+- **`S` signs in from inside Quill; `quill account sign-in` from a terminal.** At the Mac the browser is opened; over SSH (`SSH_CONNECTION` or `SSH_TTY` set) a code is shown instead, for Microsoft, and for Google the answer is to sign in at the Mac or use an app password. In the UI the account signed in is the one in front of the user if it signs in this way, otherwise the first that is not signed in.
+- **The core never opens the browser.** In the app the address goes to the shell (`link.open`), which opens it as it opens any link; in a terminal the system's `open` does. A scripted run of the app records it and opens nothing.
+- **The sign-in listens on a loopback port, which the sandbox allows only with `com.apple.security.network.server`.** Checked in the sandboxed app both ways: refused without it ("Operation not permitted"), and with it the listener is made and the provider's address reaches the shell. The entitlement and its reason are in the table under M1. Signing in inside the system's own web sign-in sheet would need no listener; it is a shell-side flow with its own registration rules (custom address schemes), and Google's desktop clients do not allow those. Left as it is unless App Review objects.
+- **What an account signs in with is one async trait, `quill_core::Credentials`**, for IMAP and SMTP alike: a password from the Keychain or a token from the provider. The Keychain is read off the async threads. This is the fix for "Keychain reads block" under M3: a Keychain that stops to ask the user something now holds up that one sign-in and nothing else.
+- **A token a mail server refuses is renewed and tried once more** on the same connection, then the account is said to need signing in to again.
+- **Gmail over IMAP uses XOAUTH2**, with the address as the user. Whether Gmail offers anything better is not looked at: SMTP already prefers OAUTHBEARER where a server has it.
+- **A Graph account keeps the answered mark Quill made**, since the service does not report one (the store does not let what Graph says about a message clear it). And a message a backend reports again because it changed no longer counts its people twice for address completion.
+- **The Microsoft 365 acceptance (a mailbox syncs, sends and files; tokens renew unattended for a week) is not verified.** It needs the owner's account and an application registration. Everything up to the real services is tested against stand-ins.
 
 ## M7, POP3 (the protocol crate; the rest of the milestone follows M6)
 

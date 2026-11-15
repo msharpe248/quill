@@ -152,7 +152,7 @@ impl AccountTokens {
 /// What to say, and do, about an account nobody has signed in to.
 pub fn not_signed_in(name: &str) -> String {
     format!(
-        "not signed in. Sign in from the command palette, or run: quill account sign-in \"{name}\""
+        "nobody has signed in to it yet. Use \"Sign in to an account\" in the palette or the File menu, or run: quill account sign-in \"{name}\""
     )
 }
 

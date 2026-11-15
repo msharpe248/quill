@@ -49,7 +49,7 @@ Press `A` (or File, Add an Account in the app). Quill asks for:
 2. **The servers**, as found, to confirm or correct: the one mail is read from (its name, port, security and the name to sign in with) and, under "Send via", the one it is sent through. `tab` moves between the fields and `←`/`→` changes the security. Clear "Send via" to add an account that only reads.
 3. **The password.** Quill signs in to both servers to check it, and sends nothing. Only when that works is anything saved: the account in `config.toml`, the password in your Keychain and nowhere else. If reading works and sending does not, the form says so and goes back to the sending server.
 
-`enter` goes on, `esc` goes back a step. Many providers (Gmail, iCloud, Fastmail, Yahoo) want an app password here, not your normal one; the form says so when it recognises the provider. Microsoft accounts (Microsoft 365, Outlook.com) do not accept a password over IMAP. They need the OAuth sign-in that arrives in M5.
+`enter` goes on, `esc` goes back a step. Many providers (Gmail, iCloud, Fastmail, Yahoo) want an app password here, not your normal one; the form says so when it recognises the provider. Microsoft accounts (Microsoft 365, Outlook.com) do not accept a password at all: see the next section.
 
 If the server's certificate is not one your Mac trusts, as with a self-signed certificate on a home server, Quill sends it nothing and shows you the certificate: who it was issued to and by, its dates and its SHA-256 fingerprint. `r` rejects it, `o` trusts it until Quill quits, `p` trusts that one certificate from now on by writing its fingerprint into the config. The same question is asked if an existing account's certificate stops being trusted.
 
@@ -75,6 +75,26 @@ Optional keys inside `imap = { ... }`: `username`, when you do not sign in with 
 
 A Keychain item belongs to the program that made it. If you build Quill from source and then rebuild it, macOS will ask whether the new `quill` may read the password the old one saved; "Always Allow" settles it for that build. Until you answer, Quill waits and no mail moves.
 
+## Microsoft 365 and Gmail: signing in with the provider
+
+A Microsoft 365 or Outlook.com mailbox is read and sent through Microsoft Graph, and signs in with OAuth: in your browser, at Microsoft, with Quill never seeing the password. Gmail can sign in the same way, in place of an app password.
+
+Both need an application id that you register with the provider once. [docs/oauth.md](docs/oauth.md) goes through it step by step. The account is then a few lines in `config.toml`:
+
+```toml
+[[account]]
+name = "Work"
+type = "graph"
+address = "you@example.com"
+oauth_client_id = "the id of the application you registered"
+```
+
+Start Quill and press `S`, or choose "Sign in to an account" from the palette or the File menu. Your browser opens at the provider; sign in there and come back. From a terminal it is `quill account sign-in Work`, and over SSH Quill shows a code to type in on any device instead of opening a browser (Microsoft only).
+
+The sign-in is kept in your Keychain. `quill account list` shows which accounts are signed in, and `quill account forget NAME` removes one.
+
+This part has not met the real services yet: it is tested against stand-ins on this Mac only.
+
 ## Keys
 
 Press `?` at any time for the keys that apply where you are. The bottom bar shows the most useful ones.
@@ -92,6 +112,7 @@ Press `?` at any time for the keys that apply where you are. The bottom bar show
 | `f` | Forward | `e` | Archive |
 | `d` | Delete (to Trash; from Trash, for good) | `m` | Move to a folder |
 | `U` | Undo the last move, deletion or send | `A` | Add an account |
+| `S` | Sign in to an account (Microsoft, Google) | | |
 | `/` | Search | `a` | List a message's attachments |
 | `x` | Select or unselect, and move on | `V` | Start or end a range |
 
@@ -230,6 +251,7 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `attachment.save`, `attachment.open` | Save the chosen attachment, or open it in its application |
 | `edit.copy`, `edit.cut`, `edit.select_all` | The app's Edit menu, while a message is being written |
 | `account.add` | Add an account |
+| `account.sign_in` | Sign an account in to Microsoft or Google |
 | `help.toggle` | Show or hide help |
 | `app.quit` | Quit |
 

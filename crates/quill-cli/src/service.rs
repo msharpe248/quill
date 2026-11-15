@@ -254,7 +254,14 @@ impl Service {
         };
         oauth::sign_in(&http, &setup, method, Arc::clone(&self.secrets), account)
             .await
-            .map_err(|err| sentence(&err.to_string()))
+            .map_err(|err| {
+                sentence(&match err {
+                    // Their own words say it; "backend error" and "sign-in
+                    // failed" in front add nothing after "is not signed in".
+                    Error::Backend(reason) | Error::Auth(reason) => reason,
+                    other => other.to_string(),
+                })
+            })
     }
 
     fn config_text(&self) -> Result<String, String> {
