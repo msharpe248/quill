@@ -1,8 +1,9 @@
 //! The message list: one row per message, newest first.
 //!
-//! Each row starts with a cursor cell and three marker cells, so neither the
-//! selection nor a message's state depends on colour: `>` is the cursor, `*`
-//! unread, `!` starred, `@` has attachments.
+//! Each row starts with a cursor cell, a selection cell and three marker
+//! cells, so neither the cursor nor a message's state depends on colour: `>`
+//! is the cursor, `+` selected to be acted on with others, `*` unread, `!`
+//! starred, `@` has attachments.
 
 use quill_store::{Mailbox, MessageRow};
 use ratatui::Frame;
@@ -59,6 +60,23 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
             unread => format!("{} - {unread} unread", state.mailbox_title()),
         },
     };
+    let range = state.list.range_rows();
+    let is_marked = |index: usize, message: &MessageRow| {
+        state.list.marked.contains(&message.id)
+            || range.is_some_and(|(first, last)| (first..=last).contains(&index))
+    };
+    let title = if state.list.has_marks() {
+        let count = state
+            .list
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(index, message)| is_marked(*index, message))
+            .count();
+        format!("{title} - {count} selected")
+    } else {
+        title
+    };
     let block = pane_block(2, &title, focused, styles);
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -101,7 +119,15 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         let rect = Rect::new(inner.x, inner.y + row as u16, inner.width, 1);
         let selected = index == state.list.selected;
         frame.render_widget(
-            line(message, selected, &columns, recipients, state, env),
+            line(
+                message,
+                selected,
+                is_marked(index, message),
+                &columns,
+                recipients,
+                state,
+                env,
+            ),
             rect,
         );
         if selected {
@@ -113,6 +139,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
 fn line<'a>(
     message: &MessageRow,
     selected: bool,
+    marked: bool,
     columns: &Columns,
     recipients: bool,
     state: &State,
@@ -129,7 +156,8 @@ fn line<'a>(
 
     let mut spans = vec![
         // The cursor is a marker as well as a bar, so it shows without colour.
-        Span::raw(if selected { "> " } else { "  " }),
+        Span::raw(if selected { ">" } else { " " }),
+        Span::styled(if marked { "+" } else { " " }, styles.accent()),
         // One column says where the message stands: not yet read, or
         // read and answered.
         if unread {

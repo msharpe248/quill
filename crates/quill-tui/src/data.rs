@@ -19,6 +19,16 @@ use crate::compose::Prefill;
 use crate::files::{self, AttachedFile, ExtractedFile, Files};
 use crate::outgoing::{self, Response, SendRequest};
 
+/// What [`DataRequest::Many`] does to each of its messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Bulk {
+    Archive,
+    Delete,
+    MoveTo(LocalFolderId),
+    Seen(bool),
+    Flagged(bool),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DataRequest {
     LoadSidebar,
@@ -40,6 +50,11 @@ pub enum DataRequest {
     MoveTo {
         id: LocalMessageId,
         folder: LocalFolderId,
+    },
+    /// One change to several messages, taken back together by one undo.
+    Many {
+        ids: Vec<LocalMessageId>,
+        what: Bulk,
     },
     /// Take back the last change that still can be.
     Undo,
@@ -351,6 +366,7 @@ fn run(
             }
         }
         DataRequest::MoveTo { id, folder } => moved(store, id, folder, "Moved")?,
+        DataRequest::Many { ids, what } => many(store, &ids, what)?,
         DataRequest::Extract {
             message,
             part,
@@ -383,9 +399,18 @@ fn run(
         }
         DataRequest::Undo => {
             let at = now();
-            if let Some(operation) = store.undoable(at)?
-                && store.undo_operation(operation)?
-            {
+            let undone = match store.undoable(at)? {
+                Some(operation) => store.undo_batch(operation)?,
+                None => 0,
+            };
+            if undone > 1 {
+                vec![
+                    DataEvent::StoreChanged,
+                    flash(&format!(
+                        "Undone: {undone} messages are back where they were."
+                    )),
+                ]
+            } else if undone == 1 {
                 vec![DataEvent::StoreChanged, flash("Undone.")]
             } else if let Some(draft) = store.unsendable(at)?
                 && store.unsend(draft, at)?
@@ -449,6 +474,113 @@ fn moved(
         .queue_move(id, folder, at, at + UNDO_SECONDS)?
         .is_some();
     Ok(done(queued_one, what))
+}
+
+/// Does one thing to several messages. The moves and deletions among them
+/// are queued as one batch, so that one undo takes them all back.
+fn many(
+    store: &mut Store,
+    ids: &[LocalMessageId],
+    what: Bulk,
+) -> quill_store::Result<Vec<DataEvent>> {
+    let at = now();
+    let mut operations = Vec::new();
+    // Changes that are not queued moves or deletions: marks, and drafts
+    // thrown away.
+    let mut others = 0usize;
+    let mut marks = false;
+    for &id in ids {
+        match what {
+            Bulk::Seen(seen) => {
+                if let Some(location) = store.message_location(id)?
+                    && store.queue_flags(
+                        id,
+                        Flags {
+                            seen,
+                            ..location.flags
+                        },
+                        at,
+                    )?
+                {
+                    marks = true;
+                }
+            }
+            Bulk::Flagged(flagged) => {
+                if let Some(location) = store.message_location(id)?
+                    && store.queue_flags(
+                        id,
+                        Flags {
+                            flagged,
+                            ..location.flags
+                        },
+                        at,
+                    )?
+                {
+                    marks = true;
+                }
+            }
+            Bulk::Archive => {
+                if let Some(archive) = folder_with_role(store, id, FolderRole::Archive)? {
+                    operations.extend(store.queue_move(id, archive, at, at + UNDO_SECONDS)?);
+                }
+            }
+            Bulk::MoveTo(folder) => {
+                operations.extend(store.queue_move(id, folder, at, at + UNDO_SECONDS)?);
+            }
+            Bulk::Delete => {
+                if let Some(draft) = DraftId::from_message_id(id) {
+                    others += usize::from(store.delete_draft(draft)?);
+                    continue;
+                }
+                let trash = folder_with_role(store, id, FolderRole::Trash)?;
+                let already_there = store
+                    .message_location(id)?
+                    .is_some_and(|location| Some(location.folder) == trash);
+                operations.extend(match trash {
+                    Some(trash) if !already_there => {
+                        store.queue_move(id, trash, at, at + UNDO_SECONDS)?
+                    }
+                    _ => store.queue_delete(id, at, at + UNDO_SECONDS)?,
+                });
+            }
+        }
+    }
+    store.group_operations(&operations)?;
+
+    if matches!(what, Bulk::Seen(_) | Bulk::Flagged(_)) {
+        return Ok(queued(marks));
+    }
+    let done = operations.len() + others;
+    let verb = match what {
+        Bulk::Archive => "Archived",
+        Bulk::Delete => "Deleted",
+        _ => "Moved",
+    };
+    if done == 0 {
+        // Say so: several messages were asked about and none moved.
+        return Ok(vec![flash(match what {
+            Bulk::Archive => "None of these can be archived: no archive folder to move them to.",
+            Bulk::Delete => "None of these could be deleted.",
+            _ => "None of these can be moved there: the folder belongs to another account.",
+        })]);
+    }
+    let text = if done == ids.len() {
+        format!("{verb} {done} messages.")
+    } else {
+        format!(
+            "{verb} {done} of {} messages. The others stay where they are.",
+            ids.len()
+        )
+    };
+    let mut events = vec![DataEvent::StoreChanged];
+    if !operations.is_empty() {
+        events.push(DataEvent::Queued);
+    }
+    events.push(DataEvent::Flash {
+        text,
+        undoable: !operations.is_empty(),
+    });
+    Ok(events)
 }
 
 fn flash(text: &str) -> DataEvent {

@@ -9,17 +9,17 @@ expression: harness.screen()
 │    Dra┃   Reply to all                                             R ┃  04:30┃
 │    Sen┃   Focus the reader                                         3 ┃    Fri┃
 │    Arc┃   Mark read or unread                                      u ┃    Fri┃
-│    Tra┃   Focus the previous pane or field                 shift-tab ┃    Fri┃
-│  Perso┃   Archive                                                  e ┃    Thu┃
-│    Inb┃   Go to Work / Sent                                          ┃    Thu┃
-│    Dra┃   Write a new message                                      c ┃    Wed┃
-│    Sen┃   Go to Work / Archive                                       ┃    Tue┃
-│    Arc┃   Help for this context                                    ? ┃    Mon┃
-│    Tra┃   Go to Personal / Sent                                      ┃    Sun┃
-│       ┃   Go to Personal / Archive                                   ┃ Nov 06┃
-│       ┃   Focus the next pane or field                           tab ┃ Nov 02┃
-│       ┃   Undo the last move, deletion or send                     U ┃ Oct 25┃
-│       ┃                                                              ┃ct 2025┃
+│    Tra┃   Select a range                                           V ┃    Fri┃
+│  Perso┃   Focus the previous pane or field                 shift-tab ┃    Thu┃
+│    Inb┃   Archive                                                  e ┃    Thu┃
+│    Dra┃   Go to Work / Sent                                          ┃    Wed┃
+│    Sen┃   Select or unselect                                       x ┃    Tue┃
+│    Arc┃   Write a new message                                      c ┃    Mon┃
+│    Tra┃   Go to Work / Archive                                       ┃    Sun┃
+│       ┃   Help for this context                                    ? ┃ Nov 06┃
+│       ┃   Go to Personal / Sent                                      ┃ Nov 02┃
+│       ┃   Go to Personal / Archive                                   ┃ Oct 25┃
+│       ┃   Select every message listed                         ctrl-a ┃ct 2025┃
 │       ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛       ┃
 │                │┃                                                            ┃
 │                │┃                                                            ┃

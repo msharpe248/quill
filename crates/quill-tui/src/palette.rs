@@ -76,10 +76,13 @@ pub fn score(typed: &str, name: &str) -> Option<i32> {
                 Some(place(at))
             } else {
                 // The rest go somewhere to the right; right next door
-                // continues a run, which counts for more.
+                // continues a run. Three letters running count for more
+                // than three word starts ("star" is "Star or unstar" before
+                // it is "Select a range"); two in the middle of a word
+                // count for less than one word start and a letter after it.
                 (at + 1..name.len())
                     .filter_map(|after| {
-                        let run = if after == at + 1 { 4 } else { 0 };
+                        let run = if after == at + 1 { 6 } else { 0 };
                         best[after].map(|rest| rest + run)
                     })
                     .max()

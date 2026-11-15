@@ -307,6 +307,56 @@ impl Store {
         Ok(true)
     }
 
+    /// Marks operations as made by one action, so that undoing the newest
+    /// of them undoes them all ([`Store::undo_batch`]).
+    pub fn group_operations(&mut self, operations: &[OperationId]) -> Result<()> {
+        let Some(first) = operations.first() else {
+            return Ok(());
+        };
+        let tx = self.conn.transaction()?;
+        for operation in operations {
+            tx.execute(
+                "UPDATE operations SET batch = ?2 WHERE id = ?1",
+                params![operation.0, first.0],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Takes back a change and every other change made by the same action,
+    /// newest first. Only what the engine has not taken yet can be undone.
+    /// Returns how many changes were taken back.
+    pub fn undo_batch(&mut self, operation: OperationId) -> Result<usize> {
+        let tx = self.conn.transaction()?;
+        let batch: Option<Option<i64>> = tx
+            .query_row(
+                "SELECT batch FROM operations WHERE id = ?1",
+                [operation.0],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let together: Vec<i64> = match batch {
+            None => return Ok(0),
+            Some(None) => tx
+                .prepare("SELECT id FROM operations WHERE id = ?1 AND state = 'pending'")?
+                .query_map([operation.0], |row| row.get(0))?
+                .collect::<rusqlite::Result<_>>()?,
+            Some(Some(batch)) => tx
+                .prepare(
+                    "SELECT id FROM operations WHERE batch = ?1 AND state = 'pending'
+                     ORDER BY id DESC",
+                )?
+                .query_map([batch], |row| row.get(0))?
+                .collect::<rusqlite::Result<_>>()?,
+        };
+        for id in &together {
+            revert(&tx, *id)?;
+        }
+        tx.commit()?;
+        Ok(together.len())
+    }
+
     /// When the account's next queued operation may run, if it has any.
     /// Operations run strictly in the order made, so this is the oldest
     /// one's time.

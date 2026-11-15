@@ -78,7 +78,7 @@ fn a_key_that_breaks_a_sequence_still_acts_by_itself() {
     assert!(harness.state.pending.is_empty());
     assert_eq!(harness.selected_subject(), "[quill] PR #42 passed");
     // An unbound key after a prefix is simply dropped.
-    harness.keys("g x j");
+    harness.keys("g Q j");
     assert_eq!(harness.selected_subject(), "Sunday dinner");
 }
 
@@ -717,7 +717,7 @@ fn overridden_keys_show_up_in_the_hints_and_in_help() {
     let bar = harness.screen().lines().last().unwrap().to_owned();
     assert!(
         bar.starts_with(
-            " n/p move  enter open  / search  c write  r reply  e archive  d delete  u unread  tab next pane"
+            " n/p move  enter open  / search  c write  r reply  e archive  d delete  u unread  x select  tab next pane"
         ),
         "{bar}"
     );

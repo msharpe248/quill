@@ -16,7 +16,7 @@ use quill_sync::{SyncEvent, SyncRequest};
 
 use crate::command::{CommandId, Context, Registry};
 use crate::compose::{Compose, Did, Field, Prefill};
-use crate::data::{DataEvent, DataRequest, FileUse, LoadedBody};
+use crate::data::{Bulk, DataEvent, DataRequest, FileUse, LoadedBody};
 use crate::editor::Editor;
 use crate::files::{AttachedFile, ExtractedFile};
 use crate::input::LineInput;
@@ -317,6 +317,65 @@ pub struct MessageList {
     pub offset: usize,
     /// The rows are those of the current mailbox, not a mailbox just left.
     pub loaded: bool,
+    /// Messages selected to be acted on together.
+    pub marked: BTreeSet<LocalMessageId>,
+    /// Where a range being selected began. Every row from there to the
+    /// cursor counts as selected, and follows the cursor until the range
+    /// is ended.
+    pub range: Option<LocalMessageId>,
+}
+
+impl MessageList {
+    /// The first and last row of the range being selected.
+    pub fn range_rows(&self) -> Option<(usize, usize)> {
+        let anchor = self.range?;
+        let anchor = self.rows.iter().position(|row| row.id == anchor)?;
+        Some((anchor.min(self.selected), anchor.max(self.selected)))
+    }
+
+    pub fn has_marks(&self) -> bool {
+        !self.marked.is_empty() || self.range.is_some()
+    }
+
+    /// The selected messages, in the order listed.
+    pub fn marked_ids(&self) -> Vec<LocalMessageId> {
+        let range = self.range_rows();
+        self.rows
+            .iter()
+            .enumerate()
+            .filter(|(index, row)| {
+                self.marked.contains(&row.id)
+                    || range.is_some_and(|(first, last)| (first..=last).contains(index))
+            })
+            .map(|(_, row)| row.id)
+            .collect()
+    }
+
+    /// Ends the range, keeping what it covered selected.
+    fn settle_range(&mut self) {
+        if let Some((first, last)) = self.range_rows() {
+            self.marked
+                .extend(self.rows[first..=last].iter().map(|row| row.id));
+        }
+        self.range = None;
+    }
+
+    fn clear_marks(&mut self) {
+        self.marked.clear();
+        self.range = None;
+    }
+
+    /// Forgets selected messages that are no longer listed.
+    fn keep_listed_marks(&mut self) {
+        if !self.has_marks() {
+            return;
+        }
+        let listed: BTreeSet<LocalMessageId> = self.rows.iter().map(|row| row.id).collect();
+        self.marked.retain(|id| listed.contains(id));
+        if self.range.is_some_and(|anchor| !listed.contains(&anchor)) {
+            self.range = None;
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -343,8 +402,10 @@ pub enum Showing {
 /// narrows the list.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FolderPicker {
-    /// The message to move.
+    /// The message to move. Its account's folders are the ones on offer.
     pub message: LocalMessageId,
+    /// The other messages to move with it.
+    pub also: Vec<LocalMessageId>,
     pub filter: LineInput,
     pub selected: usize,
     pub offset: usize,
@@ -354,6 +415,7 @@ impl FolderPicker {
     pub fn for_message(message: LocalMessageId) -> Self {
         Self {
             message,
+            also: Vec::new(),
             filter: LineInput::default(),
             selected: 0,
             offset: 0,
@@ -940,26 +1002,75 @@ impl State {
                 if let Some(picker) = self.folders.take()
                     && let Some(choice) = self.folder_choices(&picker).get(picker.selected)
                 {
-                    out.data.push(DataRequest::MoveTo {
-                        id: picker.message,
-                        folder: choice.id,
-                    });
+                    if picker.also.is_empty() {
+                        out.data.push(DataRequest::MoveTo {
+                            id: picker.message,
+                            folder: choice.id,
+                        });
+                    } else {
+                        let mut ids = vec![picker.message];
+                        ids.extend(picker.also);
+                        out.data.push(DataRequest::Many {
+                            ids,
+                            what: Bulk::MoveTo(choice.id),
+                        });
+                    }
+                    self.list.clear_marks();
                 }
             }
-            CommandId::MessageArchive => {
-                if let Some(row) = self.target_row() {
-                    out.data.push(DataRequest::Archive(row.id));
-                }
-            }
-            CommandId::MessageDelete => {
-                if let Some(row) = self.target_row() {
-                    out.data.push(DataRequest::Delete(row.id));
-                }
-            }
+            CommandId::MessageArchive => match self.targets().as_slice() {
+                [] => {}
+                [id] => out.data.push(DataRequest::Archive(*id)),
+                ids => out.data.push(DataRequest::Many {
+                    ids: ids.to_vec(),
+                    what: Bulk::Archive,
+                }),
+            },
+            CommandId::MessageDelete => match self.targets().as_slice() {
+                [] => {}
+                [id] => out.data.push(DataRequest::Delete(*id)),
+                ids => out.data.push(DataRequest::Many {
+                    ids: ids.to_vec(),
+                    what: Bulk::Delete,
+                }),
+            },
             CommandId::MessageMove => {
-                if let Some(row) = self.target_row() {
-                    self.folders = Some(FolderPicker::for_message(row.id));
+                // Drafts are in no folder of any server and stay put.
+                let mut ids = self
+                    .targets()
+                    .into_iter()
+                    .filter(|id| DraftId::from_message_id(*id).is_none());
+                if let Some(first) = ids.next() {
+                    let mut picker = FolderPicker::for_message(first);
+                    picker.also = ids.collect();
+                    self.folders = Some(picker);
                 }
+            }
+            CommandId::SelectToggle => {
+                if self.list.range.is_some() {
+                    // The range ends here, with everything in it selected.
+                    self.list.settle_range();
+                } else if let Some(row) = self.list.rows.get(self.list.selected) {
+                    let id = row.id;
+                    if !self.list.marked.remove(&id) {
+                        self.list.marked.insert(id);
+                    }
+                    // On to the next, so a run can be picked out with one key.
+                    if self.list.selected + 1 < self.list.rows.len() {
+                        self.navigate(env, Motion::Next, out);
+                    }
+                }
+            }
+            CommandId::SelectRange => {
+                if self.list.range.is_some() {
+                    self.list.settle_range();
+                } else {
+                    self.list.range = self.list.rows.get(self.list.selected).map(|row| row.id);
+                }
+            }
+            CommandId::SelectAll => {
+                self.list.range = None;
+                self.list.marked = self.list.rows.iter().map(|row| row.id).collect();
             }
             CommandId::EditUndo => out.data.push(DataRequest::Undo),
             CommandId::MessageCompose => self.start_composing(env),
@@ -1135,6 +1246,9 @@ impl State {
                 .as_ref()
                 .is_some_and(|picker| !self.folder_choices(picker).is_empty()),
             CommandId::MessageDelete => self.target_row().is_some(),
+            CommandId::SelectToggle | CommandId::SelectRange | CommandId::SelectAll => {
+                !self.list.rows.is_empty()
+            }
             CommandId::MessageCompose => !self.accounts.is_empty(),
             CommandId::MessageReply | CommandId::MessageReplyAll | CommandId::MessageForward => {
                 self.target_row()
@@ -1159,8 +1273,9 @@ impl State {
             // A draft is in no folder of any server: it can be thrown away,
             // not filed or flagged.
             CommandId::MessageArchive | CommandId::MessageMove => self
-                .target_row()
-                .is_some_and(|row| DraftId::from_message_id(row.id).is_none()),
+                .targets()
+                .iter()
+                .any(|id| DraftId::from_message_id(*id).is_none()),
             CommandId::AccountAdd => env.accounts,
             CommandId::NavOpen => {
                 self.focus == Pane::Sidebar || self.list.rows.get(self.list.selected).is_some()
@@ -1190,6 +1305,7 @@ impl State {
                     || !self.certificates.is_empty()
                     || !self.notices.is_empty()
                     || self.focus == Pane::Reader
+                    || self.list.has_marks()
                     || (self.focus == Pane::Sidebar
                         && LayoutMode::for_width(self.size.0) == LayoutMode::Narrow)
             }
@@ -1415,6 +1531,8 @@ impl State {
             self.set_focus(Pane::List);
         } else if self.notices.pop_front().is_some() {
             // One notice dismissed per press.
+        } else if self.list.has_marks() && self.focus != Pane::Reader {
+            self.list.clear_marks();
         } else if self.search.is_some() && self.focus != Pane::Reader {
             // Out of the search, back to the mailbox it was started from.
             self.search = None;
@@ -1789,7 +1907,67 @@ impl State {
         }
     }
 
+    /// The messages a filing or marking command acts on: those selected
+    /// in the list, when there are any and the list is where the user is;
+    /// otherwise the one [`State::target_row`] names.
+    fn targets(&self) -> Vec<LocalMessageId> {
+        if self.focus != Pane::Reader && self.list.has_marks() {
+            self.list.marked_ids()
+        } else {
+            self.target_row().map(|row| row.id).into_iter().collect()
+        }
+    }
+
+    /// Marks every selected message the same way: all read if any is
+    /// unread, otherwise all unread; and likewise for stars. Returns
+    /// whether there were several to mark.
+    fn mark_selected(&mut self, star: bool, out: &mut Effects) -> bool {
+        let ids = self.targets();
+        if ids.len() < 2 {
+            return false;
+        }
+        let wanted: BTreeSet<LocalMessageId> = ids.iter().copied().collect();
+        let is_on = |row: &MessageRow| {
+            if star {
+                row.flags.flagged
+            } else {
+                row.flags.seen
+            }
+        };
+        let on = !self
+            .list
+            .rows
+            .iter()
+            .filter(|row| wanted.contains(&row.id))
+            .all(is_on);
+        for row in self
+            .list
+            .rows
+            .iter_mut()
+            .chain(self.reader.row.as_mut())
+            .filter(|row| wanted.contains(&row.id))
+        {
+            if star {
+                row.flags.flagged = on;
+            } else {
+                row.flags.seen = on;
+            }
+        }
+        out.data.push(DataRequest::Many {
+            ids,
+            what: if star {
+                Bulk::Flagged(on)
+            } else {
+                Bulk::Seen(on)
+            },
+        });
+        true
+    }
+
     fn toggle_unread(&mut self, out: &mut Effects) {
+        if self.mark_selected(false, out) {
+            return;
+        }
         let Some(row) = self.target_row() else {
             return;
         };
@@ -1800,6 +1978,9 @@ impl State {
     }
 
     fn toggle_star(&mut self, out: &mut Effects) {
+        if self.mark_selected(true, out) {
+            return;
+        }
         let Some(row) = self.target_row() else {
             return;
         };
@@ -2025,6 +2206,7 @@ impl State {
                 }
                 self.list.rows = rows;
                 self.list.loaded = true;
+                self.list.keep_listed_marks();
                 self.sync_reader(out);
             }
             DataEvent::MessagesLoaded { mailbox, mut rows } => {
@@ -2048,6 +2230,7 @@ impl State {
                     });
                 self.list.rows = rows;
                 self.list.loaded = true;
+                self.list.keep_listed_marks();
                 self.sync_reader(out);
             }
             DataEvent::BodyLoaded { id, body } => {

@@ -302,6 +302,9 @@ const VIM: PresetTable = &[
     (CommandId::MessageArchive, &["e"]),
     (CommandId::MessageDelete, &["d"]),
     (CommandId::MessageMove, &["m"]),
+    (CommandId::SelectToggle, &["x"]),
+    (CommandId::SelectRange, &["V"]),
+    (CommandId::SelectAll, &["ctrl-a"]),
     (CommandId::SearchStart, &["/", "cmd-f"]),
     (CommandId::PaletteOpen, &[":", "ctrl-k"]),
     (CommandId::MessageAttachments, &["a"]),
@@ -349,6 +352,9 @@ const MUTT: PresetTable = &[
     (CommandId::MessageArchive, &["e"]),
     (CommandId::MessageDelete, &["d"]),
     (CommandId::MessageMove, &["s"]),
+    (CommandId::SelectToggle, &["x"]),
+    (CommandId::SelectRange, &["V"]),
+    (CommandId::SelectAll, &["ctrl-a"]),
     (CommandId::SearchStart, &["/", "cmd-f"]),
     (CommandId::PaletteOpen, &[":", "ctrl-k"]),
     (CommandId::MessageAttachments, &["v"]),
@@ -665,8 +671,8 @@ mod tests {
             resolve("g g", Context::List),
             Resolution::Command(CommandId::NavTop)
         );
-        assert_eq!(resolve("g x", Context::List), Resolution::Unbound);
-        assert_eq!(resolve("x", Context::List), Resolution::Unbound);
+        assert_eq!(resolve("g Q", Context::List), Resolution::Unbound);
+        assert_eq!(resolve("Q", Context::List), Resolution::Unbound);
     }
 
     #[test]

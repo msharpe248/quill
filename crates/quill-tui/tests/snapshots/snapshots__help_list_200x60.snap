@@ -30,7 +30,10 @@ expression: harness.screen()
 │                          │┃                                       ┃   e                        Archive                           ┃                                                                   │
 │                          │┃                                       ┃   d                        Delete                            ┃                                                                   │
 │                          │┃                                       ┃   m                        Move to a folder                  ┃                                                                   │
-│                          │┃                                       ┃   a                        List the attachments              ┃ Corp                                                              │
+│                          │┃                                       ┃   x                        Select or unselect                ┃ Corp                                                              │
+│                          │┃                                       ┃   V                        Select a range                    ┃                                                                   │
+│                          │┃                                       ┃   ctrl-a                   Select every message listed       ┃                                                                   │
+│                          │┃                                       ┃   a                        List the attachments              ┃                                                                   │
 │                          │┃                                       ┃   c                        Write a new message               ┃                                                                   │
 │                          │┃                                       ┃   r                        Reply                             ┃                                                                   │
 │                          │┃                                       ┃   R                        Reply to all                      ┃                                                                   │
@@ -43,9 +46,6 @@ expression: harness.screen()
 │                          │┃                                       ┃   U                        Undo the last move, deletion or … ┃                                                                   │
 │                          │┃                                       ┃   A                        Add an account                    ┃                                                                   │
 │                          │┃                                       ┃   ?                        Help for this context             ┃                                                                   │
-│                          │┃                                       ┃                                                              ┃                                                                   │
-│                          │┃                                       ┃                                                              ┃                                                                   │
-│                          │┃                                       ┃                                                              ┃                                                                   │
 │                          │┃                                       ┃                                                              ┃                                                                   │
 │                          │┃                                       ┃                                                              ┃                                                                   │
 │                          │┃                                       ┃                                                              ┃                                                                   │

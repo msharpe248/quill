@@ -93,6 +93,7 @@ Press `?` at any time for the keys that apply where you are. The bottom bar show
 | `d` | Delete (to Trash; from Trash, for good) | `m` | Move to a folder |
 | `U` | Undo the last move, deletion or send | `A` | Add an account |
 | `/` | Search | `a` | List a message's attachments |
+| `x` | Select or unselect, and move on | `V` | Start or end a range |
 
 Arrow keys, `home`, `end`, `pageup` and `pagedown` work too. `ctrl-d` also pages down and `ctrl-c` also quits.
 
@@ -102,7 +103,9 @@ Set `keymap = "mutt"` in the config for mutt-flavoured keys.
 
 The mouse works too. A click selects, a second click on what is selected opens it, and the wheel scrolls whatever is under the pointer. Links in a message and the line naming its files can be clicked, and in a message being written a click places the cursor and a drag selects. While Quill has the mouse, selecting text the terminal's own way needs `shift` held; `mouse = false` under `[ui]` gives the mouse back to the terminal.
 
-In the message list, `>` marks the cursor, `*` an unread message, `r` one you have answered, `!` a starred one and `@` one with attachments.
+In the message list, `>` marks the cursor, `+` a selected message, `*` an unread one, `r` one you have answered, `!` a starred one and `@` one with attachments.
+
+To act on several messages at once, select them first: `x` on each, or `V`, move, and `V` again for a run of them; `ctrl-a` selects everything listed. Archive, delete, move, read and star then apply to all of them, and one `U` takes the whole lot back. `esc` lets the selection go. From the reader, a command is always about the message being read.
 
 ## Searching
 
@@ -214,7 +217,8 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `message.toggle_unread`, `message.toggle_star` | Change a message's flags |
 | `message.toggle_html` | Switch a message between its HTML and its plain text |
 | `message.open_link` | List the message's links, to open one in the browser |
-| `message.archive`, `message.delete`, `message.move` | File the message |
+| `message.archive`, `message.delete`, `message.move` | File the message, or every selected one |
+| `select.toggle`, `select.range`, `select.all` | Select messages to act on together |
 | `message.compose` | Write a new message |
 | `message.reply`, `message.reply_all`, `message.forward` | Answer or pass on the message |
 | `compose.send`, `compose.save` | Send the message being written, or save it as a draft |

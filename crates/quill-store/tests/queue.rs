@@ -243,6 +243,47 @@ fn a_move_can_be_undone_until_the_engine_takes_it() {
 }
 
 #[test]
+fn changes_made_by_one_action_are_undone_together() {
+    let mut rig = Rig::new();
+    let (one, two, three) = (
+        rig.id(rig.inbox, "1"),
+        rig.id(rig.inbox, "2"),
+        rig.id(rig.inbox, "3"),
+    );
+    // An earlier change of its own, then two made together.
+    let alone = rig
+        .store
+        .queue_move(one, rig.archive, 1000, 1010)
+        .unwrap()
+        .unwrap();
+    let together = [
+        rig.store
+            .queue_move(two, rig.archive, 1001, 1011)
+            .unwrap()
+            .unwrap(),
+        rig.store.queue_delete(three, 1001, 1011).unwrap().unwrap(),
+    ];
+    rig.store.group_operations(&together).unwrap();
+    assert!(rig.subjects(rig.inbox).is_empty());
+
+    let newest = rig.store.undoable(1005).unwrap().unwrap();
+    assert_eq!(newest, together[1]);
+    assert_eq!(rig.store.undo_batch(newest).unwrap(), 2);
+    assert_eq!(rig.subjects(rig.inbox), ["Message 3", "Message 2"]);
+    assert_eq!(rig.subjects(rig.archive), ["Message 1"]);
+    assert_eq!(rig.store.queued_operations().unwrap(), 1);
+
+    // The earlier one is next, by itself. A second go finds nothing.
+    assert_eq!(rig.store.undoable(1005).unwrap(), Some(alone));
+    assert_eq!(rig.store.undo_batch(alone).unwrap(), 1);
+    assert_eq!(rig.store.undo_batch(alone).unwrap(), 0);
+    assert_eq!(
+        rig.subjects(rig.inbox),
+        ["Message 3", "Message 2", "Message 1"]
+    );
+}
+
+#[test]
 fn a_move_the_server_refuses_is_taken_back() {
     let mut rig = Rig::new();
     let two = rig.id(rig.inbox, "2");
