@@ -16,9 +16,13 @@ quill-imap = { path = "crates/quill-imap" }
 quill-media = { path = "crates/quill-media" }
 quill-mime = { path = "crates/quill-mime" }
 quill-net = { path = "crates/quill-net" }
+quill-pop3 = { path = "crates/quill-pop3" }
+quill-smtp = { path = "crates/quill-smtp" }
 quill-store = { path = "crates/quill-store" }
 quill-sync = { path = "crates/quill-sync" }
 quill-tui = { path = "crates/quill-tui" }
+hickory-resolver = { version = "0.26.3", default-features = false, features = ["tokio", "system-config"] }
+toml_edit = "0.25.19"
 
 anyhow = "1.0.104"
 async-imap = { version = "0.12.0", default-features = false, features = ["runtime-tokio"] }
@@ -27,6 +31,7 @@ base64 = "0.22.1"
 bytes = "1.12"
 clap = { version = "4.6", features = ["derive"] }
 crossterm = { version = "0.29", features = ["event-stream"] }
+flate2 = "1.1.11"
 futures-util = { version = "0.3.34", default-features = false }
 insta = "1.49"
 jiff = "0.2.44"
@@ -35,11 +40,13 @@ mail-parser = "1.0.1"
 jsonschema = { version = "0.61.2", default-features = false }
 ratatui = "0.30.2"
 rcgen = "0.14.10"
+ring = "0.17.14"
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-platform-verifier = "0.7.1"
 rustix = { version = "1.1.6", features = ["termios"] }
 rusqlite = { version = "0.42", features = ["bundled"] }
 sha2 = "0.10.9"
+stringprep = "0.1.5"
 security-framework = "3.7.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
@@ -51,6 +58,7 @@ tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring
 toml = "1.2"
 unicode-segmentation = "1.13"
 unicode-width = "0.2.3"
+x509-parser = "0.18.1"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

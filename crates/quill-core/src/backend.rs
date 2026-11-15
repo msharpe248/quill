@@ -27,8 +27,12 @@ pub trait Sender: Send + Sync {
     /// The sender removes any `Bcc` header before transmitting.
     ///
     /// `Ok` means the server accepted the message for every recipient. On
-    /// any error nothing was sent: see `Error::Temporary`, `Error::Refused`,
-    /// `Error::Recipients` and `Error::TooLarge` for what to do next.
+    /// `Error::Temporary`, `Error::Refused`, `Error::Recipients` and
+    /// `Error::TooLarge` nothing was sent. `Error::Connection` is the one
+    /// case that cannot promise that: if the connection drops after the
+    /// whole message was handed over and before the server's answer, the
+    /// server may have taken it. A retry after that can deliver twice,
+    /// which is why every message carries a `Message-ID`.
     async fn send(&self, raw: &[u8], envelope: &Envelope) -> Result<()>;
 }
 
