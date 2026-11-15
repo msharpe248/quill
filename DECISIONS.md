@@ -568,6 +568,23 @@ Accepted 2026-11-15: repeated polls never duplicate or lose a message under each
 - **No labels.** The spec lists "label" among a rule's actions; Quill has folders (Gmail's labels appear as folders), so filing is the action.
 - **Rules run only while Quill does**, in the app or in `quill sync`. They are not server-side rules (Sieve, Graph inbox rules), which are on the P2 list.
 
+### Unsubscribing
+
+- **`X` unsubscribes from a mailing list, and always says first exactly what it will do**: tell the list's server, write a message to the list's address, or open its page. Which of these, in that order of preference, comes from the message's `List-Unsubscribe` and `List-Unsubscribe-Post` headers (RFC 2369, RFC 8058).
+- **One-click is one HTTPS POST** with the body the RFC gives, from the accounts service, not the UI: no cookies, no redirects followed, no referer, fifteen seconds. Its answer is never read beyond its status. The host is checked twice, by the UI that shows it and by the service that posts to it, and must be the same.
+- **An address that could read as one server and lead to another is refused whole**, not repaired: plain `http`, anything not printable ASCII, a user name before the host, a backslash, an IP literal, a host with no dot, a bad port. Those are also the ways a list header could point a request at the user's own network.
+- **An `https` address without the one-click header is never fetched.** It is offered as a page to open in the browser, after the same question.
+- **A `mailto:` only starts a message**, from the account the list wrote to, to the first address alone, for the user to send.
+- **DKIM is not checked**, though RFC 8058 asks for it before a one-click request. Naming the host and asking stands in for it. To revisit if DKIM verification is ever built.
+- **Not verified against a real list.** The request is tested against a stand-in; no list's server was contacted.
+
+### Templates
+
+- **A template is a `.md` or `.txt` file in `templates/` beside the config**; its name is its title, and a first line `Subject: ...` followed by a blank line sets the subject. Read at startup by the binary and handed to the UI: at most 200 files of at most 64 KiB, with one notice for what was left out.
+- **`ctrl-r` (or `cmd-T`) in a message being written picks one**; it goes in at the cursor as one undo step, and sets the subject if there is none.
+- **`{{placeholders}}` Quill knows are filled**: `to`, `to_name`, `first_name`, `from_name`, `date`, `subject`. One it does not know, or cannot fill, is left as written and the first of them is selected, to type over. Filling is a single pass: a value is never read again for placeholders. `{{first_name}}` is not guessed from a bare address.
+- **Nothing in a template is run, included or fetched.**
+
 ## M9, the Vim option (in progress)
 
 - **The draft file is headers, a blank line and the body**, as mutt has it (`quill_store::draft_file`): `From` (shown, never read back), `To`, `Cc`, `Bcc`, `Subject`, and an `Attach:` line per file. Reading it back is forgiving of what a person does to a file (case, order, missing fields, continued lines, no headers at all) and strict about what a file may say: a header Quill does not know is dropped, not sent; what the message answers and which account sends it are not an editor buffer's to change. An `Attach:` line naming a file the draft already has keeps it; one naming a path attaches that file; deleting the line removes the attachment.
