@@ -1,5 +1,6 @@
 import AppKit
 import Bridge
+import Panes
 import TerminalKit
 
 /// The main window: the terminal surface running the core, a toolbar built
@@ -18,7 +19,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     private let options: LaunchOptions
     private let splitView = NSSplitView()
     private var bridge: BridgeServer?
-    private(set) var previewPane: PreviewPane?
+    /// The second pane, while one is showing. There is never more than one:
+    /// showing another replaces it.
+    private(set) var pane: PaneView?
     private var keyMonitor: Any?
 
     /// Hands an address to the user's browser or mail program. A scripted
@@ -43,6 +46,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         panel.resolvesAliases = true
         let finish: (NSApplication.ModalResponse) -> Void = { response in
             done(response == .OK ? panel.urls : [])
+        }
+        if let window {
+            panel.beginSheetModal(for: window, completionHandler: finish)
+        } else {
+            finish(panel.runModal())
+        }
+    }
+
+    /// Opens a file in the application the user's Mac opens its kind with.
+    /// A scripted run replaces it, so that a check starts no other program.
+    var fileOpener: (URL) -> Void = { NSWorkspace.shared.open($0) }
+
+    /// Asks the user where to save a file, offering a name, and hands the
+    /// place to the completion; `nil` means they cancelled. The panel has
+    /// already asked about replacing a file that is there. A scripted run
+    /// replaces it, so that a check never waits on a panel.
+    var savePanel: (NSWindow?, String, @escaping (URL?) -> Void) -> Void = { window, name, done in
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = name
+        panel.canCreateDirectories = true
+        let finish: (NSApplication.ModalResponse) -> Void = { response in
+            done(response == .OK ? panel.url : nil)
         }
         if let window {
             panel.beginSheetModal(for: window, completionHandler: finish)
@@ -100,11 +125,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         surface.onDropFiles = { [weak self] files in
             self?.deliver(files: files)
         }
-        // esc in the preview pane closes it. The terminal handles its own esc.
+        // While a pane has the keyboard, esc closes it and the pane has
+        // first call on the few keys it uses; every other key goes on to
+        // the viewer inside it. The terminal handles its own keys. Only
+        // this window's keys are looked at: a player gone full screen has a
+        // window of its own, where esc means leave full screen.
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, event.keyCode == 53, previewHasFocus else { return event }
-            closePreview()
-            return nil
+            guard let self, event.window === window, let pane, paneHasFocus,
+                let key = PaneKey(event: event)
+            else { return event }
+            if key == .escape {
+                closePane()
+                return nil
+            }
+            return pane.handleKey(key) ? nil : event
         }
     }
 
@@ -171,17 +205,32 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             window?.subtitle = state.unread > 0 ? "\(state.unread) unread" : ""
             NSApp.dockTile.badgeLabel = state.unread > 0 ? String(state.unread) : nil
         case let .panePreview(preview):
-            let first = preview.items[preview.index]
-            showPreview(URL(fileURLWithPath: first.path), title: first.title)
-        case .panePlay, .paneWeb, .fileOpen:
-            // The panes for these arrive with the rest of M4.
-            NSLog("Quill: a pane the shell does not have yet was asked for")
+            let items = preview.items.map { PreviewItem(url: URL(fileURLWithPath: $0.path), title: $0.title) }
+            guard let deck = PreviewDeck(items: items, index: preview.index) else { break }
+            if let showing = pane as? PreviewPane {
+                // Other files in the pane that is there: nothing flickers.
+                showing.show(deck)
+                focus(showing)
+            } else {
+                show(PreviewPane(deck: deck))
+            }
+        case let .panePlay(file):
+            show(PlayerPane(file: URL(fileURLWithPath: file.path), title: file.title))
+        case let .paneWeb(page):
+            show(
+                WebPane(file: URL(fileURLWithPath: page.path), title: page.title, allowsRemoteContent: page.remote) {
+                    [weak self] address in
+                    // The same door every other link goes through.
+                    self?.openLink(address.absoluteString)
+                })
         case let .thumbnailMake(make):
-            bridge?.send(.thumbnailMade(id: make.id, ok: false))
+            makeThumbnail(make)
+        case let .fileOpen(path):
+            openFile(URL(fileURLWithPath: path))
         case let .filesSave(save):
-            bridge?.send(.filesSaved(name: save.name, saved: false))
+            saveCopy(of: URL(fileURLWithPath: save.path), offering: save.name)
         case .paneClose:
-            closePreview()
+            closePane()
         case let .linkOpen(open):
             openLink(open.url)
         case let .clipboardWrite(text):
@@ -244,6 +293,71 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             return
         }
         linkOpener(url)
+    }
+
+    /// Opens a file the core wrote out for the user in the application
+    /// their Mac opens its kind with. Only a file in the app's temporary
+    /// folder: the core has no business opening anything else, and a path
+    /// that names something else is a mistake or worse.
+    private func openFile(_ file: URL) {
+        var isFolder: ObjCBool = false
+        guard TemporaryFolder.contains(file),
+            FileManager.default.fileExists(atPath: file.path, isDirectory: &isFolder), !isFolder.boolValue
+        else {
+            NSLog("Quill: did not open a file that is not in the app's temporary folder")
+            return
+        }
+        fileOpener(file)
+    }
+
+    /// Makes the picture off the main thread and tells the core how it
+    /// went. The answer is always sent: the core is waiting on it.
+    private func makeThumbnail(_ make: ThumbnailMake) {
+        Task { [weak self] in
+            let made = await Thumbnails.make(
+                file: URL(fileURLWithPath: make.path), out: URL(fileURLWithPath: make.out), size: make.size)
+            guard let self else { return }
+            if !made {
+                NSLog("Quill: thumbnail %ld could not be made", make.id)
+            }
+            note("\(make.id) \(made ? "made" : "failed")", in: &thumbnailResults)
+            bridge?.send(.thumbnailMade(id: make.id, ok: made))
+        }
+    }
+
+    /// Asks the user where a copy of a file should go, puts it there, and
+    /// tells the core what became of it. The answer is always sent.
+    private func saveCopy(of file: URL, offering name: String) {
+        savePanel(window, FileSaving.offeredName(name)) { [weak self] destination in
+            guard let destination else {
+                self?.finishSave(name: name, destination: nil, saved: false)
+                return
+            }
+            Task { [weak self] in
+                let saved = await Self.copy(file, to: destination)
+                self?.finishSave(name: name, destination: destination, saved: saved)
+            }
+        }
+    }
+
+    /// Off the main thread: a big file takes a while to copy.
+    private nonisolated static func copy(_ file: URL, to destination: URL) async -> Bool {
+        do {
+            try FileSaving.copy(file, to: destination)
+            return true
+        } catch {
+            NSLog("Quill: a file could not be saved: %@", String(describing: error))
+            return false
+        }
+    }
+
+    private func finishSave(name: String, destination: URL?, saved: Bool) {
+        if let destination {
+            note("\(name) -> \(destination.path) (\(saved ? "saved" : "failed"))", in: &saveResults)
+        } else {
+            note("\(name) (cancelled)", in: &saveResults)
+        }
+        bridge?.send(.filesSaved(name: destination?.lastPathComponent ?? name, saved: saved))
     }
 
     private func coreDidExit(_ exit: TerminalExit) {
@@ -320,6 +434,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     func windowWillClose(_: Notification) {
+        // Nothing goes on playing behind a closed window.
+        pane?.tearDown()
         stopCore()
     }
 
@@ -353,43 +469,54 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     // MARK: - Panes
 
-    private func showPreview(_ url: URL, title: String) {
-        let pane: PreviewPane
-        if let existing = previewPane {
-            pane = existing
-        } else {
-            pane = PreviewPane(frame: .zero)
-            pane.onClose = { [weak self] in self?.closePreview() }
-            previewPane = pane
-            splitView.addArrangedSubview(pane)
-            splitView.layoutSubtreeIfNeeded()
-            // The terminal keeps the larger share.
-            splitView.setPosition(splitView.bounds.width * 0.58, ofDividerAt: 0)
+    /// Puts a pane beside the terminal, in place of any pane already there,
+    /// and gives it the keyboard.
+    private func show(_ newPane: PaneView) {
+        newPane.onClose = { [weak self] in self?.closePane() }
+        // A pane that replaces another takes its place exactly; the first
+        // pane leaves the terminal the larger share.
+        var divider = splitView.bounds.width * 0.58
+        if let old = pane {
+            divider = surface.view.frame.width
+            old.tearDown()
+            old.removeFromSuperview()
         }
-        pane.show(url, title: title)
-        window?.makeFirstResponder(pane.focusTarget)
+        pane = newPane
+        splitView.addArrangedSubview(newPane)
+        splitView.layoutSubtreeIfNeeded()
+        splitView.setPosition(divider, ofDividerAt: 0)
+        focus(newPane)
     }
 
-    private func closePreview() {
-        guard let pane = previewPane else { return }
-        previewPane = nil
-        pane.removeFromSuperview()
+    private func closePane() {
+        guard let old = pane else { return }
+        pane = nil
+        old.tearDown()
+        old.removeFromSuperview()
         surface.focus()
     }
 
-    private var previewHasFocus: Bool {
-        guard let pane = previewPane, let responder = window?.firstResponder as? NSView else {
+    private func focus(_ pane: PaneView) {
+        // A viewer that will not take the keyboard leaves it with the pane
+        // around it, where esc still closes the pane.
+        if window?.makeFirstResponder(pane.focusTarget) != true {
+            window?.makeFirstResponder(pane)
+        }
+    }
+
+    private var paneHasFocus: Bool {
+        guard let pane, let responder = window?.firstResponder as? NSView else {
             return false
         }
         return responder.isDescendant(of: pane)
     }
 
     @objc func focusNextPane(_: Any?) {
-        guard let pane = previewPane else { return }
-        if previewHasFocus {
+        guard let pane else { return }
+        if paneHasFocus {
             surface.focus()
         } else {
-            window?.makeFirstResponder(pane.focusTarget)
+            focus(pane)
         }
     }
 
@@ -398,8 +525,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         focusNextPane(sender)
     }
 
-    @objc func closePreviewPane(_: Any?) {
-        closePreview()
+    @objc func closePane(_: Any?) {
+        closePane()
     }
 
     // MARK: - Edit menu
@@ -408,7 +535,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     // the terminal view knows nothing about. While the core says one of
     // these commands applies, the menu item runs it there. Otherwise the
     // item does what it does in any Mac app, on the view with the focus:
-    // text selected with the mouse in the terminal, or the preview pane.
+    // text selected with the mouse in the terminal, or the second pane.
 
     @objc func editCut(_ sender: Any?) {
         runInCoreOrFocusedView("edit.cut", #selector(NSText.cut(_:)), sender)
@@ -423,7 +550,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     private func runInCoreOrFocusedView(_ command: String, _ native: Selector, _ sender: Any?) {
-        if !previewHasFocus, commands.isEnabled(command) {
+        if !paneHasFocus, commands.isEnabled(command) {
             commands.run(named: command)
         } else {
             NSApp.sendAction(native, to: nil, from: sender)
@@ -434,6 +561,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     var terminalText: String { surface.visibleText() ?? "<no surface>" }
 
+    /// What became of the latest `files.save` requests, in order.
+    private(set) var saveResults: [String] = []
+
+    /// What became of the latest `thumbnail.make` requests, in order.
+    private(set) var thumbnailResults: [String] = []
+
+    /// Keeps the last hundred: the app may run for weeks.
+    private func note(_ line: String, in log: inout [String]) {
+        log.append(line)
+        log.removeFirst(max(log.count - 100, 0))
+    }
+
     func typeIntoTerminal(_ text: String) {
         surface.sendText(text)
     }
@@ -442,8 +581,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 extension MainWindowController: NSMenuItemValidation {
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
-        case #selector(focusNextPane(_:)), #selector(focusPreviousPane(_:)), #selector(closePreviewPane(_:)):
-            previewPane != nil
+        case #selector(focusNextPane(_:)), #selector(focusPreviousPane(_:)), #selector(closePane(_:)):
+            pane != nil
         default:
             true
         }

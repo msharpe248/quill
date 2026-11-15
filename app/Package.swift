@@ -22,13 +22,24 @@ let package = Package(
         // The shell-core bridge: message types and the socket server. Knows
         // command names, never mail.
         .target(name: "Bridge"),
+        // The native viewers of the second pane (Quick Look, AVKit, a web
+        // view) and the file work done for the core. Knows files and titles,
+        // never mail; takes from Bridge only the rule for which links open.
+        .target(
+            name: "Panes",
+            dependencies: ["Bridge"]
+        ),
         .executableTarget(
             name: "QuillApp",
-            dependencies: ["TerminalKit", "Bridge"]
+            dependencies: ["TerminalKit", "Bridge", "Panes"]
         ),
         .testTarget(
             name: "BridgeTests",
             dependencies: ["Bridge"]
+        ),
+        .testTarget(
+            name: "PanesTests",
+            dependencies: ["Panes"]
         ),
     ],
     swiftLanguageModes: [.v6]

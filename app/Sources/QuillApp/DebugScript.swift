@@ -19,6 +19,14 @@ import Bridge
 /// - `choose:PATH,PATH` what the open panel answers when the core next asks
 ///   for files; no panel is ever shown to a script
 /// - `drop:PATH,PATH`  hand files over as if dropped on the window
+/// - `saveto:PATH`    where the save panel answers when the core next asks
+///   to save a file; without it the answer is that the user cancelled. No
+///   panel is ever shown to a script, so inside the sandbox the place must
+///   be in the app's container
+///
+/// `press:` reaches whatever has the keyboard, a pane as well as the
+/// terminal: `press:right` steps a Quick Look pane, `press:space` plays or
+/// pauses a player, `press:esc` closes any pane.
 ///
 /// With `--dump-screen`, the terminal's text and the shell's state are
 /// written to the file afterwards and the app quits.
@@ -37,6 +45,18 @@ enum DebugScript {
         controller.filePicker = { _, done in
             panelsAsked += 1
             done(chosen)
+        }
+        // Nor start another program on a file. What would have been opened
+        // is written to the dump.
+        controller.fileOpener = { file in openedFiles.append(file.path) }
+        // Nor wait on a save panel. The place named by the last `saveto:`
+        // step is where the user is taken to have saved, once; with none,
+        // they are taken to have cancelled.
+        controller.savePanel = { _, name, done in
+            savePanelsAsked.append(name)
+            let destination = saveDestination
+            saveDestination = nil
+            done(destination)
         }
         Task { @MainActor in
             for step in steps {
@@ -114,6 +134,9 @@ enum DebugScript {
         case "drop":
             controller.deliver(files: paths(argument))
             try? await Task.sleep(for: .milliseconds(300))
+        case "saveto":
+            // Where the save panel will answer when it is next asked for.
+            saveDestination = argument.isEmpty ? nil : URL(fileURLWithPath: argument)
         default:
             note("unknown step \(step)")
         }
@@ -129,6 +152,9 @@ enum DebugScript {
     private static var copied: [String] = []
     private static var chosen: [URL] = []
     private static var panelsAsked = 0
+    private static var openedFiles: [String] = []
+    private static var saveDestination: URL?
+    private static var savePanelsAsked: [String] = []
 
     /// Paths separated by commas.
     private static func paths(_ argument: String) -> [URL] {
@@ -215,13 +241,24 @@ enum DebugScript {
         lines.append("title: \(controller.window?.title ?? "")")
         lines.append("subtitle: \(controller.window?.subtitle ?? "")")
         lines.append("dock badge: \(NSApp.dockTile.badgeLabel ?? "")")
-        lines.append("preview: \(controller.previewPane?.fileURL?.lastPathComponent ?? "")")
+        if let pane = controller.pane {
+            // preview "Report" item 2 of 5, report.pdf
+            // player "Clip" paused at 0:05 of 1:15
+            // web "Subject" remote content blocked, loaded
+            lines.append("pane: \(pane.kind.rawValue) \(pane.title.debugDescription) \(pane.summary)")
+        } else {
+            lines.append("pane: none")
+        }
         let responder = controller.window?.firstResponder.map { String(describing: type(of: $0)) }
         lines.append("keys go to: \(responder ?? "nothing")")
         lines.append("opened: \(opened.joined(separator: " "))")
         lines.append("enabled: \(controller.commands.enabledNames.joined(separator: " "))")
         lines.append("file panels asked for: \(panelsAsked)")
         lines.append("copied: \(copied.map { $0.debugDescription }.joined(separator: " "))")
+        lines.append("opened files: \(openedFiles.joined(separator: " "))")
+        lines.append("save panels asked for: \(savePanelsAsked.map { $0.debugDescription }.joined(separator: " "))")
+        lines.append("saved: \(controller.saveResults.joined(separator: "; "))")
+        lines.append("thumbnails: \(controller.thumbnailResults.joined(separator: ", "))")
         let toolbar = (controller.window?.toolbar?.items ?? [])
             .filter { $0.itemIdentifier != .flexibleSpace }
             .map { "\($0.isEnabled ? "+" : "-")\($0.itemIdentifier.rawValue)" }

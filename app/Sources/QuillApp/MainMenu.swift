@@ -58,7 +58,7 @@ enum MainMenu {
             keyEquivalent: "[")
         previous.target = panes
         let close = view.addItem(
-            withTitle: "Close Preview Pane", action: #selector(MainWindowController.closePreviewPane(_:)),
+            withTitle: "Close Pane", action: #selector(MainWindowController.closePane(_:)),
             keyEquivalent: "w")
         close.keyEquivalentModifierMask = [.command, .shift]
         close.target = panes
