@@ -107,10 +107,21 @@ enum DebugScript {
         "b": 11, "q": 12, "w": 13, "e": 14, "r": 15, "y": 16, "t": 17, "o": 31, "u": 32,
         "i": 34, "p": 35, "l": 37, "j": 38, "k": 40, "n": 45, "m": 46,
         "]": 30, "[": 33, "enter": 36, "tab": 48, "space": 49, "esc": 53,
+        "up": 126, "down": 125, "left": 123, "right": 124,
+        "home": 115, "end": 119, "pageup": 116, "pagedown": 121,
     ]
 
     private static let characters: [String: String] = [
         "enter": "\r", "tab": "\t", "space": " ", "esc": "\u{1B}",
+        "up": "\u{F700}", "down": "\u{F701}", "left": "\u{F702}", "right": "\u{F703}",
+        "home": "\u{F729}", "end": "\u{F72B}", "pageup": "\u{F72C}", "pagedown": "\u{F72D}",
+    ]
+
+    /// What a real keyboard sets on these keys besides the modifiers held.
+    private static let extraFlags: [String: NSEvent.ModifierFlags] = [
+        "up": [.numericPad, .function], "down": [.numericPad, .function],
+        "left": [.numericPad, .function], "right": [.numericPad, .function],
+        "home": .function, "end": .function, "pageup": .function, "pagedown": .function,
     ]
 
     private static func press(_ notation: String, in window: NSWindow?) {
@@ -121,6 +132,7 @@ enum DebugScript {
             return
         }
         var flags = chord.modifiers.eventFlags
+        flags.formUnion(extraFlags[chord.key.lowercased()] ?? [])
         if chord.key.count == 1, chord.key != chord.key.lowercased() {
             flags.insert(.shift)
         }
@@ -154,6 +166,8 @@ enum DebugScript {
         lines.append("subtitle: \(controller.window?.subtitle ?? "")")
         lines.append("dock badge: \(NSApp.dockTile.badgeLabel ?? "")")
         lines.append("preview: \(controller.previewPane?.fileURL?.lastPathComponent ?? "")")
+        let responder = controller.window?.firstResponder.map { String(describing: type(of: $0)) }
+        lines.append("keys go to: \(responder ?? "nothing")")
         let toolbar = (controller.window?.toolbar?.items ?? [])
             .filter { $0.itemIdentifier != .flexibleSpace }
             .map { "\($0.isEnabled ? "+" : "-")\($0.itemIdentifier.rawValue)" }
