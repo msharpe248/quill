@@ -109,6 +109,11 @@ What this leaves open, knowingly:
 - **Cells are assumed to be twice as tall as wide** when sizing an image. M4 reads the real cell size.
 - **`debug.image_sample` (`I`) is temporary**, like `debug.preview_sample`: it shows a generated picture in the reader so the Kitty graphics path can be proved before messages have images.
 
+### The config, from the app
+
+- **"Edit Config" (`cmd-,`) and "Reveal Config in Finder" are in the Quill menu** (added with M8's work). The config is a file in the app's container, which nobody finds by looking. With no config yet, Edit Config makes one that is empty but for a comment: an empty config is a valid one. A scripted run records what would have been opened and shown, and opens nothing.
+- **The config is still read once, at startup.** The spec's hot reload is not built; the made file says so.
+
 ### Entitlements
 
 | Entitlement | Why |

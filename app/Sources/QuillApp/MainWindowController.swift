@@ -36,6 +36,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     private var afterEditor: (() -> Void)?
     /// The user's vimrc, as Quill keeps it.
     let vimrc: ImportedVimrc
+    /// The folder the core reads `config.toml` from.
+    let configFolder: URL
+
+    /// Shows a file or folder in the Finder. A scripted run replaces it, so
+    /// that a check never brings the Finder forward.
+    var revealer: (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) }
 
     /// Hands an address to the user's browser or mail program. A scripted
     /// run replaces it, so that a check opens nothing.
@@ -198,6 +204,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         vimrc = ImportedVimrc(
             folder: ImportedVimrc.folder(
                 applicationSupport: support, configFolder: options.coreEnvironment["QUILL_CONFIG_DIR"]))
+        // A run whose core was pointed at another config folder, as a
+        // scratch run is, shows that one and leaves the user's own alone.
+        if let folder = options.coreEnvironment["QUILL_CONFIG_DIR"], folder.hasPrefix("/") {
+            configFolder = URL(fileURLWithPath: folder, isDirectory: true)
+        } else {
+            configFolder =
+                support
+                .appendingPathComponent("Quill", isDirectory: true)
+                .appendingPathComponent("config", isDirectory: true)
+        }
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760),
@@ -853,6 +869,36 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             guard editor === running else { return }
             running.surface.kill()
         }
+    }
+
+    // MARK: - The config
+
+    /// Makes the config folder if it is not there yet, private to the user.
+    private func makeConfigFolder() {
+        try? FileManager.default.createDirectory(
+            at: configFolder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+    }
+
+    /// Opens `config.toml` in the application the Mac edits text with. With
+    /// no config yet there is nothing to open, so one is made: an empty
+    /// config is a valid one, and says where to look for what goes in it.
+    @objc func editConfig(_: Any?) {
+        let file = configFolder.appendingPathComponent("config.toml")
+        if !FileManager.default.fileExists(atPath: file.path) {
+            makeConfigFolder()
+            let start = [
+                "# Quill's settings. The README says what can go here.",
+                "# Quill reads this file when it starts.", "",
+            ].joined(separator: "\n")
+            FileManager.default.createFile(
+                atPath: file.path, contents: Data(start.utf8), attributes: [.posixPermissions: 0o600])
+        }
+        fileOpener(file)
+    }
+
+    @objc func revealConfig(_: Any?) {
+        makeConfigFolder()
+        revealer(configFolder)
     }
 
     // MARK: - The user's vimrc

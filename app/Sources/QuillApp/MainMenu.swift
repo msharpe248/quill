@@ -15,6 +15,15 @@ enum MainMenu {
             keyEquivalent: "")
         app.addItem(.separator())
         append(commands.makeMenuItems(for: .app), to: app, thenSeparator: true)
+        // The config is a file in the app's container, which is not a
+        // place anyone finds by looking. These two get to it.
+        let editConfig = app.addItem(
+            withTitle: "Edit Config", action: #selector(MainWindowController.editConfig(_:)), keyEquivalent: ",")
+        editConfig.target = panes
+        let revealConfig = app.addItem(
+            withTitle: "Reveal Config in Finder", action: #selector(MainWindowController.revealConfig(_:)),
+            keyEquivalent: "")
+        revealConfig.target = panes
         // The vimrc for writing mail in Vim is copied in by the shell: the
         // core cannot be shown a file outside the sandbox, and has no need
         // of this one.

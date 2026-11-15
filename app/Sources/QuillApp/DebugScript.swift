@@ -79,6 +79,8 @@ enum DebugScript {
         // Nor start another program on a file. What would have been opened
         // is written to the dump.
         controller.fileOpener = { file in openedFiles.append(file.path) }
+        // Nor bring the Finder forward.
+        controller.revealer = { file in revealed.append(file.path) }
         // Nor wait on a save panel. The place named by the last `saveto:`
         // step is where the user is taken to have saved, once; with none,
         // they are taken to have cancelled.
@@ -218,6 +220,7 @@ enum DebugScript {
     private static var chosen: [URL] = []
     private static var panelsAsked = 0
     private static var openedFiles: [String] = []
+    private static var revealed: [String] = []
     private static var saveDestination: URL?
     private static var savePanelsAsked: [String] = []
     private static var vimrcPanelsAsked = 0
@@ -324,6 +327,7 @@ enum DebugScript {
         lines.append("file panels asked for: \(panelsAsked)")
         lines.append("copied: \(copied.map { $0.debugDescription }.joined(separator: " "))")
         lines.append("opened files: \(openedFiles.joined(separator: " "))")
+        lines.append("revealed: \(revealed.joined(separator: " "))")
         lines.append("save panels asked for: \(savePanelsAsked.map { $0.debugDescription }.joined(separator: " "))")
         lines.append("saved: \(controller.saveResults.joined(separator: "; "))")
         lines.append("thumbnails: \(controller.thumbnailResults.joined(separator: ", "))")
