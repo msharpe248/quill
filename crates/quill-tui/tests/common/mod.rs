@@ -144,6 +144,7 @@ impl Harness {
             notifications: true,
             threads: true,
             searches: Vec::new(),
+            templates: Vec::new(),
         };
         adjust(&mut env);
         let scratch = tempfile::tempdir().unwrap();

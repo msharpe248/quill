@@ -30,6 +30,7 @@ mod mouse;
 use crate::setup::{
     AccountEvent, AccountRequest, CertificatePrompt, Outcome, Setup, SignIn, SignInStage,
 };
+use crate::template::{self, Template};
 use crate::theme::Styles;
 use crate::{text, view};
 pub use mouse::{Mouse, MouseKind};
@@ -84,6 +85,9 @@ pub struct Env {
     pub threads: bool,
     /// Searches kept in the sidebar: a name and what to search for.
     pub searches: Vec<(String, String)>,
+    /// Text kept ready to put into a message, from the user's `templates`
+    /// folder.
+    pub templates: Vec<Template>,
 }
 
 impl Env {
@@ -487,6 +491,43 @@ impl FolderPicker {
     }
 }
 
+/// The templates, open to choose one to put into the message being
+/// written. Typing narrows the list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TemplatePicker {
+    pub filter: LineInput,
+    pub selected: usize,
+    pub offset: usize,
+    /// How many templates there are before any narrowing, which is how
+    /// tall the box is.
+    pub total: usize,
+}
+
+/// The question asked before anything is done to unsubscribe from a list:
+/// whose list it is, and exactly what saying yes does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnsubscribePrompt {
+    /// The account the list's mail came to. A message asking to leave is
+    /// written from it.
+    pub account: LocalAccountId,
+    /// Who the list's mail is from, as the reader shows it.
+    pub sender: String,
+    pub how: UnsubscribeHow,
+}
+
+/// The way of unsubscribing that is on offer. Every address in it is the
+/// list's own, from the message's `List-Unsubscribe` header.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnsubscribeHow {
+    /// Quill tells the list's server itself, with one request that says
+    /// only "unsubscribe" (RFC 8058).
+    OneClick { url: String, host: String },
+    /// A message to the list is started. The user sends it.
+    Mail { url: String, address: String },
+    /// The list's page is opened in the browser. Quill sends nothing.
+    Page { url: String, host: String },
+}
+
 /// A folder on offer in the folder picker.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FolderChoice {
@@ -667,6 +708,10 @@ pub struct State {
     pub search: Option<Search>,
     pub palette: Option<Palette>,
     pub folders: Option<FolderPicker>,
+    /// The templates to choose from, over the message being written.
+    pub templates: Option<TemplatePicker>,
+    /// The question to answer before unsubscribing from a list.
+    pub unsubscribe: Option<UnsubscribePrompt>,
     /// The message being written, in the reader's place.
     pub compose: Option<Compose>,
     /// A message the store worker has prepared to write, opened at the end
@@ -729,6 +774,8 @@ impl State {
             search: None,
             palette: None,
             folders: None,
+            templates: None,
+            unsubscribe: None,
             compose: None,
             compose_pending: None,
             respond_pending: None,
@@ -775,6 +822,9 @@ impl State {
         if self.when.is_some() {
             return Context::When;
         }
+        if self.unsubscribe.is_some() {
+            return Context::Unsubscribe;
+        }
         if self.setup.is_some() {
             return Context::Setup;
         }
@@ -789,6 +839,9 @@ impl State {
         }
         if self.folders.is_some() {
             return Context::Folders;
+        }
+        if self.templates.is_some() {
+            return Context::Templates;
         }
         if self.compose.is_some() {
             return Context::Compose;
@@ -865,6 +918,13 @@ impl State {
                     if let Some(picker) = &mut self.folders {
                         picker.filter.insert(&text);
                         picker.selected = 0;
+                    }
+                }
+                Context::Templates => {
+                    if let Some(picker) = &mut self.templates {
+                        picker.filter.insert(&text);
+                        picker.selected = 0;
+                        picker.offset = 0;
                     }
                 }
                 Context::Palette => {
@@ -988,6 +1048,16 @@ impl State {
                     return;
                 }
             }
+            Context::Templates => {
+                if let Some(picker) = &mut self.templates
+                    && picker.filter.key(chord)
+                {
+                    // A narrower list starts again from its top.
+                    picker.selected = 0;
+                    picker.offset = 0;
+                    return;
+                }
+            }
             Context::Palette => {
                 if let Some(palette) = &mut self.palette
                     && palette.input.key(chord)
@@ -1019,6 +1089,9 @@ impl State {
             // Waiting on the browser: only giving up is on offer, and a
             // letter must not run a command behind the dialog.
             Context::SignIn if matches!(chord.key, Key::Char(_)) => return,
+            // A question with two answers, enter and esc. A letter is
+            // neither, and must not run a command behind it.
+            Context::Unsubscribe if matches!(chord.key, Key::Char(_)) => return,
             _ => {}
         }
         self.pending.push(chord);
@@ -1135,6 +1208,10 @@ impl State {
                 self.use_attachment(FileUse::View, out);
             }
             CommandId::NavOpen if context == Context::When => self.answer_when(env, out),
+            CommandId::NavOpen if context == Context::Unsubscribe => {
+                self.answer_unsubscribe(env, out);
+            }
+            CommandId::NavOpen if context == Context::Templates => self.insert_template(env),
             CommandId::NavOpen if context == Context::Folders => {
                 if let Some(picker) = self.folders.take()
                     && let Some(choice) = self.folder_choices(&picker).get(picker.selected)
@@ -1266,6 +1343,17 @@ impl State {
                 if let Some(compose) = &mut self.compose {
                     compose.show_bcc();
                 }
+            }
+            CommandId::ComposeTemplate => {
+                self.templates = Some(TemplatePicker {
+                    filter: LineInput::default(),
+                    selected: 0,
+                    offset: 0,
+                    total: env.templates.len(),
+                });
+            }
+            CommandId::MessageUnsubscribe => {
+                self.unsubscribe = self.unsubscribe_offer(env, context);
             }
             // From the app's Edit menu, which takes these keys before the
             // editor can. Typed in a terminal they reach the editor itself.
@@ -1469,6 +1557,24 @@ impl State {
                 .iter()
                 .any(|id| DraftId::from_message_id(*id).is_none()),
             CommandId::NavOpen if context == Context::When => true,
+            CommandId::NavOpen if context == Context::Unsubscribe => true,
+            CommandId::NavOpen if context == Context::Templates => self
+                .templates
+                .as_ref()
+                .is_some_and(|picker| !self.template_choices(env, picker).is_empty()),
+            // The question is all there is until it is answered: nothing
+            // behind it moves.
+            _ if context == Context::Unsubscribe => {
+                matches!(id, CommandId::NavBack | CommandId::HelpToggle)
+            }
+            CommandId::ComposeTemplate => {
+                !env.templates.is_empty()
+                    && self
+                        .compose
+                        .as_ref()
+                        .is_some_and(|compose| !compose.sending && compose.attaching.is_none())
+            }
+            CommandId::MessageUnsubscribe => self.unsubscribe_offer(env, context).is_some(),
             // Only where the body's own selection is the one meant.
             CommandId::EditCopy | CommandId::EditCut => {
                 self.compose.as_ref().is_some_and(|compose| {
@@ -1518,6 +1624,8 @@ impl State {
                     || self.links.is_some()
                     || self.attachments.is_some()
                     || self.folders.is_some()
+                    || self.templates.is_some()
+                    || self.unsubscribe.is_some()
                     || self.compose.is_some()
                     || self.setup.is_some()
                     || self.sign_in.is_some()
@@ -1611,6 +1719,15 @@ impl State {
             let page = areas.links.map_or(1, layout::inner_height).max(1);
             let selected = step(picker.selected, count, motion, page);
             if let Some(picker) = &mut self.folders {
+                picker.selected = selected;
+            }
+            return;
+        }
+        if let Some(picker) = &self.templates {
+            let count = self.template_choices(env, picker).len();
+            let page = areas.links.map_or(1, layout::inner_height).max(1);
+            let selected = step(picker.selected, count, motion, page);
+            if let Some(picker) = &mut self.templates {
                 picker.selected = selected;
             }
             return;
@@ -1724,6 +1841,8 @@ impl State {
             self.certificates.pop_front();
         } else if self.when.take().is_some() {
             // Nothing was snoozed or sent.
+        } else if self.unsubscribe.take().is_some() {
+            // Nothing was asked of the list, written or opened.
         } else if self.sign_in.take().is_some() {
             // Nothing is kept of a sign-in given up on.
             out.accounts.push(AccountRequest::CancelSignIn);
@@ -1737,6 +1856,8 @@ impl State {
             self.attachments = None;
         } else if self.folders.is_some() {
             self.folders = None;
+        } else if self.templates.is_some() {
+            self.templates = None;
         } else if let Some(compose) = self.compose.take() {
             // Closing keeps what was written. A reply opened and closed
             // untouched leaves nothing behind, and a draft emptied out is
@@ -2061,14 +2182,135 @@ impl State {
                 }
                 _ => None,
             })
-            .filter(|choice| {
-                let mut name = choice.name.chars().flat_map(char::to_lowercase);
-                typed
-                    .chars()
-                    .filter(|c| !c.is_whitespace())
-                    .all(|wanted| name.any(|c| c == wanted))
-            })
+            .filter(|choice| template::narrows(&typed, &choice.name))
             .collect()
+    }
+
+    /// The templates the picker offers, as places in `env.templates`:
+    /// those whose names what has been typed narrows to.
+    pub fn template_choices(&self, env: &Env, picker: &TemplatePicker) -> Vec<usize> {
+        env.templates
+            .iter()
+            .enumerate()
+            .filter(|(_, template)| template::narrows(picker.filter.text(), &template.name))
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    /// Puts the chosen template into the message being written, with what
+    /// is known about the message filled in.
+    fn insert_template(&mut self, env: &Env) {
+        let Some(picker) = self.templates.take() else {
+            return;
+        };
+        let chosen = self
+            .template_choices(env, &picker)
+            .get(picker.selected)
+            .and_then(|index| env.templates.get(*index));
+        let (Some(template), Some(compose)) = (chosen, &mut self.compose) else {
+            return;
+        };
+        let from_name = self
+            .accounts
+            .iter()
+            .find(|row| row.id == compose.account)
+            .and_then(|row| env.identities.get(&row.name))
+            .and_then(|identity| identity.full_name.as_deref());
+        let values = template::Values::of(
+            compose.to.text(),
+            compose.subject.text(),
+            from_name,
+            &text::day(self.now, &env.tz),
+        );
+        compose.insert_template(template, values);
+    }
+
+    /// What unsubscribing from the list of the message in the reader would
+    /// be, when that message is the one the user is on, is here in full,
+    /// and its list gives a way Quill will use. One click needs the
+    /// service that makes the request, so without one (the demo mailbox)
+    /// it is a message or the list's page.
+    fn unsubscribe_offer(&self, env: &Env, context: Context) -> Option<UnsubscribePrompt> {
+        self.page_message(context)?;
+        let row = self.reader.row.as_ref()?;
+        let Body::Loaded(body) = &self.reader.body else {
+            return None;
+        };
+        let offered = body.unsubscribe.as_ref()?;
+        let host = |url: &str| quill_mime::unsubscribe::web_host(url).map(text::sanitize_line);
+        let how = match offered.way(env.accounts)? {
+            quill_mime::unsubscribe::Way::OneClick(url) => UnsubscribeHow::OneClick {
+                url: url.to_owned(),
+                host: host(url)?,
+            },
+            quill_mime::unsubscribe::Way::Mail(url) => UnsubscribeHow::Mail {
+                url: url.to_owned(),
+                address: quill_core::links::parse_mailto(url)?
+                    .to
+                    .first()
+                    .map(|address| text::sanitize_line(address))?,
+            },
+            quill_mime::unsubscribe::Way::Page(url) => UnsubscribeHow::Page {
+                url: Some(url)
+                    .filter(|url| quill_mime::links::is_openable(url))?
+                    .to_owned(),
+                host: host(url)?,
+            },
+        };
+        Some(UnsubscribePrompt {
+            account: row.account,
+            sender: row.headers.from.first().map_or_else(
+                || "a sender it does not name".to_owned(),
+                ToString::to_string,
+            ),
+            how,
+        })
+    }
+
+    /// Whether the message in the reader can be unsubscribed from, for the
+    /// reader to say so.
+    pub fn reader_can_unsubscribe(&self, env: &Env) -> bool {
+        self.unsubscribe_offer(env, Context::Reader).is_some()
+    }
+
+    /// The user said yes: does the one thing the question described.
+    fn answer_unsubscribe(&mut self, env: &Env, out: &mut Effects) {
+        let Some(prompt) = self.unsubscribe.take() else {
+            return;
+        };
+        match prompt.how {
+            UnsubscribeHow::OneClick { url, host } => {
+                out.accounts.push(AccountRequest::Unsubscribe { url });
+                self.flash = Some((format!("Asking {host} to unsubscribe you…"), false));
+            }
+            UnsubscribeHow::Mail { url, .. } => {
+                let Some(mut mailto) = quill_core::links::parse_mailto(&url) else {
+                    return;
+                };
+                // The request goes to the address the question named and
+                // to nobody else, whoever else the header names.
+                mailto.to.truncate(1);
+                mailto.cc.clear();
+                mailto.bcc.clear();
+                if mailto.subject.trim().is_empty() {
+                    // What lists expect when they do not say.
+                    mailto.subject = "unsubscribe".to_owned();
+                }
+                self.write_to(env, mailto, Some(prompt.account));
+                if self.compose.is_some() {
+                    self.flash = Some((
+                        "Nothing has been sent. Send this message to unsubscribe.".to_owned(),
+                        false,
+                    ));
+                }
+            }
+            UnsubscribeHow::Page { url, host } => {
+                if quill_mime::links::is_openable(&url) {
+                    out.host.push(HostRequest::OpenUrl(url));
+                    self.flash = Some((format!("Opened {host} in your browser."), false));
+                }
+            }
+        }
     }
 
     /// Takes a key as the answer to the certificate on screen: `o` trusts
@@ -2174,6 +2416,19 @@ impl State {
                 }
                 return;
             }
+            AccountEvent::Unsubscribed { host, result } => {
+                let host = text::sanitize_line(&host);
+                self.notices.push_back(match result {
+                    Ok(()) => Notice::info(format!(
+                        "Unsubscribed: {host} took the request. Mail already on its way may still arrive."
+                    )),
+                    Err(reason) => Notice::error(format!(
+                        "Not unsubscribed. {}",
+                        text::sanitize_line(&reason)
+                    )),
+                });
+                return;
+            }
             _ => {}
         }
         let Some(setup) = &mut self.setup else {
@@ -2271,13 +2526,27 @@ impl State {
         let Some(mailto) = quill_core::links::parse_mailto(url) else {
             return;
         };
+        self.write_to(env, mailto, None);
+    }
+
+    /// Starts a message from what a `mailto:` address asked for, from
+    /// `account` when it is given and still here, otherwise from the first.
+    fn write_to(
+        &mut self,
+        env: &Env,
+        mailto: quill_core::links::Mailto,
+        account: Option<LocalAccountId>,
+    ) {
         if self.compose.is_some() {
             self.notices.push_back(Notice::info(
                 "A message is already being written. Send or close it, then follow the link again.",
             ));
             return;
         }
-        let Some(account) = self.accounts.first().map(|account| account.id) else {
+        let account = account
+            .filter(|wanted| self.accounts.iter().any(|account| account.id == *wanted))
+            .or_else(|| self.accounts.first().map(|account| account.id));
+        let Some(account) = account else {
             self.notices.push_back(Notice::info(
                 "Add an account first; then a mail link can start a message.",
             ));
@@ -3189,6 +3458,27 @@ impl State {
             let count = self.folder_choices(picker).len();
             let rect = layout::compute(self, self.size, env.reader_width).links;
             if let Some(picker) = &mut self.folders {
+                picker.selected = picker.selected.min(count.saturating_sub(1));
+                if let Some(rect) = rect {
+                    keep_visible(
+                        &mut picker.offset,
+                        picker.selected,
+                        // One row of the box is the line being typed.
+                        layout::inner_height(rect).saturating_sub(1),
+                        count,
+                    );
+                }
+            }
+        }
+        // The templates are for a message being written: with none, there
+        // is nothing to put one into.
+        if self.compose.is_none() {
+            self.templates = None;
+        }
+        if let Some(picker) = &self.templates {
+            let count = self.template_choices(env, picker).len();
+            let rect = layout::compute(self, self.size, env.reader_width).links;
+            if let Some(picker) = &mut self.templates {
                 picker.selected = picker.selected.min(count.saturating_sub(1));
                 if let Some(rect) = rect {
                     keep_visible(

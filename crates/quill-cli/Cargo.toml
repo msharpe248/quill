@@ -32,6 +32,7 @@ async-trait.workspace = true
 clap.workspace = true
 hickory-resolver.workspace = true
 jiff.workspace = true
+reqwest.workspace = true
 rustix.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time"] }

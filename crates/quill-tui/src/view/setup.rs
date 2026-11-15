@@ -8,12 +8,12 @@ use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Padding};
 
+use crate::command::CommandId;
 use crate::input::LineInput;
 use crate::setup::{
     ServerField, Setup, SignInStage, Step, certificate_reason, grouped_fingerprint,
 };
-use crate::state::WhenFor;
-use crate::state::{Env, State};
+use crate::state::{Env, State, UnsubscribeHow, WhenFor};
 use crate::text;
 
 /// The width of the longest label and its gap: `Issued to: `.
@@ -118,6 +118,54 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
                 "It waits in the Outbox and goes at that time if Quill is running, or when it next is.",
             ),
         }
+        return;
+    }
+    if let Some(prompt) = &state.unsubscribe {
+        let inner = dialog(frame, area, " Unsubscribe ", env);
+        let mut rows = Rows::new(frame, inner, env);
+        rows.text("This message is from a mailing list.");
+        rows.blank();
+        rows.pair("From:", &prompt.sender);
+        rows.blank();
+        // What saying yes does, exactly; then what it does not.
+        let (does, does_not, shown, yes) = match &prompt.how {
+            UnsubscribeHow::OneClick { url, host } => (
+                format!("Quill will tell {host} to unsubscribe you."),
+                "One request goes to the address below, which the list gave for this. It says \"unsubscribe\" and nothing else: no cookies, and no page is opened.",
+                url,
+                "unsubscribe",
+            ),
+            UnsubscribeHow::Mail { url: _, address } => (
+                format!("A message will be written to {address}."),
+                "It is not sent for you. Look it over, then send it yourself to unsubscribe, or close it to do nothing.",
+                address,
+                "write the message",
+            ),
+            UnsubscribeHow::Page { url, host } => (
+                format!("Your browser will open a page at {host}."),
+                "This list has no way for Quill to unsubscribe you itself: its page says what to do next. Quill sends nothing.",
+                url,
+                "open the page",
+            ),
+        };
+        rows.text(&does);
+        rows.blank();
+        rows.dim(does_not);
+        rows.blank();
+        rows.pair(
+            match prompt.how {
+                UnsubscribeHow::Mail { .. } => "To:",
+                _ => "Address:",
+            },
+            shown,
+        );
+        rows.blank();
+        let key = |id| {
+            env.hint_key(id)
+                .map_or_else(String::new, ToString::to_string)
+        };
+        let (go, stop) = (key(CommandId::NavOpen), key(CommandId::NavBack));
+        rows.keys(&[(go.as_str(), yes), (stop.as_str(), "cancel")]);
         return;
     }
     let Some(setup) = &state.setup else {

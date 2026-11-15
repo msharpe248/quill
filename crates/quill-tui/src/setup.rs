@@ -94,6 +94,11 @@ pub enum AccountRequest {
     SignIn { account: Option<String> },
     /// Give up on the sign-in in progress.
     CancelSignIn,
+    /// Tell a mailing list's server to unsubscribe the user: one POST of
+    /// `List-Unsubscribe=One-Click` to this `https` address (RFC 8058),
+    /// which the user has just agreed to. Answered with
+    /// [`AccountEvent::Unsubscribed`].
+    Unsubscribe { url: String },
 }
 
 /// The answers.
@@ -128,6 +133,12 @@ pub enum AccountEvent {
     /// The sign-in ended: kept, or why not.
     SignedIn {
         account: String,
+        result: Result<(), String>,
+    },
+    /// The list's server at `host` took the request to unsubscribe, or why
+    /// the request did not get that far.
+    Unsubscribed {
+        host: String,
         result: Result<(), String>,
     },
 }
@@ -687,7 +698,8 @@ impl Setup {
             AccountEvent::Trusted { .. }
             | AccountEvent::SignInBrowser { .. }
             | AccountEvent::SignInCode { .. }
-            | AccountEvent::SignedIn { .. } => (Vec::new(), Outcome::Open),
+            | AccountEvent::SignedIn { .. }
+            | AccountEvent::Unsubscribed { .. } => (Vec::new(), Outcome::Open),
         }
     }
 }

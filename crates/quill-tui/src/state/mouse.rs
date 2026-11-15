@@ -108,8 +108,10 @@ impl State {
             self.back(out);
             return;
         }
-        // Folders and the palette have a line to type on above the list.
-        let typed_rows = u16::from(self.palette.is_some() || self.folders.is_some());
+        // Folders, templates and the palette have a line to type on above
+        // the list.
+        let typed_rows =
+            u16::from(self.palette.is_some() || self.folders.is_some() || self.templates.is_some());
         let first = rect.y + 1 + typed_rows;
         let last = rect.y + rect.height.saturating_sub(1);
         if mouse.row < first || mouse.row >= last {
@@ -125,6 +127,12 @@ impl State {
         } else if let Some(picker) = &self.folders {
             (
                 self.folder_choices(picker).len(),
+                picker.selected,
+                picker.offset,
+            )
+        } else if let Some(picker) = &self.templates {
+            (
+                self.template_choices(env, picker).len(),
                 picker.selected,
                 picker.offset,
             )
@@ -147,6 +155,8 @@ impl State {
         if let Some(palette) = &mut self.palette {
             palette.selected = index;
         } else if let Some(picker) = &mut self.folders {
+            picker.selected = index;
+        } else if let Some(picker) = &mut self.templates {
             picker.selected = index;
         } else if let Some(picker) = &mut self.attachments {
             picker.selected = index;

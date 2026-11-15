@@ -24,6 +24,7 @@ pub mod outgoing;
 pub mod palette;
 pub mod setup;
 pub mod state;
+pub mod template;
 pub mod terminal;
 pub mod text;
 pub mod theme;

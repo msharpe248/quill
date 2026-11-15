@@ -251,6 +251,14 @@ pub fn long_date(ts: i64, tz: &TimeZone) -> String {
     }
 }
 
+/// The day alone, written out, as a letter is dated: `14 November 2026`.
+pub fn day(ts: i64, tz: &TimeZone) -> String {
+    match Timestamp::from_second(ts) {
+        Ok(then) => then.to_zoned(tz.clone()).strftime("%-d %B %Y").to_string(),
+        Err(_) => String::new(),
+    }
+}
+
 /// The local calendar day of a timestamp, as days since the Unix epoch. Used
 /// to notice midnight passing.
 pub fn local_day(ts: i64, tz: &TimeZone) -> i64 {
@@ -398,6 +406,17 @@ mod tests {
         assert_eq!(short_date(ts, NOW, &TimeZone::UTC), "Fri");
         let plus_one = TimeZone::fixed(jiff::tz::offset(1));
         assert_eq!(short_date(ts, NOW, &plus_one), "00:50");
+    }
+
+    #[test]
+    fn a_day_is_written_out_in_the_users_time_zone() {
+        assert_eq!(day(NOW, &TimeZone::UTC), "14 November 2026");
+        // Half past nine in the morning in London is the evening before
+        // in Honolulu.
+        let honolulu = TimeZone::get("Pacific/Honolulu").unwrap();
+        assert_eq!(day(NOW, &honolulu), "13 November 2026");
+        assert_eq!(day(86_400 * 4, &TimeZone::UTC), "5 January 1970");
+        assert_eq!(day(i64::MAX, &TimeZone::UTC), "");
     }
 
     #[test]

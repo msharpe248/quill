@@ -4,6 +4,10 @@
 //! check, and only then writes the account to `config.toml`, its password
 //! to the Keychain, and hands it to the sync engine. Accepting a server's
 //! certificate for an account that already exists goes the same way.
+//!
+//! The UI reaches no server itself, so the one request it ever asks to
+//! have made to a server that is not the user's comes through here too:
+//! telling a mailing list to unsubscribe them (see `unsubscribe`).
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -26,6 +30,8 @@ use crate::accounts::{imap_config, imap_password_name, parse_fingerprint, sync_a
 use crate::config_edit;
 use crate::discover::{self, Dns, Prober};
 use crate::oauth;
+
+mod unsubscribe;
 
 pub struct Service {
     /// `config.toml`.
@@ -70,6 +76,15 @@ pub fn spawn(service: Service) -> AccountsLink {
                     if let Some(sign_in) = signing_in.take() {
                         sign_in.abort();
                     }
+                }
+                // A list's server may take its time, or never answer. The
+                // request runs beside the others, which are not held up.
+                request @ AccountRequest::Unsubscribe { .. } => {
+                    let service = Arc::clone(&service);
+                    let events = events_tx.clone();
+                    tokio::spawn(async move {
+                        let _ = events.send(service.handle(request).await);
+                    });
                 }
                 request => {
                     let event = service.handle(request).await;
@@ -148,6 +163,10 @@ impl Service {
                 account: String::new(),
                 result: Err("no sign-in was under way".to_owned()),
             },
+            AccountRequest::Unsubscribe { url } => {
+                let (host, result) = unsubscribe::one_click(&url).await;
+                AccountEvent::Unsubscribed { host, result }
+            }
         }
     }
 
@@ -1219,6 +1238,139 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    /// A stand-in for a mailing list's server.
+    async fn list_server() -> wiremock::MockServer {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/u/r0b1n"))
+            .and(wiremock::matchers::header(
+                "content-type",
+                "application/x-www-form-urlencoded",
+            ))
+            .and(wiremock::matchers::body_string(
+                "List-Unsubscribe=One-Click",
+            ))
+            .respond_with(wiremock::ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::path("/gone"))
+            .respond_with(wiremock::ResponseTemplate::new(410))
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::path("/slow"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(202).set_delay(Duration::from_millis(1500)),
+            )
+            .mount(&server)
+            .await;
+        server
+    }
+
+    #[tokio::test]
+    async fn unsubscribing_asks_the_lists_server_once_and_says_how_it_went() {
+        let rig = Rig::new();
+        let server = list_server().await;
+        let (requests, mut events) = link(&rig);
+
+        requests
+            .send(AccountRequest::Unsubscribe {
+                url: format!("{}/u/r0b1n", server.uri()),
+            })
+            .unwrap();
+        assert_eq!(
+            next(&mut events).await,
+            AccountEvent::Unsubscribed {
+                host: "127.0.0.1".to_owned(),
+                result: Ok(()),
+            }
+        );
+        // One request, and it was the POST the standard describes: the
+        // stand-in answers nothing else at that address.
+        let received = server.received_requests().await.unwrap();
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0].method.as_str(), "POST");
+        assert_eq!(received[0].body, b"List-Unsubscribe=One-Click");
+        assert!(!received[0].headers.contains_key("cookie"));
+        assert!(!received[0].headers.contains_key("authorization"));
+
+        // A server that says no is reported as that, with its number.
+        requests
+            .send(AccountRequest::Unsubscribe {
+                url: format!("{}/gone", server.uri()),
+            })
+            .unwrap();
+        match next(&mut events).await {
+            AccountEvent::Unsubscribed {
+                host,
+                result: Err(reason),
+            } => {
+                assert_eq!(host, "127.0.0.1");
+                assert!(reason.contains("refused the request (410)"), "{reason}");
+            }
+            other => panic!("{other:?}"),
+        }
+
+        // An address that is not HTTPS is asked nothing at all. (Only a
+        // test's own server on this machine is let off that.)
+        for unfit in [
+            "http://lists.example.com/u/r0b1n",
+            "https://lists.example.com@127.0.0.1/u/r0b1n",
+            "https://127.0.0.1/u/r0b1n",
+            "mailto:leave@lists.example.com",
+        ] {
+            requests
+                .send(AccountRequest::Unsubscribe {
+                    url: unfit.to_owned(),
+                })
+                .unwrap();
+            match next(&mut events).await {
+                AccountEvent::Unsubscribed {
+                    host,
+                    result: Err(reason),
+                } => {
+                    assert_eq!(host, "");
+                    assert!(reason.contains("not one Quill will use"), "{reason}");
+                }
+                other => panic!("{unfit}: {other:?}"),
+            }
+        }
+        assert_eq!(server.received_requests().await.unwrap().len(), 2);
+        // None of it touched the config or the Keychain.
+        assert!(!rig.service.config_file.exists());
+    }
+
+    #[tokio::test]
+    async fn a_list_that_is_slow_to_answer_holds_nothing_else_up() {
+        let rig = Rig::new();
+        let server = list_server().await;
+        let (requests, mut events) = link(&rig);
+        requests
+            .send(AccountRequest::Unsubscribe {
+                url: format!("{}/slow", server.uri()),
+            })
+            .unwrap();
+        // Asked after it, answered before it.
+        requests
+            .send(AccountRequest::Trust {
+                account: "Nobody".to_owned(),
+                fingerprint: "ab".repeat(32),
+                pin: false,
+                sending: false,
+            })
+            .unwrap();
+        assert!(matches!(
+            next(&mut events).await,
+            AccountEvent::Trusted { result: Err(_), .. }
+        ));
+        assert_eq!(
+            next(&mut events).await,
+            AccountEvent::Unsubscribed {
+                host: "127.0.0.1".to_owned(),
+                result: Ok(()),
+            }
+        );
     }
 
     #[test]

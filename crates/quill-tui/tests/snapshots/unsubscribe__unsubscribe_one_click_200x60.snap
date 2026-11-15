@@ -1,0 +1,64 @@
+---
+source: crates/quill-tui/tests/unsubscribe.rs
+expression: harness.screen()
+---
+┌ [1] Accounts ────────────┐┌ [2] Inbox (unified) - 12 unread ───────────────────────────────────────────────────┐┏ [3] Reader ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ X unsubscribes ┓
+│> Unified              12 ││>     W Harbour Books         New this November                                09:31│┃ From:    Harbour Books <news@harbourbooks.example.com>                             ┃
+│  Work                    ││  * @ W Ana Ruiz              Q4 roadmap                                       09:14│┃ To:      Robin Vale <robin@example.com>                                            ┃
+│    Inbox               8 ││      W Build Bot             [quill] PR #42 passed                            08:51│┃ Date:    Sat 14 Nov 2026 09:31                                                     ┃
+│    Drafts                ││  *   P Peter Vale            Sunday dinner                                    08:35│┃ Subject: New this November                                                         ┃
+│    Sent                  ││  *   P Maya Okafor           Trail run Saturday                               04:30│┃                                                                                    ┃
+│    Archive               ││  * @ W Sam Lee               Photos from Sat                                    Fri│┃ Three new arrivals this month.                                                     ┃
+│    Trash                 ││  *   P Riverside Library     Your hold is ready                                 Fri│┃                                                                                    ┃
+│  Personal                ││  *   W Priya Nair            Re: Offsite agenda                                 Fri│┃                                                                                    ┃
+│    Inbox               4 ││  *!@ W Tomás Ortega          Invoice 2026-114                                   Thu│┃                                                                                    ┃
+│    Drafts                ││      P Jo Park               Re: Book club pick                                 Thu│┃                                                                                    ┃
+│    Sent                  ││  *   W 陈静 Chen Jing        Design review notes 设计评审                       Wed│┃                                                                                    ┃
+│    Archive               ││      W IT Helpdesk           Scheduled maintenance Sunday                       Tue│┃                                                                                    ┃
+│    Trash                 ││  *   W Lena Fischer          Lunch on Thursday?                                 Mon│┃                                                                                    ┃
+│                          ││  *   P Hillcrest Dental      Appointment reminder                               Sun│┃                                                                                    ┃
+│                          ││  *!@ W Omar Haddad           Re: Contract redlines                           Nov 06│┃                                                                                    ┃
+│                          ││  *   W The Weekly Parser     Issue 88: Parsing email is still hard           Nov 02│┃                                                                                    ┃
+│                          ││   !@ P Maya Okafor           Recipe you asked for                            Oct 25│┃                                                                                    ┃
+│                          ││      W Ana Ruiz              Welcome to the team                           Oct 2025│┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                 ┏ Unsubscribe ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓                                                             ┃
+│                          ││                                 ┃ This message is from a mailing list.                                     ┃                                                             ┃
+│                          ││                                 ┃                                                                          ┃                                                             ┃
+│                          ││                                 ┃ From:      Harbour Books <news@harbourbooks.example.com>                 ┃                                                             ┃
+│                          ││                                 ┃                                                                          ┃                                                             ┃
+│                          ││                                 ┃ Quill will tell lists.harbourbooks.example.com to unsubscribe you.       ┃                                                             ┃
+│                          ││                                 ┃                                                                          ┃                                                             ┃
+│                          ││                                 ┃ One request goes to the address below, which the list gave for this. It  ┃                                                             ┃
+│                          ││                                 ┃ says "unsubscribe" and nothing else: no cookies, and no page is opened.  ┃                                                             ┃
+│                          ││                                 ┃                                                                          ┃                                                             ┃
+│                          ││                                 ┃ Address:   https://lists.harbourbooks.example.com/u/r0b1n                ┃                                                             ┃
+│                          ││                                 ┃                                                                          ┃                                                             ┃
+│                          ││                                 ┃ enter unsubscribe   esc cancel                                           ┃                                                             ┃
+│                          ││                                 ┃                                                                          ┃                                                             ┃
+│                          ││                                 ┃                                                                          ┃                                                             ┃
+│                          ││                                 ┃                                                                          ┃                                                             ┃
+│                          ││                                 ┃                                                                          ┃                                                             ┃
+│                          ││                                 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛                                                             ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+└──────────────────────────┘└────────────────────────────────────────────────────────────────────────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+ enter go ahead  esc cancel

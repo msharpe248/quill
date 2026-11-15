@@ -13,7 +13,7 @@ const APP_SUPPORT: &str = "Library/Application Support/Quill";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Paths {
-    /// `config.toml`, `keys.toml` and `themes/`.
+    /// `config.toml`, `keys.toml`, `themes/` and `templates/`.
     pub config_dir: PathBuf,
     /// `quill.db` and, later, raw message blobs.
     pub data_dir: PathBuf,
@@ -53,6 +53,12 @@ impl Paths {
 
     pub fn keys_file(&self) -> PathBuf {
         self.config_dir.join("keys.toml")
+    }
+
+    /// The folder of text kept ready to put into messages: each `.md` or
+    /// `.txt` file in it is a template.
+    pub fn templates_dir(&self) -> PathBuf {
+        self.config_dir.join("templates")
     }
 
     /// The file of a user theme, or `None` when the name could not be a file

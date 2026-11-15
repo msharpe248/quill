@@ -129,21 +129,32 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
             palette_width,
             palette_height,
         ));
-    } else if state.links.is_some() || state.folders.is_some() || state.attachments.is_some() {
+    } else if state.links.is_some()
+        || state.folders.is_some()
+        || state.templates.is_some()
+        || state.attachments.is_some()
+    {
         // As tall as what it lists, as far as the screen allows. The folder
         // picker has a line to type on above its list, and keeps its
         // height as typing narrows it, so the box does not jump about.
-        let links_width = width.saturating_sub(4).min(if state.folders.is_some() {
-            60
-        } else if state.attachments.is_some() {
-            76
-        } else {
-            100
-        });
+        let links_width =
+            width
+                .saturating_sub(4)
+                .min(if state.folders.is_some() || state.templates.is_some() {
+                    60
+                } else if state.attachments.is_some() {
+                    76
+                } else {
+                    100
+                });
         let wanted = match &state.folders {
             Some(picker) => {
                 let all = crate::state::FolderPicker::for_message(picker.message);
                 state.folder_choices(&all).len() + 1
+            }
+            // The same: a line to type on, and every template under it.
+            None if state.templates.is_some() => {
+                state.templates.as_ref().map_or(0, |picker| picker.total) + 1
             }
             None if state.attachments.is_some() => state.reader.files().len(),
             None => state.reader.links.len(),
@@ -165,6 +176,7 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
         || !state.certificates.is_empty()
         || state.sign_in.is_some()
         || state.when.is_some()
+        || state.unsubscribe.is_some()
     {
         let dialog_width = width.saturating_sub(4).min(76);
         let dialog_height = body_height.saturating_sub(2).min(18);

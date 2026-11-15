@@ -54,6 +54,11 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
     // unbound has nothing to advertise and is left out.
     let hints: Vec<(String, &str, usize, bool)> = command::hints(state.context())
         .iter()
+        // A hint for a command that mostly has nothing to act on is kept
+        // back until it has.
+        .filter(|hint| {
+            !hint.only_enabled || hint.commands.iter().any(|id| state.is_enabled(env, *id))
+        })
         .filter_map(|hint| {
             let keys: Vec<String> = hint
                 .commands

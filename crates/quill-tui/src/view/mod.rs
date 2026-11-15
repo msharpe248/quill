@@ -11,6 +11,7 @@ mod reader;
 mod setup;
 mod sidebar;
 mod status;
+mod templates;
 
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
@@ -102,6 +103,8 @@ pub fn render(frame: &mut Frame, state: &State, env: &Env) -> Overlays {
             palette::render(frame, rect, state, env);
         } else if state.folders.is_some() {
             folders::render(frame, rect, state, env);
+        } else if state.templates.is_some() {
+            templates::render(frame, rect, state, env);
         } else if state.attachments.is_some() {
             attachments::render(frame, rect, state, env);
         } else {

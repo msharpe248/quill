@@ -160,7 +160,10 @@ fn a_message_can_be_sent_at_a_time_and_waits_in_the_outbox_until_then() {
     assert_eq!(harness.state.context(), Context::When);
     let screen = harness.screen();
     assert!(screen.contains(" Send at "), "{screen}");
-    assert!(screen.contains("It waits in the Outbox and goes at that time"), "{screen}");
+    assert!(
+        screen.contains("It waits in the Outbox and goes at that time"),
+        "{screen}"
+    );
     harness.type_text("tomorrow 7");
     harness.keys("enter");
     assert_ne!(

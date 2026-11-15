@@ -319,7 +319,7 @@ fn fence_after(open: u8, line: u8) -> u8 {
 /// Makes typed or pasted text fit to enter the document. Every kind of line
 /// ending becomes `\n`, a tab becomes spaces, and every other control
 /// character is dropped.
-fn clean(text: &str) -> Cow<'_, str> {
+pub(crate) fn clean(text: &str) -> Cow<'_, str> {
     let dirty = |c: char| (c.is_control() && c != '\n') || matches!(c, '\u{2028}' | '\u{2029}');
     if !text.contains(dirty) {
         return Cow::Borrowed(text);
@@ -1089,6 +1089,44 @@ impl BuiltinEditor {
         self.restore(step.after);
         self.undo.push(step);
         true
+    }
+
+    /// Puts `text` in at the cursor, in place of the selection if there is
+    /// one, as one step to undo. Then selects `select`, a range of bytes
+    /// within the text just put in, so that the next thing typed replaces
+    /// it. With `None`, or a range that is not in the text, the cursor is
+    /// left after the text.
+    pub fn insert_selecting(&mut self, text: &str, select: Option<Range<usize>>) {
+        self.last = None;
+        let text = clean(text);
+        if text.is_empty() {
+            return;
+        }
+        // A range counted over text that then had characters taken out of
+        // it no longer says where anything is.
+        let select = select.filter(|range| {
+            matches!(text, Cow::Borrowed(_))
+                && range.start < range.end
+                && text.is_char_boundary(range.start)
+                && text.is_char_boundary(range.end)
+                && range.end <= text.len()
+        });
+        let (start, end) = self.span().unwrap_or((self.cursor, self.cursor));
+        let base = self.offset_of(start);
+        self.edit(start, end, &text, Kind::Other, None);
+        if let Some(range) = select {
+            let anchor = self.clamp(self.pos_of(base + range.start));
+            let cursor = self.clamp(self.pos_of(base + range.end));
+            if anchor < cursor {
+                self.anchor = Some(anchor);
+                self.cursor = cursor;
+                self.upstream = false;
+                self.goal_x = None;
+                // Doing the step again selects again.
+                self.settle();
+            }
+        }
+        self.follow = true;
     }
 
     /// Inserts `text` at the cursor as a quotation, each line prefixed with
@@ -3385,6 +3423,51 @@ mod tests {
         // The quotation is drawn as one.
         let view = editor.view(40, 5);
         assert_eq!(kinds(&view, 1), [("> a", SpanKind::Quote(1))]);
+    }
+
+    #[test]
+    fn text_put_in_can_leave_part_of_itself_selected() {
+        let mut editor = BuiltinEditor::new("Dear all,\n\nBye.");
+        press(&mut editor, "down");
+        // The range is counted within what is put in, wherever that lands.
+        editor.insert_selecting("Hi {{name}},\nthanks.", Some(3..11));
+        assert_eq!(marked(&editor), "Dear all,\nHi ^{{name}}|,\nthanks.\nBye.");
+        // Typing replaces what is selected, as it always does.
+        type_text(&mut editor, "Ana");
+        assert_eq!(marked(&editor), "Dear all,\nHi Ana|,\nthanks.\nBye.");
+        // Undone, the typing gives the selection back; and putting the
+        // text in was one step, which done again selects again.
+        press(&mut editor, "cmd-z cmd-z");
+        assert_eq!(marked(&editor), "Dear all,\nHi ^{{name}}|,\nthanks.\nBye.");
+        press(&mut editor, "cmd-z");
+        assert_eq!(marked(&editor), "Dear all,\n|\nBye.");
+        assert!(!editor.is_modified());
+        press(&mut editor, "cmd-Z");
+        assert_eq!(marked(&editor), "Dear all,\nHi ^{{name}}|,\nthanks.\nBye.");
+
+        // It goes in over a selection, like anything typed or pasted.
+        let mut editor = BuiltinEditor::new("old words");
+        press(&mut editor, "cmd-a");
+        editor.insert_selecting("new", None);
+        assert_eq!(marked(&editor), "new|");
+
+        // A range that is not in the text, or is empty, or splits a
+        // character, selects nothing: the cursor is left after the text.
+        let backwards = Range { start: 3, end: 2 };
+        for range in [0..0, 2..2, backwards, 0..99, 4..5, 5..7] {
+            let mut editor = BuiltinEditor::new("");
+            editor.insert_selecting("caf\u{e9}s", Some(range.clone()));
+            assert_eq!(marked(&editor), "caf\u{e9}s|", "{range:?}");
+        }
+        // Text that had to be cleaned is not where the range says it is.
+        let mut editor = BuiltinEditor::new("");
+        editor.insert_selecting("a\u{7}\tb {{x}}", Some(5..10));
+        assert_eq!(marked(&editor), "a    b {{x}}|");
+        // Nothing to put in is nothing done, and nothing to undo.
+        let mut editor = BuiltinEditor::new("kept");
+        editor.insert_selecting("\u{7}", Some(0..1));
+        assert_eq!(marked(&editor), "|kept");
+        assert!(!editor.undo());
     }
 
     #[test]

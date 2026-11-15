@@ -150,6 +150,7 @@ Press `?` at any time for the keys that apply where you are. The bottom bar show
 | `v` | View the message as a web page | `B` | Open that page in the browser |
 | `i` | Load remote pictures for this message | `I` | Always load them from this sender |
 | `x` | Select or unselect, and move on | `V` | Start or end a range |
+| `X` | Unsubscribe from a mailing list | | |
 
 Arrow keys, `home`, `end`, `pageup` and `pagedown` work too. `ctrl-d` also pages down and `ctrl-c` also quits.
 
@@ -181,6 +182,24 @@ remote_images = "ask"     # or "never": i and I do nothing
 ```
 
 A link whose text names one site and whose target is another is flagged in the reader, on the line below it.
+
+## Unsubscribing from a mailing list
+
+Mail from a list usually says how to leave it, in a `List-Unsubscribe` header that mail programs read and people never see. When the message in the reader has one that Quill will use, the reader's top border says `X unsubscribes`.
+
+`X` asks first. The question names who sent the message and says exactly what `enter` will do, which is one of three things, in this order of preference:
+
+| The list gives | `enter` does |
+|---|---|
+| An `https` address, and `List-Unsubscribe-Post: List-Unsubscribe=One-Click` | Quill tells the list's server itself (RFC 8058): one POST to that address, saying `List-Unsubscribe=One-Click` and nothing else. The status line says whether the server took it |
+| A `mailto:` address | A message to that address is started, from the account the list wrote to. Nothing is sent until you send it |
+| An `https` address alone | Your browser opens that page. Quill sends nothing |
+
+`esc` does nothing at all, and no other key answers the question.
+
+The header is a stranger's, so it is held to rules. Only `https` and `mailto:` addresses are taken; plain `http` is ignored. A web address must name its server plainly: one with a user name in front of the host, a bare number or `localhost` for a host, a backslash, or characters outside printable ASCII is dropped whole, and so is one longer than 2048 characters. The one-click request carries no cookies and no sign-in, follows no redirect, and gives up after 15 seconds. Its answer is not read beyond whether the server said yes. A message to the list goes to the one address the question named: other recipients and copies the header asks for are left off, and a missing subject becomes `unsubscribe`.
+
+Quill does not check the message's DKIM signature, which RFC 8058 asks for before a one-click request. The question on screen, naming the server, stands in for it: read the name before pressing `enter`. In the demo mailbox, which has nothing to make requests with, one click is not offered.
 
 ## New mail, and mail links
 
@@ -246,6 +265,7 @@ Files are written to a private folder that is removed when Quill quits, under na
 | `cmd-s` or `ctrl-s` | Save as a draft and keep writing |
 | `cmd-shift-a` or `ctrl-t` | Attach a file. The app shows its file panel; a terminal asks for the path, typed or pasted |
 | `cmd-shift-b` or `ctrl-o` | Add blind copies (Bcc) |
+| `cmd-shift-t` or `ctrl-r` | Insert a template, when there are any |
 | `esc` | Close. What you wrote is kept in Drafts |
 
 The `cmd` keys work in the app; a terminal keeps `cmd` for itself, so there the `ctrl` keys are the ones shown.
@@ -278,6 +298,37 @@ The SMTP server is signed in to with the same name and password as the IMAP serv
 ### Sending later
 
 `ctrl-l` (or `cmd-L` in the app) in a message being written asks when to send it, in the same words as a snooze: `tomorrow 8`, `mon`, `2h`. The message waits in the Outbox, which shows when it will go, and `U` or opening it from the Outbox takes it back. It is sent at that time if Quill is running then, and otherwise when Quill next runs: nothing on a server holds it.
+
+### Templates
+
+Text you write often can be kept in files and put into a message with a key. Each `.md` or `.txt` file in a `templates` folder beside `config.toml` is a template, named after the file without its ending. A first line `Subject: ...` with an empty line under it is the subject the template brings; the rest is its text.
+
+```
+Subject: Following up on {{topic}}
+
+Hi {{first_name}},
+
+Thanks for meeting on {{date}}. As promised: {{what}}
+
+{{from_name}}
+```
+
+`ctrl-r` (or `cmd-shift-t` in the app) in a message being written lists the templates. Typing narrows the list, `↓`/`↑` choose, `enter` puts the chosen one into the body at the cursor, in place of anything selected there, and `esc` closes the list. A message with no subject yet takes the template's. One `cmd-z` takes the text out again.
+
+Words in double braces are placeholders. Quill fills the ones it knows:
+
+| Placeholder | Becomes |
+|---|---|
+| `{{to}}` | The first recipient's address |
+| `{{to_name}}` | Their name, or the part of their address before the `@` when they are written without one |
+| `{{first_name}}` | The first word of their name. Not guessed from an address |
+| `{{from_name}}` | Your `full_name` on the account the message is from |
+| `{{date}}` | Today, as `14 November 2026`, in your time zone |
+| `{{subject}}` | The message's subject |
+
+Any other placeholder, and one of these that has nothing to fill it yet (no recipient, no `full_name`), stays as written, and the first of them is selected in the body so that what you type next replaces it. Braces that are not a placeholder (`{{ two words }}`, `{{#if}}`, a single `{`) are left alone. Filling is substitution and nothing more: a template cannot run a command, include another file or fetch anything, and a value that is put in is not read again for placeholders of its own.
+
+Templates are read once, when Quill starts. A file over 64 KiB, one that is not UTF-8 text, and anything past the first 200 by name are left out, with a notice saying which.
 
 ## Rules for arriving mail
 
@@ -332,6 +383,7 @@ Quill looks in `~/Library/Application Support/Quill/config/`:
 | `config.toml` | Settings. See the example in the spec. |
 | `keys.toml` | Key overrides, on top of the chosen preset. |
 | `themes/NAME.toml` | Your own themes, selected with `theme = "NAME"`. |
+| `templates/NAME.md`, `templates/NAME.txt` | Text to put into messages. See "Templates". |
 
 Use `--config-dir` and `--data-dir`, or the `QUILL_CONFIG_DIR` and `QUILL_DATA_DIR` environment variables, to point elsewhere.
 
@@ -371,12 +423,14 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `compose.send`, `compose.save` | Send the message being written, or save it as a draft |
 | `compose.send_later` | Send the message being written at a time you type |
 | `compose.attach`, `compose.bcc` | Attach a file; add blind copies |
+| `compose.template` | Put a template into the message being written |
 | `edit.undo` | Undo the last move, deletion or send |
 | `search.start` | Search |
 | `palette.open` | The command palette |
 | `message.attachments` | List the message's attachments |
 | `message.view_html`, `message.open_in_browser` | Show the message as a web page, beside the reader or in the browser |
 | `message.load_remote`, `sender.always_remote` | Let this message, or this sender's mail, load remote pictures |
+| `message.unsubscribe` | Unsubscribe from the list that sent the message, after asking |
 | `attachment.save`, `attachment.open` | Save the chosen attachment, or open it in its application |
 | `edit.copy`, `edit.cut`, `edit.select_all` | The app's Edit menu, while a message is being written |
 | `account.add` | Add an account |

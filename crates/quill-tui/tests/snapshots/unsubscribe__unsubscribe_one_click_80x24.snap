@@ -1,0 +1,28 @@
+---
+source: crates/quill-tui/tests/unsubscribe.rs
+expression: harness.screen()
+---
+┌ [1] Accounts ──┐┏ [3] Reader ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ X unsubscribes ┓
+│> Unified    12 │┃ From:    Harbour Books <news@harbourbooks.example.com>     ┃
+│ ┏ Unsubscribe ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ ┃
+│ ┃ This message is from a mailing list.                                     ┃ ┃
+│ ┃                                                                          ┃ ┃
+│ ┃ From:      Harbour Books <news@harbourbooks.example.com>                 ┃ ┃
+│ ┃                                                                          ┃ ┃
+│ ┃ Quill will tell lists.harbourbooks.example.com to unsubscribe you.       ┃ ┃
+│ ┃                                                                          ┃ ┃
+│ ┃ One request goes to the address below, which the list gave for this. It  ┃ ┃
+│ ┃ says "unsubscribe" and nothing else: no cookies, and no page is opened.  ┃ ┃
+│ ┃                                                                          ┃ ┃
+│ ┃ Address:   https://lists.harbourbooks.example.com/u/r0b1n                ┃ ┃
+│ ┃                                                                          ┃ ┃
+│ ┃ enter unsubscribe   esc cancel                                           ┃ ┃
+│ ┃                                                                          ┃ ┃
+│ ┃                                                                          ┃ ┃
+│ ┃                                                                          ┃ ┃
+│ ┃                                                                          ┃ ┃
+│ ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+└────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+ enter go ahead  esc cancel

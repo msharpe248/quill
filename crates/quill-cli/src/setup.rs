@@ -15,6 +15,8 @@ use quill_tui::keymap::Keymap;
 use quill_tui::state::{ComposeSettings, Env, Identity, Notice};
 use quill_tui::theme::{ColorMode, Styles, Theme};
 
+mod templates;
+
 pub struct Loaded {
     pub config: Config,
     /// `config` is what the file says, not the defaults standing in for a
@@ -53,6 +55,8 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
             preset
         }
     };
+
+    let templates = templates::load(&paths.templates_dir(), &mut notices);
 
     let env = Env {
         registry,
@@ -98,6 +102,7 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
             .iter()
             .map(|search| (search.name.clone(), search.query.clone()))
             .collect(),
+        templates,
     };
     Loaded {
         config,
@@ -308,5 +313,43 @@ mod tests {
         assert_eq!(first_key(&loaded, CommandId::MessageToggleUnread), "u");
         assert_eq!(loaded.notices.len(), 1);
         assert!(loaded.notices[0].text.contains("no.such.command"));
+    }
+
+    #[test]
+    fn templates_beside_the_config_are_handed_to_the_ui() {
+        let dir = TempDir::new().unwrap();
+        // With no folder there are none, and that is not worth a notice.
+        assert!(load_from(&dir).env.templates.is_empty());
+
+        write(
+            &dir,
+            "templates/Out of office.md",
+            "Subject: Away until {{back}}\n\nHi {{first_name}},\n\nI am away.\n",
+        );
+        write(&dir, "templates/thanks.txt", "Thanks,\n{{from_name}}\n");
+        // A template that cannot be used is said so, and the rest load.
+        write(
+            &dir,
+            "templates/huge.md",
+            &"x".repeat(templates::MAX_FILE_BYTES as usize + 1),
+        );
+        let loaded = load_from(&dir);
+        let names: Vec<&str> = loaded
+            .env
+            .templates
+            .iter()
+            .map(|template| template.name.as_str())
+            .collect();
+        assert_eq!(names, ["Out of office", "thanks"]);
+        assert_eq!(
+            loaded.env.templates[0].subject.as_deref(),
+            Some("Away until {{back}}")
+        );
+        assert_eq!(loaded.notices.len(), 1, "{:?}", loaded.notices);
+        assert!(
+            loaded.notices[0]
+                .text
+                .contains("huge.md (is larger than 64 KiB)")
+        );
     }
 }

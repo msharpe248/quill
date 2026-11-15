@@ -37,10 +37,17 @@ pub fn render(
     };
 
     // The message's state, in words, on the top border.
+    // And, for mail from a list that says how to leave it, the key that
+    // does.
+    let unsubscribe = env
+        .hint_key(crate::command::CommandId::MessageUnsubscribe)
+        .filter(|_| state.reader_can_unsubscribe(env))
+        .map(|key| format!("{key} unsubscribes"));
     let tags: Vec<&str> = [
         (!row.flags.seen, "unread"),
         (row.flags.flagged, "starred"),
         (row.has_attachments, "attachment"),
+        (unsubscribe.is_some(), unsubscribe.as_deref().unwrap_or("")),
     ]
     .into_iter()
     .filter_map(|(on, tag)| on.then_some(tag))

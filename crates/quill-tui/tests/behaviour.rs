@@ -987,6 +987,7 @@ fn html_cannot_smuggle_escape_sequences_onto_the_screen() {
             html_first: true,
             has_plain: true,
             files: Vec::new(),
+            unsubscribe: None,
         }),
     }));
     for line in &harness.state.reader.lines {
@@ -1017,6 +1018,7 @@ fn html_that_renders_to_nothing_falls_back_to_the_plain_text() {
             html_first: true,
             has_plain: true,
             files: Vec::new(),
+            unsubscribe: None,
         }),
     }));
     assert!(harness.screen().contains("The plain words."));
@@ -1104,6 +1106,7 @@ fn a_message_with_one_version_has_nothing_to_switch_to() {
             html_first: true,
             has_plain: false,
             files: Vec::new(),
+            unsubscribe: None,
         }),
     }));
     assert!(
@@ -1131,6 +1134,7 @@ fn a_fuller_plain_part_is_shown_first_with_the_html_one_key_away() {
             html_first: false,
             has_plain: true,
             files: Vec::new(),
+            unsubscribe: None,
         }),
     }));
     assert_eq!(harness.state.reader.showing(), Some(Showing::Plain));
@@ -1207,6 +1211,7 @@ fn a_link_is_reached_by_typing_its_number() {
             html_first: true,
             has_plain: false,
             files: Vec::new(),
+            unsubscribe: None,
         }),
     }));
     assert_eq!(harness.state.reader.links.len(), 14);
@@ -1284,6 +1289,7 @@ fn only_web_and_mail_links_are_ever_opened() {
             html_first: true,
             has_plain: false,
             files: Vec::new(),
+            unsubscribe: None,
         }),
     }));
     // All three are listed, so where they lead can be seen.
@@ -1401,6 +1407,7 @@ fn link_text_cut_off_by_the_pane_is_placed_only_as_far_as_it_shows() {
             html_first: true,
             has_plain: false,
             files: Vec::new(),
+            unsubscribe: None,
         }),
     }));
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();

@@ -1,0 +1,28 @@
+---
+source: crates/quill-tui/tests/templates.rs
+expression: harness.screen()
+---
+┌ [1] Accounts ──┐┏ [3] New message ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+│> Unified    12 │┃ From:    Robin Vale <robin@example.com>  (Work)            ┃
+│  Work          │┃ To:                                                        ┃
+│    Inbox     8 │┃ Cc:                                                        ┃
+│    Drafts      │┃ Subject:                                                   ┃
+│    Sent        │┃ ────────────────────────────────────────────────────────── ┃
+│    Archive     │┃                                                            ┃
+│    Trash       │┃                                                            ┃
+│  Persona┏ Insert a template ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓         ┃
+│    Inbox┃ / o                                                      ┃         ┃
+│    Draft┃ > Meeting follow-up  Following up on {{topic}}           ┃         ┃
+│    Sent ┃   Out of office                                          ┃         ┃
+│    Archi┃                                                          ┃         ┃
+│    Trash┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛         ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+└────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+ enter insert  esc cancel

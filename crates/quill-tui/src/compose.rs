@@ -12,6 +12,7 @@ use quill_store::{Contact, DraftAttachment, DraftContent, DraftId};
 use crate::editor::{BuiltinEditor, Editor, EditorView, Outcome};
 use crate::input::LineInput;
 use crate::keymap::{Key, KeyChord, Mods};
+use crate::template::{self, Template, Values};
 
 /// The parts of a message being written, in the order `tab` visits them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -295,6 +296,30 @@ impl Compose {
             }
         }
         Did::Handled
+    }
+
+    /// Puts a template into the body at the cursor, in place of whatever
+    /// is selected there, with `values` filled in for its placeholders.
+    /// The first placeholder left unfilled is selected, so that typing
+    /// replaces it. A message with no subject takes the template's.
+    pub fn insert_template(&mut self, template: &Template, mut values: Values) {
+        self.error = None;
+        self.doubts.clear();
+        self.completion = None;
+        self.attaching = None;
+        if self.subject.is_empty()
+            && let Some(subject) = &template.subject
+        {
+            // One line, whatever the template's file held.
+            let filled = template::fill(subject, &values).text;
+            self.subject.insert(&filled);
+            self.touched = true;
+            values.subject = Some(self.subject.text().to_owned());
+        }
+        let filled = template::fill(&template.body, &values);
+        // The body is where the text went, and where there is more to do.
+        self.field = Field::Body;
+        self.body.insert_selecting(&filled.text, filled.gap);
     }
 
     /// Adds a file to the message. It is part of what has been written: a

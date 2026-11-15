@@ -395,7 +395,12 @@ impl Io<'_> {
                 Context::SignIn => bridge::Context::Setup,
                 // A box to type in over the panes, as the folder picker is.
                 Context::When => bridge::Context::Folders,
+                // A question to answer before anything is sent, as a
+                // certificate is.
+                Context::Unsubscribe => bridge::Context::Certificate,
                 Context::Folders => bridge::Context::Folders,
+                // A list to narrow by typing, over the message.
+                Context::Templates => bridge::Context::Folders,
                 Context::Compose => bridge::Context::Compose,
                 Context::Search => bridge::Context::Search,
                 Context::Palette => bridge::Context::Palette,
@@ -566,13 +571,13 @@ async fn event_loop(
                 }
                 HostEvent::Saved { name, saved } => Some(Action::FileSaved { name, saved }),
                 HostEvent::OpenMailto(url) => Some(Action::Mailto(url)),
+                // Spelling is not asked for yet, so nothing answers.
+                HostEvent::Spelling { .. } | HostEvent::Suggestions { .. } => None,
                 HostEvent::NotificationUsed { id, action } => {
                     Some(Action::Notification { id, action })
                 }
                 HostEvent::Thumbnail { id, ok } => {
                     io.thumbnail_made(id, ok);
-                // Spelling is not asked for yet, so nothing answers.
-                HostEvent::Spelling { .. } | HostEvent::Suggestions { .. } => None,
                     None
                 }
                 // Either way there is nothing left to draw for.
@@ -667,6 +672,7 @@ mod tests {
             notifications: true,
             threads: true,
             searches: Vec::new(),
+            templates: Vec::new(),
         }
     }
 

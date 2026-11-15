@@ -22,8 +22,13 @@ pub enum Context {
     /// Typing a time: when a snoozed message comes back, or when a
     /// message is sent.
     When,
+    /// Being asked before unsubscribing from a mailing list.
+    Unsubscribe,
     /// Choosing a folder to move a message to. Typing narrows the list.
     Folders,
+    /// Choosing a template to put into the message being written. Typing
+    /// narrows the list.
+    Templates,
     /// Writing a message. Typing goes into the field with the cursor.
     Compose,
     /// Typing what to search for. The list shows what is found so far.
@@ -45,7 +50,9 @@ impl Context {
             Self::Certificate => "Certificate",
             Self::SignIn => "Signing in",
             Self::When => "Choosing a time",
+            Self::Unsubscribe => "Unsubscribe",
             Self::Folders => "Move to a folder",
+            Self::Templates => "Insert a template",
             Self::Compose => "Writing a message",
             Self::Search => "Search",
             Self::Palette => "Command palette",
@@ -65,7 +72,9 @@ const EVERYWHERE: &[Context] = &[
     Context::Certificate,
     Context::SignIn,
     Context::When,
+    Context::Unsubscribe,
     Context::Folders,
+    Context::Templates,
     Context::Compose,
     Context::Search,
     Context::Palette,
@@ -126,6 +135,7 @@ pub enum CommandId {
     MessageOpenInBrowser,
     MessageLoadRemote,
     SenderAlwaysRemote,
+    MessageUnsubscribe,
     AttachmentSave,
     AttachmentOpen,
     MessageCompose,
@@ -137,6 +147,7 @@ pub enum CommandId {
     ComposeSave,
     ComposeAttach,
     ComposeBcc,
+    ComposeTemplate,
     EditCopy,
     EditCut,
     EditSelectAll,
@@ -292,7 +303,9 @@ impl Registry {
                         Context::Attachments,
                         Context::Setup,
                         Context::When,
+                        Context::Unsubscribe,
                         Context::Folders,
+                        Context::Templates,
                         Context::Search,
                         Context::Palette,
                     ],
@@ -544,6 +557,14 @@ impl Registry {
                     MESSAGE,
                 ),
                 spec(
+                    MessageUnsubscribe,
+                    "message.unsubscribe",
+                    "Unsubscribe from this list",
+                    Message,
+                    Some(Menu::Message),
+                    MESSAGE,
+                ),
+                spec(
                     AttachmentSave,
                     "attachment.save",
                     "Save the attachment",
@@ -643,6 +664,14 @@ impl Registry {
                     Some(Menu::Message),
                     COMPOSE,
                 ),
+                spec(
+                    ComposeTemplate,
+                    "compose.template",
+                    "Insert a template",
+                    Message,
+                    Some(Menu::Message),
+                    COMPOSE,
+                ),
                 // The three below have no menu items of their own. The app's
                 // Copy, Cut and Select All run them while they are enabled,
                 // and act on the terminal's own selection otherwise.
@@ -733,6 +762,9 @@ impl Registry {
 pub struct Hint {
     pub commands: &'static [CommandId],
     pub label: &'static str,
+    /// Shown only while one of its commands would do something: for a
+    /// command that, for many users, never has anything to act on.
+    pub only_enabled: bool,
 }
 
 /// The hints the status bar shows in `context`, most useful first. The bar
@@ -740,7 +772,18 @@ pub struct Hint {
 pub fn hints(context: Context) -> &'static [Hint] {
     use CommandId::*;
     const fn hint(commands: &'static [CommandId], label: &'static str) -> Hint {
-        Hint { commands, label }
+        Hint {
+            commands,
+            label,
+            only_enabled: false,
+        }
+    }
+    const fn hint_while_enabled(commands: &'static [CommandId], label: &'static str) -> Hint {
+        Hint {
+            commands,
+            label,
+            only_enabled: true,
+        }
     }
     const SIDEBAR: &[Hint] = &[
         hint(&[NavNext, NavPrev], "move"),
@@ -817,16 +860,21 @@ pub fn hints(context: Context) -> &'static [Hint] {
     const SIGNING_IN: &[Hint] = &[hint(&[NavBack], "give up")];
     const WHEN: &[Hint] = &[hint(&[NavOpen], "set"), hint(&[NavBack], "cancel")];
     const FOLDERS: &[Hint] = &[hint(&[NavOpen], "move here"), hint(&[NavBack], "cancel")];
+    const UNSUBSCRIBING: &[Hint] = &[hint(&[NavOpen], "go ahead"), hint(&[NavBack], "cancel")];
+    const TEMPLATES: &[Hint] = &[hint(&[NavOpen], "insert"), hint(&[NavBack], "cancel")];
     const COMPOSING: &[Hint] = &[
         hint(&[ComposeSend], "send"),
         hint(&[ComposeSave], "save draft"),
         hint(&[ComposeAttach], "attach"),
+        hint_while_enabled(&[ComposeTemplate], "template"),
         hint(&[FocusNext], "next field"),
         hint(&[NavBack], "close"),
     ];
     match context {
         Context::Compose => COMPOSING,
         Context::Folders => FOLDERS,
+        Context::Unsubscribe => UNSUBSCRIBING,
+        Context::Templates => TEMPLATES,
         Context::Setup => SETUP,
         Context::Certificate => CERTIFICATE,
         Context::SignIn => SIGNING_IN,

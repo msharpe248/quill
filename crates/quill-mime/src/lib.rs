@@ -17,17 +17,20 @@ pub mod compose;
 mod disguise;
 mod guard;
 pub mod html;
+pub mod invite;
 pub mod links;
 pub mod markdown;
 pub mod plain;
 pub mod reply;
 pub mod sanitize;
+pub mod unsubscribe;
 mod width;
 
 pub use compose::{
     BodyFormat, Outgoing, OutgoingAttachment, Warning, build, envelope, new_message_id, warnings,
 };
 pub use reply::{Draft, ReplyPosition, forward, reply};
+pub use unsubscribe::Unsubscribe;
 
 use mail_parser::{MessageParser, PartKind};
 use quill_core::types::{Address, Headers};
@@ -58,6 +61,9 @@ pub struct Parsed {
     /// sender's text and not a rendering of the HTML.
     pub has_plain: bool,
     pub attachments: Vec<Attachment>,
+    /// How to leave the list that sent the message, when it is from a list
+    /// that says (`List-Unsubscribe`).
+    pub unsubscribe: Option<Unsubscribe>,
 }
 
 /// The most earlier messages a message is taken to follow. A long
@@ -307,6 +313,7 @@ pub fn parse(raw: &[u8], received: i64) -> Option<Parsed> {
         html_first,
         has_plain,
         attachments,
+        unsubscribe: unsubscribe::read(&message),
     })
 }
 

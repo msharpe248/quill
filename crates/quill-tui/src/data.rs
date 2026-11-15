@@ -252,6 +252,8 @@ pub struct LoadedBody {
     pub has_plain: bool,
     /// The files attached to the message.
     pub files: Vec<AttachedFile>,
+    /// How to leave the list that sent the message, when it says.
+    pub unsubscribe: Option<quill_mime::Unsubscribe>,
 }
 
 /// Runs one request against the store. This is the whole of the worker's
@@ -339,6 +341,7 @@ fn run(
                         html_first: false,
                         has_plain: true,
                         files: Vec::new(),
+                        unsubscribe: None,
                     }
                 });
             vec![DataEvent::BodyLoaded { id, body }]
@@ -359,6 +362,7 @@ fn run(
                         html_first: parsed.html_first,
                         has_plain: parsed.has_plain,
                         files: files::attached(&parsed.attachments),
+                        unsubscribe: parsed.unsubscribe,
                     },
                     None => LoadedBody {
                         text,
@@ -366,6 +370,7 @@ fn run(
                         html_first: false,
                         has_plain: true,
                         files: Vec::new(),
+                        unsubscribe: None,
                     },
                 }
             });
@@ -897,6 +902,7 @@ mod tests {
                     html_first: false,
                     has_plain: true,
                     files: Vec::new(),
+                    unsubscribe: None,
                 })
             }]
         );
@@ -988,6 +994,7 @@ mod tests {
                     html_first: false,
                     has_plain: true,
                     files: Vec::new(),
+                    unsubscribe: None,
                 })
             }]
         );
