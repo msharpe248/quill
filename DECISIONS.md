@@ -430,6 +430,22 @@ Built in `quill-auth` and tested against a local stand-in. No real provider was 
 - **Graph has no push**: its notifications need a public web address to call. Those accounts are polled.
 - **Store transactions take the write lock when they begin** (`BEGIN IMMEDIATE`). With two connections, the UI's and the engine's, one that read first and wrote later was refused outright with "database is locked" when the other had written in between; the busy timeout does not apply to that case. Found as a test that failed one run in six.
 
+### The performance budgets
+
+Measured on this Mac on 2026-11-15, release build. The spec's budgets: cold start under 150 ms, a 100,000-message folder scrolling with no dropped frames, search under 50 ms.
+
+| What | Measured | Budget |
+|---|---|---|
+| Cold start to the first full screen (`quill tui --demo`, in a pseudo-terminal) | 27 to 33 ms | 150 ms |
+| A key and the frame after it, anywhere in a 100,000-message inbox | 0.6 ms at worst | 16 ms |
+| Drawing a frame of that inbox | 0.4 ms | 16 ms |
+| Search for a rare word, a common word, and `from:kit is:unread quarterly` | 0.3 ms, 25 ms, 20 ms | 50 ms |
+
+- **How:** `cargo test --release -p quill-tui --test perf -- --ignored --nocapture` fills the inbox and times the rest; `crates/quill-tui/tests/coldstart.py` times the start. Both are run by hand, not by the checks: timings on a shared machine make a poor gate.
+- **The whole mailbox is still read into memory** when it is opened and again whenever the store changes: 78 ms on the store worker for 100,000 messages, then 36 ms on the UI task to take them in and group them by conversation. Scrolling is unaffected, but those 36 ms are two frames late each time mail arrives in a mailbox that size. A windowed list would end that and the memory it costs; not built, because nothing measured needs it yet.
+- **Cold start was measured with the demo mailbox**, which is made in memory. With a real database the first screen is drawn before the mail is read, so the figure is about the same; the list fills in when the worker answers.
+- **A terminal that does not answer when asked what it is makes Quill wait two seconds at startup** (the keyboard-protocol question, in `crossterm`). Every real terminal answers; Quill's own window is not asked. Found because the first stand-in terminal for the measurement did not.
+
 ### Conversations
 
 - **A message's conversation is found from the Message-IDs it names**: its own, and those in its `References` and `In-Reply-To`. Every id seen is filed under a thread; a message joins the thread of any id it names, and one that names ids of two threads makes them one. Order of arrival does not matter, and a reply to a message that never arrives still threads with its siblings.
