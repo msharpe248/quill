@@ -1,0 +1,18 @@
+[package]
+name = "quill-net"
+description = "What Quill's protocols share on the wire: TCP, TLS and certificate trust"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+quill-core.workspace = true
+rustls.workspace = true
+rustls-platform-verifier.workspace = true
+sha2.workspace = true
+tokio = { workspace = true, features = ["net", "io-util", "time"] }
+tokio-rustls.workspace = true

@@ -2061,6 +2061,7 @@ dependencies = [
  "futures-util",
  "quill-core",
  "quill-mime",
+ "quill-net",
  "rcgen",
  "rustls",
  "rustls-platform-verifier",
@@ -2085,6 +2086,18 @@ dependencies = [
  "html2text",
  "mail-parser",
  "quill-core",
+]
+
+[[package]]
+name = "quill-net"
+version = "0.1.0"
+dependencies = [
+ "quill-core",
+ "rustls",
+ "rustls-platform-verifier",
+ "sha2",
+ "tokio",
+ "tokio-rustls",
 ]
 
 [[package]]

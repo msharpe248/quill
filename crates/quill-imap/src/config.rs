@@ -1,6 +1,7 @@
 //! What it takes to reach one IMAP account.
 
 use quill_core::config::TlsMode;
+pub use quill_net::Trust;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImapConfig {
@@ -19,15 +20,4 @@ impl ImapConfig {
             TlsMode::Starttls | TlsMode::None => 143,
         }
     }
-}
-
-/// Which server certificates to accept, beyond those the system trusts.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Trust {
-    /// Extra certificate authorities, DER encoded: a custom CA bundle.
-    pub extra_roots: Vec<Vec<u8>>,
-    /// The SHA-256 of the one certificate to accept, for a self-signed
-    /// server. When set, the certificate must match it exactly and nothing
-    /// else about it is checked.
-    pub pinned_sha256: Option<[u8; 32]>,
 }

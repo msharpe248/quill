@@ -18,7 +18,9 @@ use tokio::sync::Mutex;
 use tokio::sync::mpsc::Sender;
 
 use crate::config::ImapConfig;
-use crate::connect::{self, Stream};
+use quill_net::Stream;
+
+use crate::connect;
 use crate::names;
 use crate::uidset::UidSet;
 

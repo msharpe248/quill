@@ -16,14 +16,14 @@ use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{ClientConfig, DigitallySignedStruct, SignatureScheme};
 use sha2::{Digest, Sha256};
 
-use crate::config::Trust;
+use crate::Trust;
 
 /// The certificate a server presented, kept for the error report.
-pub(crate) type Presented = Arc<Mutex<Option<Vec<u8>>>>;
+pub type Presented = Arc<Mutex<Option<Vec<u8>>>>;
 
 /// A client configuration for `trust`, and where the server's certificate
 /// will be recorded during the handshake.
-pub(crate) fn client_config(trust: &Trust) -> Result<(Arc<ClientConfig>, Presented)> {
+pub fn client_config(trust: &Trust) -> Result<(Arc<ClientConfig>, Presented)> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let system = rustls_platform_verifier::Verifier::new_with_extra_roots(
         trust
@@ -49,7 +49,7 @@ pub(crate) fn client_config(trust: &Trust) -> Result<(Arc<ClientConfig>, Present
 }
 
 /// SHA-256 of a certificate, in lower-case hex.
-pub(crate) fn fingerprint(certificate: &[u8]) -> String {
+pub fn fingerprint(certificate: &[u8]) -> String {
     Sha256::digest(certificate)
         .iter()
         .map(|byte| format!("{byte:02x}"))
@@ -57,7 +57,7 @@ pub(crate) fn fingerprint(certificate: &[u8]) -> String {
 }
 
 /// Describes a refused certificate for the user.
-pub(crate) fn problem(host: &str, reason: String, presented: &Presented) -> Error {
+pub fn problem(host: &str, reason: String, presented: &Presented) -> Error {
     let certificate = presented.lock().ok().and_then(|slot| slot.clone());
     Error::Certificate(Box::new(CertificateProblem {
         host: host.to_owned(),

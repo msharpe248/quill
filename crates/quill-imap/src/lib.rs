@@ -14,7 +14,6 @@ mod backend;
 mod config;
 mod connect;
 mod names;
-mod tls;
 mod uidset;
 
 pub use backend::{ImapBackend, PasswordProvider};

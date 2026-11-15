@@ -12,6 +12,7 @@ workspace = true
 [dependencies]
 quill-core.workspace = true
 quill-mime.workspace = true
+quill-net.workspace = true
 async-imap.workspace = true
 async-trait.workspace = true
 base64.workspace = true
