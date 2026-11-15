@@ -1,0 +1,104 @@
+import AppKit
+import Bridge
+
+/// Builds the menu bar: the items every Mac app has, which the shell owns,
+/// around the items for the commands the core announced.
+@MainActor
+enum MainMenu {
+    static func build(commands: CommandCenter, panes: AnyObject?) -> NSMenu {
+        let bar = NSMenu()
+
+        // Quill
+        let app = submenu(of: bar, title: "Quill")
+        app.addItem(
+            withTitle: "About Quill", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)),
+            keyEquivalent: "")
+        app.addItem(.separator())
+        append(commands.makeMenuItems(for: .app), to: app, thenSeparator: true)
+        app.addItem(withTitle: "Hide Quill", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        let hideOthers = app.addItem(
+            withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
+        hideOthers.keyEquivalentModifierMask = [.command, .option]
+        app.addItem(
+            withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
+        app.addItem(.separator())
+        app.addItem(withTitle: "Quit Quill", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+
+        // File, if the core has anything for it.
+        commandMenu(.file, title: "File", in: bar, commands: commands)
+
+        // Edit
+        let edit = submenu(of: bar, title: "Edit")
+        append(commands.makeMenuItems(for: .edit), to: edit, thenSeparator: true)
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+
+        // View
+        let view = submenu(of: bar, title: "View")
+        append(commands.makeMenuItems(for: .view), to: view, thenSeparator: true)
+        // Moving between panes is the shell's business, so these are cmd
+        // shortcuts and can never collide with a key the terminal uses.
+        let next = view.addItem(
+            withTitle: "Focus Next Pane", action: #selector(MainWindowController.focusNextPane(_:)), keyEquivalent: "]")
+        next.target = panes
+        let previous = view.addItem(
+            withTitle: "Focus Previous Pane", action: #selector(MainWindowController.focusPreviousPane(_:)),
+            keyEquivalent: "[")
+        previous.target = panes
+        let close = view.addItem(
+            withTitle: "Close Preview Pane", action: #selector(MainWindowController.closePreviewPane(_:)),
+            keyEquivalent: "w")
+        close.keyEquivalentModifierMask = [.command, .shift]
+        close.target = panes
+        view.addItem(.separator())
+        view.addItem(withTitle: "Show Toolbar", action: #selector(NSWindow.toggleToolbarShown(_:)), keyEquivalent: "")
+        let fullScreen = view.addItem(
+            withTitle: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
+        fullScreen.keyEquivalentModifierMask = [.command, .control]
+
+        commandMenu(.mailbox, title: "Mailbox", in: bar, commands: commands)
+        commandMenu(.message, title: "Message", in: bar, commands: commands)
+
+        // Window
+        let window = submenu(of: bar, title: "Window")
+        append(commands.makeMenuItems(for: .window), to: window, thenSeparator: true)
+        window.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        window.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        NSApp.windowsMenu = window
+
+        // Help
+        let help = submenu(of: bar, title: "Help")
+        append(commands.makeMenuItems(for: .help), to: help, thenSeparator: false)
+        NSApp.helpMenu = help
+
+        return bar
+    }
+
+    private static func submenu(of bar: NSMenu, title: String) -> NSMenu {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        let menu = NSMenu(title: title)
+        item.submenu = menu
+        bar.addItem(item)
+        return menu
+    }
+
+    /// A menu made only of the core's commands. Left out while it is empty.
+    private static func commandMenu(_ kind: Bridge.Menu, title: String, in bar: NSMenu, commands: CommandCenter) {
+        let items = commands.makeMenuItems(for: kind)
+        guard !items.isEmpty else { return }
+        let menu = submenu(of: bar, title: title)
+        // Enabled from the core's state, not by asking the responder chain.
+        menu.autoenablesItems = false
+        items.forEach(menu.addItem)
+    }
+
+    /// Adds command items to a menu the shell also has items of its own in.
+    private static func append(_ items: [NSMenuItem], to menu: NSMenu, thenSeparator: Bool) {
+        guard !items.isEmpty else { return }
+        items.forEach(menu.addItem)
+        if thenSeparator {
+            menu.addItem(.separator())
+        }
+    }
+}
