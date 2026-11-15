@@ -21,6 +21,7 @@ quill-host.workspace = true
 quill-imap.workspace = true
 quill-media.workspace = true
 quill-net.workspace = true
+quill-pop3.workspace = true
 quill-smtp.workspace = true
 quill-store.workspace = true
 quill-sync.workspace = true
@@ -37,6 +38,7 @@ toml_edit.workspace = true
 [dev-dependencies]
 # The IMAP crate's test server is compiled into this crate's tests too.
 async-imap.workspace = true
+base64.workspace = true
 rcgen.workspace = true
 rustls.workspace = true
 serde_json.workspace = true

@@ -4,12 +4,13 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use quill_auth::{OAuthHttp, SecretStore, password_name};
-use quill_core::config::{AccountConfig, AccountType, Config, TlsMode};
+use quill_core::config::{AccountConfig, AccountType, Config, DeleteFromServer, TlsMode};
 use quill_core::{Backend, Credential, Credentials, Error, Sender, TokenSource};
 use quill_imap::{ImapBackend, ImapConfig, Trust};
+use quill_pop3::{Pop3Backend, Pop3Config};
 use quill_smtp::{SmtpAuth, SmtpConfig, SmtpSender};
 use quill_store::Store;
-use quill_sync::SyncAccount;
+use quill_sync::{ServerCopies, SyncAccount};
 use quill_tui::state::Notice;
 
 use crate::oauth;
@@ -43,6 +44,69 @@ pub fn imap_config(account: &AccountConfig) -> Result<ImapConfig, String> {
             pinned_sha256,
         },
     })
+}
+
+/// How a POP3 account is reached, from its config, or why it cannot be.
+pub fn pop3_config(account: &AccountConfig) -> Result<Pop3Config, String> {
+    let server = account
+        .pop3
+        .as_ref()
+        .ok_or_else(|| "it has no `pop3` server".to_owned())?;
+    let pinned_sha256 = server
+        .fingerprint
+        .as_deref()
+        .map(parse_fingerprint)
+        .transpose()?;
+    Ok(Pop3Config {
+        host: server.host.clone(),
+        port: server.port.unwrap_or(Pop3Config::default_port(server.tls)),
+        tls: server.tls,
+        username: server
+            .username
+            .clone()
+            .unwrap_or_else(|| account.address.clone()),
+        trust: Trust {
+            extra_roots: Vec::new(),
+            pinned_sha256,
+        },
+    })
+}
+
+/// The server an account reads its mail from with a password, as far as
+/// the password goes: who signs in, where, and what the password is kept
+/// under in the Keychain.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reading {
+    pub username: String,
+    pub host: String,
+    pub secret: String,
+}
+
+impl Reading {
+    fn imap(config: &ImapConfig) -> Self {
+        Self {
+            username: config.username.clone(),
+            host: config.host.clone(),
+            secret: imap_password_name(config),
+        }
+    }
+
+    fn pop3(config: &Pop3Config) -> Self {
+        Self {
+            username: config.username.clone(),
+            host: config.host.clone(),
+            secret: password_name("pop3", &config.username, &config.host),
+        }
+    }
+}
+
+/// How an account that keeps a password reads its mail, or why it cannot.
+pub fn reading(account: &AccountConfig) -> Result<Reading, String> {
+    match account.kind {
+        AccountType::Imap => imap_config(account).map(|config| Reading::imap(&config)),
+        AccountType::Pop3 => pop3_config(account).map(|config| Reading::pop3(&config)),
+        other => Err(format!("{} accounts are not supported yet", other.as_str())),
+    }
 }
 
 /// The name an account's IMAP password is kept under in the Keychain.
@@ -147,7 +211,7 @@ pub fn sync_account(
     secrets: &Arc<dyn SecretStore>,
     tokens: Option<Arc<dyn TokenSource>>,
 ) -> SyncAccount {
-    let sender = smtp_sender(account, &imap, secrets, tokens.as_ref());
+    let sender = smtp_sender(account, &Reading::imap(&imap), secrets, tokens.as_ref());
     // Gmail files everything sent through its SMTP server in Sent Mail by
     // itself; a copy saved by Quill would be a second one.
     let server_saves_sent = account.smtp.as_ref().is_some_and(|smtp| {
@@ -164,7 +228,37 @@ pub fn sync_account(
         backend,
         sender,
         server_saves_sent,
-        server_copies: quill_sync::ServerCopies::Keep,
+        server_copies: ServerCopies::Keep,
+    }
+}
+
+/// Everything the sync engine needs for one POP3 account. Its mail is kept
+/// here: the server hands it over and has no folders or marks of its own.
+pub fn pop3_account(
+    id: quill_core::types::LocalAccountId,
+    account: &AccountConfig,
+    pop3: Pop3Config,
+    secrets: &Arc<dyn SecretStore>,
+) -> SyncAccount {
+    let reading = Reading::pop3(&pop3);
+    let sender = smtp_sender(account, &reading, secrets, None);
+    let password = Arc::new(SavedPassword {
+        secrets: Arc::clone(secrets),
+        names: vec![reading.secret],
+        account: account.name.clone(),
+    });
+    SyncAccount {
+        id,
+        name: account.name.clone(),
+        backend: Arc::new(Pop3Backend::new(pop3, password)),
+        sender,
+        // An SMTP server sends and keeps nothing; the copy is filed here.
+        server_saves_sent: false,
+        server_copies: match account.delete_from_server {
+            DeleteFromServer::Never => ServerCopies::Keep,
+            DeleteFromServer::Downloaded => ServerCopies::DeleteWhenDownloaded,
+            DeleteFromServer::AfterDays(days) => ServerCopies::DeleteAfterDays(days),
+        },
     }
 }
 
@@ -173,7 +267,7 @@ pub fn sync_account(
 /// says so.
 fn smtp_sender(
     account: &AccountConfig,
-    imap: &ImapConfig,
+    reading: &Reading,
     secrets: &Arc<dyn SecretStore>,
     tokens: Option<&Arc<dyn TokenSource>>,
 ) -> Option<Arc<dyn Sender>> {
@@ -187,7 +281,7 @@ fn smtp_sender(
     let username = server
         .username
         .clone()
-        .unwrap_or_else(|| imap.username.clone());
+        .unwrap_or_else(|| reading.username.clone());
     let config = SmtpConfig {
         host: server.host.clone(),
         port: server.port.unwrap_or(SmtpConfig::default_port(server.tls)),
@@ -209,7 +303,7 @@ fn smtp_sender(
             secrets: Arc::clone(secrets),
             names: vec![
                 password_name("smtp", &username, &server.host),
-                imap_password_name(imap),
+                reading.secret.clone(),
             ],
             account: account.name.clone(),
         }),
@@ -247,6 +341,23 @@ pub fn prepare(
             });
             match built {
                 Ok(account) => accounts.push(account),
+                Err(reason) => {
+                    notices.push(Notice::error(format!("{name} cannot sync: {reason}.")));
+                }
+            }
+            continue;
+        }
+        if account.kind == AccountType::Pop3 {
+            match pop3_config(account) {
+                Ok(pop3) => {
+                    if pop3.tls == TlsMode::None {
+                        notices.push(Notice::error(format!(
+                            "{name} connects without encryption. Its password and mail cross the network in the clear."
+                        )));
+                    }
+                    let id = store.upsert_account(name, &account.address, account.kind.as_str())?;
+                    accounts.push(pop3_account(id, account, pop3, secrets));
+                }
                 Err(reason) => {
                     notices.push(Notice::error(format!("{name} cannot sync: {reason}.")));
                 }
@@ -312,7 +423,7 @@ mod tests {
     const TWO_ACCOUNTS: &str = r#"
 [[account]]
 name = "Work"
-type = "pop3"
+type = "ews"
 address = "robin@example.com"
 
 [[account]]
@@ -332,7 +443,7 @@ imap = { host = "mail.example.com", tls = "starttls", username = "rvale" }
         assert_eq!(prepared.notices[0].kind, NoticeKind::Info);
         assert_eq!(
             prepared.notices[0].text,
-            "Work: pop3 accounts are not supported yet."
+            "Work: ews accounts are not supported yet."
         );
         // Only the account that syncs is in the store.
         let stored = store.accounts().unwrap();
@@ -457,6 +568,55 @@ imap = { host = "imap.example.org" }
         assert_eq!(
             saved.get().await.unwrap(),
             Credential::Password("for-sending".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_pop3_account_is_built_with_its_policy_and_its_own_password_name() {
+        let mut store = Store::open_in_memory().unwrap();
+        let text = r#"
+[[account]]
+name = "Old Mail"
+type = "pop3"
+address = "robin@example.com"
+delete_from_server = 30
+pop3 = { host = "pop.example.com", username = "rvale" }
+smtp = { host = "smtp.example.com" }
+
+[[account]]
+name = "No Server"
+type = "pop3"
+address = "robin@example.org"
+"#;
+        let config = config(text);
+        let prepared = prepare(&config, &mut store, &secrets(), true).unwrap();
+        assert_eq!(prepared.accounts.len(), 1);
+        let built = &prepared.accounts[0];
+        assert_eq!(built.name, "Old Mail");
+        assert_eq!(built.server_copies, ServerCopies::DeleteAfterDays(30));
+        assert!(built.sender.is_some() && !built.server_saves_sent);
+        // Its server has nothing but mail: no folders, no marks.
+        assert!(!built.backend.capabilities().folders);
+        assert_eq!(
+            prepared.notices[0].text,
+            "No Server cannot sync: it has no `pop3` server."
+        );
+        let stored = store.accounts().unwrap();
+        assert_eq!(
+            (stored[0].name.as_str(), stored[0].kind.as_str()),
+            ("Old Mail", "pop3")
+        );
+
+        let pop3 = pop3_config(&config.accounts[0]).unwrap();
+        // Implicit TLS on 995 unless told otherwise.
+        assert_eq!((pop3.port, pop3.tls), (995, TlsMode::Implicit));
+        assert_eq!(
+            reading(&config.accounts[0]).unwrap(),
+            Reading {
+                username: "rvale".to_owned(),
+                host: "pop.example.com".to_owned(),
+                secret: "pop3:rvale@pop.example.com".to_owned(),
+            }
         );
     }
 

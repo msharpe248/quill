@@ -158,8 +158,56 @@ pub struct AccountConfig {
     pub imap: Option<ServerConfig>,
     #[serde(default)]
     pub pop3: Option<ServerConfig>,
+    /// For a `pop3` account, whose mail is kept on this Mac: when the
+    /// server's copy of a message is deleted. `"never"`, `"downloaded"`,
+    /// or a number of days after it was first seen.
+    #[serde(default)]
+    pub delete_from_server: DeleteFromServer,
     #[serde(default)]
     pub smtp: Option<ServerConfig>,
+}
+
+/// When the server's copy of a message is deleted, for an account whose
+/// mail is kept here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(try_from = "DeleteFromServerText")]
+pub enum DeleteFromServer {
+    /// Left on the server, for other mail programs to see too.
+    #[default]
+    Never,
+    /// Once Quill has the whole message.
+    Downloaded,
+    /// This many days after Quill first saw it.
+    AfterDays(u32),
+}
+
+/// `delete_from_server` as written: a word, or a number of days.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum DeleteFromServerText {
+    Word(String),
+    Days(i64),
+}
+
+impl TryFrom<DeleteFromServerText> for DeleteFromServer {
+    type Error = String;
+
+    fn try_from(text: DeleteFromServerText) -> Result<Self, String> {
+        const HELP: &str =
+            "delete_from_server is \"never\", \"downloaded\", or a number of days such as 14";
+        match text {
+            DeleteFromServerText::Word(word) => match word.as_str() {
+                "never" => Ok(Self::Never),
+                "downloaded" => Ok(Self::Downloaded),
+                _ => Err(HELP.to_owned()),
+            },
+            DeleteFromServerText::Days(days) => match u32::try_from(days) {
+                Ok(0) => Ok(Self::Downloaded),
+                Ok(days) => Ok(Self::AfterDays(days)),
+                Err(_) => Err(HELP.to_owned()),
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
@@ -284,6 +332,14 @@ impl Config {
                     index + 1
                 )));
             }
+            if account.delete_from_server != DeleteFromServer::Never
+                && account.kind != AccountType::Pop3
+            {
+                return Err(ConfigError::Invalid(format!(
+                    "{}: delete_from_server is for pop3 accounts, whose mail is kept on this Mac. Other accounts keep theirs on the server",
+                    account.name
+                )));
+            }
             if self.accounts[..index]
                 .iter()
                 .any(|earlier| earlier.name == account.name)
@@ -344,6 +400,38 @@ address = "me@fastmail.com"
 imap = { host = "imap.fastmail.com", port = 993, tls = "implicit" }
 smtp = { host = "smtp.fastmail.com", port = 465, tls = "implicit" }
 "##;
+
+    #[test]
+    fn deleting_from_the_server_is_a_word_or_a_number_of_days() {
+        let pop = |line: &str| {
+            Config::parse(&format!(
+                "[[account]]\nname = \"Old\"\ntype = \"pop3\"\naddress = \"a@example.com\"\n{line}\n"
+            ))
+        };
+        let policy = |line: &str| pop(line).unwrap().accounts[0].delete_from_server;
+        assert_eq!(policy(""), DeleteFromServer::Never);
+        assert_eq!(policy("delete_from_server = \"never\""), DeleteFromServer::Never);
+        assert_eq!(
+            policy("delete_from_server = \"downloaded\""),
+            DeleteFromServer::Downloaded
+        );
+        assert_eq!(
+            policy("delete_from_server = 14"),
+            DeleteFromServer::AfterDays(14)
+        );
+        assert_eq!(policy("delete_from_server = 0"), DeleteFromServer::Downloaded);
+        for bad in ["delete_from_server = \"sometimes\"", "delete_from_server = -1"] {
+            let err = pop(bad).unwrap_err().to_string();
+            assert!(err.contains("a number of days such as 14"), "{err}");
+        }
+        // It means nothing for an account whose mail stays on its server.
+        let err = Config::parse(
+            "[[account]]\nname = \"Work\"\ntype = \"imap\"\naddress = \"a@example.com\"\ndelete_from_server = \"downloaded\"\n",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("is for pop3 accounts"), "{err}");
+    }
 
     #[test]
     fn parses_the_spec_example() {

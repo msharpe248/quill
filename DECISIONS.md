@@ -415,13 +415,28 @@ Built in `quill-auth` and tested against a local stand-in. No real provider was 
 - **A Graph account keeps the answered mark Quill made**, since the service does not report one (the store does not let what Graph says about a message clear it). And a message a backend reports again because it changed no longer counts its people twice for address completion.
 - **The Microsoft 365 acceptance (a mailbox syncs, sends and files; tokens renew unattended for a week) is not verified.** It needs the owner's account and an application registration. Everything up to the real services is tested against stand-ins.
 
-## M7, POP3 (the protocol crate; the rest of the milestone follows M6)
+## M7, POP3
 
 - **`quill-pop3` is a small in-house client**, as the spec says: CAPA, STLS, USER/PASS (AUTH PLAIN where that is all a server offers), STAT, UIDL, LIST, TOP, RETR, DELE, with pipelining when advertised. Built ahead of its milestone because it stands alone.
 - **A message's id is its UIDL**, which stays the same between sessions where message numbers do not. A server without UIDL is not supported and says so.
 - **The sync cursor is the list of UIDLs already seen**: sorted, prefix-compressed, deflated (`flate2` 1.1.11, MIT/Apache-2.0, already in the tree) and base64. Full ids, not hashes, so a removed message can be named exactly. 50,000 Dovecot-style ids take 5 KB; 50,000 random 32-character ids take about 1 MB, which is as small as full ids get. An unreadable cursor is treated as none: everything is listed again and nothing is reported removed.
 - **Every call is one short session**: sign in, work, QUIT. POP3 locks the mailbox while a session is open.
-- **Deleting commits only on a clean QUIT**, and a message already gone counts as deleted, so a replay is safe. The sync itself never deletes. Leave-on-server policies are the sync engine's to apply and are not built yet.
+- **Deleting commits only on a clean QUIT**, and a message already gone counts as deleted, so a replay is safe. The sync itself never deletes. Leave-on-server policies are the sync engine's to apply (below).
 - **Headers come from TOP**, or from RETR for a server or a message TOP is refused for.
-- **Flags, folders, moves and saved copies are unsupported** by the backend and say so; the engine will keep them locally for these accounts when the milestone is finished.
+- **Flags, folders, moves and saved copies are unsupported** by the backend and say so; the engine keeps them locally for these accounts (below).
 - **Tested against Dovecot's POP3 service and a scripted server**, including the spec's acceptance: repeated polls with deliveries and deletions in between never duplicate or lose a message.
+### The engine and a POP3 account
+
+Accepted 2026-11-15: repeated polls never duplicate or lose a message under each policy, against Dovecot's POP3 service from `config.toml` to the store (`quill-cli/src/pop3_tests.rs`) and against a stand-in in the engine's own tests (`quill-sync/tests/kept.rs`). Not checked against any real provider.
+
+- **The engine goes by what the backend says it can do, not by its name.** A backend with no folders only hands mail over, and its account's mail is kept here: that is the whole test, and it would hold for any other such server.
+- **Such an account gets Sent, Archive and Trash folders that exist only in the store**, beside the server's inbox. Their ids, and the ids of messages that were never on a server (a sent copy), start `kept:`, which no server issues.
+- **Filing, marking and sent copies happen here and the server is asked nothing.** A message filed elsewhere keeps the id the server knows it by, so it can still be downloaded or deleted there, and the server listing it again does not bring a second copy into the inbox. That check is made across all of the account's folders, on every listing: it also covers a lost cursor, when the server lists everything again.
+- **Every message is downloaded whole**, however old, fifty to a session: the copy here is the one that matters, and a POP3 server limits how often an account signs in. The 30-day window for other accounts does not apply.
+- **A downloaded message the server no longer has stays here.** One that left the server before it was downloaded is removed: there is nothing of it to keep, and a row that can never be opened is worse than none.
+- **`delete_from_server` is `"never"` (the default), `"downloaded"`, or a number of days** since Quill first saw the message. Whatever it says, nothing is deleted from the server that is not filed here in full, raw bytes and all. The store keeps what the server is believed to hold and when each was first seen (`server_copies`, migration 0007). Setting it on an account that is not POP3 is a config error, not something silently ignored.
+- **Deleting a message for good deletes the server's copy too**, if it still has one.
+- **Deleting from the server is safe to repeat**, so a crash between the server's answer and the store's note costs one repeated request and nothing else.
+- **A POP3 account is written into `config.toml` by hand.** The form for adding an account makes IMAP accounts.
+- **Not built:** a cap on the blob cache does not exist yet; when it does, it must never evict a POP3 account's messages, which are the only copies. Junk has no local folder.
+

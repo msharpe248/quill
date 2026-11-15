@@ -95,6 +95,38 @@ The sign-in is kept in your Keychain. `quill account list` shows which accounts 
 
 This part has not met the real services yet: it is tested against stand-ins on this Mac only.
 
+## POP3 accounts
+
+A POP3 server only hands mail over. It has no folders and keeps no marks, so for these accounts Quill keeps the mail on this Mac: every message is downloaded whole, and Sent, Archive and Trash are folders that exist only here. Reading, filing, starring and searching work as for any account.
+
+```toml
+[[account]]
+name = "Old Mail"
+type = "pop3"
+address = "you@example.com"
+pop3 = { host = "pop.example.com", port = 995, tls = "implicit" }
+smtp = { host = "smtp.example.com", port = 465, tls = "implicit" }
+delete_from_server = "never"
+```
+
+```sh
+quill account password "Old Mail"
+```
+
+`delete_from_server` says what becomes of the server's copy:
+
+| Value | Meaning |
+|---|---|
+| `"never"` | Left on the server, so other mail programs see the same mail. The default. |
+| `"downloaded"` | Deleted once Quill has the whole message. |
+| a number, such as `14` | Deleted that many days after Quill first saw it. |
+
+Whatever it says, nothing is deleted from the server until the whole message is safely here, and a message another program deletes from the server stays in Quill. Deleting a message for good in Quill deletes the server's copy too.
+
+With anything but `"never"`, the mail on this Mac is the only copy. Back it up: it is in `~/Library/Application Support/Quill/data` (or the app's container, for the app).
+
+`tls` is as for IMAP: `"implicit"` (port 995), `"starttls"` (port 110) or `"none"`.
+
 ## Keys
 
 Press `?` at any time for the keys that apply where you are. The bottom bar shows the most useful ones.

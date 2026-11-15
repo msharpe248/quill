@@ -19,6 +19,15 @@ mod signin;
 #[path = "../../quill-imap/tests/common/mod.rs"]
 mod imap_test_server;
 
+/// The POP3 crate's test server, likewise.
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[path = "../../quill-pop3/tests/common/mod.rs"]
+mod pop3_test_server;
+
+#[cfg(test)]
+mod pop3_tests;
+
 use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -231,8 +240,8 @@ async fn account(
                 )
             })
     };
-    let imap = |account: &AccountConfig| {
-        accounts::imap_config(account)
+    let reading = |account: &AccountConfig| {
+        accounts::reading(account)
             .map_err(|reason| anyhow::anyhow!("{} cannot sync: {reason}", account.name))
     };
     let oauth = |account: &AccountConfig| {
@@ -255,8 +264,8 @@ async fn account(
                         Err(reason) => format!("cannot sign in: {reason}"),
                     }
                 } else {
-                    match accounts::imap_config(account) {
-                        Ok(imap) => match secrets.get(&accounts::imap_password_name(&imap))? {
+                    match accounts::reading(account) {
+                        Ok(reading) => match secrets.get(&reading.secret)? {
                             Some(_) => "password saved".to_owned(),
                             None => "no password saved".to_owned(),
                         },
@@ -293,11 +302,11 @@ async fn account(
                 !oauth::wanted(account),
                 "{name} signs in with its provider, not a password: quill account sign-in \"{name}\""
             );
-            let imap = imap(account)?;
-            let prompt = format!("Password for {} on {}: ", imap.username, imap.host);
+            let reading = reading(account)?;
+            let prompt = format!("Password for {} on {}: ", reading.username, reading.host);
             let secret = password::read(&prompt)?;
             anyhow::ensure!(!secret.is_empty(), "no password given; nothing was saved");
-            secrets.set(&accounts::imap_password_name(&imap), &secret)?;
+            secrets.set(&reading.secret, &secret)?;
             println!("Saved in the Keychain.");
         }
         AccountAction::Forget { name } => {
@@ -305,8 +314,7 @@ async fn account(
             if let Some(setup) = oauth(account)? {
                 secrets.delete(&setup.secret_name(account))?;
             } else {
-                let imap = imap(account)?;
-                secrets.delete(&accounts::imap_password_name(&imap))?;
+                secrets.delete(&reading(account)?.secret)?;
             }
             println!("Removed from the Keychain.");
         }
