@@ -20,6 +20,7 @@ quill-graph.workspace = true
 quill-host.workspace = true
 quill-imap.workspace = true
 quill-media.workspace = true
+quill-mime.workspace = true
 quill-net.workspace = true
 quill-pop3.workspace = true
 quill-smtp.workspace = true
@@ -32,6 +33,7 @@ clap.workspace = true
 hickory-resolver.workspace = true
 jiff.workspace = true
 rustix.workspace = true
+serde_json.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time"] }
 toml_edit.workspace = true
 
@@ -41,7 +43,6 @@ async-imap.workspace = true
 base64.workspace = true
 rcgen.workspace = true
 rustls.workspace = true
-serde_json.workspace = true
 tempfile.workspace = true
 time.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time", "macros", "net", "io-util", "process"] }

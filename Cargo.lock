@@ -2752,6 +2752,7 @@ dependencies = [
  "quill-host",
  "quill-imap",
  "quill-media",
+ "quill-mime",
  "quill-net",
  "quill-pop3",
  "quill-smtp",

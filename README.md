@@ -256,6 +256,25 @@ smtp = { host = "smtp.example.com", port = 465, tls = "implicit" }
 
 The SMTP server is signed in to with the same name and password as the IMAP server unless `smtp = { ... }` has a `username` of its own.
 
+## From a shell
+
+Quill's mail can be read and sent without its screen, for scripts and for a quick look. Each command takes `--json`.
+
+```sh
+quill list                         # the unified inbox, newest first
+quill list --in work/sent --limit 10
+quill list --unread --json
+quill search from:ana is:unread "exact phrase"
+quill read 4127                    # by the id list and search print
+quill read 4127 --raw > message.eml
+echo "Running late." | quill send --to ana.ruiz@example.com --subject "Today"
+quill sync                         # fetch, carry out what is queued, send, stop
+```
+
+`list`, `search` and `read` look at the mail already on this Mac and reach no server. `send` checks the message as the compose screen would and puts it in the Outbox; it goes at the next sync, from the app if it is running or from `quill sync`. `--account NAME` chooses which account sends, and `--attach FILE` attaches. `quill sync` exits with an error if anything could not be done, and says what.
+
+JSON times are RFC 3339 in UTC. What mail says is printed safely: control characters and escape sequences never reach your terminal, and in JSON they are escaped as JSON escapes them.
+
 ## Configuration
 
 Quill looks in `~/Library/Application Support/Quill/config/`:

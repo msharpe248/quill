@@ -522,3 +522,14 @@ Accepted 2026-11-15: repeated polls never duplicate or lose a message under each
 - **A POP3 account is written into `config.toml` by hand.** The form for adding an account makes IMAP accounts.
 - **Not built:** a cap on the blob cache does not exist yet; when it does, it must never evict a POP3 account's messages, which are the only copies. Junk has no local folder.
 
+## M8, P1 features (in progress)
+
+### Headless commands
+
+- **`quill list`, `search`, `read`, `send` and `sync`**, each with `--json`. They read the store the UI reads and add to the outbox the UI adds to; only `sync` reaches a server, by running the engine once: a pass over every account, then whatever is queued and due, then stop.
+- **`list`, `search` and `read` make nothing.** With no database yet they say so and leave the data directory uncreated.
+- **`send` goes through the compose screen's checks** and refuses what it would refuse. What the screen would only ask about (no subject) is not asked: nobody is there. It is due at once, with no undo delay, and the body is read from standard input.
+- **`sync` exits non-zero when anything could not be done**: an account that cannot sync, mail a server refused, a certificate that was not accepted. A warning about an account that did sync (it connects without encryption) is printed and is not a failure. It gives up after two minutes of hearing nothing.
+- **A message is named by its id in the store**, which `list` and `search` print. It is stable for as long as the message stays in its folder; a move on the server can give it a new one.
+- **Plain output is made safe to print**; JSON carries the text as data.
+
