@@ -16,6 +16,7 @@ workspace = true
 [dependencies]
 quill-auth.workspace = true
 quill-core.workspace = true
+quill-ews.workspace = true
 quill-graph.workspace = true
 quill-host.workspace = true
 quill-imap.workspace = true

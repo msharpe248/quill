@@ -95,6 +95,26 @@ The sign-in is kept in your Keychain. `quill account list` shows which accounts 
 
 This part has not met the real services yet: it is tested against stand-ins on this Mac only.
 
+## Exchange on your own servers
+
+An Exchange server that is not Exchange Online is reached through Exchange Web Services. (A Microsoft 365 mailbox is a `graph` account, above.)
+
+```toml
+[[account]]
+name = "Office"
+type = "ews"
+address = "you@example.com"
+ews = { url = "https://mail.example.com/EWS/Exchange.asmx", username = "EXAMPLE\\you" }
+```
+
+```sh
+quill account password Office
+```
+
+`username` is what you sign in with, often `DOMAIN\user`; without it your address is used. The address of the service is given in full: Quill does not look it up. The server must allow Basic authentication for EWS, over `https`; one that offers only NTLM or Kerberos is not supported, and Quill says so. Exchange 2013 SP1 or later.
+
+This is the least tried part of Quill: it is tested against a stand-in only, never a real Exchange server.
+
 ## POP3 accounts
 
 A POP3 server only hands mail over. It has no folders and keeps no marks, so for these accounts Quill keeps the mail on this Mac: every message is downloaded whole, and Sent, Archive and Trash are folders that exist only here. Reading, filing, starring and searching work as for any account.

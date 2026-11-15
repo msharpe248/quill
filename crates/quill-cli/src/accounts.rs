@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use quill_auth::{OAuthHttp, SecretStore, password_name};
 use quill_core::config::{AccountConfig, AccountType, Config, DeleteFromServer, TlsMode};
 use quill_core::{Backend, Credential, Credentials, Error, Sender, TokenSource};
+use quill_ews::{EwsBackend, EwsConfig};
 use quill_imap::{ImapBackend, ImapConfig, Trust};
 use quill_pop3::{Pop3Backend, Pop3Config};
 use quill_smtp::{SmtpAuth, SmtpConfig, SmtpSender};
@@ -91,6 +92,15 @@ impl Reading {
         }
     }
 
+    fn ews(config: &EwsConfig) -> Self {
+        let host = ews_host(&config.url);
+        Self {
+            username: config.username.clone(),
+            secret: password_name("ews", &config.username, &host),
+            host,
+        }
+    }
+
     fn pop3(config: &Pop3Config) -> Self {
         Self {
             username: config.username.clone(),
@@ -105,8 +115,71 @@ pub fn reading(account: &AccountConfig) -> Result<Reading, String> {
     match account.kind {
         AccountType::Imap => imap_config(account).map(|config| Reading::imap(&config)),
         AccountType::Pop3 => pop3_config(account).map(|config| Reading::pop3(&config)),
+        AccountType::Ews => ews_config(account).map(|config| Reading::ews(&config)),
         other => Err(format!("{} accounts are not supported yet", other.as_str())),
     }
+}
+
+/// How an on-premises Exchange account is reached, or why it cannot be.
+pub fn ews_config(account: &AccountConfig) -> Result<EwsConfig, String> {
+    let server = account.ews.as_ref().ok_or_else(|| {
+        "it has no `ews` server. Give it `ews = { url = \"https://mail.example.com/EWS/Exchange.asmx\" }`"
+            .to_owned()
+    })?;
+    Ok(EwsConfig::new(
+        server.url.trim(),
+        server
+            .username
+            .clone()
+            .unwrap_or_else(|| account.address.clone()),
+    ))
+}
+
+/// The server an EWS address names, for naming its password. What is not
+/// an address is used as it stands; the backend refuses it later with a
+/// better reason.
+fn ews_host(url: &str) -> String {
+    url.split_once("://")
+        .map_or(url, |(_, rest)| rest)
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or(url)
+        .rsplit('@')
+        .next()
+        .unwrap_or(url)
+        .to_ascii_lowercase()
+}
+
+/// Everything the sync engine needs for an on-premises Exchange account:
+/// its web services read the mail and send it.
+pub fn ews_account(
+    id: quill_core::types::LocalAccountId,
+    account: &AccountConfig,
+    config: EwsConfig,
+    secrets: &Arc<dyn SecretStore>,
+) -> Result<SyncAccount, String> {
+    let password = Arc::new(SavedPassword {
+        secrets: Arc::clone(secrets),
+        names: vec![Reading::ews(&config).secret],
+        account: account.name.clone(),
+    });
+    // Plain http is taken only for this computer itself, which the backend
+    // checks: a stand-in for the server, for trying things out.
+    let backend = if config.url.starts_with("http://") {
+        EwsBackend::loopback(config, password)
+    } else {
+        EwsBackend::new(config, password)
+    }
+    .map_err(|err| err.to_string())?;
+    let backend = Arc::new(backend);
+    Ok(SyncAccount {
+        id,
+        name: account.name.clone(),
+        backend: Arc::clone(&backend) as Arc<dyn Backend>,
+        sender: Some(backend),
+        server_saves_sent: EwsBackend::SAVES_SENT_COPY,
+        server_copies: ServerCopies::Keep,
+    })
 }
 
 /// The name an account's IMAP password is kept under in the Keychain.
@@ -364,6 +437,34 @@ pub fn prepare(
             }
             continue;
         }
+        if account.kind == AccountType::Ews {
+            let built = ews_config(account).and_then(|config| {
+                // Checked before the account is registered: one that
+                // cannot be reached is not listed, empty, for ever.
+                let probe = ews_account(
+                    quill_core::types::LocalAccountId(0),
+                    account,
+                    config.clone(),
+                    secrets,
+                );
+                probe.map(|_| config)
+            });
+            match built {
+                Ok(config) => {
+                    let id = store.upsert_account(name, &account.address, account.kind.as_str())?;
+                    match ews_account(id, account, config, secrets) {
+                        Ok(account) => accounts.push(account),
+                        Err(reason) => {
+                            notices.push(Notice::error(format!("{name} cannot sync: {reason}.")));
+                        }
+                    }
+                }
+                Err(reason) => {
+                    notices.push(Notice::error(format!("{name} cannot sync: {reason}.")));
+                }
+            }
+            continue;
+        }
         if account.kind != AccountType::Imap {
             notices.push(Notice::info(format!(
                 "{name}: {} accounts are not supported yet.",
@@ -425,6 +526,7 @@ mod tests {
 name = "Work"
 type = "ews"
 address = "robin@example.com"
+ews = { url = "http://mail.example.com/EWS/Exchange.asmx" }
 
 [[account]]
 name = "Personal"
@@ -440,10 +542,13 @@ imap = { host = "mail.example.com", tls = "starttls", username = "rvale" }
         assert_eq!(prepared.accounts.len(), 1);
         assert_eq!(prepared.accounts[0].name, "Personal");
         assert_eq!(prepared.notices.len(), 1);
-        assert_eq!(prepared.notices[0].kind, NoticeKind::Info);
-        assert_eq!(
-            prepared.notices[0].text,
-            "Work: ews accounts are not supported yet."
+        // The other is refused for a reason of its own: Exchange is
+        // reached over https or not at all.
+        assert_eq!(prepared.notices[0].kind, NoticeKind::Error);
+        assert!(
+            prepared.notices[0].text.starts_with("Work cannot sync: "),
+            "{}",
+            prepared.notices[0].text
         );
         // Only the account that syncs is in the store.
         let stored = store.accounts().unwrap();
@@ -618,6 +723,51 @@ address = "robin@example.org"
                 secret: "pop3:rvale@pop.example.com".to_owned(),
             }
         );
+    }
+
+    #[test]
+    fn an_exchange_account_is_built_from_its_address_and_keeps_its_own_password() {
+        let mut store = Store::open_in_memory().unwrap();
+        let text = r#"
+[[account]]
+name = "Office"
+type = "ews"
+address = "robin@example.com"
+ews = { url = "https://Mail.Example.com/EWS/Exchange.asmx", username = "EXAMPLE\\robin" }
+
+[[account]]
+name = "No Server"
+type = "ews"
+address = "robin@example.org"
+"#;
+        let config = config(text);
+        let prepared = prepare(&config, &mut store, &secrets(), true).unwrap();
+        assert_eq!(prepared.accounts.len(), 1, "{:?}", prepared.notices);
+        let built = &prepared.accounts[0];
+        assert_eq!(built.name, "Office");
+        assert!(built.sender.is_some() && built.server_saves_sent);
+        assert!(built.backend.capabilities().folders);
+        assert!(
+            prepared.notices[0]
+                .text
+                .starts_with("No Server cannot sync: it has no `ews` server."),
+            "{}",
+            prepared.notices[0].text
+        );
+        assert_eq!(
+            reading(&config.accounts[0]).unwrap(),
+            Reading {
+                username: "EXAMPLE\\robin".to_owned(),
+                host: "mail.example.com".to_owned(),
+                secret: "ews:EXAMPLE\\robin@mail.example.com".to_owned(),
+            }
+        );
+        let stored = store.accounts().unwrap();
+        assert_eq!(
+            (stored[0].name.as_str(), stored[0].kind.as_str()),
+            ("Office", "ews")
+        );
+        assert_eq!(stored.len(), 1);
     }
 
     #[test]

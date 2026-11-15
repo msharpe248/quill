@@ -233,6 +233,9 @@ pub struct AccountConfig {
     pub imap: Option<ServerConfig>,
     #[serde(default)]
     pub pop3: Option<ServerConfig>,
+    /// For an `ews` account: where the server's Exchange Web Services are.
+    #[serde(default)]
+    pub ews: Option<EwsServerConfig>,
     /// For a `pop3` account, whose mail is kept on this Mac: when the
     /// server's copy of a message is deleted. `"never"`, `"downloaded"`,
     /// or a number of days after it was first seen.
@@ -240,6 +243,18 @@ pub struct AccountConfig {
     pub delete_from_server: DeleteFromServer,
     #[serde(default)]
     pub smtp: Option<ServerConfig>,
+}
+
+/// An on-premises Exchange server's web services.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EwsServerConfig {
+    /// The address of the service: `https://mail.example.com/EWS/Exchange.asmx`.
+    pub url: String,
+    /// The name to sign in with: often `DOMAIN\user` or the address.
+    /// `None` means the account's address.
+    #[serde(default)]
+    pub username: Option<String>,
 }
 
 /// When the server's copy of a message is deleted, for an account whose

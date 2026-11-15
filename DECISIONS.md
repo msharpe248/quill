@@ -592,3 +592,19 @@ Accepted 2026-11-15: repeated polls never duplicate or lose a message under each
 - **`:QuillSend`, `:QuillPostpone`, `:QuillDiscard`, `:QuillAttach` and address completion** (`ctrl-x ctrl-u` on a recipient line) are the plugin's. `:wq` with no verdict hands the draft back for Quill to ask; `:cq` cancels and keeps the draft as it was. The plugin runs no program and touches no network. Tried headlessly with the Vim on this Mac (9.2): attach, a refused attach, completion and send.
 - **`app/build-vim.sh` builds the Vim to ship**: Vim's source at one pinned commit (a tag can be moved), terminal-only, with no scripting languages, GUI, clipboard, networking, channels or terminal emulator, and its runtime trimmed of the manual, other languages, spelling lists and the plugins that fetch or unpack. **It has not been run.** Fetching and compiling other people's code is not something to do unattended; it is for the owner to run and look at. Until then the app has no Vim in it.
 
+## M10, Exchange Web Services (optional)
+
+Built and tested against a local stand-in (`wiremock`) with SOAP written by hand from Microsoft's reference. **Nothing here has met a real Exchange server**, and there is none to try it on. What is believed and not confirmed is listed last; it is what to check first.
+
+- **`EwsBackend` is both backend and sender**, built the way the Graph one is: Quill's own TLS settings, HTTP/1.1, no redirect followed, `https` only (plain http to a loopback address for tests), nothing fetched from an address the server hands back.
+- **Basic authentication with the account's password, or a bearer token.** NTLM, Negotiate and Kerberos are not built: there is no dependency for them. A server that offers only those is told apart from a wrong password and the message says Basic has to be enabled for EWS. A password the server refused is not sent a second time, so a wrong one costs one failed attempt against a lockout policy, not two.
+- **The request version is `Exchange2013_SP1`**, for `SuppressReadReceipts`: marking a message read or deleting it never sends a read receipt. Exchange 2007, 2010 and 2013 before SP1 are not served.
+- **Sync is `SyncFolderItems`**, with its state as the cursor. It cannot return recipients, so every message it reports is fetched again by `GetItem`, a hundred at a time, for the whole list row. An invalid state starts the folder again.
+- **Marks are read before they are written**, and only what differs is written, as for Graph. The answered mark is read (an extended property) and never written.
+- **Sending is `CreateItem` with the raw message and `SendAndSaveCopy`**: the server keeps the sent copy. As for Graph, every envelope recipient must be in the message's own headers or nothing is sent, and Bcc stays in the message for the server to act on.
+- **A saved copy is created with the message-flags property set**, since Exchange files anything made from MIME as an unsent draft otherwise.
+- **No push**: streaming notifications are a long-lived subscription of their own. These accounts are polled.
+- **XML answers are read with limits** on depth, elements, attributes and size, must be UTF-8, and a DOCTYPE is refused outright, so no entity is ever expanded.
+- **Not built:** Autodiscover (the EWS address is given in the config), server search, shared and delegate mailboxes, public folders, soft delete, older servers.
+- **Believed, to check with a real server:** that `archive` is accepted as a distinguished folder name (it is not in Microsoft's documented list; without it no folder gets the Archive role); that the message-flags property is honoured on `CreateItem`; that Bcc in a MIME send is delivered to and stripped; that `SuppressReadReceipts` is accepted at this version; the exact shape of faults and of the busy answer; and that hybrid modern authentication accepts the bearer token.
+
