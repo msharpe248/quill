@@ -121,6 +121,13 @@ pub struct AccountConfig {
     #[serde(rename = "type")]
     pub kind: AccountType,
     pub address: String,
+    /// The user's name as it appears on mail sent from this account. Without
+    /// it mail goes out from the bare address.
+    #[serde(default)]
+    pub full_name: Option<String>,
+    /// Text added to the end of new mail from this account.
+    #[serde(default)]
+    pub signature: Option<String>,
     #[serde(default)]
     pub oauth_client_id: Option<String>,
     #[serde(default)]

@@ -3,3 +3,4 @@
 /app/.swiftpm
 *.snap.new
 .DS_Store
+/.claude/

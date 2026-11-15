@@ -274,6 +274,16 @@ The UI stayed usable throughout, which is the acceptance. This was a server on t
 - **Contacts for completing addresses come from message headers as they sync**: senders of received mail, and with five times the weight the recipients of mail in Sent. People the user writes to should come before a newsletter that writes every week.
 - **Not built yet**: syncing drafts to the server's Drafts folder (drafts are local), sending to the accepted recipients after some were refused, and send later.
 
+### IMAP changes to mail
+
+- **Move uses `UID MOVE`** where the server has it; otherwise `UID COPY`, mark `\Deleted`, and `UID EXPUNGE` of that one message (UIDPLUS). The new id comes from the server's `COPYUID`, and an appended message's from `APPENDUID`. `async-imap` parses both and then drops them, so these commands are sent through its raw command interface.
+- **On a server with neither MOVE nor UIDPLUS, a plain `EXPUNGE` is used only when nothing else in the folder is marked `\Deleted`.** If other mail is marked, the move or deletion is refused before anything changes: a plain `EXPUNGE` would remove that other mail too, and the spec says never to expunge without the server's confirmation of what goes.
+- **After any expunge the folder is searched for the message again**, and a message still there is an error, not a success. A shared folder can accept the `\Deleted` flag without setting it.
+- **Moving or deleting a message that is already gone succeeds**, and so does one whose folder was renumbered or removed, so a replay after a crash is safe. Copy and append cannot be made safe to repeat; the queue runs each once and a crash mid-append can leave two sent copies.
+- **A UID is never acted on under a different UIDVALIDITY** than the one in the message's id.
+- **Folder names from the server are unescaped** (`\"` and `\\` inside quoted names), and sent back quoted or as a literal as their characters need. Before this a folder with a quote or backslash in its name could be listed and not opened.
+- **Each sign-in asks for `CAPABILITY` once more**, to learn whether the server has MOVE and UIDPLUS.
+
 ## M7, POP3 (the protocol crate; the rest of the milestone follows M6)
 
 - **`quill-pop3` is a small in-house client**, as the spec says: CAPA, STLS, USER/PASS (AUTH PLAIN where that is all a server offers), STAT, UIDL, LIST, TOP, RETR, DELE, with pipelining when advertised. Built ahead of its milestone because it stands alone.

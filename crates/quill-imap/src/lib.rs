@@ -5,12 +5,19 @@
 //! newest mail first, so a large mailbox is usable long before it has all
 //! arrived.
 //!
+//! Messages are moved, copied, deleted and saved in ways that are safe to
+//! repeat, since the operation queue replays after a crash: see the `change`
+//! module for what each one does on servers with and without `MOVE` and
+//! `UIDPLUS`.
+//!
 //! Transport security follows the account's setting exactly: implicit TLS,
 //! STARTTLS with no fallback, or plaintext only when the account opts in.
 //! Credentials are never sent before the channel is as secure as that
 //! setting requires.
 
 mod backend;
+mod change;
+mod command;
 mod config;
 mod connect;
 mod names;

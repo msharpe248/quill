@@ -104,6 +104,10 @@ pub enum Mailbox {
     /// Every account's inbox, merged.
     Unified,
     Folder(LocalFolderId),
+    /// Mail being written, from every account. It lives only here.
+    Drafts,
+    /// Mail on its way out, or refused by a server, from every account.
+    Outbox,
 }
 
 pub struct Store {
@@ -344,6 +348,23 @@ impl Store {
         }
     }
 
+    /// Files raw bytes among the blobs and returns their hash, or `None`
+    /// when this store has nowhere to keep them.
+    pub fn put_blob(&self, bytes: &[u8]) -> Result<Option<String>> {
+        match &self.blobs {
+            Some(blobs) => Ok(Some(blobs.put(bytes)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// The bytes filed under `hash`, if this store can reach them.
+    pub fn blob(&self, hash: &str) -> Result<Option<Vec<u8>>> {
+        match &self.blobs {
+            Some(blobs) => Ok(blobs.get(hash)?),
+            None => Ok(None),
+        }
+    }
+
     /// The message as it arrived, or `None` when it has not been downloaded
     /// or this store has no access to the raw messages.
     pub fn raw(&self, message: LocalMessageId) -> Result<Option<Vec<u8>>> {
@@ -440,6 +461,8 @@ impl Store {
                     .query_map([folder.0], message_row)?
                     .collect::<rusqlite::Result<Vec<_>>>()?
             }
+            Mailbox::Drafts => self.drafts()?.iter().map(DraftRow::as_message).collect(),
+            Mailbox::Outbox => self.outbox()?.iter().map(DraftRow::as_message).collect(),
         };
         Ok(rows)
     }

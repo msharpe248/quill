@@ -5,11 +5,11 @@
 //! the outbox; the sync engine takes it from there. A message leaves the
 //! outbox only when a server has accepted it.
 
-use quill_core::types::LocalAccountId;
+use quill_core::types::{Address, Flags, Headers, LocalAccountId, LocalFolderId, LocalMessageId};
 use rusqlite::{OptionalExtension, Row, params};
 use serde::{Deserialize, Serialize};
 
-use crate::{Result, Store};
+use crate::{MessageRow, Result, Store};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct DraftId(pub i64);
@@ -76,6 +76,63 @@ pub struct DraftRow {
     /// Why the last attempt to send it failed.
     pub error: Option<String>,
     pub updated: i64,
+}
+
+impl DraftId {
+    /// The id a draft goes by in a message list. Drafts are listed beside
+    /// messages, and take the negative numbers no message has.
+    pub fn as_message_id(self) -> LocalMessageId {
+        LocalMessageId(-self.0)
+    }
+
+    /// The draft a list row stands for, if it stands for one.
+    pub fn from_message_id(id: LocalMessageId) -> Option<Self> {
+        (id.0 < 0).then_some(Self(-id.0))
+    }
+}
+
+impl DraftRow {
+    /// The draft as a row of a message list: who it is to, its subject,
+    /// when it was last touched.
+    pub fn as_message(&self) -> MessageRow {
+        let people = |text: &str| -> Vec<Address> {
+            text.split(',')
+                .map(str::trim)
+                .filter(|part| !part.is_empty())
+                .map(|part| match part.rsplit_once('<') {
+                    Some((name, email)) => Address {
+                        name: Some(name.trim().trim_matches('"').to_owned())
+                            .filter(|name| !name.is_empty()),
+                        email: email.trim_end_matches('>').trim().to_owned(),
+                    },
+                    None => Address {
+                        name: None,
+                        email: part.to_owned(),
+                    },
+                })
+                .collect()
+        };
+        MessageRow {
+            id: self.id.as_message_id(),
+            // A draft is in no folder of any server.
+            folder: LocalFolderId(0),
+            account: self.account,
+            headers: Headers {
+                message_id: None,
+                subject: self.content.subject.clone(),
+                from: Vec::new(),
+                to: people(&self.content.to),
+                cc: people(&self.content.cc),
+                date: self.send_after.unwrap_or(self.updated),
+            },
+            flags: Flags {
+                seen: true,
+                draft: true,
+                ..Flags::default()
+            },
+            has_attachments: !self.content.attachments.is_empty(),
+        }
+    }
 }
 
 /// A message the engine has taken from the outbox to send.

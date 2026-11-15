@@ -32,6 +32,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         .iter()
         .map(|entry| match entry {
             SidebarEntry::Unified { unread } | SidebarEntry::Folder { unread, .. } => *unread,
+            SidebarEntry::Local { count, .. } => *count,
             SidebarEntry::Account { .. } => 0,
         })
         .max()
@@ -53,6 +54,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         let line = match entry {
             SidebarEntry::Unified { unread } => {
                 counted_row(cursor, "Unified", *unread, label_width, count_width, env)
+            }
+            SidebarEntry::Local { name, count, .. } => {
+                counted_row(cursor, name, *count, label_width, count_width, env)
             }
             SidebarEntry::Account { index, name } => Line::from(vec![
                 Span::raw(cursor),

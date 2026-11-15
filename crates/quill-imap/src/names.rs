@@ -1,10 +1,40 @@
 //! Mailbox names: decoding them for display and working out what a folder
 //! is for.
 
+use std::borrow::Cow;
+
 use async_imap::types::NameAttribute;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
 use quill_core::types::FolderRole;
+
+/// Takes the escapes out of a name the server sent in quotes.
+///
+/// The parser hands a quoted string over as it was written, with `\"` for
+/// `"` and `\\` for `\`, and does not say whether a name came in quotes at
+/// all. Sent back like that, the name would be escaped a second time and
+/// would name no folder. In quotes a backslash is always followed by one of
+/// those two characters, so a name where every backslash is, is read as
+/// quoted. A backslash followed by anything else can only have come in a
+/// literal, which has no escapes, and that name is kept as it is.
+pub(crate) fn unescape(name: &str) -> Cow<'_, str> {
+    if !name.contains('\\') {
+        return Cow::Borrowed(name);
+    }
+    let mut out = String::with_capacity(name.len());
+    let mut chars = name.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some(escaped @ ('\\' | '"')) => out.push(escaped),
+            _ => return Cow::Borrowed(name),
+        }
+    }
+    Cow::Owned(out)
+}
 
 /// Decodes a mailbox name from IMAP's modified UTF-7 (RFC 3501 section
 /// 5.1.3). A run that does not decode is kept as it was written, so a name
@@ -179,6 +209,24 @@ mod tests {
         assert_eq!(decode_utf7("INBOX"), "INBOX");
         assert_eq!(decode_utf7("Work/Projects 2026"), "Work/Projects 2026");
         assert_eq!(decode_utf7(""), "");
+    }
+
+    #[test]
+    fn a_quoted_name_loses_its_escapes_and_any_other_is_kept() {
+        for (written, name) in [
+            ("INBOX", "INBOX"),
+            ("Entw&APw-rfe", "Entw&APw-rfe"),
+            (r#"Say \"when\""#, r#"Say "when""#),
+            (r"Back\\slash", r"Back\slash"),
+            (r#"\\\""#, r#"\""#),
+            // A delimiter, as some servers have it.
+            (r"\\", r"\"),
+            // Not how a quoted string is written, so it came as a literal.
+            (r"Back\slash", r"Back\slash"),
+            (r"ends in one\", r"ends in one\"),
+        ] {
+            assert_eq!(unescape(written), name, "{written}");
+        }
     }
 
     #[test]

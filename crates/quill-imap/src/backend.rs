@@ -20,6 +20,7 @@ use tokio::sync::mpsc::Sender;
 use crate::config::ImapConfig;
 use quill_net::Stream;
 
+use crate::change::{self, Extensions};
 use crate::connect;
 use crate::names;
 use crate::uidset::UidSet;
@@ -46,7 +47,16 @@ pub struct ImapBackend {
     batch: usize,
     /// One connection, opened on demand and dropped after any failure so the
     /// next call starts clean.
-    session: Mutex<Option<Session<Stream>>>,
+    session: Mutex<Option<Open>>,
+}
+
+/// A signed-in connection and what its server can do. The two are kept
+/// together because the answer belongs to the connection: a server may be
+/// upgraded, or sit behind a proxy that changes, between one sign-in and the
+/// next.
+struct Open {
+    session: Session<Stream>,
+    extensions: Extensions,
 }
 
 impl ImapBackend {
@@ -67,15 +77,15 @@ impl ImapBackend {
 
     /// Signs out and closes the connection, if there is one.
     pub async fn disconnect(&self) {
-        if let Some(mut session) = self.session.lock().await.take() {
-            let _ = session.logout().await;
+        if let Some(mut open) = self.session.lock().await.take() {
+            let _ = open.session.logout().await;
         }
     }
 
-    async fn sign_in(&self) -> Result<Session<Stream>> {
+    async fn sign_in(&self) -> Result<Open> {
         let client = connect::connect(&self.config).await?;
         let password = (self.password)()?;
-        client
+        let mut session = client
             .login(&self.config.username, password)
             .await
             .map_err(|(err, _)| match err {
@@ -83,21 +93,37 @@ impl ImapBackend {
                     Error::Auth(text)
                 }
                 other => Error::Connection(other.to_string()),
-            })
+            })?;
+        // Asked now, not read from the greeting: what a server offers can
+        // change once it knows who is asking.
+        let capabilities = session.capabilities().await.map_err(failed)?;
+        Ok(Open {
+            session,
+            extensions: Extensions::of(&capabilities),
+        })
     }
 }
 
 /// Runs `$body` with `$session` bound to the open connection, signing in
 /// first if need be. A failure closes the connection: an IMAP session after
 /// an error is in an unknown state, and the next call should not inherit it.
+///
+/// With a second name, `$body` is also given what the server can do.
 macro_rules! with_session {
-    ($backend:expr, |$session:ident| $body:expr) => {{
+    ($backend:expr, |$session:ident| $body:expr) => {
+        with_session!($backend, |$session, _extensions| $body)
+    };
+    ($backend:expr, |$session:ident, $extensions:ident| $body:expr) => {{
         let mut guard = $backend.session.lock().await;
         if guard.is_none() {
             *guard = Some($backend.sign_in().await?);
         }
         let result = match guard.as_mut() {
-            Some($session) => $body,
+            Some(open) => {
+                let $extensions = open.extensions;
+                let $session = &mut open.session;
+                $body
+            }
             None => Err(Error::Backend("no connection".to_owned())),
         };
         if result.is_err() {
@@ -146,12 +172,40 @@ impl Backend for ImapBackend {
                 let flags = *flags;
                 with_session!(self, |session| set_flags(session, &message, flags).await)
             }
-            Operation::Move { .. } | Operation::Copy { .. } | Operation::Delete { .. } => {
-                Err(Error::Unsupported(
-                    "moving and deleting arrive with the operation queue".to_owned(),
-                ))
+            Operation::Move { id, to } => self.move_message(id, to).await.map(drop),
+            Operation::Copy { id, to } => {
+                let message = MessageRef::parse(id)?;
+                with_session!(self, |session| change::copy(session, &message, to).await)
+            }
+            Operation::Delete { id } => {
+                let message = MessageRef::parse(id)?;
+                with_session!(self, |session, extensions| change::delete(
+                    session, extensions, &message
+                )
+                .await)
             }
         }
+    }
+
+    /// The new id is known whenever the server has UIDPLUS, which is what
+    /// makes it say where a copy went. `change::move_message` says how the
+    /// move is done on servers with and without `MOVE`.
+    async fn move_message(&self, id: &RemoteId, to: &FolderId) -> Result<Option<RemoteId>> {
+        let message = MessageRef::parse(id)?;
+        with_session!(self, |session, extensions| change::move_message(
+            session, extensions, &message, to
+        )
+        .await)
+    }
+
+    async fn append(
+        &self,
+        folder: &FolderId,
+        raw: &[u8],
+        flags: Flags,
+    ) -> Result<Option<RemoteId>> {
+        with_session!(self, |session| change::append(session, folder, raw, flags)
+            .await)
     }
 
     /// Push arrives with IDLE in M6. Until then the sync engine polls.
@@ -231,7 +285,7 @@ impl Cursor {
     }
 }
 
-fn failed(err: async_imap::error::Error) -> Error {
+pub(crate) fn failed(err: async_imap::error::Error) -> Error {
     use async_imap::error::Error as Imap;
     match err {
         Imap::Io(_) | Imap::ConnectionLost => Error::Connection(err.to_string()),
@@ -248,15 +302,25 @@ async fn list_folders(session: &mut Session<Stream>) -> Result<Vec<RemoteFolder>
         .try_collect()
         .await
         .map_err(failed)?;
-    // Servers list in no particular order, and may list a folder twice.
-    let mut listed: Vec<names::Listed<'_>> = names
+    let named: Vec<_> = names
         .iter()
         // A name that only holds other folders has no messages to sync.
         .filter(|name| !name.attributes().contains(&NameAttribute::NoSelect))
-        .map(|name| names::Listed {
-            raw: name.name(),
-            delimiter: name.delimiter(),
-            attributes: name.attributes(),
+        .map(|name| {
+            (
+                names::unescape(name.name()),
+                name.delimiter().map(names::unescape),
+                name.attributes(),
+            )
+        })
+        .collect();
+    // Servers list in no particular order, and may list a folder twice.
+    let mut listed: Vec<names::Listed<'_>> = named
+        .iter()
+        .map(|(raw, delimiter, attributes)| names::Listed {
+            raw,
+            delimiter: delimiter.as_deref(),
+            attributes,
         })
         .collect();
     listed.sort_by(|a, b| a.raw.cmp(b.raw));

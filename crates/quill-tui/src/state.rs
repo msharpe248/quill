@@ -9,7 +9,7 @@ use std::collections::{BTreeSet, VecDeque};
 use jiff::tz::TimeZone;
 use quill_core::types::{FolderRole, LocalAccountId, LocalFolderId, LocalMessageId};
 use quill_mime::html::Line;
-use quill_store::{AccountRow, FolderRow, Mailbox, MessageRow};
+use quill_store::{AccountRow, DraftId, FolderRow, Mailbox, MessageRow};
 use quill_sync::{SyncEvent, SyncRequest};
 
 use crate::command::{CommandId, Context, Registry};
@@ -161,6 +161,12 @@ pub enum SidebarEntry {
     Unified {
         unread: u32,
     },
+    /// Drafts or the outbox: mail that lives only on this Mac.
+    Local {
+        mailbox: Mailbox,
+        name: &'static str,
+        count: u32,
+    },
     /// A heading. The cursor skips it.
     Account {
         index: usize,
@@ -180,6 +186,7 @@ impl SidebarEntry {
     pub fn mailbox(&self) -> Option<Mailbox> {
         match self {
             Self::Unified { .. } => Some(Mailbox::Unified),
+            Self::Local { mailbox, .. } => Some(*mailbox),
             Self::Account { .. } => None,
             Self::Folder { id, .. } => Some(Mailbox::Folder(*id)),
         }
@@ -621,9 +628,12 @@ impl State {
                 .folders
                 .as_ref()
                 .is_some_and(|picker| !self.folder_choices(picker).is_empty()),
-            CommandId::MessageArchive | CommandId::MessageDelete | CommandId::MessageMove => {
-                self.target_row().is_some()
-            }
+            CommandId::MessageDelete => self.target_row().is_some(),
+            // A draft is in no folder of any server: it can be thrown away,
+            // not filed or flagged.
+            CommandId::MessageArchive | CommandId::MessageMove => self
+                .target_row()
+                .is_some_and(|row| DraftId::from_message_id(row.id).is_none()),
             CommandId::AccountAdd => env.accounts,
             CommandId::NavOpen => {
                 self.focus == Pane::Sidebar || self.list.rows.get(self.list.selected).is_some()
@@ -641,9 +651,9 @@ impl State {
                     || (self.focus == Pane::Sidebar
                         && LayoutMode::for_width(self.size.0) == LayoutMode::Narrow)
             }
-            CommandId::MessageToggleUnread | CommandId::MessageToggleStar => {
-                self.target_row().is_some()
-            }
+            CommandId::MessageToggleUnread | CommandId::MessageToggleStar => self
+                .target_row()
+                .is_some_and(|row| DraftId::from_message_id(row.id).is_none()),
             _ => true,
         }
     }
@@ -1097,8 +1107,14 @@ impl State {
 
     fn on_data(&mut self, event: DataEvent, out: &mut Effects) {
         match event {
-            DataEvent::SidebarLoaded { accounts, folders } => {
-                self.sidebar.entries = sidebar_entries(&accounts, &folders);
+            DataEvent::SidebarLoaded {
+                accounts,
+                folders,
+                drafts,
+                outbox,
+            } => {
+                self.sidebar.entries =
+                    sidebar_entries(&accounts, &folders, drafts, outbox, self.mailbox);
                 self.accounts = accounts;
                 self.accounts_known = true;
                 match self
@@ -1288,6 +1304,8 @@ impl State {
             (Mailbox::Unified, _) => "Inbox (unified)".to_owned(),
             (Mailbox::Folder(_), Some((account, folder, _, _))) => format!("{account} / {folder}"),
             (Mailbox::Folder(_), None) => String::new(),
+            (Mailbox::Drafts, _) => "Drafts".to_owned(),
+            (Mailbox::Outbox, _) => "Outbox".to_owned(),
         }
     }
 
@@ -1303,17 +1321,26 @@ impl State {
                 })
                 .unwrap_or(0),
             Mailbox::Folder(_) => self.current_folder().map_or(0, |(_, _, _, unread)| unread),
+            Mailbox::Drafts | Mailbox::Outbox => 0,
         }
     }
 
     /// In Sent and Drafts the interesting party is the recipient.
     pub fn shows_recipients(&self) -> bool {
-        self.current_folder()
-            .is_some_and(|(_, _, role, _)| matches!(role, FolderRole::Sent | FolderRole::Drafts))
+        matches!(self.mailbox, Mailbox::Drafts | Mailbox::Outbox)
+            || self.current_folder().is_some_and(|(_, _, role, _)| {
+                matches!(role, FolderRole::Sent | FolderRole::Drafts)
+            })
     }
 }
 
-fn sidebar_entries(accounts: &[AccountRow], folders: &[FolderRow]) -> Vec<SidebarEntry> {
+fn sidebar_entries(
+    accounts: &[AccountRow],
+    folders: &[FolderRow],
+    drafts: u32,
+    outbox: u32,
+    showing: Mailbox,
+) -> Vec<SidebarEntry> {
     if accounts.is_empty() {
         return Vec::new();
     }
@@ -1325,6 +1352,20 @@ fn sidebar_entries(accounts: &[AccountRow], folders: &[FolderRow]) -> Vec<Sideba
     let mut entries = vec![SidebarEntry::Unified {
         unread: unified_unread,
     }];
+    // Mail that lives only here: shown while there is any, and while it is
+    // what the list shows, so the cursor is never left on a missing row.
+    for (mailbox, name, count) in [
+        (Mailbox::Drafts, "Drafts", drafts),
+        (Mailbox::Outbox, "Outbox", outbox),
+    ] {
+        if count > 0 || showing == mailbox {
+            entries.push(SidebarEntry::Local {
+                mailbox,
+                name,
+                count,
+            });
+        }
+    }
     for (index, account) in accounts.iter().enumerate() {
         entries.push(SidebarEntry::Account {
             index,

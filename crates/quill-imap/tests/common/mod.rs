@@ -474,3 +474,174 @@ pub async fn fill(session: &mut Session<TcpStream>, folder: &str, count: usize) 
             .unwrap();
     }
 }
+
+/// A server without some of Dovecot's extensions: a relay in front of it
+/// that takes the named capabilities out of what Dovecot advertises and
+/// answers BAD to the commands they add, as a server that had never heard
+/// of them would. It keeps every command it is sent, so a test can see what
+/// the backend really did.
+pub struct Without {
+    /// Plaintext, like Dovecot's own port.
+    pub port: u16,
+    commands: Arc<std::sync::Mutex<Vec<String>>>,
+}
+
+impl Without {
+    /// `hidden` are capability names: `MOVE`, `UIDPLUS`.
+    pub async fn start(upstream: u16, hidden: &[&str]) -> Self {
+        let hidden: Arc<Vec<String>> =
+            Arc::new(hidden.iter().map(|name| name.to_uppercase()).collect());
+        let commands = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen = Arc::clone(&commands);
+        tokio::spawn(async move {
+            while let Ok((client, _)) = listener.accept().await {
+                let (hidden, seen) = (Arc::clone(&hidden), Arc::clone(&seen));
+                tokio::spawn(async move {
+                    let _ = relay(client, upstream, hidden, seen).await;
+                });
+            }
+        });
+        Self { port, commands }
+    }
+
+    /// Every command sent so far, without its tag, oldest first.
+    pub fn commands(&self) -> Vec<String> {
+        self.commands.lock().unwrap().clone()
+    }
+
+    /// Forgets the commands seen so far.
+    pub fn clear(&self) {
+        self.commands.lock().unwrap().clear();
+    }
+}
+
+/// The length of the literal a line announces at its end, if it does.
+fn literal_length(line: &[u8]) -> Option<usize> {
+    let line = line.strip_suffix(b"\r\n")?.strip_suffix(b"}")?;
+    let open = line.iter().rposition(|byte| *byte == b'{')?;
+    let digits = std::str::from_utf8(&line[open + 1..]).ok()?;
+    digits.strip_suffix('+').unwrap_or(digits).parse().ok()
+}
+
+/// Whether `command` is one that only a hidden extension provides.
+fn needs_hidden(command: &str, hidden: &[String]) -> bool {
+    let command = command.to_uppercase();
+    let has = |name: &str| hidden.iter().any(|hidden| hidden == name);
+    (has("MOVE") && (command.starts_with("UID MOVE ") || command.starts_with("MOVE ")))
+        || (has("UIDPLUS") && command.starts_with("UID EXPUNGE"))
+}
+
+/// Takes the hidden capabilities out of a line that lists capabilities, and
+/// with UIDPLUS hidden, the response codes only UIDPLUS adds.
+fn hide(line: Vec<u8>, hidden: &[String]) -> Vec<u8> {
+    let Ok(mut text) = String::from_utf8(line.clone()) else {
+        return line;
+    };
+    if text.contains("CAPABILITY") {
+        for name in hidden {
+            for (end, kept) in [(" ", " "), ("]", "]"), ("\r\n", "\r\n")] {
+                text = text.replace(&format!(" {name}{end}"), kept);
+            }
+        }
+    }
+    if hidden.iter().any(|name| name == "UIDPLUS") {
+        for code in ["[COPYUID ", "[APPENDUID "] {
+            if let Some(start) = text.find(code)
+                && let Some(length) = text[start..].find("] ")
+            {
+                text.replace_range(start..start + length + 2, "");
+            }
+        }
+    }
+    text.into_bytes()
+}
+
+/// One connection through a [`Without`].
+async fn relay(
+    client: TcpStream,
+    upstream: u16,
+    hidden: Arc<Vec<String>>,
+    seen: Arc<std::sync::Mutex<Vec<String>>>,
+) -> std::io::Result<()> {
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+    let server = TcpStream::connect(("127.0.0.1", upstream)).await?;
+    let (client_read, client_write) = client.into_split();
+    let (server_read, mut server_write) = server.into_split();
+    let client_write = Arc::new(tokio::sync::Mutex::new(client_write));
+    // How the server answered each line: `true` when it asked for a literal,
+    // `false` when it ended the command.
+    let (answered, mut answers) = tokio::sync::mpsc::unbounded_channel::<bool>();
+
+    let to_client = Arc::clone(&client_write);
+    let server_hidden = Arc::clone(&hidden);
+    let down = tokio::spawn(async move {
+        let mut server = BufReader::new(server_read);
+        // False while inside a response that a literal has interrupted.
+        let mut fresh = true;
+        loop {
+            let mut line = Vec::new();
+            if server.read_until(b'\n', &mut line).await? == 0 {
+                return std::io::Result::Ok(());
+            }
+            let literal = literal_length(&line);
+            if fresh {
+                if line.starts_with(b"+") {
+                    let _ = answered.send(true);
+                } else if !line.starts_with(b"*") {
+                    let _ = answered.send(false);
+                }
+                line = hide(line, &server_hidden);
+            }
+            let mut client = to_client.lock().await;
+            client.write_all(&line).await?;
+            if let Some(length) = literal {
+                let mut bytes = vec![0; length];
+                server.read_exact(&mut bytes).await?;
+                client.write_all(&bytes).await?;
+            }
+            fresh = literal.is_none();
+        }
+    });
+
+    let mut client = BufReader::new(client_read);
+    loop {
+        let mut line = Vec::new();
+        if client.read_until(b'\n', &mut line).await? == 0 {
+            break;
+        }
+        let text = String::from_utf8_lossy(&line).trim_end().to_owned();
+        let (tag, command) = text.split_once(' ').unwrap_or((&text, ""));
+        seen.lock().unwrap().push(command.to_owned());
+        if needs_hidden(command, &hidden) {
+            client_write
+                .lock()
+                .await
+                .write_all(format!("{tag} BAD Unknown command\r\n").as_bytes())
+                .await?;
+            continue;
+        }
+        // Answers to earlier commands are of no interest any more.
+        while answers.try_recv().is_ok() {}
+        server_write.write_all(&line).await?;
+        // The client sends a literal, and the line after it, only once the
+        // server has asked. If the server ends the command instead, what
+        // comes next is a new command.
+        let mut literal = literal_length(&line);
+        while let Some(length) = literal {
+            if answers.recv().await != Some(true) {
+                break;
+            }
+            let mut bytes = vec![0; length];
+            client.read_exact(&mut bytes).await?;
+            server_write.write_all(&bytes).await?;
+            let mut rest = Vec::new();
+            client.read_until(b'\n', &mut rest).await?;
+            server_write.write_all(&rest).await?;
+            literal = literal_length(&rest);
+        }
+    }
+    down.abort();
+    Ok(())
+}

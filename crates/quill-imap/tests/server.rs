@@ -518,10 +518,7 @@ async fn flags_are_set_and_cleared_on_the_server_without_touching_other_keywords
         draft: false,
     };
     backend
-        .apply(&Operation::SetFlags {
-            id: id.clone(),
-            flags: wanted,
-        })
+        .apply(&Operation::SetFlags { id, flags: wanted })
         .await
         .unwrap();
     let after = backend
@@ -541,12 +538,6 @@ async fn flags_are_set_and_cleared_on_the_server_without_touching_other_keywords
         .unwrap();
     let flags = format!("{:?}", fetches[0].flags().collect::<Vec<_>>());
     assert!(flags.contains("$Important"), "{flags}");
-
-    // Moving and deleting are refused for now, not silently dropped.
-    assert!(matches!(
-        backend.apply(&Operation::Delete { id }).await,
-        Err(Error::Unsupported(_))
-    ));
 }
 
 #[tokio::test]

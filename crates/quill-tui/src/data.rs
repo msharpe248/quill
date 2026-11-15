@@ -8,7 +8,7 @@ use std::sync::mpsc;
 use std::thread;
 
 use quill_core::types::{Flags, FolderRole, LocalFolderId, LocalMessageId};
-use quill_store::{AccountRow, FolderRow, Mailbox, MessageRow, Store};
+use quill_store::{AccountRow, DraftId, DraftState, FolderRow, Mailbox, MessageRow, Store};
 use tokio::sync::mpsc::UnboundedSender;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +42,10 @@ pub enum DataEvent {
     SidebarLoaded {
         accounts: Vec<AccountRow>,
         folders: Vec<FolderRow>,
+        /// How many drafts are being written, and how much mail is on its
+        /// way out or was refused.
+        drafts: u32,
+        outbox: u32,
     },
     MessagesLoaded {
         mailbox: Mailbox,
@@ -107,11 +111,41 @@ fn run(store: &mut Store, request: DataRequest) -> quill_store::Result<Vec<DataE
         DataRequest::LoadSidebar => vec![DataEvent::SidebarLoaded {
             accounts: store.accounts()?,
             folders: store.folders()?,
+            drafts: u32::try_from(store.drafts()?.len()).unwrap_or(u32::MAX),
+            outbox: u32::try_from(store.outbox()?.len()).unwrap_or(u32::MAX),
         }],
         DataRequest::LoadMessages(mailbox) => vec![DataEvent::MessagesLoaded {
             mailbox,
             rows: store.messages(mailbox)?,
         }],
+        DataRequest::LoadBody(id) if DraftId::from_message_id(id).is_some() => {
+            // A draft's body is what has been written so far. Mail a server
+            // refused says why above it.
+            let body = DraftId::from_message_id(id)
+                .map(|draft| store.draft(draft))
+                .transpose()?
+                .flatten()
+                .map(|draft| {
+                    let mut text = String::new();
+                    match (draft.state, &draft.error) {
+                        (DraftState::Failed, Some(error)) => {
+                            text.push_str(&format!("Not sent: {error}\n\n"));
+                        }
+                        (DraftState::Outbox, Some(error)) => {
+                            text.push_str(&format!("Will be tried again. Last time: {error}\n\n"));
+                        }
+                        _ => {}
+                    }
+                    text.push_str(&draft.content.body);
+                    LoadedBody {
+                        text,
+                        html: None,
+                        html_first: false,
+                        has_plain: true,
+                    }
+                });
+            vec![DataEvent::BodyLoaded { id, body }]
+        }
         DataRequest::LoadBody(id) => {
             let body = store.body(id)?.map(|text| {
                 // The HTML is read from the message as it arrived. If that
@@ -148,6 +182,19 @@ fn run(store: &mut Store, request: DataRequest) -> quill_store::Result<Vec<DataE
                 "This account has no archive folder to move the message to.".to_owned(),
             )],
         },
+        DataRequest::Delete(id) if DraftId::from_message_id(id).is_some() => {
+            let removed = match DraftId::from_message_id(id) {
+                Some(draft) => store.delete_draft(draft)?,
+                None => false,
+            };
+            if removed {
+                vec![DataEvent::StoreChanged, flash("Thrown away.")]
+            } else {
+                vec![flash(
+                    "It is being sent right now and cannot be thrown away.",
+                )]
+            }
+        }
         DataRequest::Delete(id) => {
             let trash = folder_with_role(store, id, FolderRole::Trash)?;
             let already_there = store
@@ -356,7 +403,11 @@ mod tests {
     fn loads_answer_with_the_matching_event() {
         let (mut store, mailbox, id) = store_with_one_message();
         match handle(&mut store, DataRequest::LoadSidebar).as_slice() {
-            [DataEvent::SidebarLoaded { accounts, folders }] => {
+            [
+                DataEvent::SidebarLoaded {
+                    accounts, folders, ..
+                },
+            ] => {
                 assert_eq!(accounts.len(), 1);
                 assert_eq!(folders[0].unread, 1);
             }
