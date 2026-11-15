@@ -343,6 +343,25 @@ Not verified, because it needs the owner: sending through a real provider. Not b
 - **`ammonia` 4.2.5 (MIT/Apache-2.0) sanitizes HTML** before it reaches the web view or a browser, as the spec names it. It brings `cssparser` and `dtoa-short`, which are MPL-2.0. The licence list in `deny.toml` is unchanged; those two crates are allowed by name. MPL-2.0 is file-level: Quill uses both unmodified, their source is public, and nothing in it reaches Quill's own files. It is compatible with selling the app and with any licence the open-source question in the spec might settle on.
 - **`image` 0.25.10 (MIT/Apache-2.0) decodes PNG, JPEG, GIF and WebP** for inline pictures, with only those four formats switched on. HEIC, PDF pages and video frames are pictured by the shell (`thumbnail.make`), which has the system's decoders.
 
+## M5, OAuth and Microsoft Graph (in progress)
+
+### Microsoft Graph
+
+Built and tested against a local stand-in (`wiremock` on 127.0.0.1) only. Nothing here has met a real mailbox: the owner's accounts are not touched while they are away. What is believed about the service but not confirmed is listed last.
+
+- **`GraphBackend` is both the backend and the sender**, over `reqwest` with Quill's own TLS settings and HTTP/1.1. `new` takes `https` only. `loopback` is the test door: plain http, and only to a loopback address written as a number.
+- **No redirect is followed, and a cursor or next-page link is followed only back to the same scheme, host and port** as the service address. A stored cursor that fails this starts a fresh sync; a foreign link in an answer is an error. Either would otherwise carry the token to a server nobody chose.
+- **The token is asked for before every attempt** and never kept by the crate; the `TokenSource` caches. A 401 invalidates it and tries once more, then is an authentication failure. A 403 is a refusal of that one thing, not of the account: the engine holds an account's whole queue on an authentication failure, and a 403 can be about one message.
+- **Throttling waits as told.** 429 and 503 wait for `Retry-After` (2, 4, 8 seconds without one) and try up to three more times; told to wait more than a minute, it gives up for now and the engine's own retry takes over. 504 is not retried here, since a send may have gone through.
+- **Sync is the delta query per folder**, cursor and all. Graph does not say whether an entry is new or changed, so everything not removed is reported as added and the store's upsert sorts it out. An entry that came without its read state is fetched again before being reported. An expired cursor (410, or `SyncStateNotFound`) starts again in the same call.
+- **Ids are immutable ids** (`Prefer: IdType="ImmutableId"`), so a move does not rename a message behind the store's back.
+- **Setting marks reads first and writes only what differs.** A blind write would reset Outlook's follow-up dates on every mark-read and turn a completed flag back into none. Draft and answered are never written.
+- **Sending posts the raw message to `sendMail`** exactly as built, Bcc header included, on the belief that the service delivers to it and strips it. Before sending, every envelope recipient must appear in the message's own To, Cc or Bcc, or nothing is sent: Graph takes recipients from the message, and an envelope that disagreed would silently send to the wrong set. A 4xx is a refusal; a 5xx leaves the outcome unknown and says so.
+- **The service keeps the sent copy itself** (`SAVES_SENT_COPY`), so the engine does not append one. Saving to a folder is supported for drafts only: Graph files any message made from MIME as an unsent draft.
+- **No push.** Graph's notifications need a public web address to call. These accounts are polled.
+- **Not built:** the answered mark (sync always reports it unset, and the next delta for a message clears the local one), server search, conversation threads, certificate prompts or pinning for Graph.
+- **Believed, to check first with the owner's account:** that Bcc in a MIME `sendMail` is honoured and stripped; the size limit for a MIME send (about 4 MB is remembered, nothing is enforced here, a 413 is a refusal); that `$orderby=receivedDateTime desc` is accepted on `messages/delta`; that `DELETE` on a message is a soft delete; that a flag write with only the status leaves its dates alone.
+
 ## M7, POP3 (the protocol crate; the rest of the milestone follows M6)
 
 - **`quill-pop3` is a small in-house client**, as the spec says: CAPA, STLS, USER/PASS (AUTH PLAIN where that is all a server offers), STAT, UIDL, LIST, TOP, RETR, DELE, with pipelining when advertised. Built ahead of its milestone because it stands alone.
