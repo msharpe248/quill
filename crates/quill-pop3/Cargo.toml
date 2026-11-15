@@ -1,0 +1,29 @@
+[package]
+name = "quill-pop3"
+description = "Quill's POP3 backend"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+quill-core.workspace = true
+quill-mime.workspace = true
+quill-net.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+bytes.workspace = true
+flate2.workspace = true
+tokio = { workspace = true, features = ["net", "io-util", "sync", "time"] }
+
+[dev-dependencies]
+rcgen.workspace = true
+rustls.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+time.workspace = true
+tokio = { workspace = true, features = ["net", "io-util", "sync", "time", "rt-multi-thread", "macros"] }
+tokio-rustls.workspace = true

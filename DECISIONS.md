@@ -258,3 +258,29 @@ The UI stayed usable throughout, which is the acceptance. This was a server on t
 - **If the connection drops after the whole message was handed over, the server may have taken it.** That is reported as a connection failure, and a retry can deliver twice. `Message-ID` is what lets a server or reader discard the copy.
 - **Not built**: a client certificate, pipelining, and SCRAM channel binding.
 - **Tested against a scripted server inside the tests**, since no SMTP server is installed and none may be: all three TLS modes, each mechanism (SCRAM against the RFC 7677 vectors), certificates that are expired, misnamed, self-signed and pinned, size limits, refused recipients, 4xx and 5xx.
+
+### The queue, undo and the outbox
+
+- **Every change to mail on a server is made in the store first and replayed from a queue**, as the spec asks: moves, permanent deletions, flag changes and sent copies. Each account's queue runs strictly in the order made.
+- **A moved message keeps its row and its body.** The row changes folder and carries a placeholder server id until the server says what the message is called there (IMAP's COPYUID). If the server does not say, the local copy is dropped and the next sync brings the message back under its new id; keeping it would show the message twice.
+- **`Backend` gained `move_message` and `append`**, both with default bodies, beside the spec's `apply`. `apply` returns nothing, and without the new id a moved message would have to be downloaded again.
+- **Undo is a ten-second hold, not a reversal.** A move or deletion is not sent to the server for ten seconds; `U` within that time takes it back and the server never hears of it. After that the change is the server's. The spec's wording is "undoable for 10 seconds instead of asking for confirmation".
+- **`d` moves to the trash; from the trash it deletes for good.** A permanent deletion hides the message at once and removes it when the server confirms. An account with no trash folder deletes for good directly.
+- **A sync that runs before the server has heard of a change does not undo it**: a message moved away is not re-listed in its old folder, a renumbered folder keeps messages moved into it, and flags changed here win over the server's until they have been sent.
+- **A change the server refuses is taken back with a notice**, along with any later change built on it (a second move of the same message). A change that cannot be sent because the server is unreachable, busy, or refusing sign-in keeps its place and is retried, doubling the wait from 30 seconds to half an hour.
+- **Sending builds the message once**, files it among the blobs and records who it goes to. Every attempt sends those same bytes under the same Message-ID.
+- **A send interrupted by a crash is never repeated automatically.** Whether the server took it is not known, and the spec says a replay must not duplicate a send, so it is held in the outbox marked as such for the user to check Sent and decide.
+- **After a send**, the copy is saved to the account's Sent folder unless the server keeps its own (Gmail's SMTP does), and the message replied to is marked answered. Both go through the queue.
+- **Contacts for completing addresses come from message headers as they sync**: senders of received mail, and with five times the weight the recipients of mail in Sent. People the user writes to should come before a newsletter that writes every week.
+- **Not built yet**: syncing drafts to the server's Drafts folder (drafts are local), sending to the accepted recipients after some were refused, and send later.
+
+## M7, POP3 (the protocol crate; the rest of the milestone follows M6)
+
+- **`quill-pop3` is a small in-house client**, as the spec says: CAPA, STLS, USER/PASS (AUTH PLAIN where that is all a server offers), STAT, UIDL, LIST, TOP, RETR, DELE, with pipelining when advertised. Built ahead of its milestone because it stands alone.
+- **A message's id is its UIDL**, which stays the same between sessions where message numbers do not. A server without UIDL is not supported and says so.
+- **The sync cursor is the list of UIDLs already seen**: sorted, prefix-compressed, deflated (`flate2` 1.1.11, MIT/Apache-2.0, already in the tree) and base64. Full ids, not hashes, so a removed message can be named exactly. 50,000 Dovecot-style ids take 5 KB; 50,000 random 32-character ids take about 1 MB, which is as small as full ids get. An unreadable cursor is treated as none: everything is listed again and nothing is reported removed.
+- **Every call is one short session**: sign in, work, QUIT. POP3 locks the mailbox while a session is open.
+- **Deleting commits only on a clean QUIT**, and a message already gone counts as deleted, so a replay is safe. The sync itself never deletes. Leave-on-server policies are the sync engine's to apply and are not built yet.
+- **Headers come from TOP**, or from RETR for a server or a message TOP is refused for.
+- **Flags, folders, moves and saved copies are unsupported** by the backend and say so; the engine will keep them locally for these accounts when the milestone is finished.
+- **Tested against Dovecot's POP3 service and a scripted server**, including the spec's acceptance: repeated polls with deliveries and deletions in between never duplicate or lose a message.
