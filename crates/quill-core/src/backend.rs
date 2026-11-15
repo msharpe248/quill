@@ -7,7 +7,8 @@ use tokio::sync::mpsc;
 
 use crate::Result;
 use crate::types::{
-    Capabilities, FolderId, Operation, RemoteEvent, RemoteFolder, RemoteId, SyncCursor, SyncDelta,
+    Capabilities, Flags, FolderId, Operation, RemoteEvent, RemoteFolder, RemoteId, SyncCursor,
+    SyncDelta,
 };
 
 /// Who a message is from and to on the wire. Not the same as its headers:
@@ -56,4 +57,36 @@ pub trait Backend: Send + Sync {
 
     /// IDLE, polling, or a no-op that returns at once.
     async fn watch(&self, tx: mpsc::Sender<RemoteEvent>) -> Result<()>;
+
+    /// Moves a message to another folder and says what it is called there,
+    /// when the server tells: with that the local copy can keep its body
+    /// and simply take the new id. `None` means the move worked and the
+    /// new id is not known; the next sync of the folder will find it.
+    ///
+    /// Moving a message that is no longer in its folder is `Ok(None)`, not
+    /// an error: a replay after a crash must not fail because the first
+    /// attempt had already worked.
+    async fn move_message(&self, id: &RemoteId, to: &FolderId) -> Result<Option<RemoteId>> {
+        self.apply(&Operation::Move {
+            id: id.clone(),
+            to: to.clone(),
+        })
+        .await
+        .map(|()| None)
+    }
+
+    /// Saves a complete message into a folder, as a sent copy or a draft,
+    /// and says what it is called there when the server tells.
+    async fn append(
+        &self,
+        folder: &FolderId,
+        raw: &[u8],
+        flags: Flags,
+    ) -> Result<Option<RemoteId>> {
+        let _ = (raw, flags);
+        Err(crate::Error::Unsupported(format!(
+            "messages cannot be saved into {}",
+            folder.0
+        )))
+    }
 }
