@@ -9,5 +9,5 @@ pub mod fixture;
 pub mod links;
 pub mod types;
 
-pub use backend::Backend;
-pub use error::{CertificateProblem, Error, Result};
+pub use backend::{Backend, Envelope, Sender};
+pub use error::{CertificateProblem, Error, RefusedRecipient, Result};

@@ -27,6 +27,30 @@ pub enum Error {
     /// The backend cannot do this.
     #[error("not supported: {0}")]
     Unsupported(String),
+    /// The server could not take the message just now (an SMTP 4xx reply,
+    /// throttling). Nothing was sent. Keep the message and try again later.
+    #[error("the server is not accepting mail right now: {0}")]
+    Temporary(String),
+    /// The server refused the message for good (an SMTP 5xx reply). Nothing
+    /// was sent. Keep the message and show the server's words.
+    #[error("the server refused the message: {0}")]
+    Refused(String),
+    /// The server refused some of the recipients. Nothing was sent to
+    /// anyone: a message goes to everyone it is addressed to or to no one,
+    /// unless the user says otherwise.
+    #[error("the server refused {} of the recipients", .0.len())]
+    Recipients(Vec<RefusedRecipient>),
+    /// The message is larger than the server takes. Known before any of it
+    /// was uploaded.
+    #[error("the message is {size} bytes and the server accepts at most {limit}")]
+    TooLarge { size: u64, limit: u64 },
+}
+
+/// One address a server would not deliver to, and what it said.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefusedRecipient {
+    pub address: String,
+    pub reason: String,
 }
 
 /// A certificate the client would not trust, for the user to judge.
