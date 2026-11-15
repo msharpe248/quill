@@ -115,7 +115,21 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
         }
     }
 
-    if state.links.is_some() || state.folders.is_some() || state.attachments.is_some() {
+    if state.palette.is_some() {
+        // The palette keeps its size as typing narrows it, so the box does
+        // not jump about: a line to type on and up to fifteen below it.
+        let palette_width = width.saturating_sub(4).min(64);
+        let palette_height = 18
+            .min(body_height.saturating_sub(2))
+            .max(3)
+            .min(body_height);
+        areas.links = Some(Rect::new(
+            (width - palette_width) / 2,
+            (body_height - palette_height) / 3,
+            palette_width,
+            palette_height,
+        ));
+    } else if state.links.is_some() || state.folders.is_some() || state.attachments.is_some() {
         // As tall as what it lists, as far as the screen allows. The folder
         // picker has a line to type on above its list, and keeps its
         // height as typing narrows it, so the box does not jump about.

@@ -23,6 +23,7 @@ use crate::input::LineInput;
 use crate::keymap::{Key, KeyChord, Keymap, Mods, Resolution};
 use crate::layout::{self, LayoutMode};
 use crate::outgoing::{Handed, Response, SendRequest};
+use crate::palette::{self, Item, Palette, What};
 use crate::setup::{AccountEvent, AccountRequest, CertificatePrompt, Outcome, Setup};
 use crate::theme::Styles;
 use crate::{text, view};
@@ -509,6 +510,7 @@ pub struct State {
     pub links: Option<LinkPicker>,
     pub attachments: Option<AttachmentPicker>,
     pub search: Option<Search>,
+    pub palette: Option<Palette>,
     pub folders: Option<FolderPicker>,
     /// The message being written, in the reader's place.
     pub compose: Option<Compose>,
@@ -556,6 +558,7 @@ impl State {
             links: None,
             attachments: None,
             search: None,
+            palette: None,
             folders: None,
             compose: None,
             compose_pending: None,
@@ -593,6 +596,9 @@ impl State {
         }
         if self.setup.is_some() {
             return Context::Setup;
+        }
+        if self.palette.is_some() {
+            return Context::Palette;
         }
         if self.links.is_some() {
             return Context::Links;
@@ -669,6 +675,13 @@ impl State {
                     if let Some(picker) = &mut self.folders {
                         picker.filter.insert(&text);
                         picker.selected = 0;
+                    }
+                }
+                Context::Palette => {
+                    if let Some(palette) = &mut self.palette {
+                        palette.input.insert(&text.replace(['\r', '\n'], " "));
+                        palette.selected = 0;
+                        palette.offset = 0;
                     }
                 }
                 Context::Search => {
@@ -772,6 +785,16 @@ impl State {
                     return;
                 }
             }
+            Context::Palette => {
+                if let Some(palette) = &mut self.palette
+                    && palette.input.key(chord)
+                {
+                    // A narrower list starts again from its top.
+                    palette.selected = 0;
+                    palette.offset = 0;
+                    return;
+                }
+            }
             Context::Search => {
                 let before = self.search_text();
                 if let Some(search) = &mut self.search
@@ -865,6 +888,30 @@ impl State {
             CommandId::NavBottom => self.navigate(env, Motion::Bottom, out),
             CommandId::NavPageDown => self.navigate(env, Motion::PageDown, out),
             CommandId::NavPageUp => self.navigate(env, Motion::PageUp, out),
+            CommandId::NavOpen if context == Context::Palette => {
+                let chosen = self
+                    .palette
+                    .as_ref()
+                    .and_then(|palette| self.palette_items(env).into_iter().nth(palette.selected));
+                self.palette = None;
+                match chosen.map(|item| item.what) {
+                    // Run where the palette was opened, as its key would.
+                    Some(What::Command(id)) => self.run(env, id, out),
+                    Some(What::Mailbox(mailbox)) => {
+                        self.show_mailbox(mailbox, out);
+                        if let Some(index) = self
+                            .sidebar
+                            .entries
+                            .iter()
+                            .position(|entry| entry.mailbox() == Some(mailbox))
+                        {
+                            self.sidebar.selected = index;
+                        }
+                        self.set_focus(Pane::List);
+                    }
+                    None => {}
+                }
+            }
             CommandId::NavOpen if context == Context::Links => self.open_selected_link(out),
             CommandId::NavOpen if context == Context::Search => {
                 // To the results, if there are any to go to.
@@ -996,6 +1043,22 @@ impl State {
                 }
             }
             CommandId::MessageOpenLink => self.links = Some(LinkPicker::default()),
+            CommandId::PaletteOpen => {
+                // What applies here, decided before the palette takes over.
+                let commands = env
+                    .registry
+                    .specs()
+                    .iter()
+                    .map(|spec| spec.id)
+                    .filter(|id| *id != CommandId::PaletteOpen && self.is_enabled(env, *id))
+                    .collect();
+                self.palette = Some(Palette {
+                    input: LineInput::default(),
+                    selected: 0,
+                    offset: 0,
+                    commands,
+                });
+            }
             CommandId::SearchStart => {
                 // Again, to change what is being searched for.
                 match &mut self.search {
@@ -1048,6 +1111,7 @@ impl State {
             return false;
         }
         match id {
+            CommandId::NavOpen if context == Context::Palette => true,
             CommandId::NavOpen if context == Context::Links => !self.reader.links.is_empty(),
             CommandId::NavOpen if context == Context::Attachments => {
                 self.chosen_attachment().is_some()
@@ -1104,6 +1168,7 @@ impl State {
             }
             CommandId::NavBack => {
                 self.help.is_some()
+                    || self.palette.is_some()
                     || self.search.is_some()
                     || self.links.is_some()
                     || self.attachments.is_some()
@@ -1173,6 +1238,19 @@ impl State {
             let page = areas.links.map_or(1, layout::inner_height).max(1);
             picker.selected = step(picker.selected, self.reader.links.len(), motion, page);
             picker.typed.clear();
+            return;
+        }
+        if let Some(palette) = &self.palette {
+            let count = self.palette_items(env).len();
+            let page = areas
+                .links
+                .map_or(1, layout::inner_height)
+                .saturating_sub(1)
+                .max(1);
+            let selected = step(palette.selected, count, motion, page);
+            if let Some(palette) = &mut self.palette {
+                palette.selected = selected;
+            }
             return;
         }
         if let Some(picker) = &mut self.attachments {
@@ -1289,6 +1367,8 @@ impl State {
     fn back(&mut self, out: &mut Effects) {
         if self.help.is_some() {
             self.help = None;
+        } else if self.palette.is_some() {
+            self.palette = None;
         } else if !self.certificates.is_empty() {
             // Not answering is rejecting: nothing is sent to that server.
             self.certificates.pop_front();
@@ -1357,6 +1437,48 @@ impl State {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// Everything the open palette offers for what has been typed, best
+    /// match first: the commands that applied where it was opened, then
+    /// the mailboxes to go to.
+    pub fn palette_items(&self, env: &Env) -> Vec<Item> {
+        let Some(palette) = &self.palette else {
+            return Vec::new();
+        };
+        let mut items: Vec<Item> = palette
+            .commands
+            .iter()
+            .filter_map(|id| env.registry.get(*id))
+            // Moving about is done with the keys, not looked up.
+            .filter(|spec| spec.category != crate::command::Category::Navigation)
+            .map(|spec| Item {
+                what: What::Command(spec.id),
+                title: spec.title.to_owned(),
+                keys: env
+                    .hint_key(spec.id)
+                    .map_or_else(String::new, ToString::to_string),
+            })
+            .collect();
+        items.extend(self.sidebar.entries.iter().filter_map(|entry| {
+            let title = match entry {
+                SidebarEntry::Unified { .. } => "Go to Inbox (unified)".to_owned(),
+                SidebarEntry::Local { name, .. } => format!("Go to {name}"),
+                SidebarEntry::Folder { account, name, .. } => format!(
+                    "Go to {} / {name}",
+                    self.accounts
+                        .get(*account)
+                        .map_or("", |account| account.name.as_str())
+                ),
+                SidebarEntry::Account { .. } => return None,
+            };
+            Some(Item {
+                what: What::Mailbox(entry.mailbox()?),
+                title,
+                keys: String::new(),
+            })
+        }));
+        palette::matching(palette.input.text(), items)
     }
 
     /// The message in the reader and the file the attachment list's cursor
@@ -2104,6 +2226,23 @@ impl State {
         }
         if self.reader.links.is_empty() {
             self.links = None;
+        }
+        if let Some(palette) = &self.palette {
+            let count = self.palette_items(env).len();
+            let selected = palette.selected.min(count.saturating_sub(1));
+            let rect = layout::compute(self, self.size, env.reader_width).links;
+            if let Some(palette) = &mut self.palette {
+                palette.selected = selected;
+                if let Some(rect) = rect {
+                    keep_visible(
+                        &mut palette.offset,
+                        selected,
+                        // One row of the box is the line being typed.
+                        layout::inner_height(rect).saturating_sub(1),
+                        count,
+                    );
+                }
+            }
         }
         let files = self.reader.files().len();
         if files == 0 {

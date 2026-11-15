@@ -6,6 +6,7 @@ mod folders;
 pub mod help;
 mod links;
 mod list;
+mod palette;
 mod reader;
 mod setup;
 mod sidebar;
@@ -97,7 +98,9 @@ pub fn render(frame: &mut Frame, state: &State, env: &Env) -> Overlays {
     status::render(frame, areas.status, state, env);
     if let Some(rect) = areas.links {
         clear(frame, rect, &env.styles);
-        if state.folders.is_some() {
+        if state.palette.is_some() {
+            palette::render(frame, rect, state, env);
+        } else if state.folders.is_some() {
             folders::render(frame, rect, state, env);
         } else if state.attachments.is_some() {
             attachments::render(frame, rect, state, env);

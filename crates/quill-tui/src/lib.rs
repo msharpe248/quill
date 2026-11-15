@@ -21,6 +21,7 @@ pub mod input;
 pub mod keymap;
 pub mod layout;
 pub mod outgoing;
+pub mod palette;
 pub mod setup;
 pub mod state;
 pub mod terminal;

@@ -23,6 +23,8 @@ pub enum Context {
     Compose,
     /// Typing what to search for. The list shows what is found so far.
     Search,
+    /// The command palette: typing narrows what it offers.
+    Palette,
 }
 
 impl Context {
@@ -39,6 +41,7 @@ impl Context {
             Self::Folders => "Move to a folder",
             Self::Compose => "Writing a message",
             Self::Search => "Search",
+            Self::Palette => "Command palette",
         }
     }
 }
@@ -56,6 +59,7 @@ const EVERYWHERE: &[Context] = &[
     Context::Folders,
     Context::Compose,
     Context::Search,
+    Context::Palette,
 ];
 /// The panes, and the form whose fields `tab` moves between.
 const PANES_AND_FORMS: &[Context] = &[
@@ -102,6 +106,7 @@ pub enum CommandId {
     MessageDelete,
     MessageMove,
     SearchStart,
+    PaletteOpen,
     MessageAttachments,
     AttachmentSave,
     AttachmentOpen,
@@ -268,6 +273,7 @@ impl Registry {
                         Context::Setup,
                         Context::Folders,
                         Context::Search,
+                        Context::Palette,
                     ],
                 ),
                 // Before nav.back, so that a key bound to both quits from a
@@ -421,6 +427,14 @@ impl Registry {
                         PANES,
                     ),
                     "magnifyingglass",
+                ),
+                spec(
+                    PaletteOpen,
+                    "palette.open",
+                    "Command palette",
+                    General,
+                    Some(Menu::View),
+                    PANES,
                 ),
                 spec(
                     MessageAttachments,
@@ -664,6 +678,11 @@ pub fn hints(context: Context) -> &'static [Hint] {
         hint(&[NavOpen], "to the results"),
         hint(&[NavBack], "stop searching"),
     ];
+    const PALETTE: &[Hint] = &[
+        hint(&[NavNext, NavPrev], "move"),
+        hint(&[NavOpen], "run"),
+        hint(&[NavBack], "close"),
+    ];
     const LINKS: &[Hint] = &[
         hint(&[NavNext, NavPrev], "move"),
         hint(&[NavOpen], "open in browser"),
@@ -690,6 +709,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         Context::Certificate => CERTIFICATE,
         Context::Links => LINKS,
         Context::Search => SEARCHING,
+        Context::Palette => PALETTE,
         Context::Attachments => ATTACHED,
         Context::Sidebar => SIDEBAR,
         Context::List => LIST,

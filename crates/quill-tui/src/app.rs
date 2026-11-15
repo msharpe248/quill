@@ -370,6 +370,7 @@ impl Io<'_> {
                 Context::Folders => bridge::Context::Folders,
                 Context::Compose => bridge::Context::Compose,
                 Context::Search => bridge::Context::Search,
+                Context::Palette => bridge::Context::Palette,
             },
             enabled: current
                 .enabled

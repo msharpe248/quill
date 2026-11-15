@@ -1,0 +1,64 @@
+---
+source: crates/quill-tui/tests/palette.rs
+expression: harness.screen()
+---
+┌ [1] Accounts ────────────┐┏ [2] Inbox (unified) - 12 unread ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓┌ [3] Reader ──────────────────────────────────────────────────── unread, attachment ┐
+│> Unified              12 │┃> * @ W Ana Ruiz              Q4 roadmap                                       09:14┃│ From:    Ana Ruiz <ana.ruiz@example.com>                                           │
+│  Work                    │┃      W Build Bot             [quill] PR #42 passed                            08:51┃│ To:      Robin Vale <robin@example.com>                                            │
+│    Inbox               8 │┃  *   P Peter Vale            Sunday dinner                                    08:35┃│ Date:    Sat 14 Nov 2026 09:14                                                     │
+│    Drafts                │┃  *   P Maya Okafor           Trail run Saturday                               04:30┃│ Subject: Q4 roadmap                                                                │
+│    Sent                  │┃  * @ W Sam Lee               Photos from Sat                                    Fri┃│ Attach:  roadmap.pdf (937 bytes)  (a lists them)                                   │
+│    Archive               │┃  *   P Riverside Library     Your hold is ready                                 Fri┃│                                                                                    │
+│    Trash                 │┃  *   W Priya Nair            Re: Offsite agenda                                 Fri┃│ Hi Robin,                                                                          │
+│  Personal                │┃  *!@ W Tomás Ortega          Invoice 2026-114                                   Thu┃│                                                                                    │
+│    Inbox               4 │┃      P Jo Park               Re: Book club pick                                 Thu┃│ Here is the draft roadmap for Q4. The short version: we ship the sync rewrite in   │
+│    Drafts                │┃  *   W 陈静 Chen Jing        Design review notes 设计评审                       Wed┃│ October, spend November on search, and keep December for whatever the first two    │
+│    Sent                  │┃      W IT Helpdesk           Scheduled maintenance Sunday                       Tue┃│ months break.                                                                      │
+│    Archive               │┃  *   W Lena Fischer          Lunch on Thursday?                                 Mon┃│                                                                                    │
+│    Trash                 │┃  *   P Hillcrest Dental      Appointme┏ Commands ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ould like your eyes on before Thursday:                            │
+│                          │┃  *!@ W Omar Haddad           Re: Contr┃ : re                                                         ┃                                                                   │
+│                          │┃  *   W The Weekly Parser     Issue 88:┃ > Reply                                                    r ┃lestone assumes the index format is settled. Is it?                │
+│                          │┃   !@ P Maya Okafor           Recipe yo┃   Reply to all                                             R ┃led in two weeks for the offline queue. Tell me if that is         │
+│                          │┃      W Ana Ruiz              Welcome t┃   Focus the reader                                         3 ┃                                                                   │
+│                          │┃                                       ┃   Focus the previous pane or field                 shift-tab ┃ota over the holidays is still empty.                              │
+│                          │┃                                       ┃   Archive                                                  e ┃                                                                   │
+│                          │┃                                       ┃   Go to Work / Sent                                          ┃detail, including the dependency chart you asked for. Comments in  │
+│                          │┃                                       ┃   Mark read or unread                                      u ┃ply, whichever is easier.                                          │
+│                          │┃                                       ┃   Write a new message                                      c ┃                                                                   │
+│                          │┃                                       ┃   Go to Work / Archive                                       ┃                                                                   │
+│                          │┃                                       ┃   Help for this context                                    ? ┃                                                                   │
+│                          │┃                                       ┃   Go to Personal / Sent                                      ┃                                                                   │
+│                          │┃                                       ┃   Go to Personal / Archive                                   ┃                                                                   │
+│                          │┃                                       ┃   Focus the next pane or field                           tab ┃                                                                   │
+│                          │┃                                       ┃   Undo the last move, deletion or send                     U ┃ Corp                                                              │
+│                          │┃                                       ┃                                                              ┃                                                                   │
+│                          │┃                                       ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛                                                                   │
+│                          │┃                                                                                    ┃│                                                                                    │
+│                          │┃                                                                                    ┃│                                                                                    │
+│                          │┃                                                                                    ┃│                                                                                    │
+│                          │┃                                                                                    ┃│                                                                                    │
+│                          │┃                                                                                    ┃│                                                                                    │
+│                          │┃                                                                                    ┃│                                                                                    │
+│                          │┃                                                                                    ┃│                                                                                    │
+│                          │┃                                                                                    ┃│                                                                                    │
+│                          │┃                                                                                    ┃│                                                                                    │
+│                          │┃                                                                                    ┃│                                                                                    │
+│                          │┃                                                                                    ┃│                                                                                    │
+│                          │┃                                                                                    ┃│                                                                                    │
+│                          │┃                                                                                    ┃│                                                                                    │
+│                          │┃                                                                                    ┃│                                                                                    │
+│                          │┃                                                                                    ┃│                                                                                    │
+│                          │┃                                                                                    ┃│                                                                                    │
+│                          │┃                                                                                    ┃│                                                                                    │
+│                          │┃                                                                                    ┃│                                                                                    │
+│                          │┃                                                                                    ┃│                                                                                    │
+│                          │┃                                                                                    ┃│                                                                                    │
+│                          │┃                                                                                    ┃│                                                                                    │
+│                          │┃                                                                                    ┃│                                                                                    │
+│                          │┃                                                                                    ┃│                                                                                    │
+│                          │┃                                                                                    ┃│                                                                                    │
+│                          │┃                                                                                    ┃│                                                                                    │
+│                          │┃                                                                                    ┃│                                                                                    │
+│                          │┃                                                                                    ┃│                                                                                    │
+└──────────────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛└────────────────────────────────────────────────────────────────────────────────────┘
+ j/k move  enter run  esc close
