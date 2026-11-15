@@ -20,6 +20,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use quill_core::types::{
     Flags, FolderId, FolderRole, LocalAccountId, LocalFolderId, LocalMessageId, Operation,
+    RemoteEvent,
 };
 use quill_core::{Backend, CertificateProblem, Envelope, Error, Sender};
 use quill_store::{BlobStore, Outgoing, QueuedKind, QueuedOperation, Store};
@@ -312,8 +313,13 @@ impl Engine {
             let running = Arc::clone(&running);
             async move { engine.run_queue(&running).await }
         });
+        let watch = tokio::spawn({
+            let engine = Arc::clone(engine);
+            let running = Arc::clone(&running);
+            async move { engine.watch(&running).await }
+        });
         if let Ok(mut tasks) = running.task.lock() {
-            tasks.extend([sync, queue]);
+            tasks.extend([sync, queue, watch]);
         }
         let replaced = engine
             .accounts
@@ -365,6 +371,50 @@ impl Engine {
         })
         .await
         .map_err(|err| err.to_string())?
+    }
+
+    /// Listens for the server saying that something has changed, and syncs
+    /// the account when it does, so new mail shows without waiting for the
+    /// interval. The interval goes on regardless: push is a hurry-up, not
+    /// what correctness rests on.
+    async fn watch(&self, running: &Running) {
+        let backend = Arc::clone(&running.account.backend);
+        let mut failures: u32 = 0;
+        loop {
+            let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+            let watching = backend.watch(tx);
+            tokio::pin!(watching);
+            // The backend holds the other end until it returns.
+            let mut listening = true;
+            let outcome = loop {
+                tokio::select! {
+                    outcome = &mut watching => break outcome,
+                    event = rx.recv(), if listening => match event {
+                        Some(RemoteEvent::FolderChanged(_)) => {
+                            failures = 0;
+                            running.wake.notify_one();
+                        }
+                        None => listening = false,
+                    },
+                }
+            };
+            match outcome {
+                // It came back by itself with nothing wrong: this server
+                // does not push. The interval does all the work.
+                Ok(()) => return,
+                // The connection it listens on failed. The sync loop says
+                // so if the server is really unreachable; here it is only
+                // a reason to wait before listening again.
+                Err(_) => {
+                    let wait = self.retry_at(failures).saturating_sub(now());
+                    failures = failures.saturating_add(1);
+                    tokio::time::sleep(Duration::from_secs(
+                        u64::try_from(wait).unwrap_or(1).max(1),
+                    ))
+                    .await;
+                }
+            }
+        }
     }
 
     async fn keep_in_sync(&self, running: &Running) {

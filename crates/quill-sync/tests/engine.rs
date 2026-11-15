@@ -46,6 +46,15 @@ struct Server {
     /// Move without saying what the message is called afterwards.
     forgets_new_ids: bool,
     batch: usize,
+    /// Whether the server says when something changes. Without it `watch`
+    /// comes straight back.
+    pushes: bool,
+    /// How many times `watch` has been called.
+    watches: usize,
+    /// Fail this many calls to `watch` before one holds.
+    watch_failures: usize,
+    /// Whoever is listening now.
+    listeners: Vec<Sender<RemoteEvent>>,
 }
 
 /// A sender that keeps what it was given, or refuses as told.
@@ -321,8 +330,20 @@ impl Backend for MemoryBackend {
         Ok(Some(RemoteId(id)))
     }
 
-    async fn watch(&self, _tx: Sender<RemoteEvent>) -> Result<()> {
-        Ok(())
+    async fn watch(&self, tx: Sender<RemoteEvent>) -> Result<()> {
+        {
+            let mut server = self.0.lock().unwrap();
+            server.watches += 1;
+            if !server.pushes {
+                return Ok(());
+            }
+            if server.watch_failures > 0 {
+                server.watch_failures -= 1;
+                return Err(Error::Connection("the line dropped".to_owned()));
+            }
+            server.listeners.push(tx);
+        }
+        std::future::pending().await
     }
 }
 
@@ -738,6 +759,83 @@ async fn the_interval_drives_passes_without_being_asked() {
     let events = rig.pass().await;
     assert_eq!(changed(&events), 1);
     assert_eq!(rig.subjects("INBOX"), ["Second", "First"]);
+}
+
+/// Tells whoever is listening that the inbox changed, once someone is.
+async fn push(backend: &MemoryBackend) {
+    let listener = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Some(listener) = backend.with(|server| server.listeners.last().cloned()) {
+                return listener;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("nobody listened for changes");
+    listener
+        .send(RemoteEvent::FolderChanged(FolderId("INBOX".to_owned())))
+        .await
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_change_the_server_announces_is_fetched_without_waiting_for_the_interval() {
+    let backend = MemoryBackend::new(100);
+    backend.with(|server| server.pushes = true);
+    backend.add("INBOX", "1", "First", NOW_ISH);
+    // The interval is an hour: only a push can bring the second message.
+    let mut rig = Rig::start(backend);
+    rig.pass().await;
+    rig.backend.add("INBOX", "2", "Second", NOW_ISH + 1);
+    push(&rig.backend).await;
+    let events = rig.pass().await;
+    assert_eq!(changed(&events), 1);
+    assert_eq!(rig.subjects("INBOX"), ["Second", "First"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn listening_starts_again_after_the_connection_drops() {
+    let backend = MemoryBackend::new(100);
+    backend.with(|server| {
+        server.pushes = true;
+        server.watch_failures = 1;
+    });
+    backend.add("INBOX", "1", "First", NOW_ISH);
+    let mut rig = Rig::start(backend);
+    rig.pass().await;
+    rig.backend.add("INBOX", "2", "Second", NOW_ISH + 1);
+    // Waits for the second attempt, which holds.
+    push(&rig.backend).await;
+    let events = rig.pass().await;
+    assert_eq!(changed(&events), 1);
+    assert_eq!(rig.backend.with(|server| server.watches), 2);
+    // A dropped line while listening is not a problem to show: the passes
+    // say so if the server is really gone.
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, SyncEvent::Problem { .. }))
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_server_that_cannot_push_is_asked_once() {
+    let backend = MemoryBackend::new(100);
+    backend.add("INBOX", "1", "First", NOW_ISH);
+    let mut rig = Rig::start_with(
+        backend,
+        SyncOptions {
+            retry: Duration::from_secs(1),
+            interval: Duration::from_millis(30),
+            prefetch_days: 30,
+            prefetch_limit: 10,
+        },
+    );
+    for _ in 0..3 {
+        rig.pass().await;
+    }
+    assert_eq!(rig.backend.with(|server| server.watches), 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -145,6 +145,10 @@ impl Store {
         // The UI and the sync engine each hold a connection. A writer that
         // finds the other mid-write waits its turn instead of failing.
         conn.busy_timeout(std::time::Duration::from_secs(10))?;
+        // A transaction that reads first and writes later is refused
+        // outright, not made to wait, when the other connection wrote in
+        // between. Taking the write lock at the start makes it queue.
+        conn.set_transaction_behavior(rusqlite::TransactionBehavior::Immediate);
         migrations::run(&mut conn)?;
         Ok(Self { conn, blobs: None })
     }
