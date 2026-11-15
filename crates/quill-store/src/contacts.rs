@@ -93,6 +93,22 @@ impl Store {
         Ok(found.is_some())
     }
 
+    /// The people written to and heard from most, best first: for an
+    /// editor that completes addresses from a list of its own.
+    pub fn top_contacts(&self, limit: usize) -> Result<Vec<Contact>> {
+        let mut statement = self.conn.prepare(
+            "SELECT name, email FROM contacts
+             ORDER BY weight DESC, last_seen DESC, email LIMIT ?1",
+        )?;
+        let rows = statement.query_map([i64::try_from(limit).unwrap_or(i64::MAX)], |row| {
+            Ok(Contact {
+                name: row.get(0)?,
+                email: row.get(1)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
     /// People whose name or address has a part starting with `typed` (a
     /// word of the name, or what follows a dot or the @ of the address),
     /// best first: those written to most, then most recently.
