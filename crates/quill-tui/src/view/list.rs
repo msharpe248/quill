@@ -95,7 +95,13 @@ fn line<'a>(
     let mut spans = vec![
         // The cursor is a marker as well as a bar, so it shows without colour.
         Span::raw(if selected { "> " } else { "  " }),
-        Span::styled(mark(unread, "*"), styles.unread()),
+        // One column says where the message stands: not yet read, or
+        // read and answered.
+        if unread {
+            Span::styled("*", styles.unread())
+        } else {
+            Span::styled(mark(message.flags.answered, "r"), styles.dim())
+        },
         Span::styled(mark(message.flags.flagged, "!"), styles.starred()),
         Span::styled(mark(message.has_attachments, "@"), styles.dim()),
         Span::raw(" "),

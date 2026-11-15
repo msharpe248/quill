@@ -61,4 +61,4 @@ expression: harness.screen()
 ┃                                                                                                                                                                                                      ┃
 ┃                                                                                                                                                                                                      ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
- j/k move  enter open  e archive  d delete  u unread  s star  tab next pane  z zoom  ? help  q quit
+ j/k move  enter open  c write  r reply  e archive  d delete  u unread  s star  tab next pane  z zoom  ? help  q quit

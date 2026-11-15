@@ -17,6 +17,8 @@ pub enum Context {
     Certificate,
     /// Choosing a folder to move a message to. Typing narrows the list.
     Folders,
+    /// Writing a message. Typing goes into the field with the cursor.
+    Compose,
 }
 
 impl Context {
@@ -30,6 +32,7 @@ impl Context {
             Self::Setup => "Add an account",
             Self::Certificate => "Certificate",
             Self::Folders => "Move to a folder",
+            Self::Compose => "Writing a message",
         }
     }
 }
@@ -44,6 +47,7 @@ const EVERYWHERE: &[Context] = &[
     Context::Setup,
     Context::Certificate,
     Context::Folders,
+    Context::Compose,
 ];
 /// The panes, and the form whose fields `tab` moves between.
 const PANES_AND_FORMS: &[Context] = &[
@@ -51,6 +55,15 @@ const PANES_AND_FORMS: &[Context] = &[
     Context::List,
     Context::Reader,
     Context::Setup,
+    Context::Compose,
+];
+const COMPOSE: &[Context] = &[Context::Compose];
+/// The panes, and the message being written in the reader's place.
+const PANES_AND_COMPOSE: &[Context] = &[
+    Context::Sidebar,
+    Context::List,
+    Context::Reader,
+    Context::Compose,
 ];
 /// Where a message is in view: commands on its body apply.
 const MESSAGE: &[Context] = &[Context::List, Context::Reader];
@@ -79,6 +92,14 @@ pub enum CommandId {
     MessageArchive,
     MessageDelete,
     MessageMove,
+    MessageCompose,
+    MessageReply,
+    MessageReplyAll,
+    MessageForward,
+    ComposeSend,
+    ComposeSave,
+    ComposeAttach,
+    ComposeBcc,
     EditUndo,
     AccountAdd,
     DebugPreviewSample,
@@ -293,7 +314,7 @@ impl Registry {
                         "Zoom the focused pane",
                         Panes,
                         Some(Menu::View),
-                        PANES,
+                        PANES_AND_COMPOSE,
                     ),
                     "arrow.up.left.and.arrow.down.right",
                 ),
@@ -373,6 +394,82 @@ impl Registry {
                         MESSAGE,
                     ),
                     "folder",
+                ),
+                with_symbol(
+                    spec(
+                        MessageCompose,
+                        "message.compose",
+                        "Write a new message",
+                        Message,
+                        Some(Menu::File),
+                        PANES,
+                    ),
+                    "square.and.pencil",
+                ),
+                with_symbol(
+                    spec(
+                        MessageReply,
+                        "message.reply",
+                        "Reply",
+                        Message,
+                        Some(Menu::Message),
+                        MESSAGE,
+                    ),
+                    "arrowshape.turn.up.left",
+                ),
+                spec(
+                    MessageReplyAll,
+                    "message.reply_all",
+                    "Reply to all",
+                    Message,
+                    Some(Menu::Message),
+                    MESSAGE,
+                ),
+                spec(
+                    MessageForward,
+                    "message.forward",
+                    "Forward",
+                    Message,
+                    Some(Menu::Message),
+                    MESSAGE,
+                ),
+                with_symbol(
+                    spec(
+                        ComposeSend,
+                        "compose.send",
+                        "Send",
+                        Message,
+                        Some(Menu::Message),
+                        COMPOSE,
+                    ),
+                    "paperplane",
+                ),
+                spec(
+                    ComposeSave,
+                    "compose.save",
+                    "Save as a draft",
+                    Message,
+                    Some(Menu::File),
+                    COMPOSE,
+                ),
+                with_symbol(
+                    spec(
+                        ComposeAttach,
+                        "compose.attach",
+                        "Attach a file",
+                        Message,
+                        Some(Menu::Message),
+                        COMPOSE,
+                    ),
+                    "paperclip",
+                ),
+                spec(
+                    ComposeBcc,
+                    "compose.bcc",
+                    "Add blind copies (Bcc)",
+                    Message,
+                    Some(Menu::Message),
+                    COMPOSE,
                 ),
                 spec(
                     EditUndo,
@@ -471,6 +568,8 @@ pub fn hints(context: Context) -> &'static [Hint] {
     const LIST: &[Hint] = &[
         hint(&[NavNext, NavPrev], "move"),
         hint(&[NavOpen], "open"),
+        hint(&[MessageCompose], "write"),
+        hint(&[MessageReply], "reply"),
         hint(&[MessageArchive], "archive"),
         hint(&[MessageDelete], "delete"),
         hint(&[MessageToggleUnread], "unread"),
@@ -484,6 +583,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         hint(&[NavNext, NavPrev], "scroll"),
         hint(&[NavPageDown], "page"),
         hint(&[NavBack], "back"),
+        hint(&[MessageReply], "reply"),
         hint(&[MessageArchive], "archive"),
         hint(&[MessageDelete], "delete"),
         hint(&[MessageOpenLink], "links"),
@@ -510,7 +610,15 @@ pub fn hints(context: Context) -> &'static [Hint] {
     ];
     const CERTIFICATE: &[Hint] = &[hint(&[NavBack], "reject")];
     const FOLDERS: &[Hint] = &[hint(&[NavOpen], "move here"), hint(&[NavBack], "cancel")];
+    const COMPOSING: &[Hint] = &[
+        hint(&[ComposeSend], "send"),
+        hint(&[ComposeSave], "save draft"),
+        hint(&[ComposeAttach], "attach"),
+        hint(&[FocusNext], "next field"),
+        hint(&[NavBack], "close"),
+    ];
     match context {
+        Context::Compose => COMPOSING,
         Context::Folders => FOLDERS,
         Context::Setup => SETUP,
         Context::Certificate => CERTIFICATE,

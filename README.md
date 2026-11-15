@@ -12,7 +12,9 @@ Milestone 1, the app shell, is in place too. `Quill.app` runs the core in its ow
 
 Milestone 2, reading mail over IMAP, is built. Add an account from inside Quill (`A`): type its address, confirm the server Quill finds, give the password, and its mail syncs into the local store and reads offline. HTML mail is drawn as styled text: headings, lists, emphasis, quotes and simple tables, with links numbered and listed at the end of the message. `t` switches a message between its HTML and its plain text when it came as both. `o` lists a message's links to open one in your browser, and in the app or a terminal that supports hyperlinks, cmd-click on a link's text opens it too. Quill opens only `http`, `https` and `mailto` links.
 
-Sending arrives in M3, and Microsoft accounts with OAuth in M5.
+Milestone 3, writing and sending, is built. `c` writes a new message, `r`, `R` and `f` reply, reply to all and forward, and the message is written in the reader's place with an editor that follows macOS text keys. Mail is sent over SMTP from an Outbox that holds it for ten seconds, in which `U` takes it back. `e`, `d` and `m` archive, delete and move, also undoable, and all of it works offline and is carried out when the server is next reachable.
+
+Microsoft accounts with OAuth arrive in M5.
 
 ## Try it
 
@@ -71,6 +73,8 @@ Optional keys inside `imap = { ... }`: `username`, when you do not sign in with 
 
 `quill account list` shows each account and whether it has a saved password. `quill account forget NAME` removes one. Passwords are only ever in the Keychain: not in the config, the database or the logs.
 
+A Keychain item belongs to the program that made it. If you build Quill from source and then rebuild it, macOS will ask whether the new `quill` may read the password the old one saved; "Always Allow" settles it for that build. Until you answer, Quill waits and no mail moves.
+
 ## Keys
 
 Press `?` at any time for the keys that apply where you are. The bottom bar shows the most useful ones.
@@ -84,14 +88,56 @@ Press `?` at any time for the keys that apply where you are. The bottom bar show
 | `esc` | Back, close, dismiss | `s` | Star or unstar |
 | `?` | Help for this context | `q` | Quit |
 | `t` | Show as HTML or plain text | `o` | Open a link |
-| `A` | Add an account | | |
+| `c` | Write a new message | `r` / `R` | Reply, reply to all |
+| `f` | Forward | `e` | Archive |
+| `d` | Delete (to Trash; from Trash, for good) | `m` | Move to a folder |
+| `U` | Undo the last move, deletion or send | `A` | Add an account |
 | `P` | Preview a sample file | `I` | Show a sample image |
 
 Arrow keys, `home`, `end`, `pageup` and `pagedown` work too. `ctrl-d` also pages down and `ctrl-c` also quits.
 
 Set `keymap = "mutt"` in the config for mutt-flavoured keys.
 
-In the message list, `>` marks the cursor, `*` an unread message, `!` a starred one and `@` one with attachments.
+In the message list, `>` marks the cursor, `*` an unread message, `r` one you have answered, `!` a starred one and `@` one with attachments.
+
+## Writing mail
+
+`c` opens a new message where the reader was; `r`, `R` and `f` start a reply, a reply to all, or a forward of the message under the cursor. `ctrl-z` gives the message the whole window and back.
+
+| Key | Action |
+|---|---|
+| `tab` / `shift-tab` | Next, previous field. `enter` and the arrows move between the header fields too |
+| `cmd-enter` or `ctrl-x` | Send |
+| `cmd-s` or `ctrl-s` | Save as a draft and keep writing |
+| `cmd-shift-a` or `ctrl-t` | Attach a file: type or paste its path |
+| `cmd-shift-b` or `ctrl-o` | Add blind copies (Bcc) |
+| `esc` | Close. What you wrote is kept in Drafts |
+
+The `cmd` keys work in the app; a terminal keeps `cmd` for itself, so there the `ctrl` keys are the ones shown.
+
+- **Addresses.** As you type in To, Cc or Bcc, people you have had mail from or written to are offered under the field. `↓`/`↑` choose, `enter` or `tab` takes one, `esc` declines. Separate several with commas.
+- **From.** With more than one account, `shift-tab` up to From and `←`/`→` choose which one sends.
+- **The body** follows macOS text keys: arrows, `opt-←`/`opt-→` by word, `cmd-←`/`cmd-→` to the ends of the line, `cmd-↑`/`cmd-↓` to the ends of the message, shift with any of them to select, `cmd-a`, `cmd-c`, `cmd-x`, `cmd-z` and `cmd-shift-z` to undo and redo. `ctrl-a`, `ctrl-e`, `ctrl-k`, `ctrl-w` and the other Emacs-style keys of macOS text fields work as well, and are the ones to use in a terminal.
+- **Markdown.** The body is written as Markdown and sent as plain text with an HTML version beside it. `format = "plain"` under `[compose]` sends plain text only.
+- **Before it goes**, Quill asks once if the subject is empty or the message mentions an attachment and has none. Sending again sends it as it is.
+- **Undo send.** A sent message waits in the Outbox for `undo_send_seconds` (10 by default); `U` in that time makes it a draft again. Set it to 0 to send at once.
+- **Drafts and the Outbox** appear at the top of the sidebar when there is something in them. `enter` on a draft, or on mail still in the Outbox, opens it to carry on writing; `d` throws a draft away. What you are writing is saved every few seconds and when Quill quits.
+- **Mail a server refuses** stays in the Outbox and says why when you open it. Mail that could not be sent because the server was unreachable is tried again by itself.
+
+To send, an account needs an SMTP server. Adding an account inside Quill fills it in when it can be found; by hand it is one more line:
+
+```toml
+[[account]]
+name = "Personal"
+type = "imap"
+address = "you@example.com"
+full_name = "Your Name"                 # optional: how your name appears on mail you send
+signature = "Your Name\nExample Ltd"    # optional: added to new messages
+imap = { host = "imap.example.com", port = 993, tls = "implicit" }
+smtp = { host = "smtp.example.com", port = 465, tls = "implicit" }
+```
+
+The SMTP server is signed in to with the same name and password as the IMAP server unless `smtp = { ... }` has a `username` of its own.
 
 ## Configuration
 
@@ -132,6 +178,12 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `message.toggle_unread`, `message.toggle_star` | Change a message's flags |
 | `message.toggle_html` | Switch a message between its HTML and its plain text |
 | `message.open_link` | List the message's links, to open one in the browser |
+| `message.archive`, `message.delete`, `message.move` | File the message |
+| `message.compose` | Write a new message |
+| `message.reply`, `message.reply_all`, `message.forward` | Answer or pass on the message |
+| `compose.send`, `compose.save` | Send the message being written, or save it as a draft |
+| `compose.attach`, `compose.bcc` | Attach a file; add blind copies |
+| `edit.undo` | Undo the last move, deletion or send |
 | `account.add` | Add an account |
 | `debug.preview_sample` | Preview a sample file (temporary) |
 | `debug.image_sample` | Show a sample image in the reader (temporary) |

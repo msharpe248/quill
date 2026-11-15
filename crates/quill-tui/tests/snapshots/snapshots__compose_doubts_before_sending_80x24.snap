@@ -1,0 +1,28 @@
+---
+source: crates/quill-tui/tests/snapshots.rs
+expression: harness.screen()
+---
+┌ [1] Accounts ──┐┏ [3] New message ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+│> Unified    12 │┃ From:    robin@example.com  (Work)                         ┃
+│  Work          │┃ To:      Priya Nair <priya.nair@example.com>,              ┃
+│    Inbox     8 │┃ Cc:                                                        ┃
+│    Drafts      │┃ Subject:                                                   ┃
+│    Sent        │┃ ────────────────────────────────────────────────────────── ┃
+│    Archive     │┃ The agenda is attached.                                    ┃
+│    Trash       │┃                                                            ┃
+│  Personal      │┃                                                            ┃
+│    Inbox     4 │┃                                                            ┃
+│    Drafts      │┃                                                            ┃
+│    Sent        │┃                                                            ┃
+│    Archive     │┃                                                            ┃
+│    Trash       │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃ There is no subject.                                       ┃
+│                │┃ The message mentions an attachment and has none.           ┃
+│                │┃ cmd-enter again sends it as it is.                         ┃
+└────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+ cmd-enter send  cmd-s save draft  cmd-A attach  tab next field  esc close

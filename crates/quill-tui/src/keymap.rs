@@ -215,6 +215,13 @@ impl fmt::Display for KeyChord {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct KeySeq(pub Vec<KeyChord>);
 
+impl KeySeq {
+    /// Whether any key in it is held with `cmd`.
+    pub fn uses_cmd(&self) -> bool {
+        self.0.iter().any(|chord| chord.mods.cmd)
+    }
+}
+
 impl FromStr for KeySeq {
     type Err = KeyParseError;
 
@@ -287,7 +294,7 @@ const VIM: PresetTable = &[
     (CommandId::FocusReader, &["3"]),
     (CommandId::FocusNext, &["tab"]),
     (CommandId::FocusPrev, &["shift-tab"]),
-    (CommandId::ViewZoom, &["z"]),
+    (CommandId::ViewZoom, &["z", "ctrl-z"]),
     (CommandId::MessageToggleUnread, &["u"]),
     (CommandId::MessageToggleStar, &["s"]),
     (CommandId::MessageToggleHtml, &["t"]),
@@ -295,6 +302,17 @@ const VIM: PresetTable = &[
     (CommandId::MessageArchive, &["e"]),
     (CommandId::MessageDelete, &["d"]),
     (CommandId::MessageMove, &["m"]),
+    (CommandId::MessageCompose, &["c"]),
+    (CommandId::MessageReply, &["r"]),
+    (CommandId::MessageReplyAll, &["R"]),
+    (CommandId::MessageForward, &["f"]),
+    (
+        CommandId::ComposeSend,
+        &["cmd-enter", "ctrl-x", "ctrl-enter"],
+    ),
+    (CommandId::ComposeSave, &["cmd-s", "ctrl-s"]),
+    (CommandId::ComposeAttach, &["cmd-A", "ctrl-t"]),
+    (CommandId::ComposeBcc, &["cmd-B", "ctrl-o"]),
     (CommandId::EditUndo, &["U"]),
     (CommandId::AccountAdd, &["A"]),
     (CommandId::DebugPreviewSample, &["P"]),
@@ -317,7 +335,7 @@ const MUTT: PresetTable = &[
     (CommandId::FocusReader, &["3"]),
     (CommandId::FocusNext, &["tab"]),
     (CommandId::FocusPrev, &["shift-tab"]),
-    (CommandId::ViewZoom, &["z"]),
+    (CommandId::ViewZoom, &["z", "ctrl-z"]),
     (CommandId::MessageToggleUnread, &["N"]),
     (CommandId::MessageToggleStar, &["F"]),
     (CommandId::MessageToggleHtml, &["t"]),
@@ -325,6 +343,17 @@ const MUTT: PresetTable = &[
     (CommandId::MessageArchive, &["e"]),
     (CommandId::MessageDelete, &["d"]),
     (CommandId::MessageMove, &["s"]),
+    (CommandId::MessageCompose, &["m"]),
+    (CommandId::MessageReply, &["r"]),
+    (CommandId::MessageReplyAll, &["g"]),
+    (CommandId::MessageForward, &["f"]),
+    (
+        CommandId::ComposeSend,
+        &["cmd-enter", "ctrl-x", "ctrl-enter"],
+    ),
+    (CommandId::ComposeSave, &["cmd-s", "ctrl-s"]),
+    (CommandId::ComposeAttach, &["cmd-A", "ctrl-t"]),
+    (CommandId::ComposeBcc, &["cmd-B", "ctrl-o"]),
     (CommandId::EditUndo, &["U"]),
     (CommandId::AccountAdd, &["A"]),
     (CommandId::DebugPreviewSample, &["P"]),

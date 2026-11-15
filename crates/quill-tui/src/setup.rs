@@ -80,6 +80,8 @@ pub enum AccountRequest {
         account: String,
         fingerprint: String,
         pin: bool,
+        /// The certificate is the sending server's.
+        sending: bool,
     },
 }
 
@@ -95,6 +97,8 @@ pub enum AccountEvent {
     Saved(Result<String, String>),
     Trusted {
         account: String,
+        /// Which of the account's servers the answer was about.
+        sending: bool,
         result: Result<(), String>,
     },
 }
@@ -545,6 +549,8 @@ impl Setup {
 pub struct CertificatePrompt {
     pub account: String,
     pub problem: Box<CertificateProblem>,
+    /// It is the server the account sends mail through.
+    pub sending: bool,
     /// The answer has been given and is being acted on.
     pub busy: bool,
 }

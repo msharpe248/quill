@@ -163,6 +163,7 @@ async fn tui(args: TuiArgs) -> anyhow::Result<()> {
             sync: Arc::clone(&handle),
             dns: Box::new(discover::SystemDns::new()),
             prober: Box::new(discover::NetworkProber),
+            trusted_once: std::sync::Mutex::default(),
         });
         (
             store,
@@ -180,6 +181,8 @@ async fn tui(args: TuiArgs) -> anyhow::Result<()> {
     // terminal says it is.
     // The demo mailbox has no config to add an account to.
     env.accounts = !args.demo;
+    // A terminal program keeps cmd for itself; the shell passes it on.
+    env.cmd_keys = attached.host.is_shell();
     env.images = attached.host.is_shell()
         || quill_media::kitty::supported_by_environment(|name| std::env::var(name).ok());
     app::run(store, env, notices, attached, sync, accounts)

@@ -5,6 +5,7 @@
 
 use ratatui::layout::Rect;
 
+use crate::compose::{Compose, Field};
 use crate::state::{MainPane, Pane, State};
 
 /// At this many columns and above, all three panes are side by side.
@@ -163,6 +164,57 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
         ));
     }
     areas
+}
+
+/// How many rows of the compose pane the header fields take, with the rule
+/// under them: From, To, Cc, Subject always; Bcc when it is in use; the
+/// attachments when there are any.
+pub fn compose_header_rows(compose: &Compose) -> u16 {
+    let bcc = u16::from(compose.field == Field::Bcc || !compose.bcc.is_empty());
+    let attachments = u16::from(!compose.attachments.is_empty());
+    4 + bcc + attachments + 1
+}
+
+/// The most rows a complaint at the foot of the compose pane may take.
+pub const COMPOSE_ERROR_ROWS: usize = 3;
+
+/// How many rows at the foot of the compose pane are taken by a complaint,
+/// doubts about sending, or the line a file name is typed on. `width` is
+/// the pane's text width: a long complaint wraps rather than being cut.
+pub fn compose_footer_rows(compose: &Compose, width: u16) -> u16 {
+    if compose.attaching.is_some() || compose.sending {
+        1
+    } else if let Some(error) = &compose.error {
+        let rows = crate::text::wrap(error, usize::from(width))
+            .len()
+            .clamp(1, COMPOSE_ERROR_ROWS);
+        u16::try_from(rows).unwrap_or(1)
+    } else {
+        u16::try_from(compose.doubts.len())
+            .unwrap_or(u16::MAX)
+            .min(3)
+            + u16::from(!compose.doubts.is_empty())
+    }
+}
+
+/// Where the body of the message being written is drawn, inside the pane
+/// at `rect`.
+pub fn compose_body(rect: Rect, compose: &Compose) -> Rect {
+    // The pane's border and one column of padding each side.
+    let inner = Rect::new(
+        rect.x.saturating_add(2),
+        rect.y.saturating_add(1),
+        rect.width.saturating_sub(4),
+        rect.height.saturating_sub(2),
+    );
+    let header = compose_header_rows(compose).min(inner.height);
+    let footer = compose_footer_rows(compose, inner.width).min(inner.height - header);
+    Rect::new(
+        inner.x,
+        inner.y + header,
+        inner.width,
+        inner.height - header - footer,
+    )
 }
 
 /// The rows inside a bordered pane.

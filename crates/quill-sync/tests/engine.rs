@@ -857,7 +857,12 @@ async fn a_refused_certificate_is_reported_with_the_certificate_once() {
     let mut rig = Rig::start(backend.clone());
     rig.pass().await;
     // The report follows the end of the pass that failed.
-    let SyncEvent::Certificate { account, problem } = rig.next().await else {
+    let SyncEvent::Certificate {
+        account,
+        problem,
+        sending: false,
+    } = rig.next().await
+    else {
         panic!("expected a certificate event");
     };
     assert_eq!(account, "Work");
@@ -1155,15 +1160,9 @@ async fn mail_in_the_outbox_is_sent_filed_in_sent_and_marks_the_original_answere
     assert_eq!(appended.len(), 1);
     assert_eq!(appended[0].0, "Sent");
     assert_eq!(appended[0].1, sent[0].1);
-    // The message replied to is marked answered, here and there.
-    assert!(
-        rig.store
-            .message_location(original)
-            .unwrap()
-            .unwrap()
-            .flags
-            .answered
-    );
+    // The message replied to is marked answered, and read, here and there.
+    let flags = rig.store.message_location(original).unwrap().unwrap().flags;
+    assert!(flags.answered && flags.seen, "{flags:?}");
     assert!(
         rig.backend
             .with(|server| server.folders["INBOX"]["2"].flags.answered)
@@ -1231,6 +1230,57 @@ async fn a_busy_server_is_tried_again_and_the_message_goes_once() {
             .any(|event| matches!(event, SyncEvent::Problem { .. })),
         "{events:?}"
     );
+    assert_eq!(rig.post.0.lock().unwrap().sent.len(), 1);
+    assert!(rig.store.outbox().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sending_server_whose_certificate_is_not_accepted_is_asked_about() {
+    let mut rig = filing_rig().await;
+    rig.post.0.lock().unwrap().failures = vec![Error::Certificate(Box::new(
+        quill_core::CertificateProblem {
+            host: "smtp.example.com".to_owned(),
+            reason: "UnknownIssuer".to_owned(),
+            fingerprint: Some("cd".repeat(32)),
+            certificate: None,
+            details: None,
+        },
+    ))];
+    let draft = outbox(&mut rig, "Held", None);
+    rig.handle.send(SyncRequest::Queue);
+
+    let events = rig
+        .until(|event| matches!(event, SyncEvent::Certificate { .. }))
+        .await;
+    let Some(SyncEvent::Certificate {
+        account,
+        problem,
+        sending,
+    }) = events.last()
+    else {
+        unreachable!()
+    };
+    assert_eq!((account.as_str(), *sending), ("Work", true));
+    assert_eq!(problem.host, "smtp.example.com");
+    // It is a question, not a failure: nothing else is said, and the
+    // message keeps its place in the outbox.
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, SyncEvent::Problem { .. })),
+        "{events:?}"
+    );
+    let waiting = rig.store.draft(draft).unwrap().unwrap();
+    assert_eq!(waiting.state, quill_store::DraftState::Outbox);
+    assert!(waiting.error.unwrap().contains("certificate"));
+    assert!(rig.post.0.lock().unwrap().sent.is_empty());
+
+    // Once the certificate is accepted the waiting mail is made due, and
+    // it goes.
+    assert_eq!(rig.store.hurry_sends(rig.account, now()).unwrap(), 1);
+    rig.handle.send(SyncRequest::Queue);
+    rig.until(|event| matches!(event, SyncEvent::Sent { .. }))
+        .await;
     assert_eq!(rig.post.0.lock().unwrap().sent.len(), 1);
     assert!(rig.store.outbox().unwrap().is_empty());
 }

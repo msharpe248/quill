@@ -20,9 +20,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
 
     if let Some(notice) = state.notices.front() {
         let dismiss = env
-            .keymap
-            .keys_for(CommandId::NavBack)
-            .first()
+            .hint_key(CommandId::NavBack)
             .map_or_else(String::new, |key| format!("  [{key} to dismiss]"));
         let more = match state.notices.len() - 1 {
             0 => String::new(),
@@ -60,7 +58,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
             let keys: Vec<String> = hint
                 .commands
                 .iter()
-                .filter_map(|id| env.keymap.keys_for(*id).first())
+                .filter_map(|id| env.hint_key(*id))
                 .map(ToString::to_string)
                 .collect();
             if keys.is_empty() {
@@ -101,9 +99,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
     } else if let Some((flash, undoable)) = &state.flash {
         // What the last key did, and how to take it back.
         let undo = env
-            .keymap
-            .keys_for(CommandId::EditUndo)
-            .first()
+            .hint_key(CommandId::EditUndo)
             .filter(|_| *undoable)
             .map_or_else(String::new, |key| format!(" {key} undoes it."));
         let said = format!("{flash}{undo} ");

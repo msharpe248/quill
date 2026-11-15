@@ -102,6 +102,9 @@ pub enum SyncEvent {
     Certificate {
         account: String,
         problem: Box<CertificateProblem>,
+        /// It was the server mail is sent through, not the one it is
+        /// read from.
+        sending: bool,
     },
 }
 
@@ -390,6 +393,7 @@ impl Engine {
                             Failure::Certificate(problem) => SyncEvent::Certificate {
                                 account: account.name.clone(),
                                 problem,
+                                sending: false,
                             },
                         });
                     }
@@ -662,8 +666,14 @@ impl Engine {
                 .and_then(Result::ok)
                 .flatten();
                 match raw {
+                    // A saved copy has no row here until a sync lists it,
+                    // whether or not the server said what it called it.
                     Some(raw) => (
-                        account.backend.append(&target, &raw, flags).await,
+                        account
+                            .backend
+                            .append(&target, &raw, flags)
+                            .await
+                            .map(|_| None),
                         "saved",
                         true,
                     ),
@@ -788,8 +798,10 @@ impl Engine {
                         if let Some(original) = replied_to {
                             let original = LocalMessageId(original);
                             if let Some(location) = store.message_location(original)? {
+                                // Answering a message is having read it.
                                 let answered = Flags {
                                     answered: true,
+                                    seen: true,
                                     ..location.flags
                                 };
                                 queued |= store.queue_flags(original, answered, now())?;
@@ -825,6 +837,27 @@ impl Engine {
                         format!("A message could not be sent yet and will be tried again: {err}"),
                     );
                 }
+                false
+            }
+            // Nothing was said to a server whose certificate was not
+            // accepted. The message waits while the user is asked.
+            Err(Error::Certificate(problem)) => {
+                let retry_at = self.retry_at(outgoing.attempts);
+                let _ = self
+                    .db(move |store| {
+                        store.send_failed(
+                            id,
+                            "the server's certificate was not accepted",
+                            Some(retry_at),
+                        )
+                    })
+                    .await;
+                self.emit(SyncEvent::Changed);
+                self.emit(SyncEvent::Certificate {
+                    account: account.name.clone(),
+                    problem,
+                    sending: true,
+                });
                 false
             }
             Err(Error::Recipients(refused)) => {

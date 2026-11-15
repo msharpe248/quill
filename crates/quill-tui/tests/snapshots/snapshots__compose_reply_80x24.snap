@@ -1,0 +1,28 @@
+---
+source: crates/quill-tui/tests/snapshots.rs
+expression: harness.screen()
+---
+┌ [1] Accounts ──┐┏ [3] Reply ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+│> Unified    12 │┃ From:    robin@example.com  (Work)                         ┃
+│  Work          │┃ To:      Ana Ruiz <ana.ruiz@example.com>                   ┃
+│    Inbox     8 │┃ Cc:                                                        ┃
+│    Drafts      │┃ Subject: Re: Q4 roadmap                                    ┃
+│    Sent        │┃ ────────────────────────────────────────────────────────── ┃
+│    Archive     │┃                                                            ┃
+│    Trash       │┃                                                            ┃
+│  Personal      │┃ On Sat 14 Nov 2026 09:14, Ana Ruiz wrote:                  ┃
+│    Inbox     4 │┃ > Hi Robin,                                                ┃
+│    Drafts      │┃ >                                                          ┃
+│    Sent        │┃ > Here is the draft roadmap for Q4. The short version: we  ┃
+│    Archive     │┃ ship the sync rewrite in October, spend November on        ┃
+│    Trash       │┃ search, and keep December for whatever the first two       ┃
+│                │┃ months break.                                              ┃
+│                │┃ >                                                          ┃
+│                │┃ > Three things I would like your eyes on before Thursday:  ┃
+│                │┃ >                                                          ┃
+│                │┃ > 1. The search milestone assumes the index format is      ┃
+│                │┃ settled. Is it?                                            ┃
+│                │┃ > 2. I have pencilled in two weeks for the offline queue.  ┃
+│                │┃ Tell me if that is fantasy.                                ┃
+└────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1-16 of 29 ┛
+ cmd-enter send  cmd-s save draft  cmd-A attach  tab next field  esc close

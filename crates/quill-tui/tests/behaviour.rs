@@ -659,7 +659,7 @@ fn the_status_bar_shows_the_keys_of_the_focused_context() {
             .lines()
             .last()
             .unwrap()
-            .starts_with(" j/k move  enter open  e archive  d delete  u unread")
+            .starts_with(" j/k move  enter open  c write  r reply  e archive  d delete  u unread")
     );
     harness.keys("1");
     let bar = harness.screen().lines().last().unwrap().to_owned();
@@ -699,7 +699,7 @@ fn the_mutt_preset_drives_the_same_commands_with_mutt_keys() {
             .lines()
             .last()
             .unwrap()
-            .contains("N unread  F star")
+            .contains("m write  r reply  e archive  d delete  N unread")
     );
 }
 
@@ -715,7 +715,9 @@ fn overridden_keys_show_up_in_the_hints_and_in_help() {
     let mut harness = Harness::build(200, 60, keymap, ColorMode::TrueColor);
     let bar = harness.screen().lines().last().unwrap().to_owned();
     assert!(
-        bar.starts_with(" n/p move  enter open  e archive  d delete  u unread  tab next pane"),
+        bar.starts_with(
+            " n/p move  enter open  c write  r reply  e archive  d delete  u unread  tab next pane"
+        ),
         "{bar}"
     );
     harness.keys("n n p");
@@ -1596,4 +1598,33 @@ fn a_large_unread_count_is_shown_whole() {
     assert!(row.contains("Mail… 15055 │"), "{row}");
     // Small counts still end at the same column.
     assert!(harness.row_with("Unified").contains(" 12 │"));
+}
+
+#[test]
+fn a_message_that_was_answered_says_so_once_read() {
+    let mut harness = Harness::demo(200, 60);
+    // The second message has been read; the first has not.
+    for index in [0, 1] {
+        let row = harness.state.list.rows[index].clone();
+        let answered = quill_core::types::Flags {
+            answered: true,
+            ..row.flags
+        };
+        harness
+            .store
+            .queue_flags(row.id, answered, common::NOW)
+            .unwrap();
+    }
+    harness.act(Action::Data(DataEvent::StoreChanged));
+    assert!(
+        harness.row_with("Build Bot").contains("  r   W Build Bot"),
+        "{}",
+        harness.row_with("Build Bot")
+    );
+    // Unread comes first: it is the more useful thing to know.
+    assert!(
+        harness.row_with("Q4 roadmap").contains("> * @ W Ana Ruiz"),
+        "{}",
+        harness.row_with("Q4 roadmap")
+    );
 }

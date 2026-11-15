@@ -285,6 +285,7 @@ fn an_existing_accounts_certificate_is_asked_about_before_anything_else() {
     harness.act(Action::Sync(SyncEvent::Certificate {
         account: "Work".to_owned(),
         problem: problem(),
+        sending: false,
     }));
     assert_eq!(harness.state.context(), Context::Certificate);
     let screen = harness.screen();
@@ -305,6 +306,7 @@ fn an_existing_accounts_certificate_is_asked_about_before_anything_else() {
             account: "Work".to_owned(),
             fingerprint: "0123456789abcdef".repeat(4),
             pin: false,
+            sending: false,
         }]
     );
     // Answered once: a second press asks for nothing more.
@@ -314,6 +316,7 @@ fn an_existing_accounts_certificate_is_asked_about_before_anything_else() {
 
     harness.act(Action::Account(AccountEvent::Trusted {
         account: "Work".to_owned(),
+        sending: false,
         result: Ok(()),
     }));
     assert_eq!(harness.state.context(), Context::List);
@@ -326,12 +329,14 @@ fn rejecting_a_certificate_sends_nothing_and_a_failure_is_reported() {
         harness.act(Action::Sync(SyncEvent::Certificate {
             account: account.to_owned(),
             problem: problem(),
+            sending: false,
         }));
     }
     // A repeat for the same account replaces its question; it does not queue.
     harness.act(Action::Sync(SyncEvent::Certificate {
         account: "Work".to_owned(),
         problem: problem(),
+        sending: false,
     }));
     assert_eq!(harness.state.certificates.len(), 2);
 
@@ -346,10 +351,12 @@ fn rejecting_a_certificate_sends_nothing_and_a_failure_is_reported() {
     harness.act(Action::Sync(SyncEvent::Certificate {
         account: "Work".to_owned(),
         problem: problem(),
+        sending: false,
     }));
     harness.keys("p");
     harness.act(Action::Account(AccountEvent::Trusted {
         account: "Work".to_owned(),
+        sending: false,
         result: Err("config.toml is read-only".to_owned()),
     }));
     assert_eq!(harness.state.context(), Context::List);
@@ -369,6 +376,7 @@ fn a_certificate_that_cannot_be_read_can_only_be_rejected() {
     harness.act(Action::Sync(SyncEvent::Certificate {
         account: "Work".to_owned(),
         problem: unreadable,
+        sending: false,
     }));
     assert!(harness.screen().contains("could not be read"));
     harness.keys("o p");
@@ -432,7 +440,54 @@ fn snapshots_of_the_form_and_the_certificate_question() {
         harness.act(Action::Sync(SyncEvent::Certificate {
             account: "Work".to_owned(),
             problem: problem(),
+            sending: false,
         }));
         snap("certificate_prompt", &harness);
     }
+}
+
+#[test]
+fn the_server_mail_is_sent_through_is_asked_about_separately() {
+    let mut harness = Harness::with_accounts(120, 40);
+    // Both of one account's servers can be in question at once.
+    for sending in [false, true] {
+        harness.act(Action::Sync(SyncEvent::Certificate {
+            account: "Work".to_owned(),
+            problem: problem(),
+            sending,
+        }));
+    }
+    assert_eq!(harness.state.certificates.len(), 2);
+    assert!(harness.screen().contains(" Work: certificate "));
+    // Answering the first leaves the second, which says what it is for.
+    harness.keys("p");
+    harness.act(Action::Account(AccountEvent::Trusted {
+        account: "Work".to_owned(),
+        sending: false,
+        result: Ok(()),
+    }));
+    let screen = harness.screen();
+    assert!(
+        screen.contains(" Work: certificate for sending "),
+        "{screen}"
+    );
+    assert!(screen.contains("sends mail through"), "{screen}");
+    assert!(screen.contains("in the Outbox for it."), "{screen}");
+
+    harness.keys("o");
+    assert_eq!(
+        harness.account_requests.last(),
+        Some(&AccountRequest::Trust {
+            account: "Work".to_owned(),
+            fingerprint: "0123456789abcdef".repeat(4),
+            pin: false,
+            sending: true,
+        })
+    );
+    harness.act(Action::Account(AccountEvent::Trusted {
+        account: "Work".to_owned(),
+        sending: true,
+        result: Ok(()),
+    }));
+    assert_eq!(harness.state.context(), Context::List);
 }

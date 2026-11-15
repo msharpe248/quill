@@ -5,6 +5,7 @@
 //! to the Keychain, and hands it to the sync engine. Accepting a server's
 //! certificate for an account that already exists goes the same way.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -33,6 +34,9 @@ pub struct Service {
     pub sync: Arc<SyncHandle>,
     pub dns: Box<dyn Dns>,
     pub prober: Box<dyn Prober>,
+    /// Certificates accepted for this run only, by account and by whether
+    /// it is the sending server's. Written nowhere.
+    pub trusted_once: Mutex<HashMap<(String, bool), String>>,
 }
 
 /// Starts the service on the current Tokio runtime and returns the UI's end
@@ -90,15 +94,18 @@ impl Service {
                 account,
                 fingerprint,
                 pin,
+                sending,
             } => {
                 let service = Arc::clone(self);
                 let name = account.clone();
-                let trusted =
-                    tokio::task::spawn_blocking(move || service.trust(&name, &fingerprint, pin))
-                        .await
-                        .unwrap_or_else(|err| Err(err.to_string()));
+                let trusted = tokio::task::spawn_blocking(move || {
+                    service.trust(&name, &fingerprint, pin, sending)
+                })
+                .await
+                .unwrap_or_else(|err| Err(err.to_string()));
                 AccountEvent::Trusted {
                     account,
+                    sending,
                     result: trusted.map(|account| self.sync.set_account(account)),
                 }
             }
@@ -179,29 +186,62 @@ impl Service {
         ))
     }
 
-    /// Accepts `fingerprint` as the certificate of an existing account's
-    /// server, in the config when `pin` is set and for this run otherwise.
-    fn trust(&self, name: &str, fingerprint: &str, pin: bool) -> Result<SyncAccount, String> {
+    /// Accepts `fingerprint` as the certificate of one of an existing
+    /// account's servers, the one it reads from or the one it sends
+    /// through: in the config when `pin` is set, and for this run otherwise.
+    fn trust(
+        &self,
+        name: &str,
+        fingerprint: &str,
+        pin: bool,
+        sending: bool,
+    ) -> Result<SyncAccount, String> {
+        // Not a fingerprint, not accepted: nothing is written or kept.
+        parse_fingerprint(fingerprint)?;
         let mut text = self.config_text()?;
         if pin {
-            text = config_edit::pin_fingerprint(&text, name, fingerprint)?;
+            let server = if sending { "smtp" } else { "imap" };
+            text = config_edit::pin_fingerprint(&text, name, server, fingerprint)?;
             config_edit::write(&self.config_file, &text)
                 .map_err(|err| format!("config.toml cannot be written: {err}"))?;
         }
         let config = Config::parse(&text).map_err(|err| err.to_string())?;
-        let account = config
+        let mut account = config
             .accounts
             .iter()
             .find(|account| account.name == name)
-            .ok_or_else(|| format!("config.toml has no account called {name}"))?;
-        let mut imap = imap_config(account)?;
-        imap.trust.pinned_sha256 = Some(parse_fingerprint(fingerprint)?);
-        Ok(sync_account(
-            self.register(account)?,
-            account,
-            imap,
-            &self.secrets,
-        ))
+            .ok_or_else(|| format!("config.toml has no account called {name}"))?
+            .clone();
+        let mut imap = imap_config(&account)?;
+        let id = self.register(&account)?;
+        // What was accepted for this run stays accepted when the account's
+        // other server is asked about later.
+        let mut once = self
+            .trusted_once
+            .lock()
+            .map_err(|_| "the service is unavailable after an earlier failure".to_owned())?;
+        if !pin {
+            once.insert((name.to_owned(), sending), fingerprint.to_owned());
+        }
+        if let Some(reading) = once.get(&(name.to_owned(), false)) {
+            imap.trust.pinned_sha256 = Some(parse_fingerprint(reading)?);
+        }
+        if let Some(sender) = once.get(&(name.to_owned(), true))
+            && let Some(smtp) = &mut account.smtp
+        {
+            smtp.fingerprint = Some(sender.clone());
+        }
+        drop(once);
+        if sending {
+            // Mail that was waiting on this answer goes now, not at its
+            // next retry.
+            self.store
+                .lock()
+                .map_err(|_| "the store is unavailable after an earlier failure".to_owned())?
+                .hurry_sends(id, now())
+                .map_err(|err| err.to_string())?;
+        }
+        Ok(sync_account(id, &account, imap, &self.secrets))
     }
 }
 
@@ -254,6 +294,14 @@ fn sentence(message: &str) -> String {
         out.push('.');
     }
     out
+}
+
+fn now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX)
+        })
 }
 
 #[cfg(test)]
@@ -336,6 +384,7 @@ mod tests {
                 sync,
                 dns: Box::new(NoDns),
                 prober: Box::new(NoProber),
+                trusted_once: Mutex::default(),
             });
             Self {
                 service,
@@ -647,12 +696,14 @@ mod tests {
                     account: "Personal".to_owned(),
                     fingerprint: fingerprint.clone(),
                     pin,
+                    sending: false,
                 })
                 .await;
             assert_eq!(
                 trusted,
                 AccountEvent::Trusted {
                     account: "Personal".to_owned(),
+                    sending: false,
                     result: Ok(())
                 }
             );
@@ -674,6 +725,7 @@ mod tests {
                 account: "Nobody".to_owned(),
                 fingerprint,
                 pin: true,
+                sending: false,
             })
             .await
         {

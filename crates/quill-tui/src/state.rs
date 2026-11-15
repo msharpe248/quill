@@ -4,19 +4,23 @@
 //! the state and returns the store requests the change calls for; the run
 //! loop sends those to the store worker, whose answers come back as actions.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 
 use jiff::tz::TimeZone;
 use quill_core::types::{FolderRole, LocalAccountId, LocalFolderId, LocalMessageId};
 use quill_mime::html::Line;
-use quill_store::{AccountRow, DraftId, FolderRow, Mailbox, MessageRow};
+use quill_mime::{BodyFormat, ReplyPosition};
+use quill_store::{AccountRow, DraftContent, DraftId, FolderRow, Mailbox, MessageRow};
 use quill_sync::{SyncEvent, SyncRequest};
 
 use crate::command::{CommandId, Context, Registry};
+use crate::compose::{Compose, Did, Field, Prefill};
 use crate::data::{DataEvent, DataRequest, LoadedBody};
+use crate::editor::Editor;
 use crate::input::LineInput;
 use crate::keymap::{Key, KeyChord, Keymap, Mods, Resolution};
 use crate::layout::{self, LayoutMode};
+use crate::outgoing::{Response, SendRequest};
 use crate::setup::{AccountEvent, AccountRequest, CertificatePrompt, Outcome, Setup};
 use crate::theme::Styles;
 use crate::{text, view};
@@ -35,6 +39,53 @@ pub struct Env {
     /// Accounts can be added and their certificates accepted from here.
     /// False for the demo mailbox, which has no config to write to.
     pub accounts: bool,
+    /// Whether keys held with `cmd` can arrive: they do from Quill's own
+    /// window, and a terminal program keeps them for itself.
+    pub cmd_keys: bool,
+    /// How mail is written and sent, from the config.
+    pub compose: ComposeSettings,
+    /// Who the user is on each account, by the account's name.
+    pub identities: HashMap<String, Identity>,
+}
+
+impl Env {
+    /// The key to name when telling the user how to run a command: the
+    /// first of its keys that can be pressed here.
+    pub fn hint_key(&self, id: CommandId) -> Option<&crate::keymap::KeySeq> {
+        let keys = self.keymap.keys_for(id);
+        keys.iter()
+            .find(|sequence| self.cmd_keys || !sequence.uses_cmd())
+            .or_else(|| keys.first())
+    }
+}
+
+/// The `[compose]` settings the UI acts on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ComposeSettings {
+    /// Write in Markdown and send HTML beside the text, or plain text only.
+    pub markdown: bool,
+    /// The reply goes above the quoted message, or below it.
+    pub reply_above: bool,
+    /// How long a sent message waits in the outbox, where it can be taken
+    /// back.
+    pub undo_send_seconds: u32,
+}
+
+impl Default for ComposeSettings {
+    fn default() -> Self {
+        Self {
+            markdown: true,
+            reply_above: true,
+            undo_send_seconds: 10,
+        }
+    }
+}
+
+/// Who the user is when sending from an account.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Identity {
+    pub full_name: Option<String>,
+    pub signature: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,6 +134,8 @@ pub enum HostRequest {
     /// Open a web or mail address in the user's browser or mail program.
     /// Only ever an address `quill_mime::links::is_openable` accepts.
     OpenUrl(String),
+    /// Put text on the system clipboard.
+    Copy(String),
 }
 
 /// What the app shell mirrors: enough to enable menu items, badge the Dock
@@ -334,6 +387,13 @@ pub struct State {
     pub help: Option<Help>,
     pub links: Option<LinkPicker>,
     pub folders: Option<FolderPicker>,
+    /// The message being written, in the reader's place.
+    pub compose: Option<Compose>,
+    /// A message the store worker has prepared to write, opened at the end
+    /// of the update that brought it.
+    compose_pending: Option<Box<Prefill>>,
+    /// A reply or forward waiting for its message to be downloaded.
+    respond_pending: Option<(LocalMessageId, DataRequest)>,
     /// What was just done, in a few words, shown until the next key, and
     /// whether the undo command would take it back.
     pub flash: Option<(String, bool)>,
@@ -375,6 +435,9 @@ impl State {
             help: None,
             links: None,
             folders: None,
+            compose: None,
+            compose_pending: None,
+            respond_pending: None,
             flash: None,
             setup: None,
             certificates: VecDeque::new(),
@@ -416,6 +479,9 @@ impl State {
         if self.folders.is_some() {
             return Context::Folders;
         }
+        if self.compose.is_some() {
+            return Context::Compose;
+        }
         match self.focus {
             Pane::Sidebar => Context::Sidebar,
             Pane::List => Context::List,
@@ -436,6 +502,20 @@ impl State {
                 // Dates are drawn relative to today, so only a new day shows.
                 changed = text::local_day(now, &env.tz) != text::local_day(self.now, &env.tz);
                 self.now = now;
+                // What is being written is saved as it goes, so a crash
+                // costs a few seconds of typing at most.
+                if let Some(compose) = &self.compose
+                    && compose.is_modified()
+                    && !compose.is_blank()
+                    && !compose.sending
+                {
+                    out.data.push(DataRequest::SaveDraft {
+                        draft: compose.draft,
+                        account: compose.account,
+                        content: Box::new(compose.content()),
+                        announce: false,
+                    });
+                }
             }
             Action::Notify(notice) => self.notices.push_back(notice),
             Action::Sync(event) => self.on_sync(event, &mut out),
@@ -452,8 +532,16 @@ impl State {
                         picker.selected = 0;
                     }
                 }
+                Context::Compose => {
+                    if let Some(compose) = &mut self.compose {
+                        compose.paste(&text);
+                    }
+                }
                 _ => {}
             },
+        }
+        if let Some(prefill) = self.compose_pending.take() {
+            self.open_compose(env, *prefill);
         }
         // With no accounts there is nothing to read: offer to add one,
         // once, instead of an empty window.
@@ -472,6 +560,28 @@ impl State {
         // Where there is typing to do, a key is typing first and a command
         // only if the field has no use for it.
         match self.context() {
+            Context::Compose => {
+                let accounts: Vec<LocalAccountId> =
+                    self.accounts.iter().map(|account| account.id).collect();
+                if let Some(compose) = &mut self.compose {
+                    match compose.key(chord, &accounts) {
+                        Did::Nothing => {}
+                        Did::Handled => return,
+                        Did::Copy(text) => {
+                            out.host.push(HostRequest::Copy(text));
+                            return;
+                        }
+                        Did::Lookup(typed) => {
+                            out.data.push(DataRequest::Contacts { typed });
+                            return;
+                        }
+                        Did::Attach(path) => {
+                            out.data.push(DataRequest::Attach { path });
+                            return;
+                        }
+                    }
+                }
+            }
             Context::Folders => {
                 if let Some(picker) = &mut self.folders
                     && picker.filter.key(chord)
@@ -519,6 +629,22 @@ impl State {
         let context = self.context();
         if !self.is_enabled(env, id) {
             return;
+        }
+        // While a message is being written, tab moves between its fields.
+        if context == Context::Compose
+            && let Some(compose) = &mut self.compose
+        {
+            match id {
+                CommandId::FocusNext => {
+                    compose.move_field(true);
+                    return;
+                }
+                CommandId::FocusPrev => {
+                    compose.move_field(false);
+                    return;
+                }
+                _ => {}
+            }
         }
         // In the form, moving is between its fields and opening is going on
         // to the next step.
@@ -575,9 +701,50 @@ impl State {
                 }
             }
             CommandId::EditUndo => out.data.push(DataRequest::Undo),
+            CommandId::MessageCompose => self.start_composing(env),
+            CommandId::MessageReply | CommandId::MessageReplyAll | CommandId::MessageForward => {
+                if let Some(row) = self.target_row() {
+                    out.data.push(DataRequest::Respond {
+                        id: row.id,
+                        how: match id {
+                            CommandId::MessageForward => Response::Forward,
+                            _ => Response::Reply {
+                                all: id == CommandId::MessageReplyAll,
+                            },
+                        },
+                        date_line: text::long_date(row.headers.date, &env.tz),
+                        position: if env.compose.reply_above {
+                            ReplyPosition::Above
+                        } else {
+                            ReplyPosition::Below
+                        },
+                    });
+                }
+            }
+            CommandId::ComposeSend => self.send(env, out),
+            CommandId::ComposeSave => {
+                if let Some(compose) = &self.compose {
+                    out.data.push(DataRequest::SaveDraft {
+                        draft: compose.draft,
+                        account: compose.account,
+                        content: Box::new(compose.content()),
+                        announce: true,
+                    });
+                }
+            }
+            CommandId::ComposeBcc => {
+                if let Some(compose) = &mut self.compose {
+                    compose.show_bcc();
+                }
+            }
+            CommandId::ComposeAttach => {
+                if let Some(compose) = &mut self.compose {
+                    compose.ask_for_attachment();
+                }
+            }
             CommandId::AccountAdd => self.setup = Some(Setup::default()),
             CommandId::NavOpen => self.open(out),
-            CommandId::NavBack => self.back(),
+            CommandId::NavBack => self.back(out),
             CommandId::AppQuit => self.should_quit = true,
             CommandId::FocusSidebar => self.set_focus(Pane::Sidebar),
             CommandId::FocusList => self.set_focus(Pane::List),
@@ -629,6 +796,15 @@ impl State {
                 .as_ref()
                 .is_some_and(|picker| !self.folder_choices(picker).is_empty()),
             CommandId::MessageDelete => self.target_row().is_some(),
+            CommandId::MessageCompose => !self.accounts.is_empty(),
+            CommandId::MessageReply | CommandId::MessageReplyAll | CommandId::MessageForward => {
+                self.target_row()
+                    .is_some_and(|row| DraftId::from_message_id(row.id).is_none())
+            }
+            CommandId::ComposeSend => self
+                .compose
+                .as_ref()
+                .is_some_and(|compose| !compose.sending),
             // A draft is in no folder of any server: it can be thrown away,
             // not filed or flagged.
             CommandId::MessageArchive | CommandId::MessageMove => self
@@ -644,6 +820,7 @@ impl State {
                 self.help.is_some()
                     || self.links.is_some()
                     || self.folders.is_some()
+                    || self.compose.is_some()
                     || self.setup.is_some()
                     || !self.certificates.is_empty()
                     || !self.notices.is_empty()
@@ -788,6 +965,11 @@ impl State {
                 let Some(row) = self.list.rows.get(self.list.selected) else {
                     return;
                 };
+                // A draft opens to be written, not read.
+                if let Some(draft) = DraftId::from_message_id(row.id) {
+                    out.data.push(DataRequest::OpenDraft(draft));
+                    return;
+                }
                 let (id, previous) = (row.id, row.flags);
                 if !previous.seen {
                     self.set_seen_locally(id, true);
@@ -800,7 +982,7 @@ impl State {
         }
     }
 
-    fn back(&mut self) {
+    fn back(&mut self, out: &mut Effects) {
         if self.help.is_some() {
             self.help = None;
         } else if !self.certificates.is_empty() {
@@ -814,6 +996,25 @@ impl State {
             self.links = None;
         } else if self.folders.is_some() {
             self.folders = None;
+        } else if let Some(compose) = self.compose.take() {
+            // Closing keeps what was written. A reply opened and closed
+            // untouched leaves nothing behind, and a draft emptied out is
+            // a draft thrown away.
+            if compose.sending {
+                // It is on its way to the outbox; there is nothing to keep.
+            } else if !compose.is_blank() {
+                if compose.is_modified() {
+                    out.data.push(DataRequest::SaveDraft {
+                        draft: compose.draft,
+                        account: compose.account,
+                        content: Box::new(compose.content()),
+                        announce: true,
+                    });
+                }
+            } else if let Some(draft) = compose.draft {
+                out.data.push(DataRequest::Delete(draft.as_message_id()));
+            }
+            self.set_focus(Pane::List);
         } else if self.notices.pop_front().is_some() {
             // One notice dismissed per press.
         } else {
@@ -829,6 +1030,132 @@ impl State {
                 Pane::Sidebar | Pane::List => {}
             }
         }
+    }
+
+    /// What to ask of the store as Quill closes: a message being written
+    /// is saved as a draft.
+    pub fn parting_requests(&self) -> Vec<DataRequest> {
+        match &self.compose {
+            Some(compose) if compose.is_modified() && !compose.is_blank() && !compose.sending => {
+                vec![DataRequest::SaveDraft {
+                    draft: compose.draft,
+                    account: compose.account,
+                    content: Box::new(compose.content()),
+                    announce: false,
+                }]
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Opens an empty message, from the account whose mail is in view.
+    fn start_composing(&mut self, env: &Env) {
+        let account = self
+            .target_row()
+            .map(|row| row.account)
+            .filter(|_| self.mailbox != Mailbox::Unified)
+            .or_else(|| self.accounts.first().map(|account| account.id));
+        let Some(account) = account else {
+            return;
+        };
+        self.open_compose(
+            env,
+            Prefill {
+                draft: None,
+                account,
+                content: DraftContent::default(),
+                cursor: 0,
+                focus: Field::To,
+                title: "New message",
+                note: None,
+            },
+        );
+    }
+
+    /// Puts a message to write in the reader's place.
+    fn open_compose(&mut self, env: &Env, prefill: Prefill) {
+        let fresh = prefill.draft.is_none();
+        let account = prefill.account;
+        // A new message ends with the account's signature. A draft taken
+        // up again already has whatever it was given.
+        let signature = self
+            .accounts
+            .iter()
+            .find(|row| row.id == account)
+            .and_then(|row| env.identities.get(&row.name))
+            .and_then(|identity| identity.signature.as_deref())
+            .filter(|signature| !signature.trim().is_empty())
+            .filter(|_| fresh);
+        let mut prefill = prefill;
+        let mut placed = false;
+        if let Some(signature) = signature
+            && !prefill.content.body.trim().is_empty()
+            && prefill.content.body.is_char_boundary(prefill.cursor)
+        {
+            let signature = signature.trim_end();
+            let (before, after) = prefill.content.body.split_at(prefill.cursor);
+            if before.trim().is_empty() {
+                // Written above a quoted message, the signature goes
+                // above it too, under what is about to be written.
+                prefill.content.body = format!(
+                    "{before}\n\n-- \n{signature}\n\n{}",
+                    after.trim_start_matches('\n')
+                );
+                placed = true;
+            } else if after.trim().is_empty() {
+                // Written below it, the signature ends the message, with
+                // a line left for the reply.
+                let quoted = before.trim_end();
+                prefill.cursor = quoted.len() + 2;
+                prefill.content.body = format!("{quoted}\n\n\n\n-- \n{signature}\n");
+                placed = true;
+            }
+        }
+        let mut compose = Compose::new(prefill);
+        if !placed && let Some(signature) = signature {
+            compose.body.insert_signature(signature);
+        }
+        compose.body.mark_saved();
+        self.compose = Some(compose);
+        self.help = None;
+        self.links = None;
+        self.folders = None;
+        self.set_focus(Pane::Reader);
+    }
+
+    /// Hands the message over to be checked, built and put in the outbox.
+    fn send(&mut self, env: &Env, out: &mut Effects) {
+        let from_name = self.compose.as_ref().and_then(|compose| {
+            self.accounts
+                .iter()
+                .find(|row| row.id == compose.account)
+                .and_then(|row| env.identities.get(&row.name))
+                .and_then(|identity| identity.full_name.clone())
+        });
+        let Some(compose) = &mut self.compose else {
+            return;
+        };
+        if compose.sending {
+            return;
+        }
+        compose.sending = true;
+        compose.error = None;
+        out.data.push(DataRequest::Send(Box::new(SendRequest {
+            draft: compose.draft,
+            account: compose.account,
+            content: compose.content(),
+            from_name,
+            format: if env.compose.markdown {
+                BodyFormat::Markdown
+            } else {
+                BodyFormat::Plain
+            },
+            delay_seconds: i64::from(env.compose.undo_send_seconds),
+            utc_offset: jiff::Timestamp::from_second(self.now)
+                .map_or(0, |now| env.tz.to_offset(now).seconds()),
+            // Asked a second time, with the doubts on screen: send it.
+            confirmed: !compose.doubts.is_empty(),
+        })));
     }
 
     /// The folders the picker offers: those of the message's account other
@@ -902,14 +1229,21 @@ impl State {
                 account: prompt.account.clone(),
                 fingerprint,
                 pin,
+                sending: prompt.sending,
             });
         }
         true
     }
 
     fn on_account(&mut self, event: AccountEvent, out: &mut Effects) {
-        if let AccountEvent::Trusted { account, result } = event {
-            self.certificates.retain(|prompt| prompt.account != account);
+        if let AccountEvent::Trusted {
+            account,
+            sending,
+            result,
+        } = event
+        {
+            self.certificates
+                .retain(|prompt| prompt.account != account || prompt.sending != sending);
             if let Err(reason) = result {
                 self.notices.push_back(Notice::error(format!(
                     "{account}: the certificate could not be accepted: {}",
@@ -1068,13 +1402,19 @@ impl State {
                     self.syncing.remove(&account);
                 }
             }
-            SyncEvent::Certificate { account, problem } => {
-                // One question per account: a newer report replaces an
+            SyncEvent::Certificate {
+                account,
+                problem,
+                sending,
+            } => {
+                // One question per server: a newer report replaces an
                 // unanswered older one.
-                self.certificates.retain(|prompt| prompt.account != account);
+                self.certificates
+                    .retain(|prompt| prompt.account != account || prompt.sending != sending);
                 self.certificates.push_back(CertificatePrompt {
                     account,
                     problem,
+                    sending,
                     busy: false,
                 });
             }
@@ -1083,8 +1423,25 @@ impl State {
                 if reading(self, id) {
                     out.data.push(DataRequest::LoadBody(id));
                 }
+                if let Some((_, request)) =
+                    self.respond_pending.take_if(|(waiting, _)| *waiting == id)
+                {
+                    out.data.push(request);
+                }
             }
             SyncEvent::BodyFailed { id, reason } => {
+                if self
+                    .respond_pending
+                    .take_if(|(waiting, _)| *waiting == id)
+                    .is_some()
+                {
+                    self.flash = Some((
+                        text::sanitize_line(&format!(
+                            "That message could not be downloaded: {reason}"
+                        )),
+                        false,
+                    ));
+                }
                 if reading(self, id) {
                     self.reader.body = Body::Unavailable(text::sanitize_line(&reason));
                     self.reader.wrap_width = None;
@@ -1174,6 +1531,50 @@ impl State {
             // The change is written down: the engine can take it from there.
             DataEvent::Queued => out.sync.push(SyncRequest::Queue),
             DataEvent::Flash { text, undoable } => self.flash = Some((text, undoable)),
+            DataEvent::Contacts { typed, people } => {
+                if let Some(compose) = &mut self.compose {
+                    compose.offer(typed, people);
+                }
+            }
+            DataEvent::DraftSaved { draft } => {
+                if let Some(compose) = &mut self.compose {
+                    compose.mark_saved(draft);
+                }
+            }
+            DataEvent::SendQueued => {
+                self.compose = None;
+                self.set_focus(Pane::List);
+            }
+            DataEvent::SendDoubts(doubts) => {
+                if let Some(compose) = &mut self.compose {
+                    compose.sending = false;
+                    compose.doubts = doubts;
+                }
+            }
+            DataEvent::SendRefused(reason) => {
+                if let Some(compose) = &mut self.compose {
+                    compose.sending = false;
+                    compose.error = Some(text::sanitize_line(&reason));
+                }
+            }
+            DataEvent::Attached(attachment) => {
+                if let Some(compose) = &mut self.compose {
+                    compose.attachments.push(attachment);
+                }
+            }
+            DataEvent::AttachFailed(reason) => {
+                if let Some(compose) = &mut self.compose {
+                    compose.error = Some(text::sanitize_line(&reason));
+                }
+            }
+            DataEvent::ComposeReady(prefill) => self.compose_pending = Some(prefill),
+            DataEvent::RespondNeedsBody(request) => {
+                if let DataRequest::Respond { id, .. } = *request {
+                    self.respond_pending = Some((id, *request));
+                    out.sync.push(SyncRequest::FetchBody(id));
+                    self.flash = Some(("Downloading the message…".to_owned(), false));
+                }
+            }
             DataEvent::Error(message) => self.notices.push_back(Notice::error(message)),
         }
     }
@@ -1216,6 +1617,12 @@ impl State {
             );
             let last = self.reader.lines.len().saturating_sub(viewport);
             self.reader.scroll = self.reader.scroll.min(last);
+        }
+        if let (Some(compose), Some(rect)) = (&mut self.compose, areas.reader) {
+            let body = layout::compose_body(rect, compose);
+            compose.body_view = compose
+                .body
+                .view(usize::from(body.width), usize::from(body.height));
         }
         if self.reader.links.is_empty() {
             self.links = None;

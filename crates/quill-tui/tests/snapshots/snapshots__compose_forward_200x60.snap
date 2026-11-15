@@ -1,0 +1,64 @@
+---
+source: crates/quill-tui/tests/snapshots.rs
+expression: harness.screen()
+---
+┌ [1] Accounts ────────────┐┌ [2] Inbox (unified) - 12 unread ───────────────────────────────────────────────────┐┏ [3] Forward ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+│> Unified              12 ││> * @ W Ana Ruiz              Q4 roadmap                                       09:14│┃ From:    robin@example.com  (Work)                                                 ┃
+│  Work                    ││      W Build Bot             [quill] PR #42 passed                            08:51│┃ To:                                                                                ┃
+│    Inbox               8 ││  *   P Peter Vale            Sunday dinner                                    08:35│┃ Cc:                                                                                ┃
+│    Drafts                ││  *   P Maya Okafor           Trail run Saturday                               04:30│┃ Subject: Fwd: Q4 roadmap                                                           ┃
+│    Sent                  ││  * @ W Sam Lee               Photos from Sat                                    Fri│┃ ────────────────────────────────────────────────────────────────────────────────── ┃
+│    Archive               ││  *   P Riverside Library     Your hold is ready                                 Fri│┃                                                                                    ┃
+│    Trash                 ││  *   W Priya Nair            Re: Offsite agenda                                 Fri│┃                                                                                    ┃
+│  Personal                ││  *!@ W Tomás Ortega          Invoice 2026-114                                   Thu│┃ -------- Forwarded message --------                                                ┃
+│    Inbox               4 ││      P Jo Park               Re: Book club pick                                 Thu│┃ From: Ana Ruiz <ana.ruiz@example.com>                                              ┃
+│    Drafts                ││  *   W 陈静 Chen Jing        Design review notes 设计评审                       Wed│┃ Date: Sat 14 Nov 2026 09:14                                                        ┃
+│    Sent                  ││      W IT Helpdesk           Scheduled maintenance Sunday                       Tue│┃ Subject: Q4 roadmap                                                                ┃
+│    Archive               ││  *   W Lena Fischer          Lunch on Thursday?                                 Mon│┃ To: Robin Vale <robin@example.com>                                                 ┃
+│    Trash                 ││  *   P Hillcrest Dental      Appointment reminder                               Sun│┃                                                                                    ┃
+│                          ││  *!@ W Omar Haddad           Re: Contract redlines                           Nov 06│┃ Hi Robin,                                                                          ┃
+│                          ││  *   W The Weekly Parser     Issue 88: Parsing email is still hard           Nov 02│┃                                                                                    ┃
+│                          ││   !@ P Maya Okafor           Recipe you asked for                            Oct 25│┃ Here is the draft roadmap for Q4. The short version: we ship the sync rewrite in   ┃
+│                          ││      W Ana Ruiz              Welcome to the team                           Oct 2025│┃ October, spend November on search, and keep December for whatever the first two    ┃
+│                          ││                                                                                    │┃ months break.                                                                      ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃ Three things I would like your eyes on before Thursday:                            ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃ 1. The search milestone assumes the index format is settled. Is it?                ┃
+│                          ││                                                                                    │┃ 2. I have pencilled in two weeks for the offline queue. Tell me if that is         ┃
+│                          ││                                                                                    │┃ fantasy.                                                                           ┃
+│                          ││                                                                                    │┃ 3. The on-call rota over the holidays is still empty.                              ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃ The PDF has the detail, including the dependency chart you asked for. Comments in  ┃
+│                          ││                                                                                    │┃ the doc or by reply, whichever is easier.                                          ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃ Thanks,                                                                            ┃
+│                          ││                                                                                    │┃ Ana                                                                                ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃ --                                                                                 ┃
+│                          ││                                                                                    │┃ Ana Ruiz                                                                           ┃
+│                          ││                                                                                    │┃ Product, Example Corp                                                              ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+└──────────────────────────┘└────────────────────────────────────────────────────────────────────────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+ cmd-enter send  cmd-s save draft  cmd-A attach  tab next field  esc close

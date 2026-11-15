@@ -11,12 +11,15 @@
 
 pub mod app;
 pub mod command;
+pub mod compose;
 pub mod data;
 pub mod demo;
+pub mod editor;
 pub mod hyperlink;
 pub mod input;
 pub mod keymap;
 pub mod layout;
+pub mod outgoing;
 pub mod sample;
 pub mod setup;
 pub mod state;

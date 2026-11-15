@@ -90,6 +90,10 @@ impl Harness {
             reader_width: 0.5,
             images: false,
             accounts,
+            // As in Quill's own window.
+            cmd_keys: true,
+            compose: quill_tui::state::ComposeSettings::default(),
+            identities: std::collections::HashMap::new(),
         };
         let mut harness = Self {
             state: State::new((width, height), NOW),

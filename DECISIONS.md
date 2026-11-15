@@ -295,7 +295,35 @@ The UI stayed usable throughout, which is the acceptance. This was a server on t
 - **Moving or deleting a message that is already gone succeeds**, and so does one whose folder was renumbered or removed, so a replay after a crash is safe. Copy and append cannot be made safe to repeat; the queue runs each once and a crash mid-append can leave two sent copies.
 - **A UID is never acted on under a different UIDVALIDITY** than the one in the message's id.
 - **Folder names from the server are unescaped** (`\"` and `\\` inside quoted names), and sent back quoted or as a literal as their characters need. Before this a folder with a quote or backslash in its name could be listed and not opened.
-- **Each sign-in asks for `CAPABILITY` once more**, to learn whether the server has MOVE and UIDPLUS.
+- **Each sign-in asks for `CAPABILITY` once more**, to learn whether the server has MOVE and UIDPLUS. A server that refuses the question is taken to have neither.
+
+### IMAP: refusals, silence and mail marked deleted
+
+- **Every command after sign-in is read to its tagged answer by Quill's own runner**; `async-imap` now only connects, signs in and signs out. Before this a `NO` or `BAD` to SEARCH, FETCH, STORE or LIST was taken for an empty answer, which could report every message in a folder as removed. A refused command now fails the whole call and changes nothing here.
+- **A server that goes silent is given 20 seconds** (`quill_net::PATIENCE`), counted from the last byte in either direction, not per command, so a large message on a slow line is not cut off. The connection is then dropped and the next call makes a new one. IDLE, in M6, will need a longer limit or a connection of its own.
+- **Mail marked `\Deleted` and not yet expunged is treated as gone**: it is never listed, and a message seen before is reported removed. If the mark is later cleared it comes back as new under the same id. Nothing on the server is touched. The sync searches `UNDELETED` and checks the flags of what it fetches as well, for a message marked between the two.
+- **A summary is accepted only for a UID that was asked for**, so a flag update the server volunteers in the middle of a FETCH is not mistaken for new mail.
+
+### The compose screen
+
+- **The editor is in-house** (`quill_tui::editor`, behind the `Editor` trait), not tui-textarea or edtui. The spec's tests for the choice were graphemes and emoji, large pastes, undo, and macOS key conventions; an editor written to them was less work than bending either crate to them. A megabyte paste redraws in well under a frame because wrapping is cached per line. Details of its behaviour (the last column kept for the cursor, undo coalescing as in TextEdit, `ctrl-a`/`ctrl-e`/`ctrl-k` as in Cocoa text fields) are in the module's own comments.
+- **Markdown highlighting is a simple scanner**, not CommonMark: quote, heading and fenced lines are marked whole, inline marks do not nest. What is sent is converted by `quill_mime::markdown`, which is stricter.
+- **Not built from the spec's editor list**: find (`cmd-f`), paste as quotation, reflow and insert template have code in the editor and no command yet; mouse placement and selection wait for mouse support in M6; spell check waits for the bridge message in M6; several drafts open as tabs is not built (one message is written at a time, and closing it keeps it as a draft).
+- **`z` cannot zoom while writing**, since it is a letter. `ctrl-z` zooms in every pane.
+- **Keys for a terminal as well as the app.** Each compose command has a `cmd` key and a `ctrl` key that needs no keyboard protocol: `ctrl-x` send, `ctrl-s` save, `ctrl-t` attach, `ctrl-o` Bcc. Hints name the `ctrl` key outside Quill's own window, where `cmd` never arrives.
+- **Bcc is hidden until asked for** (`compose.bcc`) or filled in, and `tab` passes it while it is empty, so To, Cc, Subject, body is the path through a new message.
+- **Attaching is by path** for now: `compose.attach` asks for one, typed or pasted. The native file panel and drops onto the window need a bridge message; inside the sandbox a typed path outside the container cannot be read, and says so.
+- **Copy goes through the terminal** (OSC 52), which both Quill's shell and the terminals used for development honour. Paste arrives from the terminal as a bracketed paste.
+- **A reply is started from the downloaded message.** If only its headers are here, the body is fetched first and the reply opens when it lands.
+- **The signature goes above the quoted message** when the reply is written above it, and at the end when it is written below. `full_name` and `signature` are per-account keys in `config.toml`; the spec's several identities per account are not built.
+- **Closing an untouched reply leaves no draft**, and a draft emptied out is deleted. Anything else written is kept, also when Quill quits: the run loop saves it and waits for the store before exiting.
+- **Drafts are local.** They are not yet copied to the server's Drafts folder, so a draft started here is not seen by another client. This is the spec's "sync to the server's Drafts folder", still to do.
+- **Drafts and Outbox rows use negative ids** in the message list (`DraftId::as_message_id`), so one list type serves mail and drafts and nothing can confuse the two.
+- **An answered message is also marked read**, and shows `r` in the list's first column once read.
+- **A saved copy of sent mail makes the engine sync at once**, so Sent shows it without waiting for the next interval.
+- **The sending server has its own certificate question.** A certificate the SMTP server presents and Quill does not accept holds the message in the Outbox and asks, as for IMAP; "always trust" pins it under `smtp = { fingerprint = ... }`, and the waiting mail goes as soon as it is answered.
+- **Checked end to end against a scratch Dovecot and a local SMTP sink** that writes what it is given to a file and delivers nothing: reply, new message with a completed address and an attachment, undo send, reopening from Drafts and from the Outbox, the copy in Sent and the answered flag on the server. Not checked against any real provider: the owner's accounts are not touched while they are away.
+- **Keychain reads block.** The engine reads a password with a synchronous call, and macOS can hold that call while it asks the user about a rebuilt binary. Mail stops until it is answered and nothing says why. To fix with the credential rework in M5.
 
 ## M7, POP3 (the protocol crate; the rest of the milestone follows M6)
 

@@ -23,10 +23,18 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         let inner = dialog(
             frame,
             area,
-            &format!(" {}: certificate ", prompt.account),
+            &if prompt.sending {
+                format!(" {}: certificate for sending ", prompt.account)
+            } else {
+                format!(" {}: certificate ", prompt.account)
+            },
             env,
         );
         let mut rows = Rows::new(frame, inner, env);
+        if prompt.sending {
+            rows.text("This is the server the account sends mail through. A message is waiting in the Outbox for it.");
+            rows.blank();
+        }
         certificate(&mut rows, &prompt.problem, prompt.busy);
         return;
     }

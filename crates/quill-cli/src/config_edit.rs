@@ -42,8 +42,14 @@ pub fn add_account(
     checked(document.to_string())
 }
 
-/// `text` with the certificate of `account`'s IMAP server pinned.
-pub fn pin_fingerprint(text: &str, account: &str, fingerprint: &str) -> Result<String, String> {
+/// `text` with the certificate of one of `account`'s servers pinned:
+/// `server` is the key it is configured under, `imap` or `smtp`.
+pub fn pin_fingerprint(
+    text: &str,
+    account: &str,
+    server: &str,
+    fingerprint: &str,
+) -> Result<String, String> {
     let mut document: DocumentMut = text
         .parse()
         .map_err(|err| format!("config.toml cannot be read: {err}"))?;
@@ -55,16 +61,18 @@ pub fn pin_fingerprint(text: &str, account: &str, fingerprint: &str) -> Result<S
         .iter_mut()
         .find(|table| table.get("name").and_then(Item::as_str) == Some(account))
         .ok_or_else(|| format!("config.toml has no account called {account}"))?;
-    let imap = table
-        .get_mut("imap")
-        .ok_or_else(|| format!("{account} has no `imap` server in config.toml"))?;
+    let entry = table
+        .get_mut(server)
+        .ok_or_else(|| format!("{account} has no `{server}` server in config.toml"))?;
     // Written either as `imap = { ... }` or as a `[account.imap]` table.
-    if let Some(inline) = imap.as_inline_table_mut() {
+    if let Some(inline) = entry.as_inline_table_mut() {
         inline.insert("fingerprint", fingerprint.into());
-    } else if let Some(table) = imap.as_table_mut() {
+    } else if let Some(table) = entry.as_table_mut() {
         table["fingerprint"] = value(fingerprint);
     } else {
-        return Err(format!("`imap` of {account} in config.toml is not a table"));
+        return Err(format!(
+            "`{server}` of {account} in config.toml is not a table"
+        ));
     }
     checked(document.to_string())
 }
@@ -197,7 +205,7 @@ mod tests {
                       [[account]]\nname = \"Home\"\ntype = \"imap\"\naddress = \"b@example.com\"\n\n\
                       [account.imap]\nhost = \"two.example.com\"\n";
         let fingerprint = "cd".repeat(32);
-        let after = pin_fingerprint(before, "Home", &fingerprint).unwrap();
+        let after = pin_fingerprint(before, "Home", "imap", &fingerprint).unwrap();
         let config = Config::parse(&after).unwrap();
         assert_eq!(config.accounts[0].imap.as_ref().unwrap().fingerprint, None);
         assert_eq!(
@@ -211,7 +219,7 @@ mod tests {
         );
         assert!(after.contains("# the office"));
 
-        let after = pin_fingerprint(&after, "Work", &fingerprint).unwrap();
+        let after = pin_fingerprint(&after, "Work", "imap", &fingerprint).unwrap();
         let config = Config::parse(&after).unwrap();
         assert_eq!(
             config.accounts[0]
@@ -223,11 +231,34 @@ mod tests {
             Some(fingerprint.as_str())
         );
         // Pinning again replaces the old pin.
-        let again = pin_fingerprint(&after, "Work", &"ef".repeat(32)).unwrap();
+        let again = pin_fingerprint(&after, "Work", "imap", &"ef".repeat(32)).unwrap();
         assert_eq!(again.matches("fingerprint").count(), 2);
 
-        assert!(pin_fingerprint(before, "Nobody", &fingerprint).is_err());
-        assert!(pin_fingerprint("", "Work", &fingerprint).is_err());
+        assert!(pin_fingerprint(before, "Nobody", "imap", &fingerprint).is_err());
+        assert!(pin_fingerprint("", "Work", "imap", &fingerprint).is_err());
+    }
+
+    #[test]
+    fn the_sending_server_has_a_pin_of_its_own() {
+        let before = "[[account]]\nname = \"Work\"\ntype = \"imap\"\naddress = \"a@example.com\"\n\
+                      imap = { host = \"in.example.com\" }\n\
+                      smtp = { host = \"out.example.com\", port = 587, tls = \"starttls\" }\n";
+        let fingerprint = "ab".repeat(32);
+        let after = pin_fingerprint(before, "Work", "smtp", &fingerprint).unwrap();
+        let account = &Config::parse(&after).unwrap().accounts[0];
+        assert_eq!(account.imap.as_ref().unwrap().fingerprint, None);
+        let smtp = account.smtp.as_ref().unwrap();
+        assert_eq!(smtp.fingerprint.as_deref(), Some(fingerprint.as_str()));
+        // The rest of what was written about the server is kept.
+        assert_eq!(
+            (smtp.host.as_str(), smtp.port),
+            ("out.example.com", Some(587))
+        );
+
+        // An account with nowhere to send through has nothing to pin.
+        let reading_only = "[[account]]\nname = \"Work\"\ntype = \"imap\"\n\
+                            address = \"a@example.com\"\nimap = { host = \"in.example.com\" }\n";
+        assert!(pin_fingerprint(reading_only, "Work", "smtp", &fingerprint).is_err());
     }
 
     #[test]

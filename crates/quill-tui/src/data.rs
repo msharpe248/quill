@@ -4,14 +4,21 @@
 //! the worker thread runs the query against the store and answers with
 //! [`DataEvent`]s on a channel the UI task selects on.
 
-use std::sync::mpsc;
+use std::sync::{Mutex, mpsc};
 use std::thread;
 
-use quill_core::types::{Flags, FolderRole, LocalFolderId, LocalMessageId};
-use quill_store::{AccountRow, DraftId, DraftState, FolderRow, Mailbox, MessageRow, Store};
+use quill_core::types::{Flags, FolderRole, LocalAccountId, LocalFolderId, LocalMessageId};
+use quill_mime::ReplyPosition;
+use quill_store::{
+    AccountRow, Contact, DraftAttachment, DraftContent, DraftId, DraftState, FolderRow, Mailbox,
+    MessageRow, Store,
+};
 use tokio::sync::mpsc::UnboundedSender;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use crate::compose::Prefill;
+use crate::outgoing::{self, Response, SendRequest};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DataRequest {
     LoadSidebar,
     LoadMessages(Mailbox),
@@ -35,6 +42,32 @@ pub enum DataRequest {
     },
     /// Take back the last change that still can be.
     Undo,
+    /// People whose name or address starts with what was typed.
+    Contacts {
+        typed: String,
+    },
+    SaveDraft {
+        draft: Option<DraftId>,
+        account: LocalAccountId,
+        content: Box<DraftContent>,
+        /// Say so in the status bar: the user asked for it.
+        announce: bool,
+    },
+    Send(Box<SendRequest>),
+    /// Read the file at this path, to attach it.
+    Attach {
+        path: String,
+    },
+    /// Start a reply to, or a forward of, a message.
+    Respond {
+        id: LocalMessageId,
+        how: Response,
+        /// When the original was sent, in words, for the attribution line.
+        date_line: String,
+        position: ReplyPosition,
+    },
+    /// Take a draft, or mail from the outbox, up again.
+    OpenDraft(DraftId),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +94,28 @@ pub enum DataEvent {
     /// A change for a server, or mail to send, has been written to the
     /// store's queue. The sync engine should look.
     Queued,
+    /// People to complete an address with.
+    Contacts {
+        typed: String,
+        people: Vec<Contact>,
+    },
+    /// The message being written is saved as this draft.
+    DraftSaved {
+        draft: DraftId,
+    },
+    /// The message is in the outbox: there is nothing left to write.
+    SendQueued,
+    /// Things to look at before the message goes. Sending again sends it.
+    SendDoubts(Vec<String>),
+    /// The message cannot be sent as written, and why.
+    SendRefused(String),
+    Attached(DraftAttachment),
+    AttachFailed(String),
+    /// A message to start writing: a reply, a forward, or a draft.
+    ComposeReady(Box<Prefill>),
+    /// The message to answer has not been downloaded: this is the request
+    /// to make again once it has.
+    RespondNeedsBody(Box<DataRequest>),
     /// Something done, in a few words, to show until the next key.
     /// `undoable` says the undo command would take it back.
     Flash {
@@ -92,7 +147,7 @@ pub fn handle(store: &mut Store, request: DataRequest) -> Vec<DataEvent> {
     // database busy is not a failure to report, just a reason to ask again.
     let mut attempts = 0;
     loop {
-        match run(store, request) {
+        match run(store, &request) {
             Ok(events) => return events,
             Err(err) if err.is_busy() && attempts < BUSY_RETRIES => {
                 attempts += 1;
@@ -106,8 +161,24 @@ pub fn handle(store: &mut Store, request: DataRequest) -> Vec<DataEvent> {
 const BUSY_RETRIES: u32 = 20;
 const BUSY_PAUSE: std::time::Duration = std::time::Duration::from_millis(50);
 
-fn run(store: &mut Store, request: DataRequest) -> quill_store::Result<Vec<DataEvent>> {
-    Ok(match request {
+fn run(store: &mut Store, request: &DataRequest) -> quill_store::Result<Vec<DataEvent>> {
+    Ok(match request.clone() {
+        DataRequest::Contacts { typed } => outgoing::contacts(store, typed)?,
+        DataRequest::SaveDraft {
+            draft,
+            account,
+            content,
+            announce,
+        } => outgoing::save_draft(store, draft, account, &content, announce)?,
+        DataRequest::Send(request) => outgoing::send(store, &request)?,
+        DataRequest::Attach { path } => outgoing::attach(store, &path),
+        DataRequest::Respond {
+            id,
+            how,
+            date_line,
+            position,
+        } => outgoing::respond(store, id, how, &date_line, position)?,
+        DataRequest::OpenDraft(draft) => outgoing::open_draft(store, draft)?,
         DataRequest::LoadSidebar => vec![DataEvent::SidebarLoaded {
             accounts: store.accounts()?,
             folders: store.folders()?,
@@ -320,31 +391,54 @@ fn now() -> i64 {
 
 /// The UI's end of the worker. Dropping it stops the worker thread.
 pub struct DataHandle {
-    requests: mpsc::Sender<DataRequest>,
+    requests: Mutex<Option<mpsc::Sender<DataRequest>>>,
+    worker: Mutex<Option<thread::JoinHandle<()>>>,
 }
 
 impl DataHandle {
     /// Queues a request. Returns `false` when the worker has gone.
     pub fn send(&self, request: DataRequest) -> bool {
-        self.requests.send(request).is_ok()
+        self.requests
+            .lock()
+            .ok()
+            .and_then(|requests| requests.as_ref().map(|tx| tx.send(request).is_ok()))
+            .unwrap_or(false)
+    }
+
+    /// Takes no more requests and waits for those already made to be
+    /// carried out. Whoever reads the worker's answers must still be
+    /// there, or it stops at the first one it cannot deliver.
+    pub fn finish(&self) {
+        if let Ok(mut requests) = self.requests.lock() {
+            requests.take();
+        }
+        let worker = self.worker.lock().ok().and_then(|mut worker| worker.take());
+        if let Some(worker) = worker {
+            let _ = worker.join();
+        }
     }
 }
 
 /// Moves the store onto its own thread. Answers arrive on `events`.
 pub fn spawn(mut store: Store, events: UnboundedSender<DataEvent>) -> std::io::Result<DataHandle> {
     let (requests, queue) = mpsc::channel::<DataRequest>();
-    thread::Builder::new()
+    let worker = thread::Builder::new()
         .name("quill-store".to_owned())
         .spawn(move || {
             while let Ok(request) = queue.recv() {
+                // With nobody left to hear the answers, what was asked is
+                // still done: a draft saved on the way out is saved.
                 for event in handle(&mut store, request) {
                     if events.send(event).is_err() {
-                        return;
+                        break;
                     }
                 }
             }
         })?;
-    Ok(DataHandle { requests })
+    Ok(DataHandle {
+        requests: Mutex::new(Some(requests)),
+        worker: Mutex::new(Some(worker)),
+    })
 }
 
 #[cfg(test)]
@@ -355,6 +449,36 @@ mod tests {
     };
 
     use super::*;
+
+    #[test]
+    fn finishing_waits_for_what_was_asked_even_with_nobody_listening() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("quill.db");
+        let mut store = Store::open(&path).unwrap();
+        let account = store
+            .upsert_account("Work", "robin@example.com", "demo")
+            .unwrap();
+        let (events, listener) = tokio::sync::mpsc::unbounded_channel();
+        let handle = spawn(store, events).unwrap();
+        // The UI has gone.
+        drop(listener);
+        for subject in ["One", "Two"] {
+            assert!(handle.send(DataRequest::SaveDraft {
+                draft: None,
+                account,
+                content: Box::new(quill_store::DraftContent {
+                    subject: subject.to_owned(),
+                    ..Default::default()
+                }),
+                announce: true,
+            }));
+        }
+        handle.finish();
+        // Nothing more is taken, and both drafts were written.
+        assert!(!handle.send(DataRequest::Undo));
+        let drafts = Store::open(&path).unwrap().drafts().unwrap();
+        assert_eq!(drafts.len(), 2);
+    }
 
     fn store_with_one_message() -> (Store, Mailbox, LocalMessageId) {
         let mut store = Store::open_in_memory().unwrap();

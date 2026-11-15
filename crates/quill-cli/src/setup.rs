@@ -9,9 +9,10 @@ use std::path::Path;
 
 use jiff::tz::TimeZone;
 use quill_core::config::Config;
+use quill_core::config::{ComposeFormat, ReplyPosition};
 use quill_tui::command::Registry;
 use quill_tui::keymap::Keymap;
-use quill_tui::state::{Env, Notice};
+use quill_tui::state::{ComposeSettings, Env, Identity, Notice};
 use quill_tui::theme::{ColorMode, Styles, Theme};
 
 pub struct Loaded {
@@ -62,6 +63,25 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
         // Decided by the caller, once it knows what hosts the core.
         images: false,
         accounts: false,
+        cmd_keys: false,
+        compose: ComposeSettings {
+            markdown: config.compose.format == ComposeFormat::Markdown,
+            reply_above: config.compose.reply_position == ReplyPosition::Above,
+            undo_send_seconds: config.compose.undo_send_seconds,
+        },
+        identities: config
+            .accounts
+            .iter()
+            .map(|account| {
+                (
+                    account.name.clone(),
+                    Identity {
+                        full_name: account.full_name.clone(),
+                        signature: account.signature.clone(),
+                    },
+                )
+            })
+            .collect(),
     };
     Loaded {
         config,

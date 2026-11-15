@@ -2519,6 +2519,7 @@ dependencies = [
 name = "quill-tui"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "crossterm",
  "futures-util",
  "insta",
@@ -2532,6 +2533,7 @@ dependencies = [
  "ratatui",
  "rustix",
  "serde",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "toml",

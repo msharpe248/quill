@@ -127,3 +127,64 @@ fn narrow_layouts() {
     harness.keys("?");
     snapshot("narrow_help", &harness);
 }
+
+#[test]
+fn compose_new_message() {
+    for (width, height) in SIZES {
+        let mut harness = Harness::demo(width, height);
+        harness.keys("c");
+        harness.type_text("pri");
+        harness.keys("enter tab tab");
+        harness.type_text("Lunch on Thursday");
+        harness.keys("tab");
+        harness.type_text("Hi Priya,");
+        harness.keys("enter enter");
+        harness.type_text("Are you *free* on Thursday? The usual place, `12:30`.");
+        harness.keys("enter enter");
+        harness.type_text("> Tuesday is out, I am afraid.");
+        snapshot("compose_new_message", &harness);
+    }
+}
+
+#[test]
+fn compose_people_on_offer() {
+    for (width, height) in SIZES {
+        let mut harness = Harness::demo(width, height);
+        harness.keys("c");
+        harness.type_text("r");
+        harness.keys("down");
+        snapshot("compose_people_on_offer", &harness);
+    }
+}
+
+#[test]
+fn compose_reply() {
+    snapshot_after("compose_reply", "r");
+}
+
+#[test]
+fn compose_forward() {
+    snapshot_after("compose_forward", "f");
+}
+
+#[test]
+fn compose_doubts_before_sending() {
+    for (width, height) in SIZES {
+        let mut harness = Harness::demo(width, height);
+        harness.keys("c");
+        harness.type_text("pri");
+        harness.keys("enter tab tab tab");
+        harness.type_text("The agenda is attached.");
+        harness.keys("cmd-enter");
+        snapshot("compose_doubts_before_sending", &harness);
+    }
+}
+
+#[test]
+fn compose_zoomed() {
+    for (width, height) in SIZES {
+        let mut harness = Harness::demo(width, height);
+        harness.keys("r ctrl-z");
+        snapshot("compose_zoomed", &harness);
+    }
+}

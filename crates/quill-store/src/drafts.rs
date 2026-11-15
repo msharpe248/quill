@@ -307,6 +307,17 @@ impl Store {
             .map(DraftId))
     }
 
+    /// Makes the account's mail that is waiting to be tried again due now:
+    /// what stopped it has been dealt with. Returns how many were waiting.
+    pub fn hurry_sends(&mut self, account: LocalAccountId, now: i64) -> Result<usize> {
+        Ok(self.conn.execute(
+            "UPDATE drafts SET send_after = ?2
+             WHERE account_id = ?1 AND state = 'outbox' AND error IS NOT NULL
+               AND send_after > ?2",
+            params![account.0, now],
+        )?)
+    }
+
     /// When the account's next message is due to go, if any is waiting.
     pub fn next_send_time(&self, account: LocalAccountId) -> Result<Option<i64>> {
         Ok(self

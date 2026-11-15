@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use base64::Engine;
 use futures_util::StreamExt;
 use quill_host::bridge::{self, CommandInfo, StateUpdate};
 use quill_host::{Attached, Host, HostEvent};
@@ -238,6 +239,15 @@ impl Io<'_> {
             match request {
                 HostRequest::PreviewSample => self.preview_sample(),
                 HostRequest::OpenUrl(url) => self.host.open_url(&url),
+                HostRequest::Copy(text) => {
+                    // The terminal owns the clipboard: it is asked to take
+                    // the text (OSC 52). Quill's own shell and the
+                    // terminals it runs in for development both do.
+                    let encoded = base64::engine::general_purpose::STANDARD.encode(text);
+                    let mut out = stdout();
+                    let _ = queue!(out, Print(format!("\x1b]52;c;{encoded}\x1b\\")));
+                    let _ = out.flush();
+                }
             }
         }
         for request in effects.accounts {
@@ -279,6 +289,7 @@ impl Io<'_> {
                 Context::Setup => bridge::Context::Setup,
                 Context::Certificate => bridge::Context::Certificate,
                 Context::Folders => bridge::Context::Folders,
+                Context::Compose => bridge::Context::Compose,
             },
             enabled: current
                 .enabled
@@ -373,7 +384,8 @@ async fn event_loop(
     }
 
     let mut input = EventStream::new();
-    let mut clock = tokio::time::interval(Duration::from_secs(30));
+    // Often enough that a draft being written is saved every few seconds.
+    let mut clock = tokio::time::interval(Duration::from_secs(5));
     loop {
         // Redraw only on change.
         if state.dirty {
@@ -396,7 +408,7 @@ async fn event_loop(
             event = input.next() => match event {
                 Some(Ok(event)) => translate(event),
                 Some(Err(err)) => return step("cannot read input", Err(err)),
-                None => return Ok(()),
+                None => break,
             },
             Some(event) = inbound.data.recv() => Some(Action::Data(event)),
             Some(event) = inbound.host.recv() => match event {
@@ -407,7 +419,7 @@ async fn event_loop(
                     ))),
                 }),
                 // Either way there is nothing left to draw for.
-                HostEvent::WillQuit | HostEvent::Disconnected => return Ok(()),
+                HostEvent::WillQuit | HostEvent::Disconnected => break,
                 HostEvent::Problem(text) => Some(Action::Notify(Notice::error(text))),
             },
             Some(event) = inbound.sync.recv() => Some(Action::Sync(event)),
@@ -420,9 +432,16 @@ async fn event_loop(
             io.perform(effects);
         }
         if state.should_quit {
-            return Ok(());
+            break;
         }
     }
+    // A message being written is not lost by quitting: it is saved as a
+    // draft, and the store is given time to write it down.
+    for request in state.parting_requests() {
+        io.data.send(request);
+    }
+    io.data.finish();
+    Ok(())
 }
 
 /// Says which step failed. A bare "Operation not permitted" is no help when
@@ -464,6 +483,9 @@ mod tests {
             reader_width: 0.5,
             images: false,
             accounts: false,
+            cmd_keys: true,
+            compose: crate::state::ComposeSettings::default(),
+            identities: std::collections::HashMap::new(),
         }
     }
 

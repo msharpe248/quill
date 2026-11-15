@@ -1,5 +1,6 @@
 //! `view(State)`: draws the state and changes nothing.
 
+mod compose;
 mod folders;
 pub mod help;
 mod links;
@@ -82,7 +83,12 @@ pub fn render(frame: &mut Frame, state: &State, env: &Env) -> Overlays {
     let mut images = Vec::new();
     let mut links = Vec::new();
     if let Some(rect) = areas.reader {
-        images.extend(reader::render(frame, rect, state, env, &mut links));
+        // A message being written takes the reader's place.
+        if state.compose.is_some() {
+            compose::render(frame, rect, state, env);
+        } else {
+            images.extend(reader::render(frame, rect, state, env, &mut links));
+        }
     }
     if let Some(rect) = areas.sidebar {
         if areas.sidebar_overlay {
