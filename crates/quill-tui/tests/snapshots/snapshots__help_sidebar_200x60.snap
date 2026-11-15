@@ -24,11 +24,11 @@ expression: harness.screen()
 ┃                          ┃│                                       ┃                                                              ┃detail, including the dependency chart you asked for. Comments in  │
 ┃                          ┃│                                       ┃ General                                                      ┃ply, whichever is easier.                                          │
 ┃                          ┃│                                       ┃   q, ctrl-c                Quit                              ┃                                                                   │
+┃                          ┃│                                       ┃   U                        Undo the last move, deletion or … ┃                                                                   │
 ┃                          ┃│                                       ┃   A                        Add an account                    ┃                                                                   │
 ┃                          ┃│                                       ┃   P                        Preview a sample file             ┃                                                                   │
 ┃                          ┃│                                       ┃   I                        Show a sample image               ┃                                                                   │
 ┃                          ┃│                                       ┃   ?                        Help for this context             ┃                                                                   │
-┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃ Corp                                                              │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │

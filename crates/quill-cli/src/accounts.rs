@@ -4,8 +4,9 @@ use std::sync::Arc;
 
 use quill_auth::{SecretStore, password_name};
 use quill_core::config::{AccountConfig, AccountType, Config, TlsMode};
-use quill_core::{Backend, Error};
+use quill_core::{Backend, Error, Sender};
 use quill_imap::{ImapBackend, ImapConfig, Trust};
+use quill_smtp::{Credential, SmtpAuth, SmtpConfig, SmtpSender};
 use quill_store::Store;
 use quill_sync::SyncAccount;
 use quill_tui::state::Notice;
@@ -86,6 +87,82 @@ pub fn imap_backend(
     Arc::new(ImapBackend::new(imap, password))
 }
 
+/// Everything the sync engine needs for one IMAP account: how to read its
+/// mail and, when it has an SMTP server, how to send.
+pub fn sync_account(
+    id: quill_core::types::LocalAccountId,
+    account: &AccountConfig,
+    imap: ImapConfig,
+    secrets: &Arc<dyn SecretStore>,
+) -> SyncAccount {
+    let sender = smtp_sender(account, &imap, secrets);
+    // Gmail files everything sent through its SMTP server in Sent Mail by
+    // itself; a copy saved by Quill would be a second one.
+    let server_saves_sent = account.smtp.as_ref().is_some_and(|smtp| {
+        let host = smtp.host.to_ascii_lowercase();
+        host.ends_with(".gmail.com") || host.ends_with(".googlemail.com")
+    });
+    SyncAccount {
+        id,
+        name: account.name.clone(),
+        backend: imap_backend(imap, &account.name, secrets),
+        sender,
+        server_saves_sent,
+    }
+}
+
+/// How the account sends mail, when its config names an SMTP server. A
+/// server Quill cannot use (a bad fingerprint) gives no sender, and sending
+/// says so.
+fn smtp_sender(
+    account: &AccountConfig,
+    imap: &ImapConfig,
+    secrets: &Arc<dyn SecretStore>,
+) -> Option<Arc<dyn Sender>> {
+    let server = account.smtp.as_ref()?;
+    let pinned_sha256 = match server.fingerprint.as_deref().map(parse_fingerprint) {
+        Some(Ok(pinned)) => Some(pinned),
+        Some(Err(_)) => return None,
+        None => None,
+    };
+    // The same name as for reading, unless the SMTP server is given its own.
+    let username = server
+        .username
+        .clone()
+        .unwrap_or_else(|| imap.username.clone());
+    let config = SmtpConfig {
+        host: server.host.clone(),
+        port: server.port.unwrap_or(SmtpConfig::default_port(server.tls)),
+        tls: server.tls,
+        username: username.clone(),
+        trust: Trust {
+            extra_roots: Vec::new(),
+            pinned_sha256,
+        },
+        auth: SmtpAuth::Automatic,
+        hello_name: quill_smtp::DEFAULT_HELLO_NAME.to_owned(),
+    };
+    // A password saved for sending wins; otherwise the one for reading,
+    // which is the same password at nearly every provider.
+    let own = password_name("smtp", &username, &server.host);
+    let shared = imap_password_name(imap);
+    let secrets = Arc::clone(secrets);
+    let name = account.name.clone();
+    let credential = Arc::new(move || {
+        for key in [&own, &shared] {
+            match secrets.get(key) {
+                Ok(Some(password)) => return Ok(Credential::Password(password)),
+                Ok(None) => {}
+                Err(err) => return Err(Error::Auth(err.to_string())),
+            }
+        }
+        Err(Error::Auth(format!(
+            "no password is saved; run: quill account password \"{name}\""
+        )))
+    });
+    Some(Arc::new(SmtpSender::new(config, credential)))
+}
+
 /// Registers the configured accounts in the store and builds a backend for
 /// each one Quill can sync. An account it cannot use becomes a notice, never
 /// a failure to start.
@@ -123,11 +200,7 @@ pub fn prepare(
             )));
         }
         let id = store.upsert_account(name, &account.address, account.kind.as_str())?;
-        accounts.push(SyncAccount {
-            id,
-            name: name.clone(),
-            backend: imap_backend(imap, name, secrets),
-        });
+        accounts.push(sync_account(id, account, imap, secrets));
     }
     if prune {
         let keep: Vec<&str> = config

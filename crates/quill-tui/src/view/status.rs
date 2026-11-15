@@ -98,6 +98,25 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
     frame.render_widget(Line::from(spans), area);
     if !pending.is_empty() {
         frame.render_widget(Line::styled(pending, styles.key()).right_aligned(), area);
+    } else if let Some((flash, undoable)) = &state.flash {
+        // What the last key did, and how to take it back.
+        let undo = env
+            .keymap
+            .keys_for(CommandId::EditUndo)
+            .first()
+            .filter(|_| *undoable)
+            .map_or_else(String::new, |key| format!(" {key} undoes it."));
+        let said = format!("{flash}{undo} ");
+        if used + text::width(&said) < width {
+            frame.render_widget(Line::styled(said, styles.accent()).right_aligned(), area);
+        } else {
+            // Too narrow for the hints as well: what just happened matters
+            // more than what could be pressed next.
+            let said = text::truncate(&format!(" {said}"), width);
+            frame.render_widget(ratatui::widgets::Clear, area);
+            frame.buffer_mut().set_style(area, styles.base());
+            frame.render_widget(Line::styled(said, styles.accent()), area);
+        }
     } else if !state.syncing.is_empty() && used + SYNCING.len() < width {
         // Work in the background shows here and blocks nothing.
         frame.render_widget(Line::styled(SYNCING, styles.dim()).right_aligned(), area);

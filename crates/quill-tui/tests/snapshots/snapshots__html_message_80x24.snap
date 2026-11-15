@@ -25,4 +25,4 @@ expression: harness.screen()
 │                │┃                                                            ┃
 │                │┃ [1] https://example.com/issue-88/soft-breaks               ┃
 └────────────────┘┗ html ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1-16 of 18 ┛
- j/k scroll  space page  esc back  o links  t html/text  u unread  ? help
+ j/k scroll  space page  esc back  e archive  d delete  o links  ? help

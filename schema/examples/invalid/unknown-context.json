@@ -1,1 +1,1 @@
-{ "jsonrpc": "2.0", "method": "state.update", "params": { "context": "compose", "enabled": [], "unread": 0, "title": "" } }
+{ "jsonrpc": "2.0", "method": "state.update", "params": { "context": "nowhere", "enabled": [], "unread": 0, "title": "" } }

@@ -566,46 +566,46 @@ fn a_body_that_cannot_be_downloaded_says_why() {
 }
 
 #[test]
-fn flag_changes_are_sent_to_the_server_with_what_to_restore() {
+fn flag_changes_are_queued_for_the_server() {
     use quill_core::types::Flags;
     use quill_sync::SyncRequest;
     let mut harness = Harness::demo(200, 60);
     let id = harness.state.list.rows[0].id;
-    let unread = Flags::default();
     harness.keys("s");
-    assert_eq!(
-        harness.sync_requests,
-        [SyncRequest::SetFlags {
-            id,
-            flags: Flags {
-                flagged: true,
-                ..unread
-            },
-            previous: unread,
-        }]
+    // Written to the store's queue first, and only then is the engine told
+    // to look.
+    assert_eq!(harness.store.queued_operations().unwrap(), 1);
+    assert_eq!(harness.sync_requests, [SyncRequest::Queue]);
+    assert!(
+        harness
+            .store
+            .message_location(id)
+            .unwrap()
+            .unwrap()
+            .flags
+            .flagged
     );
+
+    // Opening marks it read: a second change to the same message, which
+    // the server will hear as one.
     harness.sync_requests.clear();
-    // Opening marks it read: one more change, from the starred state.
     harness.keys("enter");
+    assert_eq!(harness.store.queued_operations().unwrap(), 1);
+    assert_eq!(harness.sync_requests, [SyncRequest::Queue]);
     assert_eq!(
-        harness.sync_requests,
-        [SyncRequest::SetFlags {
-            id,
-            flags: Flags {
-                seen: true,
-                flagged: true,
-                ..unread
-            },
-            previous: Flags {
-                flagged: true,
-                ..unread
-            },
-        }]
+        harness.store.message_location(id).unwrap().unwrap().flags,
+        Flags {
+            seen: true,
+            flagged: true,
+            ..Flags::default()
+        }
     );
-    // Opening it again changes nothing, so nothing is sent.
+
+    // Opening it again changes nothing, so nothing is queued or said.
     harness.sync_requests.clear();
     harness.keys("esc enter");
     assert!(harness.sync_requests.is_empty());
+    assert_eq!(harness.store.queued_operations().unwrap(), 1);
 }
 
 #[test]
@@ -659,7 +659,7 @@ fn the_status_bar_shows_the_keys_of_the_focused_context() {
             .lines()
             .last()
             .unwrap()
-            .starts_with(" j/k move  enter open  u unread")
+            .starts_with(" j/k move  enter open  e archive  d delete  u unread")
     );
     harness.keys("1");
     let bar = harness.screen().lines().last().unwrap().to_owned();
@@ -715,7 +715,7 @@ fn overridden_keys_show_up_in_the_hints_and_in_help() {
     let mut harness = Harness::build(200, 60, keymap, ColorMode::TrueColor);
     let bar = harness.screen().lines().last().unwrap().to_owned();
     assert!(
-        bar.starts_with(" n/p move  enter open  u unread  tab next pane"),
+        bar.starts_with(" n/p move  enter open  e archive  d delete  u unread  tab next pane"),
         "{bar}"
     );
     harness.keys("n n p");

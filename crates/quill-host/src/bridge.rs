@@ -103,6 +103,10 @@ pub enum Context {
     Links,
     Setup,
     Certificate,
+    Folders,
+    Compose,
+    Palette,
+    Search,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

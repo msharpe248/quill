@@ -87,7 +87,7 @@
           "properties": {
             "context": {
               "description": "Where the keyboard focus is inside the terminal UI.",
-              "enum": ["sidebar", "list", "reader", "help", "links", "setup", "certificate"]
+              "enum": ["sidebar", "list", "reader", "help", "links", "setup", "certificate", "folders", "compose", "palette", "search"]
             },
             "enabled": {
               "description": "Names of the commands that would do something right now. Menu items and toolbar buttons for every other command are disabled.",

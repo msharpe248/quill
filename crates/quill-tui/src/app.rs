@@ -258,7 +258,7 @@ impl Io<'_> {
                         reason: "The body of this message has not been downloaded.".to_owned(),
                     }));
                 }
-                (None, SyncRequest::SyncNow | SyncRequest::SetFlags { .. }) => {}
+                (None, SyncRequest::SyncNow | SyncRequest::Queue) => {}
             }
         }
     }
@@ -278,6 +278,7 @@ impl Io<'_> {
                 Context::Links => bridge::Context::Links,
                 Context::Setup => bridge::Context::Setup,
                 Context::Certificate => bridge::Context::Certificate,
+                Context::Folders => bridge::Context::Folders,
             },
             enabled: current
                 .enabled
@@ -332,6 +333,7 @@ pub fn command_infos(env: &Env) -> Vec<CommandInfo> {
             menu: spec.menu.map(|menu| match menu {
                 Menu::App => bridge::Menu::App,
                 Menu::File => bridge::Menu::File,
+                Menu::Edit => bridge::Menu::Edit,
                 Menu::Mailbox => bridge::Menu::Mailbox,
                 Menu::View => bridge::Menu::View,
                 Menu::Message => bridge::Menu::Message,

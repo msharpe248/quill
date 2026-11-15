@@ -7,13 +7,14 @@
 use std::collections::{BTreeSet, VecDeque};
 
 use jiff::tz::TimeZone;
-use quill_core::types::{Flags, FolderRole, LocalAccountId, LocalFolderId, LocalMessageId};
+use quill_core::types::{FolderRole, LocalAccountId, LocalFolderId, LocalMessageId};
 use quill_mime::html::Line;
 use quill_store::{AccountRow, FolderRow, Mailbox, MessageRow};
 use quill_sync::{SyncEvent, SyncRequest};
 
 use crate::command::{CommandId, Context, Registry};
 use crate::data::{DataEvent, DataRequest, LoadedBody};
+use crate::input::LineInput;
 use crate::keymap::{Key, KeyChord, Keymap, Mods, Resolution};
 use crate::layout::{self, LayoutMode};
 use crate::setup::{AccountEvent, AccountRequest, CertificatePrompt, Outcome, Setup};
@@ -221,6 +222,35 @@ pub enum Showing {
     Plain,
 }
 
+/// The folders a message can be moved to, open to choose one from. Typing
+/// narrows the list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderPicker {
+    /// The message to move.
+    pub message: LocalMessageId,
+    pub filter: LineInput,
+    pub selected: usize,
+    pub offset: usize,
+}
+
+impl FolderPicker {
+    pub fn for_message(message: LocalMessageId) -> Self {
+        Self {
+            message,
+            filter: LineInput::default(),
+            selected: 0,
+            offset: 0,
+        }
+    }
+}
+
+/// A folder on offer in the folder picker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderChoice {
+    pub id: LocalFolderId,
+    pub name: String,
+}
+
 /// The list of a message's links, open to choose one from.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LinkPicker {
@@ -296,6 +326,10 @@ pub struct State {
     pub reader: Reader,
     pub help: Option<Help>,
     pub links: Option<LinkPicker>,
+    pub folders: Option<FolderPicker>,
+    /// What was just done, in a few words, shown until the next key, and
+    /// whether the undo command would take it back.
+    pub flash: Option<(String, bool)>,
     /// The add-an-account flow, while it is open.
     pub setup: Option<Setup>,
     /// Certificates of existing accounts waiting for a decision. The first
@@ -333,6 +367,8 @@ impl State {
             reader: Reader::default(),
             help: None,
             links: None,
+            folders: None,
+            flash: None,
             setup: None,
             certificates: VecDeque::new(),
             setup_offered: false,
@@ -370,6 +406,9 @@ impl State {
         if self.links.is_some() {
             return Context::Links;
         }
+        if self.folders.is_some() {
+            return Context::Folders;
+        }
         match self.focus {
             Pane::Sidebar => Context::Sidebar,
             Pane::List => Context::List,
@@ -394,13 +433,20 @@ impl State {
             Action::Notify(notice) => self.notices.push_back(notice),
             Action::Sync(event) => self.on_sync(event, &mut out),
             Action::Account(event) => self.on_account(event, &mut out),
-            Action::Paste(text) => {
-                if self.context() == Context::Setup
-                    && let Some(setup) = &mut self.setup
-                {
-                    setup.paste(&text);
+            Action::Paste(text) => match self.context() {
+                Context::Setup => {
+                    if let Some(setup) = &mut self.setup {
+                        setup.paste(&text);
+                    }
                 }
-            }
+                Context::Folders => {
+                    if let Some(picker) = &mut self.folders {
+                        picker.filter.insert(&text);
+                        picker.selected = 0;
+                    }
+                }
+                _ => {}
+            },
         }
         // With no accounts there is nothing to read: offer to add one,
         // once, instead of an empty window.
@@ -414,9 +460,21 @@ impl State {
     }
 
     fn on_key(&mut self, env: &Env, chord: KeyChord, out: &mut Effects) {
+        // What the last key did has been seen.
+        self.flash = None;
         // Where there is typing to do, a key is typing first and a command
         // only if the field has no use for it.
         match self.context() {
+            Context::Folders => {
+                if let Some(picker) = &mut self.folders
+                    && picker.filter.key(chord)
+                {
+                    // A narrower list starts again from its top.
+                    picker.selected = 0;
+                    picker.offset = 0;
+                    return;
+                }
+            }
             Context::Setup => {
                 if let Some(requests) = self.setup.as_mut().and_then(|setup| setup.key(chord)) {
                     out.accounts.extend(requests);
@@ -484,6 +542,32 @@ impl State {
             CommandId::NavPageDown => self.navigate(env, Motion::PageDown, out),
             CommandId::NavPageUp => self.navigate(env, Motion::PageUp, out),
             CommandId::NavOpen if context == Context::Links => self.open_selected_link(out),
+            CommandId::NavOpen if context == Context::Folders => {
+                if let Some(picker) = self.folders.take()
+                    && let Some(choice) = self.folder_choices(&picker).get(picker.selected)
+                {
+                    out.data.push(DataRequest::MoveTo {
+                        id: picker.message,
+                        folder: choice.id,
+                    });
+                }
+            }
+            CommandId::MessageArchive => {
+                if let Some(row) = self.target_row() {
+                    out.data.push(DataRequest::Archive(row.id));
+                }
+            }
+            CommandId::MessageDelete => {
+                if let Some(row) = self.target_row() {
+                    out.data.push(DataRequest::Delete(row.id));
+                }
+            }
+            CommandId::MessageMove => {
+                if let Some(row) = self.target_row() {
+                    self.folders = Some(FolderPicker::for_message(row.id));
+                }
+            }
+            CommandId::EditUndo => out.data.push(DataRequest::Undo),
             CommandId::AccountAdd => self.setup = Some(Setup::default()),
             CommandId::NavOpen => self.open(out),
             CommandId::NavBack => self.back(),
@@ -533,6 +617,13 @@ impl State {
         match id {
             CommandId::NavOpen if context == Context::Links => !self.reader.links.is_empty(),
             CommandId::NavOpen if context == Context::Setup => true,
+            CommandId::NavOpen if context == Context::Folders => self
+                .folders
+                .as_ref()
+                .is_some_and(|picker| !self.folder_choices(picker).is_empty()),
+            CommandId::MessageArchive | CommandId::MessageDelete | CommandId::MessageMove => {
+                self.target_row().is_some()
+            }
             CommandId::AccountAdd => env.accounts,
             CommandId::NavOpen => {
                 self.focus == Pane::Sidebar || self.list.rows.get(self.list.selected).is_some()
@@ -542,6 +633,7 @@ impl State {
             CommandId::NavBack => {
                 self.help.is_some()
                     || self.links.is_some()
+                    || self.folders.is_some()
                     || self.setup.is_some()
                     || !self.certificates.is_empty()
                     || !self.notices.is_empty()
@@ -606,6 +698,15 @@ impl State {
             let page = areas.links.map_or(1, layout::inner_height).max(1);
             picker.selected = step(picker.selected, self.reader.links.len(), motion, page);
             picker.typed.clear();
+            return;
+        }
+        if let Some(picker) = &self.folders {
+            let count = self.folder_choices(picker).len();
+            let page = areas.links.map_or(1, layout::inner_height).max(1);
+            let selected = step(picker.selected, count, motion, page);
+            if let Some(picker) = &mut self.folders {
+                picker.selected = selected;
+            }
             return;
         }
         match self.focus {
@@ -681,14 +782,6 @@ impl State {
                 if !previous.seen {
                     self.set_seen_locally(id, true);
                     out.data.push(DataRequest::SetSeen { id, seen: true });
-                    out.sync.push(SyncRequest::SetFlags {
-                        id,
-                        flags: Flags {
-                            seen: true,
-                            ..previous
-                        },
-                        previous,
-                    });
                 }
                 self.sync_reader(out);
                 self.set_focus(Pane::Reader);
@@ -709,6 +802,8 @@ impl State {
             }
         } else if self.links.is_some() {
             self.links = None;
+        } else if self.folders.is_some() {
+            self.folders = None;
         } else if self.notices.pop_front().is_some() {
             // One notice dismissed per press.
         } else {
@@ -724,6 +819,48 @@ impl State {
                 Pane::Sidebar | Pane::List => {}
             }
         }
+    }
+
+    /// The folders the picker offers: those of the message's account other
+    /// than the one it is in, narrowed by what has been typed. Letters
+    /// typed need only appear in a name in order, so "arc" and "ahv" both
+    /// find Archive.
+    pub fn folder_choices(&self, picker: &FolderPicker) -> Vec<FolderChoice> {
+        let Some(row) = self
+            .list
+            .rows
+            .iter()
+            .chain(self.reader.row.as_ref())
+            .find(|row| row.id == picker.message)
+        else {
+            return Vec::new();
+        };
+        let typed = picker.filter.text().to_lowercase();
+        self.sidebar
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                SidebarEntry::Folder {
+                    id, account, name, ..
+                } if *id != row.folder
+                    && self.accounts.get(*account).map(|account| account.id)
+                        == Some(row.account) =>
+                {
+                    Some(FolderChoice {
+                        id: *id,
+                        name: name.clone(),
+                    })
+                }
+                _ => None,
+            })
+            .filter(|choice| {
+                let mut name = choice.name.chars().flat_map(char::to_lowercase);
+                typed
+                    .chars()
+                    .filter(|c| !c.is_whitespace())
+                    .all(|wanted| name.any(|c| c == wanted))
+            })
+            .collect()
     }
 
     /// Takes a key as the answer to the certificate on screen: `o` trusts
@@ -851,11 +988,6 @@ impl State {
         let seen = !previous.seen;
         self.set_seen_locally(id, seen);
         out.data.push(DataRequest::SetSeen { id, seen });
-        out.sync.push(SyncRequest::SetFlags {
-            id,
-            flags: Flags { seen, ..previous },
-            previous,
-        });
     }
 
     fn toggle_star(&mut self, out: &mut Effects) {
@@ -868,14 +1000,6 @@ impl State {
             row.flags.flagged = flagged;
         }
         out.data.push(DataRequest::SetFlagged { id, flagged });
-        out.sync.push(SyncRequest::SetFlags {
-            id,
-            flags: Flags {
-                flagged,
-                ..previous
-            },
-            previous,
-        });
     }
 
     /// Shows the change at once; the store's answer follows and agrees.
@@ -944,6 +1068,7 @@ impl State {
                     busy: false,
                 });
             }
+            SyncEvent::Sent { .. } => self.flash = Some(("Sent.".to_owned(), false)),
             SyncEvent::BodyReady(id) => {
                 if reading(self, id) {
                     out.data.push(DataRequest::LoadBody(id));
@@ -1030,6 +1155,9 @@ impl State {
                 }
             }
             DataEvent::StoreChanged => self.reload(out),
+            // The change is written down: the engine can take it from there.
+            DataEvent::Queued => out.sync.push(SyncRequest::Queue),
+            DataEvent::Flash { text, undoable } => self.flash = Some((text, undoable)),
             DataEvent::Error(message) => self.notices.push_back(Notice::error(message)),
         }
     }
@@ -1075,6 +1203,22 @@ impl State {
         }
         if self.reader.links.is_empty() {
             self.links = None;
+        }
+        if let Some(picker) = &self.folders {
+            let count = self.folder_choices(picker).len();
+            let rect = layout::compute(self, self.size, env.reader_width).links;
+            if let Some(picker) = &mut self.folders {
+                picker.selected = picker.selected.min(count.saturating_sub(1));
+                if let Some(rect) = rect {
+                    keep_visible(
+                        &mut picker.offset,
+                        picker.selected,
+                        // One row of the box is the line being typed.
+                        layout::inner_height(rect).saturating_sub(1),
+                        count,
+                    );
+                }
+            }
         }
         if let Some(picker) = &mut self.links {
             picker.selected = picker.selected.min(self.reader.links.len() - 1);

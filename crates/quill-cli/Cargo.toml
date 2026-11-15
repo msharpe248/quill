@@ -19,6 +19,7 @@ quill-core.workspace = true
 quill-host.workspace = true
 quill-imap.workspace = true
 quill-media.workspace = true
+quill-smtp.workspace = true
 quill-store.workspace = true
 quill-sync.workspace = true
 quill-tui.workspace = true

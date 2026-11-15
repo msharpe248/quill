@@ -12,10 +12,10 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use quill_core::types::{
     Address, Capabilities, FlagChange, Flags, FolderId, FolderRole, Headers, LocalAccountId,
-    LocalMessageId, Operation, RemoteEvent, RemoteFolder, RemoteId, RemoteMessage, SyncCursor,
-    SyncDelta,
+    LocalFolderId, LocalMessageId, Operation, RemoteEvent, RemoteFolder, RemoteId, RemoteMessage,
+    SyncCursor, SyncDelta,
 };
-use quill_core::{Backend, Error, Result};
+use quill_core::{Backend, Envelope, Error, Result};
 use quill_store::{BlobStore, Mailbox, Store};
 use quill_sync::{SyncAccount, SyncEvent, SyncHandle, SyncOptions, SyncRequest};
 use tokio::sync::mpsc::{Sender, UnboundedReceiver, unbounded_channel};
@@ -41,7 +41,35 @@ struct Server {
     /// Refuse flag changes.
     read_only: bool,
     applied: Vec<Operation>,
+    /// (folder, raw message) for everything saved with `append`.
+    appended: Vec<(String, String)>,
+    /// Move without saying what the message is called afterwards.
+    forgets_new_ids: bool,
     batch: usize,
+}
+
+/// A sender that keeps what it was given, or refuses as told.
+#[derive(Clone, Default)]
+struct Outgoing(Arc<Mutex<Post>>);
+
+#[derive(Default)]
+struct Post {
+    sent: Vec<(Envelope, String)>,
+    /// Fail the next sends with these, first first.
+    failures: Vec<Error>,
+}
+
+#[async_trait]
+impl quill_core::Sender for Outgoing {
+    async fn send(&self, raw: &[u8], envelope: &Envelope) -> Result<()> {
+        let mut post = self.0.lock().unwrap();
+        if !post.failures.is_empty() {
+            return Err(post.failures.remove(0));
+        }
+        post.sent
+            .push((envelope.clone(), String::from_utf8_lossy(raw).into_owned()));
+        Ok(())
+    }
 }
 
 #[derive(Clone, Default)]
@@ -118,10 +146,12 @@ impl Backend for MemoryBackend {
             .map(|name| RemoteFolder {
                 id: FolderId(name.clone()),
                 name: name.clone(),
-                role: if name == "INBOX" {
-                    FolderRole::Inbox
-                } else {
-                    FolderRole::Other
+                role: match name.as_str() {
+                    "INBOX" => FolderRole::Inbox,
+                    "Sent" => FolderRole::Sent,
+                    "Archive" => FolderRole::Archive,
+                    "Trash" => FolderRole::Trash,
+                    _ => FolderRole::Other,
                 },
             })
             .collect())
@@ -211,15 +241,84 @@ impl Backend for MemoryBackend {
         if server.read_only {
             return Err(Error::Backend("the mailbox is read-only".to_owned()));
         }
-        if let Operation::SetFlags { id, flags } = op {
-            for folder in server.folders.values_mut() {
-                if let Some(mail) = folder.get_mut(&id.0) {
-                    mail.flags = *flags;
+        match op {
+            Operation::SetFlags { id, flags } => {
+                for folder in server.folders.values_mut() {
+                    if let Some(mail) = folder.get_mut(&id.0) {
+                        mail.flags = *flags;
+                    }
                 }
             }
+            Operation::Delete { id } => {
+                for folder in server.folders.values_mut() {
+                    folder.remove(&id.0);
+                }
+            }
+            Operation::Move { .. } | Operation::Copy { .. } => {}
         }
         server.applied.push(op.clone());
         Ok(())
+    }
+
+    /// Moves the message and renames it `<old id>-moved`, as a server that
+    /// reports new ids does. With `forgets_new_ids` it moves and says
+    /// nothing.
+    async fn move_message(&self, id: &RemoteId, to: &FolderId) -> Result<Option<RemoteId>> {
+        self.check()?;
+        let mut server = self.0.lock().unwrap();
+        if server.read_only {
+            return Err(Error::Backend("the mailbox is read-only".to_owned()));
+        }
+        if !server.folders.contains_key(&to.0) {
+            return Err(Error::NotFound(to.0.clone()));
+        }
+        let found = server
+            .folders
+            .values_mut()
+            .find_map(|folder| folder.remove(&id.0));
+        server.applied.push(Operation::Move {
+            id: id.clone(),
+            to: to.clone(),
+        });
+        // Already gone: a replay of a move that had worked.
+        let Some(mail) = found else {
+            return Ok(None);
+        };
+        let new_id = format!("{}-moved", id.0);
+        server
+            .folders
+            .entry(to.0.clone())
+            .or_default()
+            .insert(new_id.clone(), mail);
+        Ok((!server.forgets_new_ids).then_some(RemoteId(new_id)))
+    }
+
+    async fn append(
+        &self,
+        folder: &FolderId,
+        raw: &[u8],
+        flags: Flags,
+    ) -> Result<Option<RemoteId>> {
+        self.check()?;
+        let mut server = self.0.lock().unwrap();
+        let text = String::from_utf8_lossy(raw).into_owned();
+        let subject = text
+            .lines()
+            .find_map(|line| line.strip_prefix("Subject: "))
+            .unwrap_or_default()
+            .to_owned();
+        let id = format!("appended-{}", server.appended.len() + 1);
+        server.appended.push((folder.0.clone(), text.clone()));
+        server.folders.entry(folder.0.clone()).or_default().insert(
+            id.clone(),
+            Mail {
+                subject,
+                date: NOW_ISH,
+                flags,
+                body: text,
+            },
+        );
+        Ok(Some(RemoteId(id)))
     }
 
     async fn watch(&self, _tx: Sender<RemoteEvent>) -> Result<()> {
@@ -229,6 +328,7 @@ impl Backend for MemoryBackend {
 
 struct Rig {
     backend: MemoryBackend,
+    post: Outgoing,
     /// A second connection to the same database, as the UI has.
     store: Store,
     blobs: BlobStore,
@@ -244,6 +344,7 @@ impl Rig {
             backend,
             SyncOptions {
                 interval: Duration::from_secs(3600),
+                retry: Duration::from_secs(1),
                 prefetch_days: 30,
                 prefetch_limit: 100,
             },
@@ -251,6 +352,7 @@ impl Rig {
     }
 
     fn start_with(backend: MemoryBackend, options: SyncOptions) -> Self {
+        let post = Outgoing::default();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("quill.db");
         let mut store = Store::open(&path).unwrap();
@@ -265,18 +367,41 @@ impl Rig {
                 id: account,
                 name: "Work".to_owned(),
                 backend: Arc::new(backend.clone()),
+                sender: Some(Arc::new(post.clone())),
+                server_saves_sent: false,
             }],
             options,
             events_tx,
         );
         Self {
             backend,
+            post,
             store,
             blobs: BlobStore::new(dir.path().join("blobs")),
             account,
             events,
             handle,
             _dir: dir,
+        }
+    }
+
+    /// Events up to and including the first that `wanted` accepts.
+    async fn until(&mut self, wanted: impl Fn(&SyncEvent) -> bool) -> Vec<SyncEvent> {
+        let mut seen = Vec::new();
+        loop {
+            let event = self.next().await;
+            let done = wanted(&event);
+            seen.push(event);
+            if done {
+                return seen;
+            }
+        }
+    }
+
+    /// Waits until the store's queue of operations is empty.
+    async fn queue_empty(&mut self) {
+        while self.store.queued_operations().unwrap() > 0 {
+            self.next().await;
         }
     }
 
@@ -512,16 +637,11 @@ async fn a_flag_change_reaches_the_server() {
         ..Flags::default()
     };
 
-    // The UI writes the store first, then tells the engine.
-    rig.store.set_flags(id, seen).unwrap();
-    rig.handle.send(SyncRequest::SetFlags {
-        id,
-        flags: seen,
-        previous: Flags::default(),
-    });
-    // The next pass confirms it and finds nothing to change.
-    let events = rig.sync_now().await;
-    assert_eq!(changed(&events), 0, "{events:?}");
+    // The UI writes the change to the store's queue, then tells the engine
+    // to look.
+    rig.store.queue_flags(id, seen, now()).unwrap();
+    rig.handle.send(SyncRequest::Queue);
+    rig.until(|event| *event == SyncEvent::Changed).await;
     assert_eq!(
         rig.backend.with(|server| server.applied.clone()),
         [Operation::SetFlags {
@@ -529,6 +649,10 @@ async fn a_flag_change_reaches_the_server() {
             flags: seen
         }]
     );
+    assert_eq!(rig.store.queued_operations().unwrap(), 0);
+    // The next pass confirms it and finds nothing to change.
+    let events = rig.sync_now().await;
+    assert_eq!(changed(&events), 0, "{events:?}");
     assert!(rig.store.message_location(id).unwrap().unwrap().flags.seen);
 }
 
@@ -545,22 +669,19 @@ async fn a_flag_change_the_server_refuses_is_taken_back() {
     };
     rig.backend.with(|server| server.read_only = true);
 
-    rig.store.set_flags(id, seen).unwrap();
-    rig.handle.send(SyncRequest::SetFlags {
-        id,
-        flags: seen,
-        previous: Flags::default(),
-    });
+    rig.store.queue_flags(id, seen, now()).unwrap();
+    rig.handle.send(SyncRequest::Queue);
     assert_eq!(rig.next().await, SyncEvent::Changed);
     match rig.next().await {
         SyncEvent::Problem { account, message } => {
             assert_eq!(account, "Work");
-            assert!(message.contains("not saved on the server"), "{message}");
+            assert!(message.contains("put back as it was"), "{message}");
             assert!(message.contains("read-only"), "{message}");
         }
         other => panic!("{other:?}"),
     }
     assert!(!rig.store.message_location(id).unwrap().unwrap().flags.seen);
+    assert_eq!(rig.store.queued_operations().unwrap(), 0);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -606,6 +727,7 @@ async fn the_interval_drives_passes_without_being_asked() {
     let mut rig = Rig::start_with(
         backend,
         SyncOptions {
+            retry: Duration::from_secs(1),
             interval: Duration::from_millis(50),
             prefetch_days: 30,
             prefetch_limit: 10,
@@ -625,6 +747,7 @@ async fn dropping_the_handle_stops_the_engine() {
     let mut rig = Rig::start_with(
         backend,
         SyncOptions {
+            retry: Duration::from_secs(1),
             interval: Duration::from_millis(20),
             prefetch_days: 30,
             prefetch_limit: 10,
@@ -653,11 +776,11 @@ async fn an_account_added_while_running_starts_syncing() {
         .store
         .upsert_account("Personal", "robin@home.example.com", "imap")
         .unwrap();
-    rig.handle.set_account(SyncAccount {
+    rig.handle.set_account(SyncAccount::reading(
         id,
-        name: "Personal".to_owned(),
-        backend: Arc::new(personal.clone()),
-    });
+        "Personal",
+        Arc::new(personal.clone()),
+    ));
     let events = rig.pass().await;
     assert!(events.contains(&SyncEvent::Syncing {
         account: id,
@@ -703,11 +826,8 @@ async fn an_account_set_again_is_replaced_not_doubled() {
     let new = MemoryBackend::new(10);
     new.add("INBOX", "1", "From the old settings", NOW_ISH);
     new.add("INBOX", "2", "Arrived since", NOW_ISH + 1);
-    rig.handle.set_account(SyncAccount {
-        id: rig.account,
-        name: "Work".to_owned(),
-        backend: Arc::new(new),
-    });
+    rig.handle
+        .set_account(SyncAccount::reading(rig.account, "Work", Arc::new(new)));
     // The replaced loop reports that it stopped; then the new one runs.
     loop {
         if rig.subjects("INBOX").contains(&"Arrived since".to_owned()) {
@@ -758,4 +878,455 @@ async fn a_refused_certificate_is_reported_with_the_certificate_once() {
     backend.with(|server| server.bad_certificate = false);
     rig.sync_now().await;
     assert_eq!(rig.subjects("INBOX"), ["Hello"]);
+}
+
+fn now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64
+}
+
+/// A rig with an inbox of two messages and empty Archive, Trash and Sent,
+/// synced.
+async fn filing_rig() -> Rig {
+    let backend = MemoryBackend::new(100);
+    backend.add("INBOX", "1", "Keep", NOW_ISH);
+    backend.add("INBOX", "2", "File me", NOW_ISH + 1);
+    for folder in ["Archive", "Trash", "Sent"] {
+        backend.with(|server| {
+            server.folders.entry(folder.to_owned()).or_default();
+        });
+    }
+    let mut rig = Rig::start(backend);
+    rig.pass().await;
+    rig
+}
+
+impl Rig {
+    fn folder(&self, name: &str) -> LocalFolderId {
+        self.store
+            .folders()
+            .unwrap()
+            .into_iter()
+            .find(|folder| folder.name == name)
+            .unwrap_or_else(|| panic!("no folder {name}"))
+            .id
+    }
+
+    fn server_subjects(&self, folder: &str) -> Vec<String> {
+        self.backend.with(|server| {
+            server.folders[folder]
+                .values()
+                .map(|mail| mail.subject.clone())
+                .collect()
+        })
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_queued_move_reaches_the_server_and_the_message_keeps_its_body() {
+    let mut rig = filing_rig().await;
+    let id = rig.local("File me");
+    let body = rig.store.body(id).unwrap();
+    assert!(body.is_some());
+    let archive = rig.folder("Archive");
+
+    rig.store
+        .queue_move(id, archive, now(), now())
+        .unwrap()
+        .unwrap();
+    rig.handle.send(SyncRequest::Queue);
+    rig.queue_empty().await;
+
+    assert_eq!(rig.server_subjects("INBOX"), ["Keep"]);
+    assert_eq!(rig.server_subjects("Archive"), ["File me"]);
+    // The local copy took the server's new name for it, body and all.
+    let location = rig.store.message_location(id).unwrap().unwrap();
+    assert_eq!(
+        (location.folder, location.remote.0.as_str()),
+        (archive, "2-moved")
+    );
+    assert_eq!(rig.store.body(id).unwrap(), body);
+
+    // The next pass agrees: nothing added, nothing doubled.
+    rig.sync_now().await;
+    assert_eq!(rig.subjects("Archive"), ["File me"]);
+    assert_eq!(rig.subjects("INBOX"), ["Keep"]);
+    assert_eq!(rig.local("File me"), id);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_move_whose_new_id_is_not_told_is_found_by_the_sync_that_follows() {
+    let mut rig = filing_rig().await;
+    rig.backend.with(|server| server.forgets_new_ids = true);
+    let id = rig.local("File me");
+    let archive = rig.folder("Archive");
+    rig.store
+        .queue_move(id, archive, now(), now())
+        .unwrap()
+        .unwrap();
+    rig.handle.send(SyncRequest::Queue);
+    // The engine syncs by itself to find the message under its new name.
+    loop {
+        rig.next().await;
+        if rig.subjects("Archive") == ["File me"] && rig.store.queued_operations().unwrap() == 0 {
+            break;
+        }
+    }
+    assert_eq!(rig.subjects("INBOX"), ["Keep"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_move_the_server_refuses_is_put_back_and_said() {
+    let mut rig = filing_rig().await;
+    let id = rig.local("File me");
+    let archive = rig.folder("Archive");
+    rig.backend.with(|server| server.read_only = true);
+    rig.store
+        .queue_move(id, archive, now(), now())
+        .unwrap()
+        .unwrap();
+    rig.handle.send(SyncRequest::Queue);
+    let events = rig
+        .until(|event| matches!(event, SyncEvent::Problem { .. }))
+        .await;
+    assert!(events.contains(&SyncEvent::Changed));
+    let Some(SyncEvent::Problem { message, .. }) = events.last() else {
+        unreachable!()
+    };
+    assert!(
+        message.contains("could not be moved") && message.contains("put back"),
+        "{message}"
+    );
+    assert_eq!(rig.subjects("INBOX"), ["File me", "Keep"]);
+    assert!(rig.subjects("Archive").is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn work_queued_offline_waits_and_goes_when_the_server_is_back() {
+    let mut rig = filing_rig().await;
+    let id = rig.local("File me");
+    let keep = rig.local("Keep");
+    let archive = rig.folder("Archive");
+    rig.backend
+        .with(|server| server.down = Some("no route to host".to_owned()));
+
+    // Two changes made with no connection, in this order.
+    rig.store
+        .queue_move(id, archive, now(), now())
+        .unwrap()
+        .unwrap();
+    let seen = Flags {
+        seen: true,
+        ..Flags::default()
+    };
+    rig.store.queue_flags(keep, seen, now()).unwrap();
+    rig.handle.send(SyncRequest::Queue);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Nothing reached the server, nothing was undone, both still wait.
+    assert_eq!(rig.store.queued_operations().unwrap(), 2);
+    assert_eq!(rig.subjects("Archive"), ["File me"]);
+    assert!(
+        rig.store
+            .message_location(keep)
+            .unwrap()
+            .unwrap()
+            .flags
+            .seen
+    );
+    assert!(rig.backend.with(|server| server.applied.is_empty()));
+
+    // Back online: they go by themselves, in the order made.
+    rig.backend.with(|server| server.down = None);
+    rig.queue_empty().await;
+    assert_eq!(
+        rig.backend.with(|server| server.applied.clone()),
+        [
+            Operation::Move {
+                id: RemoteId("2".to_owned()),
+                to: FolderId("Archive".to_owned()),
+            },
+            Operation::SetFlags {
+                id: RemoteId("1".to_owned()),
+                flags: seen,
+            },
+        ]
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_change_is_not_sent_before_its_undo_window_closes() {
+    let mut rig = filing_rig().await;
+    let id = rig.local("File me");
+    let trash = rig.folder("Trash");
+    let operation = rig
+        .store
+        .queue_move(id, trash, now(), now() + 3600)
+        .unwrap()
+        .unwrap();
+    rig.handle.send(SyncRequest::Queue);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(rig.backend.with(|server| server.applied.is_empty()));
+    // Undone in time, the server never hears of it.
+    assert!(rig.store.undo_operation(operation).unwrap());
+    rig.handle.send(SyncRequest::Queue);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(rig.backend.with(|server| server.applied.is_empty()));
+    assert_eq!(rig.server_subjects("Trash"), Vec::<String>::new());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_permanent_delete_removes_the_message_from_the_server() {
+    let mut rig = filing_rig().await;
+    let id = rig.local("File me");
+    rig.store.queue_delete(id, now(), now()).unwrap().unwrap();
+    rig.handle.send(SyncRequest::Queue);
+    rig.queue_empty().await;
+    assert_eq!(rig.server_subjects("INBOX"), ["Keep"]);
+    assert_eq!(rig.subjects("INBOX"), ["Keep"]);
+}
+
+/// Files a finished message among the blobs and puts a draft for it in the
+/// outbox, due now.
+fn outbox(
+    rig: &mut Rig,
+    subject: &str,
+    replied_to: Option<LocalMessageId>,
+) -> quill_store::DraftId {
+    let raw = format!(
+        "From: robin@example.com\r\nTo: ana.ruiz@example.com\r\nSubject: {subject}\r\n\r\nHello.\r\n"
+    );
+    let hash = rig.blobs.put(raw.as_bytes()).unwrap();
+    let content = quill_store::DraftContent {
+        to: "ana.ruiz@example.com".to_owned(),
+        subject: subject.to_owned(),
+        body: "Hello.".to_owned(),
+        replied_to: replied_to.map(|id| id.0),
+        ..Default::default()
+    };
+    let draft = rig
+        .store
+        .save_draft(None, rig.account, &content, now())
+        .unwrap()
+        .unwrap();
+    assert!(
+        rig.store
+            .queue_send(
+                draft,
+                &hash,
+                "robin@example.com",
+                &["ana.ruiz@example.com".to_owned()],
+                now(),
+                now(),
+            )
+            .unwrap()
+    );
+    draft
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mail_in_the_outbox_is_sent_filed_in_sent_and_marks_the_original_answered() {
+    let mut rig = filing_rig().await;
+    let original = rig.local("File me");
+    outbox(&mut rig, "Re: File me", Some(original));
+    rig.handle.send(SyncRequest::Queue);
+    let events = rig
+        .until(|event| matches!(event, SyncEvent::Sent { .. }))
+        .await;
+    assert_eq!(
+        events.last(),
+        Some(&SyncEvent::Sent {
+            account: "Work".to_owned()
+        })
+    );
+    rig.queue_empty().await;
+
+    // Exactly once, to the right people, the bytes that were filed.
+    let sent = rig.post.0.lock().unwrap().sent.clone();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].0.from, "robin@example.com");
+    assert_eq!(sent[0].0.to, ["ana.ruiz@example.com"]);
+    assert!(sent[0].1.contains("Subject: Re: File me"));
+    // Out of the outbox, and a copy saved to Sent on the server.
+    assert!(rig.store.outbox().unwrap().is_empty());
+    let appended = rig.backend.with(|server| server.appended.clone());
+    assert_eq!(appended.len(), 1);
+    assert_eq!(appended[0].0, "Sent");
+    assert_eq!(appended[0].1, sent[0].1);
+    // The message replied to is marked answered, here and there.
+    assert!(
+        rig.store
+            .message_location(original)
+            .unwrap()
+            .unwrap()
+            .flags
+            .answered
+    );
+    assert!(
+        rig.backend
+            .with(|server| server.folders["INBOX"]["2"].flags.answered)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_server_that_keeps_its_own_sent_copy_is_not_given_a_second() {
+    let backend = MemoryBackend::new(100);
+    backend.add("INBOX", "1", "Hello", NOW_ISH);
+    backend.with(|server| {
+        server.folders.entry("Sent".to_owned()).or_default();
+    });
+    let mut rig = Rig::start(backend.clone());
+    rig.pass().await;
+    let post = rig.post.clone();
+    rig.handle.set_account(SyncAccount {
+        id: rig.account,
+        name: "Work".to_owned(),
+        backend: Arc::new(backend),
+        sender: Some(Arc::new(post)),
+        server_saves_sent: true,
+    });
+    outbox(&mut rig, "Hi", None);
+    rig.handle.send(SyncRequest::Queue);
+    rig.until(|event| matches!(event, SyncEvent::Sent { .. }))
+        .await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(rig.backend.with(|server| server.appended.is_empty()));
+    assert_eq!(rig.post.0.lock().unwrap().sent.len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_busy_server_is_tried_again_and_the_message_goes_once() {
+    let mut rig = filing_rig().await;
+    rig.post.0.lock().unwrap().failures = vec![
+        Error::Temporary("451 try again later".to_owned()),
+        Error::Connection("connection reset".to_owned()),
+    ];
+    let draft = outbox(&mut rig, "Patience", None);
+    rig.handle.send(SyncRequest::Queue);
+
+    // Said once, kept in the outbox with the reason, then sent.
+    let events = rig
+        .until(|event| matches!(event, SyncEvent::Problem { .. }))
+        .await;
+    let Some(SyncEvent::Problem { message, .. }) = events.last() else {
+        unreachable!()
+    };
+    assert!(
+        message.contains("will be tried again") && message.contains("451"),
+        "{message}"
+    );
+    let waiting = rig.store.draft(draft).unwrap().unwrap();
+    assert_eq!(waiting.state, quill_store::DraftState::Outbox);
+    assert!(waiting.error.unwrap().contains("451"));
+
+    let events = rig
+        .until(|event| matches!(event, SyncEvent::Sent { .. }))
+        .await;
+    // The second failure is not said again.
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, SyncEvent::Problem { .. })),
+        "{events:?}"
+    );
+    assert_eq!(rig.post.0.lock().unwrap().sent.len(), 1);
+    assert!(rig.store.outbox().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mail_a_server_refuses_stays_in_the_outbox_with_the_reason() {
+    let mut rig = filing_rig().await;
+    rig.post.0.lock().unwrap().failures =
+        vec![Error::Recipients(vec![quill_core::RefusedRecipient {
+            address: "ana.ruiz@example.com".to_owned(),
+            reason: "550 no such user".to_owned(),
+        }])];
+    let draft = outbox(&mut rig, "Bounce", None);
+    rig.handle.send(SyncRequest::Queue);
+    let events = rig
+        .until(|event| matches!(event, SyncEvent::Problem { .. }))
+        .await;
+    let Some(SyncEvent::Problem { message, .. }) = events.last() else {
+        unreachable!()
+    };
+    assert!(message.contains("waiting in the Outbox"), "{message}");
+    assert!(
+        message.contains("ana.ruiz@example.com (550 no such user)"),
+        "{message}"
+    );
+
+    let kept = rig.store.draft(draft).unwrap().unwrap();
+    assert_eq!(kept.state, quill_store::DraftState::Failed);
+    // Not tried again by itself, and nothing saved to Sent.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(rig.post.0.lock().unwrap().sent.is_empty());
+    assert!(rig.backend.with(|server| server.appended.is_empty()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_account_with_no_way_to_send_says_so() {
+    let backend = MemoryBackend::new(100);
+    backend.add("INBOX", "1", "Hello", NOW_ISH);
+    let mut rig = Rig::start(backend.clone());
+    rig.pass().await;
+    rig.handle
+        .set_account(SyncAccount::reading(rig.account, "Work", Arc::new(backend)));
+    let draft = outbox(&mut rig, "Nowhere to go", None);
+    rig.handle.send(SyncRequest::Queue);
+    let events = rig
+        .until(|event| matches!(event, SyncEvent::Problem { .. }))
+        .await;
+    let Some(SyncEvent::Problem { message, .. }) = events.last() else {
+        unreachable!()
+    };
+    assert!(message.contains("no server to send through"), "{message}");
+    assert_eq!(
+        rig.store.draft(draft).unwrap().unwrap().state,
+        quill_store::DraftState::Failed
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mail_caught_mid_send_by_a_crash_is_held_not_resent() {
+    // A store left by a run that stopped while a message was with the
+    // server.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("quill.db");
+    let draft = {
+        let mut store = Store::open(&path).unwrap();
+        let account = store
+            .upsert_account("Work", "robin@example.com", "imap")
+            .unwrap();
+        let content = quill_store::DraftContent::default();
+        let draft = store
+            .save_draft(None, account, &content, 1)
+            .unwrap()
+            .unwrap();
+        store
+            .queue_send(draft, &"ab".repeat(32), "robin@example.com", &[], 1, 1)
+            .unwrap();
+        store.claim_send(account, 1).unwrap().unwrap();
+        draft
+    };
+    let (events_tx, mut events) = unbounded_channel();
+    let _handle = quill_sync::spawn(
+        Store::open(&path).unwrap(),
+        None,
+        Vec::new(),
+        SyncOptions::default(),
+        events_tx,
+    );
+    match tokio::time::timeout(Duration::from_secs(5), events.recv()).await {
+        Ok(Some(SyncEvent::Problem { message, .. })) => {
+            assert!(message.contains("check Sent"), "{message}");
+        }
+        other => panic!("{other:?}"),
+    }
+    let store = Store::open(&path).unwrap();
+    assert_eq!(
+        store.draft(draft).unwrap().unwrap().state,
+        quill_store::DraftState::Failed
+    );
 }

@@ -114,10 +114,22 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
         }
     }
 
-    if state.links.is_some() {
-        // As tall as its links, as far as the screen allows.
-        let links_width = width.saturating_sub(4).min(100);
-        let wanted = u16::try_from(state.reader.links.len()).unwrap_or(u16::MAX);
+    if state.links.is_some() || state.folders.is_some() {
+        // As tall as what it lists, as far as the screen allows. The folder
+        // picker has a line to type on above its list, and keeps its
+        // height as typing narrows it, so the box does not jump about.
+        let links_width =
+            width
+                .saturating_sub(4)
+                .min(if state.folders.is_some() { 60 } else { 100 });
+        let wanted = match &state.folders {
+            Some(picker) => {
+                let all = crate::state::FolderPicker::for_message(picker.message);
+                state.folder_choices(&all).len() + 1
+            }
+            None => state.reader.links.len(),
+        };
+        let wanted = u16::try_from(wanted).unwrap_or(u16::MAX);
         let links_height = wanted
             .saturating_add(2)
             .min(body_height.saturating_sub(2))

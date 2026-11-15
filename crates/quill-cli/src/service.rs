@@ -20,7 +20,7 @@ use quill_tui::setup::{
 };
 use tokio::sync::mpsc::unbounded_channel;
 
-use crate::accounts::{imap_backend, imap_config, imap_password_name, parse_fingerprint};
+use crate::accounts::{imap_config, imap_password_name, parse_fingerprint, sync_account};
 use crate::config_edit;
 use crate::discover::{self, Dns, Prober};
 
@@ -171,11 +171,12 @@ impl Service {
         if let Trusting::Once(fingerprint) = trusting {
             imap.trust.pinned_sha256 = Some(parse_fingerprint(fingerprint)?);
         }
-        Ok(SyncAccount {
-            id: self.register(account)?,
-            name: account.name.clone(),
-            backend: imap_backend(imap, &account.name, &self.secrets),
-        })
+        Ok(sync_account(
+            self.register(account)?,
+            account,
+            imap,
+            &self.secrets,
+        ))
     }
 
     /// Accepts `fingerprint` as the certificate of an existing account's
@@ -195,11 +196,12 @@ impl Service {
             .ok_or_else(|| format!("config.toml has no account called {name}"))?;
         let mut imap = imap_config(account)?;
         imap.trust.pinned_sha256 = Some(parse_fingerprint(fingerprint)?);
-        Ok(SyncAccount {
-            id: self.register(account)?,
-            name: account.name.clone(),
-            backend: imap_backend(imap, &account.name, &self.secrets),
-        })
+        Ok(sync_account(
+            self.register(account)?,
+            account,
+            imap,
+            &self.secrets,
+        ))
     }
 }
 

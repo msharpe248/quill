@@ -7,7 +7,7 @@
 use std::sync::mpsc;
 use std::thread;
 
-use quill_core::types::LocalMessageId;
+use quill_core::types::{Flags, FolderRole, LocalFolderId, LocalMessageId};
 use quill_store::{AccountRow, FolderRow, Mailbox, MessageRow, Store};
 use tokio::sync::mpsc::UnboundedSender;
 
@@ -16,8 +16,25 @@ pub enum DataRequest {
     LoadSidebar,
     LoadMessages(Mailbox),
     LoadBody(LocalMessageId),
-    SetSeen { id: LocalMessageId, seen: bool },
-    SetFlagged { id: LocalMessageId, flagged: bool },
+    SetSeen {
+        id: LocalMessageId,
+        seen: bool,
+    },
+    SetFlagged {
+        id: LocalMessageId,
+        flagged: bool,
+    },
+    /// Move the message to its account's archive folder.
+    Archive(LocalMessageId),
+    /// Move the message to the trash, or remove it for good if it is
+    /// already there.
+    Delete(LocalMessageId),
+    MoveTo {
+        id: LocalMessageId,
+        folder: LocalFolderId,
+    },
+    /// Take back the last change that still can be.
+    Undo,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +54,15 @@ pub enum DataEvent {
     },
     /// Something in the store changed; views of it should reload.
     StoreChanged,
+    /// A change for a server, or mail to send, has been written to the
+    /// store's queue. The sync engine should look.
+    Queued,
+    /// Something done, in a few words, to show until the next key.
+    /// `undoable` says the undo command would take it back.
+    Flash {
+        text: String,
+        undoable: bool,
+    },
     Error(String),
 }
 
@@ -112,17 +138,137 @@ fn run(store: &mut Store, request: DataRequest) -> quill_store::Result<Vec<DataE
             });
             vec![DataEvent::BodyLoaded { id, body }]
         }
-        DataRequest::SetSeen { id, seen } => changed(store.set_seen(id, seen)?),
-        DataRequest::SetFlagged { id, flagged } => changed(store.set_flagged(id, flagged)?),
+        DataRequest::SetSeen { id, seen } => set_flags(store, id, |flags| Flags { seen, ..flags })?,
+        DataRequest::SetFlagged { id, flagged } => {
+            set_flags(store, id, |flags| Flags { flagged, ..flags })?
+        }
+        DataRequest::Archive(id) => match folder_with_role(store, id, FolderRole::Archive)? {
+            Some(archive) => moved(store, id, archive, "Archived")?,
+            None => vec![DataEvent::Error(
+                "This account has no archive folder to move the message to.".to_owned(),
+            )],
+        },
+        DataRequest::Delete(id) => {
+            let trash = folder_with_role(store, id, FolderRole::Trash)?;
+            let already_there = store
+                .message_location(id)?
+                .is_some_and(|location| Some(location.folder) == trash);
+            match trash {
+                Some(trash) if !already_there => moved(store, id, trash, "Moved to the trash")?,
+                // In the trash already, or the account has none: for good.
+                _ => {
+                    let at = now();
+                    let queued_one = store.queue_delete(id, at, at + UNDO_SECONDS)?.is_some();
+                    done(queued_one, "Deleted for good")
+                }
+            }
+        }
+        DataRequest::MoveTo { id, folder } => moved(store, id, folder, "Moved")?,
+        DataRequest::Undo => {
+            let at = now();
+            if let Some(operation) = store.undoable(at)?
+                && store.undo_operation(operation)?
+            {
+                vec![DataEvent::StoreChanged, flash("Undone.")]
+            } else if let Some(draft) = store.unsendable(at)?
+                && store.unsend(draft, at)?
+            {
+                vec![
+                    DataEvent::StoreChanged,
+                    flash("Not sent. The message is a draft again."),
+                ]
+            } else {
+                vec![flash("Nothing to undo.")]
+            }
+        }
     })
 }
 
-fn changed(did_change: bool) -> Vec<DataEvent> {
-    if did_change {
-        vec![DataEvent::StoreChanged]
+/// Changes a message's flags here and queues the change for its server.
+fn set_flags(
+    store: &mut Store,
+    id: LocalMessageId,
+    change: impl FnOnce(Flags) -> Flags,
+) -> quill_store::Result<Vec<DataEvent>> {
+    let Some(location) = store.message_location(id)? else {
+        return Ok(Vec::new());
+    };
+    Ok(queued(store.queue_flags(
+        id,
+        change(location.flags),
+        now(),
+    )?))
+}
+
+/// How long a move or a deletion can be undone before the server hears of
+/// it.
+pub const UNDO_SECONDS: i64 = 10;
+
+/// The folder of the message's account that has `role`, if it has one.
+fn folder_with_role(
+    store: &Store,
+    id: LocalMessageId,
+    role: FolderRole,
+) -> quill_store::Result<Option<LocalFolderId>> {
+    let Some(location) = store.message_location(id)? else {
+        return Ok(None);
+    };
+    Ok(store
+        .folders()?
+        .into_iter()
+        .find(|folder| folder.account == location.account && folder.role == role)
+        .map(|folder| folder.id))
+}
+
+/// Moves a message here and queues the move for its server.
+fn moved(
+    store: &mut Store,
+    id: LocalMessageId,
+    folder: LocalFolderId,
+    what: &str,
+) -> quill_store::Result<Vec<DataEvent>> {
+    let at = now();
+    let queued_one = store
+        .queue_move(id, folder, at, at + UNDO_SECONDS)?
+        .is_some();
+    Ok(done(queued_one, what))
+}
+
+fn flash(text: &str) -> DataEvent {
+    DataEvent::Flash {
+        text: text.to_owned(),
+        undoable: false,
+    }
+}
+
+/// What to tell the UI after a move or a deletion.
+fn done(queued_one: bool, what: &str) -> Vec<DataEvent> {
+    if queued_one {
+        vec![
+            DataEvent::StoreChanged,
+            DataEvent::Queued,
+            DataEvent::Flash {
+                text: format!("{what}."),
+                undoable: true,
+            },
+        ]
     } else {
         Vec::new()
     }
+}
+
+/// What to tell the UI after a change that was also queued for a server.
+fn queued(did_change: bool) -> Vec<DataEvent> {
+    if did_change {
+        vec![DataEvent::StoreChanged, DataEvent::Queued]
+    } else {
+        Vec::new()
+    }
+}
+
+/// Seconds since the Unix epoch.
+fn now() -> i64 {
+    jiff::Timestamp::now().as_second()
 }
 
 /// The UI's end of the worker. Dropping it stops the worker thread.
@@ -255,11 +401,11 @@ mod tests {
         let (mut store, _, id) = store_with_one_message();
         assert_eq!(
             handle(&mut store, DataRequest::SetSeen { id, seen: true }),
-            [DataEvent::StoreChanged]
+            [DataEvent::StoreChanged, DataEvent::Queued]
         );
         assert_eq!(
             handle(&mut store, DataRequest::SetFlagged { id, flagged: true }),
-            [DataEvent::StoreChanged]
+            [DataEvent::StoreChanged, DataEvent::Queued]
         );
         let missing = LocalMessageId(999);
         assert!(

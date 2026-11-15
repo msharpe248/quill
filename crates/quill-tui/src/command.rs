@@ -15,6 +15,8 @@ pub enum Context {
     Setup,
     /// Deciding about a server certificate that was not trusted.
     Certificate,
+    /// Choosing a folder to move a message to. Typing narrows the list.
+    Folders,
 }
 
 impl Context {
@@ -27,6 +29,7 @@ impl Context {
             Self::Links => "Links",
             Self::Setup => "Add an account",
             Self::Certificate => "Certificate",
+            Self::Folders => "Move to a folder",
         }
     }
 }
@@ -40,6 +43,7 @@ const EVERYWHERE: &[Context] = &[
     Context::Links,
     Context::Setup,
     Context::Certificate,
+    Context::Folders,
 ];
 /// The panes, and the form whose fields `tab` moves between.
 const PANES_AND_FORMS: &[Context] = &[
@@ -72,6 +76,10 @@ pub enum CommandId {
     MessageToggleStar,
     MessageToggleHtml,
     MessageOpenLink,
+    MessageArchive,
+    MessageDelete,
+    MessageMove,
+    EditUndo,
     AccountAdd,
     DebugPreviewSample,
     DebugImageSample,
@@ -110,6 +118,7 @@ impl Category {
 pub enum Menu {
     App,
     File,
+    Edit,
     View,
     Mailbox,
     Message,
@@ -221,6 +230,7 @@ impl Registry {
                         Context::List,
                         Context::Links,
                         Context::Setup,
+                        Context::Folders,
                     ],
                 ),
                 // Before nav.back, so that a key bound to both quits from a
@@ -333,6 +343,47 @@ impl Registry {
                 ),
                 with_symbol(
                     spec(
+                        MessageArchive,
+                        "message.archive",
+                        "Archive",
+                        Message,
+                        Some(Menu::Message),
+                        MESSAGE,
+                    ),
+                    "archivebox",
+                ),
+                with_symbol(
+                    spec(
+                        MessageDelete,
+                        "message.delete",
+                        "Delete",
+                        Message,
+                        Some(Menu::Message),
+                        MESSAGE,
+                    ),
+                    "trash",
+                ),
+                with_symbol(
+                    spec(
+                        MessageMove,
+                        "message.move",
+                        "Move to a folder",
+                        Message,
+                        Some(Menu::Message),
+                        MESSAGE,
+                    ),
+                    "folder",
+                ),
+                spec(
+                    EditUndo,
+                    "edit.undo",
+                    "Undo the last move, deletion or send",
+                    General,
+                    Some(Menu::Edit),
+                    PANES,
+                ),
+                with_symbol(
+                    spec(
                         AccountAdd,
                         "account.add",
                         "Add an account",
@@ -420,6 +471,8 @@ pub fn hints(context: Context) -> &'static [Hint] {
     const LIST: &[Hint] = &[
         hint(&[NavNext, NavPrev], "move"),
         hint(&[NavOpen], "open"),
+        hint(&[MessageArchive], "archive"),
+        hint(&[MessageDelete], "delete"),
         hint(&[MessageToggleUnread], "unread"),
         hint(&[MessageToggleStar], "star"),
         hint(&[FocusNext], "next pane"),
@@ -431,6 +484,8 @@ pub fn hints(context: Context) -> &'static [Hint] {
         hint(&[NavNext, NavPrev], "scroll"),
         hint(&[NavPageDown], "page"),
         hint(&[NavBack], "back"),
+        hint(&[MessageArchive], "archive"),
+        hint(&[MessageDelete], "delete"),
         hint(&[MessageOpenLink], "links"),
         hint(&[MessageToggleHtml], "html/text"),
         hint(&[MessageToggleUnread], "unread"),
@@ -454,7 +509,9 @@ pub fn hints(context: Context) -> &'static [Hint] {
         hint(&[NavBack], "back"),
     ];
     const CERTIFICATE: &[Hint] = &[hint(&[NavBack], "reject")];
+    const FOLDERS: &[Hint] = &[hint(&[NavOpen], "move here"), hint(&[NavBack], "cancel")];
     match context {
+        Context::Folders => FOLDERS,
         Context::Setup => SETUP,
         Context::Certificate => CERTIFICATE,
         Context::Links => LINKS,

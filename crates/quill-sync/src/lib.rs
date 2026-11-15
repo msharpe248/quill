@@ -6,6 +6,11 @@
 //! hears a [`SyncEvent`] when the store has changed, and asks for what only
 //! the network can give with a [`SyncRequest`].
 //!
+//! It also carries out what the user did while it was not looking. Moves,
+//! deletions, flag changes and sent copies wait in the store's queue and
+//! are replayed against the server in the order made; mail to send waits
+//! in the outbox. Both survive a restart and a spell offline.
+//!
 //! Nothing here knows which protocol an account speaks.
 
 use std::collections::HashMap;
@@ -16,8 +21,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use quill_core::types::{
     Flags, FolderId, FolderRole, LocalAccountId, LocalFolderId, LocalMessageId, Operation,
 };
-use quill_core::{Backend, CertificateProblem, Error};
-use quill_store::{BlobStore, Store};
+use quill_core::{Backend, CertificateProblem, Envelope, Error, Sender};
+use quill_store::{BlobStore, Outgoing, QueuedKind, QueuedOperation, Store};
 use tokio::sync::Notify;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::task::JoinHandle;
@@ -27,12 +32,34 @@ pub struct SyncAccount {
     pub id: LocalAccountId,
     pub name: String,
     pub backend: Arc<dyn Backend>,
+    /// How the account sends mail. Without one, mail for it waits in the
+    /// outbox with the reason.
+    pub sender: Option<Arc<dyn Sender>>,
+    /// The server files its own copy of what is sent through it (Gmail,
+    /// Microsoft Graph), so Quill must not save a second one.
+    pub server_saves_sent: bool,
+}
+
+impl SyncAccount {
+    /// An account that only reads mail.
+    pub fn reading(id: LocalAccountId, name: impl Into<String>, backend: Arc<dyn Backend>) -> Self {
+        Self {
+            id,
+            name: name.into(),
+            backend,
+            sender: None,
+            server_saves_sent: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SyncOptions {
     /// How long to wait between passes when nothing asks for one sooner.
     pub interval: Duration,
+    /// How long to wait before trying again something the server could not
+    /// take just now. Doubled each time it fails again, up to half an hour.
+    pub retry: Duration,
     /// Bodies of mail newer than this many days are downloaded ahead of
     /// being opened, so that recent mail reads offline.
     pub prefetch_days: i64,
@@ -44,6 +71,7 @@ impl Default for SyncOptions {
     fn default() -> Self {
         Self {
             interval: Duration::from_secs(5 * 60),
+            retry: Duration::from_secs(30),
             prefetch_days: 30,
             prefetch_limit: 2000,
         }
@@ -64,6 +92,8 @@ pub enum SyncEvent {
     BodyReady(LocalMessageId),
     /// A body that was asked for could not be fetched.
     BodyFailed { id: LocalMessageId, reason: String },
+    /// A message left the outbox: a server accepted it.
+    Sent { account: String },
     /// Something went wrong that the user should see.
     Problem { account: String, message: String },
     /// An account's server presented a certificate that was not accepted.
@@ -82,13 +112,9 @@ pub enum SyncRequest {
     SyncNow,
     /// Download a message's body. Answered by `BodyReady` or `BodyFailed`.
     FetchBody(LocalMessageId),
-    /// The user changed a message's flags, and the store already says so.
-    /// Tell the server. If it refuses, the store is put back to `previous`.
-    SetFlags {
-        id: LocalMessageId,
-        flags: Flags,
-        previous: Flags,
-    },
+    /// The store's queue or outbox has something new: a change the user
+    /// made, or mail to send. Look now instead of at the next due time.
+    Queue,
 }
 
 /// The UI's end of the engine. Dropping it stops the engine.
@@ -143,6 +169,17 @@ pub fn spawn(
         events,
         accounts: RwLock::new(HashMap::new()),
     });
+    // Mail that was mid-send when Quill last stopped may or may not have
+    // gone. It is not sent again without the user's say.
+    if let Ok(mut store) = engine.store.lock()
+        && let Ok(interrupted) = store.recover_interrupted_sends()
+        && interrupted > 0
+    {
+        engine.emit(SyncEvent::Problem {
+            account: "Outbox".to_owned(),
+            message: "Quill stopped while sending. What was being sent is in the Outbox; check Sent before sending it again.".to_owned(),
+        });
+    }
     for account in accounts {
         Engine::set_account(&engine, account);
     }
@@ -169,14 +206,10 @@ async fn serve(engine: Arc<Engine>, mut queue: UnboundedReceiver<SyncRequest>) {
                 let engine = Arc::clone(&engine);
                 tokio::spawn(async move { engine.fetch_body_for_ui(id).await });
             }
-            SyncRequest::SetFlags {
-                id,
-                flags,
-                previous,
-            } => {
-                let engine = Arc::clone(&engine);
-                tokio::spawn(async move { engine.set_flags(id, flags, previous).await });
-            }
+            SyncRequest::Queue => engine
+                .running()
+                .iter()
+                .for_each(|account| account.queue.notify_one()),
         }
     }
 }
@@ -197,16 +230,19 @@ struct Running {
     account: SyncAccount,
     /// Wakes the loop before the interval is up.
     wake: Notify,
-    /// The loop, to stop it when the account is replaced or removed.
-    task: Mutex<Option<JoinHandle<()>>>,
+    /// Wakes the queue runner before its next due time.
+    queue: Notify,
+    /// The sync loop and the queue runner, to stop them when the account is
+    /// replaced or removed.
+    task: Mutex<Vec<JoinHandle<()>>>,
 }
 
 impl Running {
     fn stop(&self) {
-        if let Ok(mut task) = self.task.lock()
-            && let Some(task) = task.take()
-        {
-            task.abort();
+        if let Ok(mut tasks) = self.task.lock() {
+            for task in tasks.drain(..) {
+                task.abort();
+            }
         }
     }
 }
@@ -260,15 +296,21 @@ impl Engine {
         let running = Arc::new(Running {
             account,
             wake: Notify::new(),
-            task: Mutex::new(None),
+            queue: Notify::new(),
+            task: Mutex::new(Vec::new()),
         });
-        let task = tokio::spawn({
+        let sync = tokio::spawn({
             let engine = Arc::clone(engine);
             let running = Arc::clone(&running);
             async move { engine.keep_in_sync(&running).await }
         });
-        if let Ok(mut slot) = running.task.lock() {
-            *slot = Some(task);
+        let queue = tokio::spawn({
+            let engine = Arc::clone(engine);
+            let running = Arc::clone(&running);
+            async move { engine.run_queue(&running).await }
+        });
+        if let Ok(mut tasks) = running.task.lock() {
+            tasks.extend([sync, queue]);
         }
         let replaced = engine
             .accounts
@@ -491,30 +533,309 @@ impl Engine {
         .map_err(FetchFailure::Other)
     }
 
-    /// Tells the server about a flag change the store already shows, and
-    /// takes the change back if the server will not have it.
-    async fn set_flags(&self, id: LocalMessageId, flags: Flags, previous: Flags) {
-        let Ok(Some(location)) = self.db(move |store| store.message_location(id)).await else {
-            return;
-        };
-        let Some(running) = self.account(location.account) else {
-            // An account with no server, such as the demo: local is all.
-            return;
-        };
+    /// Carries out the account's queued changes and sends its waiting
+    /// mail, each in the order made, for as long as the account runs.
+    async fn run_queue(&self, running: &Running) {
         let account = &running.account;
-        let operation = Operation::SetFlags {
-            id: location.remote,
-            flags,
-        };
-        if let Err(err) = account.backend.apply(&operation).await {
-            let rolled_back = self.db(move |store| store.set_flags(id, previous)).await;
-            if rolled_back.is_ok() {
-                self.emit(SyncEvent::Changed);
+        let id = account.id;
+        loop {
+            // Changes first: a reply's "answered" flag and sent copy follow
+            // the send that queued them on the next turn of this loop.
+            let mut waiting_until: Option<i64> = None;
+            loop {
+                let claimed = self.db(move |store| store.claim_operation(id, now())).await;
+                match claimed {
+                    Ok(Some(operation)) => {
+                        if let Some(retry_at) = self.carry_out(running, operation).await {
+                            // The server cannot be reached or is busy:
+                            // everything behind this operation waits too.
+                            waiting_until = Some(retry_at);
+                            break;
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(message) => {
+                        self.problem(account, message);
+                        break;
+                    }
+                }
             }
-            self.emit(SyncEvent::Problem {
-                account: account.name.clone(),
-                message: format!("The change was not saved on the server: {err}"),
-            });
+            if waiting_until.is_none() {
+                loop {
+                    let claimed = self.db(move |store| store.claim_send(id, now())).await;
+                    match claimed {
+                        Ok(Some(outgoing)) => {
+                            let queued_more = self.send(account, outgoing).await;
+                            if queued_more {
+                                // The sent copy and the answered flag.
+                                running.queue.notify_one();
+                            }
+                        }
+                        Ok(None) => break,
+                        Err(message) => {
+                            self.problem(account, message);
+                            break;
+                        }
+                    }
+                }
+            }
+            // Sleep until the next thing is due, or until told there is
+            // something new.
+            let due = self
+                .db(move |store| {
+                    let operation = store.next_operation_time(id)?;
+                    let send = store.next_send_time(id)?;
+                    Ok([operation, send].into_iter().flatten().min())
+                })
+                .await
+                .ok()
+                .flatten();
+            let wait = match [due, waiting_until].into_iter().flatten().max() {
+                Some(at) => Duration::from_secs(u64::try_from(at - now()).unwrap_or(0).max(1)),
+                None => Duration::from_secs(24 * 60 * 60),
+            };
+            tokio::select! {
+                () = tokio::time::sleep(wait) => {}
+                () = running.queue.notified() => {}
+            }
+        }
+    }
+
+    fn problem(&self, account: &SyncAccount, message: String) {
+        self.emit(SyncEvent::Problem {
+            account: account.name.clone(),
+            message,
+        });
+    }
+
+    /// When to try again after `attempts` failures.
+    fn retry_at(&self, attempts: u32) -> i64 {
+        let base = self.options.retry.as_secs().max(1);
+        let wait = base.saturating_mul(1 << attempts.min(10)).min(30 * 60);
+        now() + i64::try_from(wait).unwrap_or(30 * 60)
+    }
+
+    /// Replays one queued operation against the server. Returns when to try
+    /// again if it could not be tried or finished just now; `None` when it
+    /// is settled, done or refused.
+    async fn carry_out(&self, running: &Running, operation: QueuedOperation) -> Option<i64> {
+        let account = &running.account;
+        let id = operation.id;
+        let (outcome, what, resync) = match operation.kind {
+            QueuedKind::Nothing => (Ok(None), "", false),
+            QueuedKind::Move { remote, target, .. } => (
+                account.backend.move_message(&remote, &target).await,
+                "moved",
+                true,
+            ),
+            QueuedKind::Delete { remote, .. } => (
+                account
+                    .backend
+                    .apply(&Operation::Delete { id: remote })
+                    .await
+                    .map(|()| None),
+                "deleted",
+                false,
+            ),
+            QueuedKind::Flags { remote, flags } => (
+                account
+                    .backend
+                    .apply(&Operation::SetFlags { id: remote, flags })
+                    .await
+                    .map(|()| None),
+                "changed",
+                false,
+            ),
+            QueuedKind::Append {
+                target,
+                blob_hash,
+                flags,
+                ..
+            } => {
+                let blobs = self.blobs.clone();
+                let raw = tokio::task::spawn_blocking(move || match blobs {
+                    Some(blobs) => blobs.get(&blob_hash),
+                    None => Ok(None),
+                })
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .flatten();
+                match raw {
+                    Some(raw) => (
+                        account.backend.append(&target, &raw, flags).await,
+                        "saved",
+                        true,
+                    ),
+                    // The message to save has gone: there is nothing to do.
+                    None => (Ok(None), "saved", false),
+                }
+            }
+        };
+        match outcome {
+            Ok(new_id) => {
+                let knows_new_id = new_id.is_some();
+                let done = self
+                    .db(move |store| store.complete_operation(id, new_id.as_ref()))
+                    .await;
+                if let Err(message) = done {
+                    self.problem(account, message);
+                }
+                self.emit(SyncEvent::Changed);
+                if resync && !knows_new_id {
+                    // The message is in its new folder under a name only a
+                    // sync will tell.
+                    running.wake.notify_one();
+                }
+                None
+            }
+            // Not the operation's fault: the server could not be asked. It
+            // keeps its place and is tried again.
+            Err(
+                Error::Connection(_) | Error::Temporary(_) | Error::Auth(_) | Error::Certificate(_),
+            ) => {
+                let retry_at = self.retry_at(operation.attempts);
+                let _ = self
+                    .db(move |store| store.retry_operation(id, retry_at))
+                    .await;
+                Some(retry_at)
+            }
+            Err(refused) => {
+                let undone = self.db(move |store| store.fail_operation(id)).await;
+                if undone.is_ok() {
+                    self.emit(SyncEvent::Changed);
+                }
+                self.problem(
+                    account,
+                    format!("A message could not be {what} on the server and has been put back as it was: {refused}"),
+                );
+                None
+            }
+        }
+    }
+
+    /// Sends one message from the outbox. Returns whether sending it
+    /// queued further work (a sent copy, an answered flag).
+    async fn send(&self, account: &SyncAccount, outgoing: Outgoing) -> bool {
+        let id = outgoing.id;
+        let refuse = |reason: String| async move {
+            let kept = reason.clone();
+            let _ = self
+                .db(move |store| store.send_failed(id, &kept, None))
+                .await;
+            self.emit(SyncEvent::Changed);
+            self.problem(
+                account,
+                format!("A message was not sent and is waiting in the Outbox: {reason}"),
+            );
+            false
+        };
+        let Some(sender) = &account.sender else {
+            return refuse(
+                "this account has no server to send through. Add `smtp = { host = \"...\" }` to it in config.toml."
+                    .to_owned(),
+            )
+            .await;
+        };
+        let blobs = self.blobs.clone();
+        let hash = outgoing.raw_hash.clone();
+        let raw = tokio::task::spawn_blocking(move || match blobs {
+            Some(blobs) => blobs.get(&hash),
+            None => Ok(None),
+        })
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .flatten();
+        let Some(raw) = raw else {
+            return refuse(
+                "the finished message is missing. Open it and send it again.".to_owned(),
+            )
+            .await;
+        };
+        let envelope = Envelope {
+            from: outgoing.from.clone(),
+            to: outgoing.to.clone(),
+        };
+        match sender.send(&raw, &envelope).await {
+            Ok(()) => {
+                let account_id = account.id;
+                let save_copy = !account.server_saves_sent;
+                let raw_hash = outgoing.raw_hash.clone();
+                let replied_to = outgoing.replied_to;
+                let queued = self
+                    .db(move |store| {
+                        store.sent(id)?;
+                        let mut queued = false;
+                        if save_copy {
+                            let sent_folder = store
+                                .folders()?
+                                .into_iter()
+                                .find(|folder| {
+                                    folder.account == account_id && folder.role == FolderRole::Sent
+                                })
+                                .map(|folder| folder.id);
+                            if let Some(folder) = sent_folder {
+                                let seen = Flags {
+                                    seen: true,
+                                    ..Flags::default()
+                                };
+                                queued |= store
+                                    .queue_append(folder, &raw_hash, seen, now())?
+                                    .is_some();
+                            }
+                        }
+                        if let Some(original) = replied_to {
+                            let original = LocalMessageId(original);
+                            if let Some(location) = store.message_location(original)? {
+                                let answered = Flags {
+                                    answered: true,
+                                    ..location.flags
+                                };
+                                queued |= store.queue_flags(original, answered, now())?;
+                            }
+                        }
+                        Ok(queued)
+                    })
+                    .await;
+                self.emit(SyncEvent::Sent {
+                    account: account.name.clone(),
+                });
+                self.emit(SyncEvent::Changed);
+                match queued {
+                    Ok(queued) => queued,
+                    Err(message) => {
+                        self.problem(account, message);
+                        false
+                    }
+                }
+            }
+            // The server could not take it just now. It stays in the outbox
+            // and goes later.
+            Err(err @ (Error::Connection(_) | Error::Temporary(_))) => {
+                let retry_at = self.retry_at(outgoing.attempts);
+                let reason = err.to_string();
+                let _ = self
+                    .db(move |store| store.send_failed(id, &reason, Some(retry_at)))
+                    .await;
+                self.emit(SyncEvent::Changed);
+                if outgoing.attempts == 0 {
+                    self.problem(
+                        account,
+                        format!("A message could not be sent yet and will be tried again: {err}"),
+                    );
+                }
+                false
+            }
+            Err(Error::Recipients(refused)) => {
+                let list = refused
+                    .iter()
+                    .map(|recipient| format!("{} ({})", recipient.address, recipient.reason))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                refuse(format!("the server refused these recipients: {list}")).await
+            }
+            Err(other) => refuse(other.to_string()).await,
         }
     }
 }

@@ -75,7 +75,7 @@ public struct StateUpdate: Equatable, Sendable, Codable {
 }
 
 public enum Context: String, Equatable, Sendable, Codable {
-    case sidebar, list, reader, help, links, setup, certificate
+    case sidebar, list, reader, help, links, setup, certificate, folders, compose, palette, search
 }
 
 public struct LinkOpen: Equatable, Sendable, Codable {
