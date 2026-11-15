@@ -39,6 +39,9 @@ pub struct Service {
     /// Certificates accepted for this run only, by account and by whether
     /// it is the sending server's. Written nowhere.
     pub trusted_once: Mutex<HashMap<(String, bool), String>>,
+    /// Whether whoever is at the keyboard is at another computer (over
+    /// SSH), where a browser opened on this Mac would be no use to them.
+    pub remote: bool,
 }
 
 /// Starts the service on the current Tokio runtime and returns the UI's end
@@ -48,11 +51,36 @@ pub fn spawn(service: Service) -> AccountsLink {
     let (events_tx, events) = unbounded_channel();
     tokio::spawn(async move {
         let service = Arc::new(service);
+        // A sign-in waits on the user for minutes. It runs beside the
+        // requests, which go on being answered, and is dropped to give up.
+        let mut signing_in: Option<tokio::task::JoinHandle<()>> = None;
         while let Some(request) = requests.recv().await {
-            let event = service.handle(request).await;
-            if events_tx.send(event).is_err() {
-                break;
+            match request {
+                AccountRequest::SignIn { account } => {
+                    if let Some(earlier) = signing_in.take() {
+                        earlier.abort();
+                    }
+                    let service = Arc::clone(&service);
+                    let events = events_tx.clone();
+                    signing_in = Some(tokio::spawn(async move {
+                        service.sign_in(account, events).await;
+                    }));
+                }
+                AccountRequest::CancelSignIn => {
+                    if let Some(sign_in) = signing_in.take() {
+                        sign_in.abort();
+                    }
+                }
+                request => {
+                    let event = service.handle(request).await;
+                    if events_tx.send(event).is_err() {
+                        break;
+                    }
+                }
             }
+        }
+        if let Some(sign_in) = signing_in {
+            sign_in.abort();
         }
     });
     AccountsLink {
@@ -111,7 +139,122 @@ impl Service {
                     result: trusted.map(|account| self.sync.set_account(account)),
                 }
             }
+            // These two are taken before here: see `spawn`.
+            AccountRequest::SignIn { account } => AccountEvent::SignedIn {
+                account: account.unwrap_or_default(),
+                result: Err("signing in is not done this way".to_owned()),
+            },
+            AccountRequest::CancelSignIn => AccountEvent::SignedIn {
+                account: String::new(),
+                result: Err("no sign-in was under way".to_owned()),
+            },
         }
+    }
+
+    /// Signs an account in to its provider and says how it went. On the
+    /// way it says how the user is to do their part: in the browser, or
+    /// with a code.
+    pub async fn sign_in(
+        self: &Arc<Self>,
+        preferred: Option<String>,
+        events: tokio::sync::mpsc::UnboundedSender<AccountEvent>,
+    ) {
+        let (account, result) = match self.choose_for_sign_in(preferred).await {
+            Ok(account) => {
+                let result = self.sign_in_to(&account, &events).await;
+                (account.name, result)
+            }
+            Err(reason) => (String::new(), Err(reason)),
+        };
+        let _ = events.send(AccountEvent::SignedIn { account, result });
+    }
+
+    /// Which account to sign in: the one asked for if it signs in with a
+    /// provider, otherwise the first such account nobody has signed in to
+    /// yet, otherwise the first of them.
+    async fn choose_for_sign_in(
+        self: &Arc<Self>,
+        preferred: Option<String>,
+    ) -> Result<AccountConfig, String> {
+        let service = Arc::clone(self);
+        // The config file and the Keychain both block.
+        tokio::task::spawn_blocking(move || {
+            let config = Config::parse(&service.config_text()?)
+                .map_err(|err| format!("config.toml has a mistake to fix first: {err}"))?;
+            let candidates: Vec<&AccountConfig> = config
+                .accounts
+                .iter()
+                .filter(|account| oauth::wanted(account))
+                .collect();
+            if let Some(asked) = candidates
+                .iter()
+                .find(|account| Some(&account.name) == preferred.as_ref())
+            {
+                return Ok((*asked).clone());
+            }
+            let signed_in = |account: &AccountConfig| {
+                oauth::setup(account)
+                    .ok()
+                    .flatten()
+                    .and_then(|setup| service.secrets.get(&setup.secret_name(account)).ok())
+                    .flatten()
+                    .is_some()
+            };
+            candidates
+                .iter()
+                .find(|account| !signed_in(account))
+                .or(candidates.first())
+                .map(|account| (*account).clone())
+                .ok_or_else(|| {
+                    "No account here signs in with Microsoft or Google. An account with a password keeps it in the Keychain, and there is nothing to sign in to.".to_owned()
+                })
+        })
+        .await
+        .unwrap_or_else(|err| Err(err.to_string()))
+    }
+
+    async fn sign_in_to(
+        &self,
+        account: &AccountConfig,
+        events: &tokio::sync::mpsc::UnboundedSender<AccountEvent>,
+    ) -> Result<(), String> {
+        let setup = oauth::setup(account)?
+            .ok_or_else(|| "it signs in with a password, not with a provider".to_owned())?;
+        let http = quill_auth::OAuthHttp::new(&Trust::default()).map_err(|err| err.to_string())?;
+        let name = account.name.clone();
+        let events = events.clone();
+        let method = if self.remote {
+            if setup.provider.device_url.is_none() {
+                return Err(
+                    "this provider has no sign-in by code, which is the only way from another computer. Sign in at the Mac itself, or use an app password".to_owned(),
+                );
+            }
+            quill_auth::SignInMethod::DeviceCode(quill_auth::DeviceSignIn::new(
+                move |prompt: &quill_auth::DevicePrompt| {
+                    let _ = events.send(AccountEvent::SignInCode {
+                        account: name,
+                        address: prompt.verification_uri.clone(),
+                        code: prompt.user_code.clone(),
+                        minutes: prompt.expires_in.as_secs().div_ceil(60),
+                    });
+                },
+            ))
+        } else {
+            // The UI opens the browser: here there may be a sandbox in the
+            // way, and it is the UI that knows the way out.
+            let mut browser = quill_auth::BrowserSignIn::new(move |url: &str| {
+                let _ = events.send(AccountEvent::SignInBrowser {
+                    account: name,
+                    url: url.to_owned(),
+                });
+                Ok(())
+            });
+            browser.login_hint = Some(account.address.clone());
+            quill_auth::SignInMethod::Browser(browser)
+        };
+        oauth::sign_in(&http, &setup, method, Arc::clone(&self.secrets), account)
+            .await
+            .map_err(|err| sentence(&err.to_string()))
     }
 
     fn config_text(&self) -> Result<String, String> {
@@ -392,6 +535,11 @@ mod tests {
 
     impl Rig {
         fn new() -> Self {
+            Self::at(false)
+        }
+
+        /// With whoever is typing at another computer, or at this one.
+        fn at(remote: bool) -> Self {
             let dir = tempfile::tempdir().unwrap();
             let database = dir.path().join("quill.db");
             let store = Store::open(&database).unwrap();
@@ -415,6 +563,7 @@ mod tests {
                 dns: Box::new(NoDns),
                 prober: Box::new(NoProber),
                 trusted_once: Mutex::default(),
+                remote,
             });
             Self {
                 service,
@@ -868,6 +1017,199 @@ mod tests {
             .await
         {
             AccountEvent::Trusted { result: Err(_), .. } => {}
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// A stand-in for the sign-in service, and a config with one account
+    /// that signs in there and one that has a password.
+    async fn provider(rig: &Rig) -> wiremock::MockServer {
+        let server = wiremock::MockServer::start().await;
+        std::fs::create_dir_all(rig.service.config_file.parent().unwrap()).unwrap();
+        std::fs::write(
+            &rig.service.config_file,
+            format!(
+                "[[account]]\nname = \"Personal\"\ntype = \"imap\"\naddress = \"robin@example.org\"\nimap = {{ host = \"mail.example.org\" }}\n\n[[account]]\nname = \"Work\"\ntype = \"graph\"\naddress = \"robin@example.com\"\noauth_client_id = \"app-1\"\n\n[account.oauth]\nauthorize_url = \"{0}/authorize\"\ntoken_url = \"{0}/token\"\ndevice_url = \"{0}/devicecode\"\n",
+                server.uri()
+            ),
+        )
+        .unwrap();
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/token"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "access_token": "short-lived",
+                    "refresh_token": "to-keep",
+                    "token_type": "Bearer",
+                    "expires_in": 3600,
+                })),
+            )
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/devicecode"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "device_code": "long-and-private",
+                    "user_code": "WXYZ-1234",
+                    "verification_uri": "https://login.example.com/device",
+                    "expires_in": 600,
+                    "interval": 1,
+                })),
+            )
+            .mount(&server)
+            .await;
+        server
+    }
+
+    async fn next(events: &mut UnboundedReceiver<AccountEvent>) -> AccountEvent {
+        tokio::time::timeout(Duration::from_secs(10), events.recv())
+            .await
+            .expect("the service said nothing")
+            .expect("the service stopped")
+    }
+
+    /// The service as the UI holds it: its two ends.
+    fn link(
+        rig: &Rig,
+    ) -> (
+        tokio::sync::mpsc::UnboundedSender<AccountRequest>,
+        UnboundedReceiver<AccountEvent>,
+    ) {
+        // The rig's service is shared with the test; run a second like it.
+        let service = Service {
+            config_file: rig.service.config_file.clone(),
+            secrets: rig.secrets.clone(),
+            store: Mutex::new(Store::open(&rig.dir.path().join("quill.db")).unwrap()),
+            sync: Arc::clone(&rig.service.sync),
+            dns: Box::new(NoDns),
+            prober: Box::new(NoProber),
+            trusted_once: Mutex::default(),
+            remote: rig.service.remote,
+        };
+        let link = spawn(service);
+        (link.requests.unwrap(), link.events)
+    }
+
+    #[tokio::test]
+    async fn from_another_computer_the_account_that_needs_it_signs_in_with_a_code() {
+        let rig = Rig::at(true);
+        let _server = provider(&rig).await;
+        let (requests, mut events) = link(&rig);
+        // The account the user is looking at has a password; the one that
+        // needs signing in to is found.
+        requests
+            .send(AccountRequest::SignIn {
+                account: Some("Personal".to_owned()),
+            })
+            .unwrap();
+        assert_eq!(
+            next(&mut events).await,
+            AccountEvent::SignInCode {
+                account: "Work".to_owned(),
+                address: "https://login.example.com/device".to_owned(),
+                code: "WXYZ-1234".to_owned(),
+                minutes: 10,
+            }
+        );
+        assert_eq!(
+            next(&mut events).await,
+            AccountEvent::SignedIn {
+                account: "Work".to_owned(),
+                result: Ok(()),
+            }
+        );
+        assert_eq!(
+            rig.secrets
+                .get("oauth:microsoft:robin@example.com")
+                .unwrap(),
+            Some("to-keep".to_owned())
+        );
+    }
+
+    #[tokio::test]
+    async fn at_the_mac_the_browser_is_asked_for_and_giving_up_keeps_nothing() {
+        let rig = Rig::new();
+        let _server = provider(&rig).await;
+        let (requests, mut events) = link(&rig);
+        requests
+            .send(AccountRequest::SignIn { account: None })
+            .unwrap();
+        let AccountEvent::SignInBrowser { account, url } = next(&mut events).await else {
+            panic!("expected to be sent to the browser");
+        };
+        assert_eq!(account, "Work");
+        assert!(
+            url.contains("/authorize?") && url.contains("client_id=app-1"),
+            "{url}"
+        );
+        assert!(url.contains("login_hint=robin%40example.com"), "{url}");
+        // Quill is listening for the browser's answer.
+        let listener = url
+            .split('&')
+            .find_map(|pair| pair.strip_prefix("redirect_uri="))
+            .unwrap()
+            .replace("%3A", ":")
+            .replace("%2F", "/")
+            .replace("http://localhost", "127.0.0.1");
+        assert!(tokio::net::TcpStream::connect(&listener).await.is_ok());
+
+        // Other requests are answered while it waits.
+        requests
+            .send(AccountRequest::Trust {
+                account: "Nobody".to_owned(),
+                fingerprint: "ab".repeat(32),
+                pin: false,
+                sending: false,
+            })
+            .unwrap();
+        assert!(matches!(
+            next(&mut events).await,
+            AccountEvent::Trusted { result: Err(_), .. }
+        ));
+
+        requests.send(AccountRequest::CancelSignIn).unwrap();
+        // The listener goes, nothing more is said, and nothing was kept.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while tokio::net::TcpStream::connect(&listener).await.is_ok() {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "still listening after giving up"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(events.try_recv().is_err());
+        assert_eq!(
+            rig.secrets
+                .get("oauth:microsoft:robin@example.com")
+                .unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn with_no_account_to_sign_in_it_says_so() {
+        let rig = Rig::new();
+        std::fs::create_dir_all(rig.service.config_file.parent().unwrap()).unwrap();
+        std::fs::write(
+            &rig.service.config_file,
+            "[[account]]\nname = \"Personal\"\ntype = \"imap\"\naddress = \"robin@example.org\"\nimap = { host = \"mail.example.org\" }\n",
+        )
+        .unwrap();
+        let (requests, mut events) = link(&rig);
+        requests
+            .send(AccountRequest::SignIn {
+                account: Some("Personal".to_owned()),
+            })
+            .unwrap();
+        match next(&mut events).await {
+            AccountEvent::SignedIn {
+                account,
+                result: Err(reason),
+            } => {
+                assert_eq!(account, "");
+                assert!(reason.starts_with("No account here signs in"), "{reason}");
+            }
             other => panic!("{other:?}"),
         }
     }

@@ -26,7 +26,9 @@ use crate::outgoing::{Handed, Response, SendRequest};
 use crate::palette::{self, Item, Palette, What};
 
 mod mouse;
-use crate::setup::{AccountEvent, AccountRequest, CertificatePrompt, Outcome, Setup};
+use crate::setup::{
+    AccountEvent, AccountRequest, CertificatePrompt, Outcome, Setup, SignIn, SignInStage,
+};
 use crate::theme::Styles;
 use crate::{text, view};
 pub use mouse::{Mouse, MouseKind};
@@ -593,6 +595,8 @@ pub struct State {
     pub flash: Option<(String, bool)>,
     /// The add-an-account flow, while it is open.
     pub setup: Option<Setup>,
+    /// A sign-in to an account's provider, waiting on the user.
+    pub sign_in: Option<SignIn>,
     /// Certificates of existing accounts waiting for a decision. The first
     /// is the one on screen.
     pub certificates: VecDeque<CertificatePrompt>,
@@ -634,6 +638,7 @@ impl State {
             respond_pending: None,
             flash: None,
             setup: None,
+            sign_in: None,
             certificates: VecDeque::new(),
             setup_offered: false,
             accounts_known: false,
@@ -662,6 +667,9 @@ impl State {
         // from that server waits on the answer.
         if !self.certificates.is_empty() {
             return Context::Certificate;
+        }
+        if self.sign_in.is_some() {
+            return Context::SignIn;
         }
         if self.setup.is_some() {
             return Context::Setup;
@@ -887,6 +895,9 @@ impl State {
                 }
             }
             Context::Certificate if self.answer_certificate(chord, out) => return,
+            // Waiting on the browser: only giving up is on offer, and a
+            // letter must not run a command behind the dialog.
+            Context::SignIn if matches!(chord.key, Key::Char(_)) => return,
             _ => {}
         }
         self.pending.push(chord);
@@ -1143,6 +1154,15 @@ impl State {
                 }
             }
             CommandId::AccountAdd => self.setup = Some(Setup::default()),
+            CommandId::AccountSignIn => {
+                out.accounts.push(AccountRequest::SignIn {
+                    account: self.current_account().map(|account| account.name.clone()),
+                });
+                self.sign_in = Some(SignIn {
+                    account: String::new(),
+                    stage: SignInStage::Starting,
+                });
+            }
             CommandId::NavOpen => self.open(out),
             CommandId::NavBack => self.back(out),
             CommandId::AppQuit => self.should_quit = true,
@@ -1277,6 +1297,7 @@ impl State {
                 .iter()
                 .any(|id| DraftId::from_message_id(*id).is_none()),
             CommandId::AccountAdd => env.accounts,
+            CommandId::AccountSignIn => env.accounts && !self.accounts.is_empty(),
             CommandId::NavOpen => {
                 self.focus == Pane::Sidebar || self.list.rows.get(self.list.selected).is_some()
             }
@@ -1302,6 +1323,7 @@ impl State {
                     || self.folders.is_some()
                     || self.compose.is_some()
                     || self.setup.is_some()
+                    || self.sign_in.is_some()
                     || !self.certificates.is_empty()
                     || !self.notices.is_empty()
                     || self.focus == Pane::Reader
@@ -1500,6 +1522,9 @@ impl State {
         } else if !self.certificates.is_empty() {
             // Not answering is rejecting: nothing is sent to that server.
             self.certificates.pop_front();
+        } else if self.sign_in.take().is_some() {
+            // Nothing is kept of a sign-in given up on.
+            out.accounts.push(AccountRequest::CancelSignIn);
         } else if let Some(setup) = &mut self.setup {
             if setup.back() {
                 self.setup = None;
@@ -1835,6 +1860,59 @@ impl State {
             }
             return;
         }
+        match event {
+            AccountEvent::SignInBrowser { account, url } => {
+                // An answer for a sign-in already given up on is dropped.
+                if let Some(sign_in) = &mut self.sign_in
+                    && quill_mime::links::is_openable(&url)
+                {
+                    out.host.push(HostRequest::OpenUrl(url));
+                    sign_in.account = text::sanitize_line(&account);
+                    sign_in.stage = SignInStage::Browser;
+                }
+                return;
+            }
+            AccountEvent::SignInCode {
+                account,
+                address,
+                code,
+                minutes,
+            } => {
+                if let Some(sign_in) = &mut self.sign_in {
+                    sign_in.account = text::sanitize_line(&account);
+                    sign_in.stage = SignInStage::Code {
+                        address: text::sanitize_line(&address),
+                        code: text::sanitize_line(&code),
+                        minutes,
+                    };
+                }
+                return;
+            }
+            AccountEvent::SignedIn { account, result } => {
+                if self.sign_in.take().is_none() {
+                    return;
+                }
+                let name = text::sanitize_line(&account);
+                match result {
+                    Ok(()) => {
+                        self.notices.push_back(Notice::info(format!(
+                            "Signed in to {name}. Its mail is on the way."
+                        )));
+                        out.sync.push(SyncRequest::SyncNow);
+                    }
+                    // With no account named, the reason says it all.
+                    Err(reason) if name.is_empty() => self
+                        .notices
+                        .push_back(Notice::error(text::sanitize_line(&reason))),
+                    Err(reason) => self.notices.push_back(Notice::error(format!(
+                        "{name} is not signed in: {}",
+                        text::sanitize_line(&reason)
+                    ))),
+                }
+                return;
+            }
+            _ => {}
+        }
         let Some(setup) = &mut self.setup else {
             return;
         };
@@ -1905,6 +1983,24 @@ impl State {
             Pane::Reader => self.reader.row.as_ref(),
             Pane::Sidebar | Pane::List => self.list.rows.get(self.list.selected),
         }
+    }
+
+    /// The account the user is looking at, where that can be told: the
+    /// one whose message is under the cursor, or whose folder is open.
+    fn current_account(&self) -> Option<&AccountRow> {
+        if let Some(row) = self.target_row() {
+            let id = row.account;
+            return self.accounts.iter().find(|account| account.id == id);
+        }
+        let Mailbox::Folder(folder) = self.mailbox else {
+            return None;
+        };
+        self.sidebar.entries.iter().find_map(|entry| match entry {
+            SidebarEntry::Folder { id, account, .. } if *id == folder => {
+                self.accounts.get(*account)
+            }
+            _ => None,
+        })
     }
 
     /// The messages a filing or marking command acts on: those selected

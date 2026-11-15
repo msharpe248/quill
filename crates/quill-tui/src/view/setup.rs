@@ -9,7 +9,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Padding};
 
 use crate::input::LineInput;
-use crate::setup::{ServerField, Setup, Step, certificate_reason, grouped_fingerprint};
+use crate::setup::{
+    ServerField, Setup, SignInStage, Step, certificate_reason, grouped_fingerprint,
+};
 use crate::state::{Env, State};
 use crate::text;
 
@@ -36,6 +38,43 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
             rows.blank();
         }
         certificate(&mut rows, &prompt.problem, prompt.busy);
+        return;
+    }
+    if let Some(sign_in) = &state.sign_in {
+        let title = if sign_in.account.is_empty() {
+            " Sign in ".to_owned()
+        } else {
+            format!(" Sign in to {} ", sign_in.account)
+        };
+        let inner = dialog(frame, area, &title, env);
+        let mut rows = Rows::new(frame, inner, env);
+        match &sign_in.stage {
+            SignInStage::Starting => rows.text("Getting ready to sign in..."),
+            SignInStage::Browser => {
+                rows.text("Your browser has been opened at the provider's sign-in page.");
+                rows.blank();
+                rows.text(
+                    "Sign in there. When the page says you can close it, come back: Quill is waiting, and takes it from there.",
+                );
+                rows.blank();
+                rows.dim("Your password goes to the provider, never to Quill. Quill keeps only the sign-in the provider hands back, in the Keychain.");
+            }
+            SignInStage::Code {
+                address,
+                code,
+                minutes,
+            } => {
+                rows.text("On any device, open this page and enter the code:");
+                rows.blank();
+                rows.pair("Page:", address);
+                rows.pair("Code:", code);
+                rows.blank();
+                rows.text("Quill is waiting, and takes it from there.");
+                rows.dim(&format!("The code is good for {minutes} minutes."));
+            }
+        }
+        rows.blank();
+        rows.dim("esc gives up");
         return;
     }
     let Some(setup) = &state.setup else {

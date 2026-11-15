@@ -326,6 +326,7 @@ const VIM: PresetTable = &[
     (CommandId::EditSelectAll, &["cmd-a"]),
     (CommandId::EditUndo, &["U"]),
     (CommandId::AccountAdd, &["A"]),
+    (CommandId::AccountSignIn, &["S"]),
     (CommandId::HelpToggle, &["?"]),
 ];
 
@@ -376,6 +377,7 @@ const MUTT: PresetTable = &[
     (CommandId::EditSelectAll, &["cmd-a"]),
     (CommandId::EditUndo, &["U"]),
     (CommandId::AccountAdd, &["A"]),
+    (CommandId::AccountSignIn, &["S"]),
     (CommandId::HelpToggle, &["?"]),
 ];
 

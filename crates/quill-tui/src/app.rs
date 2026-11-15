@@ -367,6 +367,8 @@ impl Io<'_> {
                 Context::Attachments => bridge::Context::Links,
                 Context::Setup => bridge::Context::Setup,
                 Context::Certificate => bridge::Context::Certificate,
+                // A question about an account, as far as the shell cares.
+                Context::SignIn => bridge::Context::Setup,
                 Context::Folders => bridge::Context::Folders,
                 Context::Compose => bridge::Context::Compose,
                 Context::Search => bridge::Context::Search,

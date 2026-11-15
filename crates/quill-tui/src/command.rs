@@ -17,6 +17,8 @@ pub enum Context {
     Setup,
     /// Deciding about a server certificate that was not trusted.
     Certificate,
+    /// Waiting for the user to sign in to an account's provider.
+    SignIn,
     /// Choosing a folder to move a message to. Typing narrows the list.
     Folders,
     /// Writing a message. Typing goes into the field with the cursor.
@@ -38,6 +40,7 @@ impl Context {
             Self::Attachments => "Attachments",
             Self::Setup => "Add an account",
             Self::Certificate => "Certificate",
+            Self::SignIn => "Signing in",
             Self::Folders => "Move to a folder",
             Self::Compose => "Writing a message",
             Self::Search => "Search",
@@ -56,6 +59,7 @@ const EVERYWHERE: &[Context] = &[
     Context::Attachments,
     Context::Setup,
     Context::Certificate,
+    Context::SignIn,
     Context::Folders,
     Context::Compose,
     Context::Search,
@@ -126,6 +130,7 @@ pub enum CommandId {
     EditSelectAll,
     EditUndo,
     AccountAdd,
+    AccountSignIn,
     HelpToggle,
 }
 
@@ -611,6 +616,17 @@ impl Registry {
                 ),
                 with_symbol(
                     spec(
+                        AccountSignIn,
+                        "account.sign_in",
+                        "Sign in to an account",
+                        General,
+                        Some(Menu::File),
+                        PANES,
+                    ),
+                    "person.badge.key",
+                ),
+                with_symbol(
+                    spec(
                         HelpToggle,
                         "help.toggle",
                         "Help for this context",
@@ -722,6 +738,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         hint(&[NavBack], "back"),
     ];
     const CERTIFICATE: &[Hint] = &[hint(&[NavBack], "reject")];
+    const SIGNING_IN: &[Hint] = &[hint(&[NavBack], "give up")];
     const FOLDERS: &[Hint] = &[hint(&[NavOpen], "move here"), hint(&[NavBack], "cancel")];
     const COMPOSING: &[Hint] = &[
         hint(&[ComposeSend], "send"),
@@ -735,6 +752,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         Context::Folders => FOLDERS,
         Context::Setup => SETUP,
         Context::Certificate => CERTIFICATE,
+        Context::SignIn => SIGNING_IN,
         Context::Links => LINKS,
         Context::Search => SEARCHING,
         Context::Palette => PALETTE,

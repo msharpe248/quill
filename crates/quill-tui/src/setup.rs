@@ -83,6 +83,17 @@ pub enum AccountRequest {
         /// The certificate is the sending server's.
         sending: bool,
     },
+    /// Sign an account in to its provider (Microsoft, Google). Answered
+    /// first with how ([`AccountEvent::SignInBrowser`] or
+    /// [`AccountEvent::SignInCode`]) and in the end with
+    /// [`AccountEvent::SignedIn`].
+    ///
+    /// `account` is the one the user is looking at, if any. The service
+    /// signs in that one if it is an account that signs in this way, and
+    /// otherwise the first that needs it.
+    SignIn { account: Option<String> },
+    /// Give up on the sign-in in progress.
+    CancelSignIn,
 }
 
 /// The answers.
@@ -100,6 +111,46 @@ pub enum AccountEvent {
         /// Which of the account's servers the answer was about.
         sending: bool,
         result: Result<(), String>,
+    },
+    /// The sign-in goes on in the browser, at this address.
+    SignInBrowser {
+        account: String,
+        url: String,
+    },
+    /// The sign-in goes on on any device: at `address`, with `code`.
+    SignInCode {
+        account: String,
+        address: String,
+        code: String,
+        /// How long the code is good for.
+        minutes: u64,
+    },
+    /// The sign-in ended: kept, or why not.
+    SignedIn {
+        account: String,
+        result: Result<(), String>,
+    },
+}
+
+/// A sign-in to an account's provider that is under way.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignIn {
+    /// Which account, once the service has said. Empty until then.
+    pub account: String,
+    pub stage: SignInStage,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SignInStage {
+    /// Asked for; nothing heard yet.
+    Starting,
+    /// The browser has been sent to the provider.
+    Browser,
+    /// A code to type in at the provider's page, on any device.
+    Code {
+        address: String,
+        code: String,
+        minutes: u64,
     },
 }
 
@@ -632,7 +683,11 @@ impl Setup {
                     }
                 }
             }
-            AccountEvent::Trusted { .. } => (Vec::new(), Outcome::Open),
+            // Not this form's business.
+            AccountEvent::Trusted { .. }
+            | AccountEvent::SignInBrowser { .. }
+            | AccountEvent::SignInCode { .. }
+            | AccountEvent::SignedIn { .. } => (Vec::new(), Outcome::Open),
         }
     }
 }

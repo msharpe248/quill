@@ -177,6 +177,7 @@ async fn tui(args: TuiArgs) -> anyhow::Result<()> {
             dns: Box::new(discover::SystemDns::new()),
             prober: Box::new(discover::NetworkProber),
             trusted_once: std::sync::Mutex::default(),
+            remote: over_ssh(),
         });
         (
             store,
@@ -282,8 +283,7 @@ async fn account(
                         .stderr(std::process::Stdio::null())
                         .status();
                 }),
-                remote: std::env::var_os("SSH_CONNECTION").is_some()
-                    || std::env::var_os("SSH_TTY").is_some(),
+                remote: over_ssh(),
             };
             signin::sign_in(find(&name)?, secrets, code, terminal).await?;
         }
@@ -312,6 +312,11 @@ async fn account(
         }
     }
     Ok(())
+}
+
+/// Whether whoever is typing is at another computer.
+fn over_ssh() -> bool {
+    std::env::var_os("SSH_CONNECTION").is_some() || std::env::var_os("SSH_TTY").is_some()
 }
 
 /// Mail is private: the data directory is readable by its owner only.

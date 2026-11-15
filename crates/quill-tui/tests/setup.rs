@@ -510,3 +510,120 @@ fn the_server_mail_is_sent_through_is_asked_about_separately() {
     }));
     assert_eq!(harness.state.context(), Context::List);
 }
+
+#[test]
+fn signing_in_opens_the_browser_and_waits_where_nothing_else_can_be_done() {
+    let mut harness = Harness::with_accounts(120, 40);
+    let first = harness.selected_subject().to_owned();
+    harness.keys("S");
+    assert_eq!(harness.state.context(), Context::SignIn);
+    // The account under the cursor is named; the service decides.
+    assert!(matches!(
+        harness.account_requests.last(),
+        Some(AccountRequest::SignIn { account: Some(_) })
+    ));
+    assert!(harness.screen().contains("Getting ready to sign in"));
+
+    harness.act(Action::Account(AccountEvent::SignInBrowser {
+        account: "Work".to_owned(),
+        url: "https://login.example.com/authorize?client_id=app-1".to_owned(),
+    }));
+    assert_eq!(
+        harness.host_requests.last(),
+        Some(&quill_tui::state::HostRequest::OpenUrl(
+            "https://login.example.com/authorize?client_id=app-1".to_owned()
+        ))
+    );
+    let screen = harness.screen();
+    assert!(screen.contains(" Sign in to Work "), "{screen}");
+    assert!(screen.contains("Your browser has been opened"), "{screen}");
+    assert!(screen.contains("esc give up"), "{screen}");
+
+    // Letters do nothing behind the dialog: no delete, no archive.
+    let before = harness.state.list.rows.len();
+    harness.keys("d e j");
+    assert_eq!(harness.state.list.rows.len(), before);
+    assert_eq!(harness.selected_subject(), first);
+
+    harness.act(Action::Account(AccountEvent::SignedIn {
+        account: "Work".to_owned(),
+        result: Ok(()),
+    }));
+    assert_ne!(harness.state.context(), Context::SignIn);
+    assert!(
+        harness
+            .screen()
+            .contains("Signed in to Work. Its mail is on the way.")
+    );
+    assert_eq!(
+        harness.sync_requests.last(),
+        Some(&quill_sync::SyncRequest::SyncNow)
+    );
+}
+
+#[test]
+fn a_code_to_type_elsewhere_is_shown_and_escape_gives_up() {
+    let mut harness = Harness::with_accounts(120, 40);
+    harness.act(Action::Command(CommandId::AccountSignIn));
+    harness.act(Action::Account(AccountEvent::SignInCode {
+        account: "Work".to_owned(),
+        address: "https://login.example.com/device".to_owned(),
+        code: "WXYZ-1234".to_owned(),
+        minutes: 15,
+    }));
+    let screen = harness.screen();
+    assert!(
+        screen.contains("https://login.example.com/device"),
+        "{screen}"
+    );
+    assert!(screen.contains("WXYZ-1234"), "{screen}");
+    assert!(screen.contains("good for 15 minutes"), "{screen}");
+    // No browser was opened on a Mac nobody is sitting at.
+    assert!(harness.host_requests.is_empty());
+
+    harness.keys("esc");
+    assert_ne!(harness.state.context(), Context::SignIn);
+    assert_eq!(
+        harness.account_requests.last(),
+        Some(&AccountRequest::CancelSignIn)
+    );
+    // An answer that was already on its way is dropped without a word.
+    harness.act(Action::Account(AccountEvent::SignedIn {
+        account: "Work".to_owned(),
+        result: Err("Nobody finished in time.".to_owned()),
+    }));
+    assert!(!harness.screen().contains("Nobody finished"));
+}
+
+#[test]
+fn a_sign_in_that_fails_says_why_and_an_address_that_is_no_web_page_is_not_opened() {
+    let mut harness = Harness::with_accounts(120, 40);
+    harness.keys("S");
+    harness.act(Action::Account(AccountEvent::SignInBrowser {
+        account: "Work".to_owned(),
+        url: "file:///etc/passwd".to_owned(),
+    }));
+    assert!(harness.host_requests.is_empty());
+    harness.act(Action::Account(AccountEvent::SignedIn {
+        account: "Work".to_owned(),
+        result: Err("The provider said no: access_denied.".to_owned()),
+    }));
+    assert!(
+        harness
+            .screen()
+            .contains("Work is not signed in: The provider said no: access_denied."),
+        "{}",
+        harness.screen()
+    );
+    // With no account to name, the reason stands alone.
+    harness.keys("esc S");
+    harness.act(Action::Account(AccountEvent::SignedIn {
+        account: String::new(),
+        result: Err("No account here signs in with Microsoft or Google.".to_owned()),
+    }));
+    assert!(
+        harness
+            .screen()
+            .contains("No account here signs in with Microsoft or Google.")
+    );
+}

@@ -31,8 +31,8 @@ expression: harness.screen()
 ┃                          ┃│                                       ┃   :, ctrl-k                Command palette                   ┃                                                                   │
 ┃                          ┃│                                       ┃   U                        Undo the last move, deletion or … ┃                                                                   │
 ┃                          ┃│                                       ┃   A                        Add an account                    ┃ Corp                                                              │
+┃                          ┃│                                       ┃   S                        Sign in to an account             ┃                                                                   │
 ┃                          ┃│                                       ┃   ?                        Help for this context             ┃                                                                   │
-┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │
