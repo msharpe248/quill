@@ -121,9 +121,11 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         frame.render_widget(
             line(
                 message,
-                selected,
-                is_marked(index, message),
-                state.list.follows.get(index).copied().unwrap_or(false),
+                Row {
+                    selected,
+                    marked: is_marked(index, message),
+                    follows: state.list.follows.get(index).copied().unwrap_or(false),
+                },
                 &columns,
                 recipients,
                 state,
@@ -137,11 +139,20 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
     }
 }
 
+/// Where a row stands in the list, beyond what its message says.
+#[derive(Clone, Copy)]
+struct Row {
+    /// The cursor is on it.
+    selected: bool,
+    /// It is selected to be acted on with others.
+    marked: bool,
+    /// It carries on the conversation of the row above.
+    follows: bool,
+}
+
 fn line<'a>(
     message: &MessageRow,
-    selected: bool,
-    marked: bool,
-    follows: bool,
+    row: Row,
     columns: &Columns,
     recipients: bool,
     state: &State,
@@ -158,8 +169,8 @@ fn line<'a>(
 
     let mut spans = vec![
         // The cursor is a marker as well as a bar, so it shows without colour.
-        Span::raw(if selected { ">" } else { " " }),
-        Span::styled(if marked { "+" } else { " " }, styles.accent()),
+        Span::raw(if row.selected { ">" } else { " " }),
+        Span::styled(if row.marked { "+" } else { " " }, styles.accent()),
         // One column says where the message stands: not yet read, or
         // read and answered.
         if unread {
@@ -204,7 +215,7 @@ fn line<'a>(
         Span::raw(" "),
         // A message that carries on the conversation above hangs from it.
         Span::styled(
-            if follows {
+            if row.follows {
                 text::fit(&format!("└ {}", message.headers.subject), columns.subject)
             } else {
                 text::fit(&message.headers.subject, columns.subject)
