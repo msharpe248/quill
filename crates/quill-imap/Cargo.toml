@@ -21,7 +21,7 @@ futures-util.workspace = true
 rustls.workspace = true
 rustls-platform-verifier.workspace = true
 sha2.workspace = true
-tokio = { workspace = true, features = ["net", "io-util", "sync", "time"] }
+tokio = { workspace = true, features = ["net", "io-util", "sync", "time", "macros"] }
 tokio-rustls.workspace = true
 
 [dev-dependencies]

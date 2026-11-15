@@ -7,6 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 
 use async_imap::Session;
@@ -30,6 +31,7 @@ use quill_net::Stream;
 use crate::change::{self, Extensions};
 use crate::command::{Command, Outcome, Wire, uid_search};
 use crate::connect;
+use crate::idle;
 use crate::names;
 use crate::uidset::UidSet;
 use crate::wait::Bounded;
@@ -50,14 +52,25 @@ const RANGES_PER_COMMAND: usize = 200;
 const SUMMARY: &str = "(UID FLAGS RFC822.SIZE INTERNALDATE BODYSTRUCTURE \
                        BODY.PEEK[HEADER.FIELDS (DATE SUBJECT FROM TO CC MESSAGE-ID)])";
 
+/// What is known of whether the server pushes: nothing until a sign-in has
+/// asked it.
+const PUSH_UNKNOWN: u8 = 0;
+const PUSH_NO: u8 = 1;
+const PUSH_YES: u8 = 2;
+
 pub struct ImapBackend {
     config: ImapConfig,
     password: PasswordProvider,
     batch: usize,
     patience: Duration,
+    idle_refresh: Duration,
     /// One connection, opened on demand and dropped after any failure so the
-    /// next call starts clean.
+    /// next call starts clean. `watch` does not use it: it opens its own.
     session: Mutex<Option<Open>>,
+    /// Whether the server said it has `IDLE`, the last time it was asked.
+    /// Kept apart from the connection because `capabilities` is asked
+    /// without one and cannot wait for a lock.
+    push: AtomicU8,
 }
 
 /// A signed-in connection and what its server can do. The two are kept
@@ -76,7 +89,9 @@ impl ImapBackend {
             password,
             batch: DEFAULT_BATCH,
             patience: quill_net::PATIENCE,
+            idle_refresh: idle::REFRESH,
             session: Mutex::new(None),
+            push: AtomicU8::new(PUSH_UNKNOWN),
         }
     }
 
@@ -95,7 +110,33 @@ impl ImapBackend {
         self
     }
 
-    /// Signs out and closes the connection, if there is one.
+    /// Sets how long `watch` idles before it stops and starts again, which
+    /// is how it finds out that the connection has died: five minutes
+    /// unless set. A connection that died quietly is noticed within this
+    /// plus the patience of [`ImapBackend::with_patience`]. Servers end an
+    /// idle of about half an hour themselves, so keep it well under that.
+    pub fn with_idle_refresh(mut self, refresh: Duration) -> Self {
+        self.idle_refresh = refresh;
+        self
+    }
+
+    /// Whether the server pushes (has `IDLE`): `None` until a sign-in has
+    /// asked it, and after that what it said the last time it was asked.
+    /// Every sign-in asks, `watch`'s own included.
+    ///
+    /// After `watch` has returned `Ok` this is how to tell why: `Some(false)`
+    /// means there is no push to be had and the account must be polled.
+    pub fn supports_idle(&self) -> Option<bool> {
+        match self.push.load(Ordering::Relaxed) {
+            PUSH_YES => Some(true),
+            PUSH_NO => Some(false),
+            _ => None,
+        }
+    }
+
+    /// Signs out and closes the command connection, if there is one. A
+    /// `watch` in progress has a connection of its own and is not touched:
+    /// it ends when its future is dropped.
     pub async fn disconnect(&self) {
         if let Some(mut open) = self.session.lock().await.take() {
             let _ = open.session.logout().await;
@@ -116,6 +157,8 @@ impl ImapBackend {
                 other => Error::Connection(other.to_string()),
             })?;
         let extensions = Extensions::ask(&mut session).await?;
+        let push = if extensions.idle { PUSH_YES } else { PUSH_NO };
+        self.push.store(push, Ordering::Relaxed);
         Ok(Open {
             session,
             extensions,
@@ -156,12 +199,15 @@ macro_rules! with_session {
 
 #[async_trait]
 impl Backend for ImapBackend {
+    /// `push` is what the server said at the last sign-in, and `false`
+    /// before the first: it is not claimed until it is known. So it can
+    /// change from one call to the next, and is worth asking again after a
+    /// sync or after `watch` returns.
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             folders: true,
             flags: true,
-            // IDLE arrives with push in M6.
-            push: false,
+            push: self.supports_idle() == Some(true),
             server_search: false,
             threads: false,
         }
@@ -229,9 +275,31 @@ impl Backend for ImapBackend {
             .await)
     }
 
-    /// Push arrives with IDLE in M6. Until then the sync engine polls.
-    async fn watch(&self, _tx: Sender<RemoteEvent>) -> Result<()> {
-        Ok(())
+    /// Watches the inbox with IDLE and sends `FolderChanged`, naming the
+    /// inbox as `list_folders` does, whenever it is worth syncing: once as
+    /// soon as the watch is in place, and after that each time the server
+    /// reports a change (`idle` says why, and how reports are gathered into
+    /// events).
+    ///
+    /// It runs until one of three things happens:
+    ///
+    /// - `Err`: the connection, or the sign-in, failed. Wait a while and
+    ///   call it again.
+    /// - `Ok` with the receiver dropped: nobody is listening any more.
+    /// - `Ok` with the receiver still held: there is nothing here to wait
+    ///   for, so poll. It comes after one sign-in and no waiting, when the
+    ///   server has no `IDLE` ([`ImapBackend::supports_idle`] and
+    ///   `capabilities().push` say so from then on) or lists no inbox.
+    ///
+    /// The connection is the watch's own, signed in here, so every other
+    /// call on the backend works while this one waits. It lives inside this
+    /// future: dropping the future closes it, and nothing is left running.
+    async fn watch(&self, tx: Sender<RemoteEvent>) -> Result<()> {
+        if tx.is_closed() {
+            return Ok(());
+        }
+        let mut open = self.sign_in().await?;
+        idle::watch_inbox(&mut open.session, open.extensions, &tx, self.idle_refresh).await
     }
 }
 
@@ -306,7 +374,7 @@ impl Cursor {
     }
 }
 
-async fn list_folders<T: Wire>(session: &mut Session<T>) -> Result<Vec<RemoteFolder>> {
+pub(crate) async fn list_folders<T: Wire>(session: &mut Session<T>) -> Result<Vec<RemoteFolder>> {
     let mut names: Vec<MailboxListData<'static>> = Vec::new();
     let reply = Command::new("LIST")
         .arg("\"\"")

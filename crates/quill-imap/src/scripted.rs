@@ -61,7 +61,9 @@ pub(crate) async fn scripted_within(
                 rest
             };
             assert_eq!(said, expect);
-            continuing = answer.starts_with('+');
+            // A go-ahead need not come first: a server may have other things
+            // to say before it.
+            continuing = answer.starts_with('+') || answer.contains("\r\n+");
             write
                 .write_all(answer.replace("{tag}", &tag).as_bytes())
                 .await

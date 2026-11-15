@@ -482,7 +482,9 @@ pub async fn fill(session: &mut Session<TcpStream>, folder: &str, count: usize) 
 /// the backend really did.
 ///
 /// It can also be told to misbehave in ways Dovecot will not: to answer NO
-/// to commands of the test's choosing, or to stop answering altogether.
+/// to commands of the test's choosing, or to stop answering altogether. And
+/// it knows how many clients are connected to it, which is how a test sees
+/// a connection being closed.
 pub struct Without {
     /// Plaintext, like Dovecot's own port.
     pub port: u16,
@@ -499,10 +501,12 @@ struct Control {
     refused: std::sync::Mutex<Vec<String>>,
     /// While set, commands are taken and never answered.
     silent: std::sync::atomic::AtomicBool,
+    /// How many clients are connected.
+    connections: std::sync::atomic::AtomicUsize,
 }
 
 impl Without {
-    /// `hidden` are capability names: `MOVE`, `UIDPLUS`.
+    /// `hidden` are capability names: `MOVE`, `UIDPLUS`, `IDLE`.
     pub async fn start(upstream: u16, hidden: &[&str]) -> Self {
         let control = Arc::new(Control {
             hidden: hidden.iter().map(|name| name.to_uppercase()).collect(),
@@ -515,7 +519,10 @@ impl Without {
             while let Ok((client, _)) = listener.accept().await {
                 let control = Arc::clone(&shared);
                 tokio::spawn(async move {
-                    let _ = relay(client, upstream, control).await;
+                    use std::sync::atomic::Ordering;
+                    control.connections.fetch_add(1, Ordering::SeqCst);
+                    let _ = relay(client, upstream, Arc::clone(&control)).await;
+                    control.connections.fetch_sub(1, Ordering::SeqCst);
                 });
             }
         });
@@ -525,6 +532,14 @@ impl Without {
     /// Every command sent so far, without its tag, oldest first.
     pub fn commands(&self) -> Vec<String> {
         self.control.commands.lock().unwrap().clone()
+    }
+
+    /// How many clients are connected now. A client that has closed its
+    /// end is no longer counted, whatever the server behind has done.
+    pub fn connections(&self) -> usize {
+        self.control
+            .connections
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Forgets the commands seen so far.
@@ -640,7 +655,9 @@ async fn relay(client: TcpStream, upstream: u16, control: Arc<Control>) -> std::
             break;
         }
         let text = String::from_utf8_lossy(&line).trim_end().to_owned();
-        let (tag, command) = text.split_once(' ').unwrap_or((&text, ""));
+        // A line of one word has no tag: it is the `DONE` that ends an
+        // `IDLE`, and is kept as the command it is.
+        let (tag, command) = text.split_once(' ').unwrap_or(("", &text));
         control.commands.lock().unwrap().push(command.to_owned());
         if control.silent.load(std::sync::atomic::Ordering::SeqCst) {
             continue;

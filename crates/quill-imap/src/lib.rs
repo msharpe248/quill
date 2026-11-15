@@ -1,9 +1,9 @@
 //! Quill's IMAP backend.
 //!
-//! [`ImapBackend`] implements `quill_core::Backend` over one connection that
-//! it opens on demand and reopens after a failure. Folders sync in batches,
-//! newest mail first, so a large mailbox is usable long before it has all
-//! arrived.
+//! [`ImapBackend`] implements `quill_core::Backend` over one connection for
+//! commands, which it opens on demand and reopens after a failure. Folders
+//! sync in batches, newest mail first, so a large mailbox is usable long
+//! before it has all arrived.
 //!
 //! Messages are moved, copied, deleted and saved in ways that are safe to
 //! repeat, since the operation queue replays after a crash: see the `change`
@@ -17,6 +17,10 @@
 //! after a limit ([`ImapBackend::with_patience`]), so that one stuck
 //! connection cannot hold up every later call.
 //!
+//! New mail is pushed where the server can push: `watch` holds a second
+//! connection that idles on the inbox (IMAP IDLE) and says when it is worth
+//! syncing. The `idle` module has the details.
+//!
 //! Transport security follows the account's setting exactly: implicit TLS,
 //! STARTTLS with no fallback, or plaintext only when the account opts in.
 //! Credentials are never sent before the channel is as secure as that
@@ -27,6 +31,7 @@ mod change;
 mod command;
 mod config;
 mod connect;
+mod idle;
 mod names;
 #[cfg(test)]
 mod scripted;

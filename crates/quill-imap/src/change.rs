@@ -53,6 +53,9 @@ pub(crate) struct Extensions {
     /// `UIDPLUS` (RFC 4315): `UID EXPUNGE` removes the messages named and no
     /// others, and COPY and APPEND say what UID the new message was given.
     pub uidplus: bool,
+    /// `IDLE` (RFC 2177): the server says when a folder changes, to a
+    /// connection that waits to be told.
+    pub idle: bool,
 }
 
 impl Extensions {
@@ -61,12 +64,13 @@ impl Extensions {
     ///
     /// Only what it advertises is used: a server that happens to accept
     /// `UID MOVE` without saying so is not relied on. A server that will
-    /// not answer the question is taken to have neither extension, which
-    /// is the cautious reading.
+    /// not answer the question is taken to have none of them, which is the
+    /// cautious reading.
     pub async fn ask<T: Wire>(session: &mut Session<T>) -> Result<Self> {
         let mut found = Self {
             moves: false,
             uidplus: false,
+            idle: false,
         };
         Command::new("CAPABILITY")
             .run_with(session, |response| {
@@ -80,6 +84,7 @@ impl Extensions {
                     };
                     found.moves |= has("MOVE");
                     found.uidplus |= has("UIDPLUS");
+                    found.idle |= has("IDLE");
                 }
             })
             .await?;
@@ -429,14 +434,17 @@ mod tests {
     const BOTH: Extensions = Extensions {
         moves: true,
         uidplus: true,
+        idle: false,
     };
     const UIDPLUS: Extensions = Extensions {
         moves: false,
         uidplus: true,
+        idle: false,
     };
     const NEITHER: Extensions = Extensions {
         moves: false,
         uidplus: false,
+        idle: false,
     };
 
     /// Selecting the inbox and finding message 5 in it, as every operation

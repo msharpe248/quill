@@ -10,6 +10,15 @@
 //! large message on a slow line takes as long as it takes, as long as it
 //! keeps coming. Putting the limit under async-imap, on the stream itself,
 //! means no command can be sent around it.
+//!
+//! One wait is different. A connection that is idling (`idle`) is waiting to
+//! be told of new mail, and hours of silence there are the server working as
+//! it should. That connection says so with [`Bounded::expect_silence`] for
+//! exactly as long as it idles, and reads wait without a clock meanwhile.
+//! It is the same stream with the limit lifted, and not a second kind of
+//! stream, so that the limit is back in force the moment the idling ends and
+//! covers the command that ends it: that command is how a dead connection is
+//! found.
 
 use std::future::Future;
 use std::io;
@@ -29,6 +38,8 @@ pub(crate) struct Bounded<T> {
     reading: Option<Pin<Box<Sleep>>>,
     /// Running while a write is waiting for the server to take more.
     writing: Option<Pin<Box<Sleep>>>,
+    /// Set while the server has nothing to say and is not expected to.
+    silence_expected: bool,
 }
 
 impl<T> Bounded<T> {
@@ -38,7 +49,21 @@ impl<T> Bounded<T> {
             patience,
             reading: None,
             writing: None,
+            silence_expected: false,
         }
+    }
+
+    /// Says whether the server is expected to keep quiet from here on. While
+    /// it is, a read waits for as long as it takes. Writes keep their limit
+    /// either way: silence is never a reason for the server not to take what
+    /// it is sent.
+    ///
+    /// A clock already running for a read is stopped, and when the limit
+    /// comes back the next wait starts a new one, so the server gets its
+    /// full patience counted from then.
+    pub fn expect_silence(&mut self, expected: bool) {
+        self.silence_expected = expected;
+        self.reading = None;
     }
 
     pub fn into_inner(self) -> T {
@@ -80,6 +105,9 @@ impl<T: AsyncRead + Unpin> AsyncRead for Bounded<T> {
     ) -> Poll<io::Result<()>> {
         let this = self.get_mut();
         let answer = Pin::new(&mut this.inner).poll_read(cx, buf);
+        if this.silence_expected {
+            return answer;
+        }
         bounded(answer, &mut this.reading, this.patience, cx)
     }
 }
@@ -162,5 +190,36 @@ mod tests {
         let started = Instant::now();
         assert!(stream.read_u8().await.is_err());
         assert!(started.elapsed() >= SHORT);
+    }
+
+    #[tokio::test]
+    async fn expected_silence_is_waited_through_and_the_limit_comes_back_after() {
+        let (ours, mut theirs) = tokio::io::duplex(64);
+        let mut stream = Bounded::new(ours, SHORT);
+        stream.expect_silence(true);
+        // Several limits pass with nothing said, and the read is still there
+        // to take the byte when it comes.
+        let server = tokio::spawn(async move {
+            tokio::time::sleep(SHORT * 4).await;
+            theirs.write_u8(7).await.unwrap();
+            theirs
+        });
+        assert_eq!(stream.read_u8().await.unwrap(), 7);
+        let _theirs = server.await.unwrap();
+
+        // A write nobody takes is still given up on.
+        let (ours, _theirs) = tokio::io::duplex(8);
+        let mut stream = Bounded::new(ours, SHORT);
+        stream.expect_silence(true);
+        let err = stream.write_all(&[0; 64]).await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+
+        // With the limit back, silence is counted from that moment.
+        stream.expect_silence(false);
+        let started = Instant::now();
+        let err = stream.read_u8().await.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+        assert!(started.elapsed() >= SHORT);
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 }

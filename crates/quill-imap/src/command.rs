@@ -164,6 +164,32 @@ pub(crate) async fn uid_search<T: Wire>(
     Ok(found)
 }
 
+/// Shows `read` the next thing the server says and returns what it made of
+/// it. (It takes a closure because async-imap does not let the response
+/// itself be named outside its own crate.)
+///
+/// The server hanging up is a failure here like any other, since whoever
+/// calls this is waiting for something. So is a line that is not IMAP: the
+/// parser gives up on the connection, and so do we.
+///
+/// Safe to drop while it waits: what has arrived stays in the connection's
+/// buffer for the next call.
+pub(crate) async fn next<T: Wire, R>(
+    session: &mut Session<T>,
+    read: impl FnOnce(&Response<'_>) -> R + Send,
+) -> Result<R> {
+    let response = session
+        .read_response()
+        .await
+        .map_err(lost)?
+        .ok_or_else(closed)?;
+    Ok(read(response.parsed()))
+}
+
+fn closed() -> Error {
+    Error::Connection("the server closed the connection".to_owned())
+}
+
 enum Next {
     /// The server is ready for the literal.
     GoAhead,
@@ -184,7 +210,7 @@ async fn read<T: Wire>(
             .read_response()
             .await
             .map_err(lost)?
-            .ok_or_else(|| Error::Connection("the server closed the connection".to_owned()))?;
+            .ok_or_else(closed)?;
         match response.parsed() {
             Response::Continue { .. } => return Ok(Next::GoAhead),
             Response::Done {
