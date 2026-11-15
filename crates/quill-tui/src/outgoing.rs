@@ -198,14 +198,29 @@ pub fn send(store: &mut Store, request: &SendRequest) -> quill_store::Result<Vec
         DataEvent::Queued,
         DataEvent::SendQueued,
         DataEvent::Flash {
-            text: if delay > 0 {
-                format!("Sending in {delay} seconds.")
-            } else {
-                "Sending.".to_owned()
+            text: match delay {
+                0 => "Sending.".to_owned(),
+                // The moment to take it back in.
+                1..=120 => format!("Sending in {delay} seconds."),
+                // Sent later, by choice.
+                _ => format!(
+                    "In the Outbox. It goes in about {}, if Quill is running then, or when it next is.",
+                    about(delay)
+                ),
             },
             undoable: delay > 0,
         },
     ])
+}
+
+/// A length of time in round words: "45 minutes", "3 hours", "2 days".
+fn about(seconds: i64) -> String {
+    let (count, unit) = match seconds {
+        ..5_400 => ((seconds + 30) / 60, "minute"),
+        5_400..129_600 => ((seconds + 1_800) / 3_600, "hour"),
+        _ => ((seconds + 43_200) / 86_400, "day"),
+    };
+    format!("{count} {unit}{}", if count == 1 { "" } else { "s" })
 }
 
 /// Reads a file and files it among the blobs, ready to attach.

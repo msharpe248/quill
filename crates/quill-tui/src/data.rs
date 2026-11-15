@@ -77,6 +77,13 @@ pub enum DataRequest {
     },
     /// Look up mail that has just arrived, to tell the user about it.
     Announce(Vec<LocalMessageId>),
+    /// Put messages aside until a time; with no time, bring them back now.
+    Snooze {
+        ids: Vec<LocalMessageId>,
+        until: Option<i64>,
+    },
+    /// Bring back the snoozed messages whose time has come.
+    Wake,
     /// Take back the last change that still can be.
     Undo,
     /// People whose name or address starts with what was typed.
@@ -155,6 +162,8 @@ pub enum DataEvent {
         /// way out or was refused.
         drafts: u32,
         outbox: u32,
+        /// How many messages are snoozed, and when the next is due back.
+        snoozed: (u32, Option<i64>),
     },
     MessagesLoaded {
         mailbox: Mailbox,
@@ -191,6 +200,11 @@ pub enum DataEvent {
     ComposeReady(Box<Prefill>),
     /// Mail that has just arrived, as far as it is still here.
     Arrived(Vec<MessageRow>),
+    /// Messages were put aside until `until`.
+    Snoozed {
+        count: usize,
+        until: i64,
+    },
     /// A message's page is written and ready to show.
     PageReady {
         message: LocalMessageId,
@@ -294,6 +308,7 @@ fn run(
             folders: store.folders()?,
             drafts: u32::try_from(store.drafts()?.len()).unwrap_or(u32::MAX),
             outbox: u32::try_from(store.outbox()?.len()).unwrap_or(u32::MAX),
+            snoozed: store.snoozed()?,
         }],
         DataRequest::LoadMessages(mailbox) => vec![DataEvent::MessagesLoaded {
             mailbox,
@@ -416,6 +431,44 @@ fn run(
             Vec::new()
         }
         DataRequest::Announce(ids) => vec![DataEvent::Arrived(store.message_rows(&ids)?)],
+        DataRequest::Snooze {
+            ids,
+            until: Some(until),
+        } => {
+            let count = store.snooze(&ids, until)?;
+            if count == 0 {
+                Vec::new()
+            } else {
+                vec![DataEvent::StoreChanged, DataEvent::Snoozed { count, until }]
+            }
+        }
+        DataRequest::Snooze { ids, until: None } => {
+            let back = store.wake_snoozed(now(), Some(&ids))?;
+            if back.is_empty() {
+                Vec::new()
+            } else {
+                vec![
+                    DataEvent::StoreChanged,
+                    flash(if back.len() == 1 {
+                        "Back in its folder."
+                    } else {
+                        "Back in their folders."
+                    }),
+                ]
+            }
+        }
+        DataRequest::Wake => {
+            let back = store.wake_snoozed(now(), None)?;
+            if back.is_empty() {
+                Vec::new()
+            } else {
+                // Mail that comes back is announced as mail that arrives.
+                vec![
+                    DataEvent::StoreChanged,
+                    DataEvent::Arrived(store.message_rows(&back)?),
+                ]
+            }
+        }
         DataRequest::Extract {
             message,
             part,

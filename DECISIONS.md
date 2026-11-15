@@ -539,3 +539,12 @@ Accepted 2026-11-15: repeated polls never duplicate or lose a message under each
 - **Saved in the config by hand.** Saving the search in front of you from inside Quill would need the UI to write the config, which goes through the accounts service; not built.
 - **A saved search shows no count.** Counting means running every one of them at each change in the store; left until someone misses it.
 
+### Snooze and send later
+
+- **One prompt asks for a time, in words**: `30m`, `2h`, `3d`, `1w`, `tonight` (18:00), `tomorrow` (08:00), `tomorrow 9`, a weekday (the next one, never today), a time alone (today if still to come, else tomorrow), or a date with or without a time. Days are the user's own, from their time zone. What is not a time to come is said so and nothing happens.
+- **Snoozing is kept in the store only** (`snoozed_until`, migration 0009). The message stays in its folder on the server, and other mail programs see it there. A snoozed message is out of its folder's list and counts and in a Snoozed mailbox, listed by when it is due; a search still finds it.
+- **When its time comes it is back at the top of its folder**, sorted by when it came back (`surfaced`) and not by its date, and announced as arriving mail is. The UI's clock asks the store worker for what is due; the engine has no part in it. Snoozed mail due while Quill was not running comes back when it next starts.
+- **Its marks are left alone.** Coming back does not make a read message unread: that would change it on the server.
+- **`now` in the prompt brings a snoozed message back at once.**
+- **Send later is the undo-send delay with a longer wait**: the message goes into the Outbox with the time it is due, and the engine sends it when that comes, as it does any other. It can be taken back the same ways. Nothing holds it on a server, so it goes only when Quill is running at or after that time, and the prompt and the confirmation both say so.
+

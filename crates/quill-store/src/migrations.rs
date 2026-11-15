@@ -17,6 +17,7 @@ pub(crate) const MIGRATIONS: &[(u32, &str)] = &[
     (6, include_str!("../migrations/0006_operation_batch.sql")),
     (7, include_str!("../migrations/0007_server_copies.sql")),
     (8, include_str!("../migrations/0008_threads.sql")),
+    (9, include_str!("../migrations/0009_snooze.sql")),
 ];
 
 #[cfg(test)]

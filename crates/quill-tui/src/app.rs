@@ -393,6 +393,8 @@ impl Io<'_> {
                 Context::Certificate => bridge::Context::Certificate,
                 // A question about an account, as far as the shell cares.
                 Context::SignIn => bridge::Context::Setup,
+                // A box to type in over the panes, as the folder picker is.
+                Context::When => bridge::Context::Folders,
                 Context::Folders => bridge::Context::Folders,
                 Context::Compose => bridge::Context::Compose,
                 Context::Search => bridge::Context::Search,

@@ -92,6 +92,8 @@ pub struct MessageRow {
     /// number belong together; one that is alone has a number nothing else
     /// has.
     pub thread: i64,
+    /// When the message comes back, while it is snoozed.
+    pub snoozed_until: Option<i64>,
 }
 
 /// Where a message lives on its server.
@@ -115,6 +117,9 @@ pub enum Mailbox {
     Drafts,
     /// Mail on its way out, or refused by a server, from every account.
     Outbox,
+    /// Mail put aside until a time, from every account, the soonest back
+    /// first.
+    Snoozed,
 }
 
 pub struct Store {
@@ -481,8 +486,10 @@ impl Store {
         let mut statement = self.conn.prepare(
             "SELECT f.id, f.account_id, f.name, f.role,
                     (SELECT count(*) FROM messages m
-                     WHERE m.folder_id = f.id AND m.seen = 0 AND m.hidden = 0),
-                    (SELECT count(*) FROM messages m WHERE m.folder_id = f.id AND m.hidden = 0)
+                     WHERE m.folder_id = f.id AND m.seen = 0 AND m.hidden = 0
+                       AND m.snoozed_until IS NULL),
+                    (SELECT count(*) FROM messages m
+                     WHERE m.folder_id = f.id AND m.hidden = 0 AND m.snoozed_until IS NULL)
              FROM folders f
              ORDER BY f.account_id,
                       CASE f.role
@@ -510,13 +517,15 @@ impl Store {
     pub fn messages(&self, mailbox: Mailbox) -> Result<Vec<MessageRow>> {
         const COLUMNS: &str = "m.id, m.folder_id, f.account_id, m.message_id, m.subject,
              m.from_addrs, m.to_addrs, m.cc_addrs, m.date, m.seen, m.flagged, m.answered,
-             m.draft, m.has_attachments, COALESCE(m.thread_id, -m.id)";
-        const ORDER: &str = "ORDER BY m.date DESC, m.id DESC";
+             m.draft, m.has_attachments, COALESCE(m.thread_id, -m.id), m.snoozed_until";
+        // A message back from a snooze sorts by when it came back.
+        const ORDER: &str = "ORDER BY COALESCE(m.surfaced, m.date) DESC, m.id DESC";
         let rows = match mailbox {
             Mailbox::Unified => {
                 let mut statement = self.conn.prepare(&format!(
                     "SELECT {COLUMNS} FROM messages m JOIN folders f ON f.id = m.folder_id
-                     WHERE f.role = 'inbox' AND m.hidden = 0 {ORDER}"
+                     WHERE f.role = 'inbox' AND m.hidden = 0 AND m.snoozed_until IS NULL
+                     {ORDER}"
                 ))?;
                 statement
                     .query_map([], message_row)?
@@ -525,7 +534,8 @@ impl Store {
             Mailbox::Folder(folder) => {
                 let mut statement = self.conn.prepare(&format!(
                     "SELECT {COLUMNS} FROM messages m JOIN folders f ON f.id = m.folder_id
-                     WHERE m.folder_id = ?1 AND m.hidden = 0 {ORDER}"
+                     WHERE m.folder_id = ?1 AND m.hidden = 0 AND m.snoozed_until IS NULL
+                     {ORDER}"
                 ))?;
                 statement
                     .query_map([folder.0], message_row)?
@@ -533,6 +543,16 @@ impl Store {
             }
             Mailbox::Drafts => self.drafts()?.iter().map(DraftRow::as_message).collect(),
             Mailbox::Outbox => self.outbox()?.iter().map(DraftRow::as_message).collect(),
+            Mailbox::Snoozed => {
+                let mut statement = self.conn.prepare(&format!(
+                    "SELECT {COLUMNS} FROM messages m JOIN folders f ON f.id = m.folder_id
+                     WHERE m.snoozed_until IS NOT NULL AND m.hidden = 0
+                     ORDER BY m.snoozed_until, m.id"
+                ))?;
+                statement
+                    .query_map([], message_row)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            }
         };
         Ok(rows)
     }
@@ -543,7 +563,7 @@ impl Store {
         let mut statement = self.conn.prepare(
             "SELECT m.id, m.folder_id, f.account_id, m.message_id, m.subject,
                     m.from_addrs, m.to_addrs, m.cc_addrs, m.date, m.seen, m.flagged, m.answered,
-                    m.draft, m.has_attachments, COALESCE(m.thread_id, -m.id)
+                    m.draft, m.has_attachments, COALESCE(m.thread_id, -m.id), m.snoozed_until
              FROM messages m JOIN folders f ON f.id = m.folder_id
              WHERE m.id = ?1 AND m.hidden = 0",
         )?;
@@ -552,6 +572,75 @@ impl Store {
             rows.extend(statement.query_row([id.0], message_row).optional()?);
         }
         Ok(rows)
+    }
+
+    /// Puts messages aside until `until`: out of their folders' lists and
+    /// counts, and into the Snoozed mailbox. Snoozing one again changes
+    /// when it comes back. Returns how many were put aside.
+    pub fn snooze(&mut self, messages: &[LocalMessageId], until: i64) -> Result<usize> {
+        let tx = self.conn.transaction()?;
+        let mut count = 0;
+        {
+            let mut set =
+                tx.prepare("UPDATE messages SET snoozed_until = ?2 WHERE id = ?1 AND hidden = 0")?;
+            for message in messages {
+                count += set.execute(params![message.0, until])?;
+            }
+        }
+        tx.commit()?;
+        Ok(count)
+    }
+
+    /// Brings back every message whose time has come by `now`, to the top
+    /// of its folder, and returns them. With `only`, brings those back
+    /// whatever their time: the user wants them now.
+    pub fn wake_snoozed(
+        &mut self,
+        now: i64,
+        only: Option<&[LocalMessageId]>,
+    ) -> Result<Vec<LocalMessageId>> {
+        let tx = self.conn.transaction()?;
+        let due: Vec<i64> = match only {
+            Some(ids) => {
+                let mut find = tx.prepare(
+                    "SELECT id FROM messages WHERE id = ?1 AND snoozed_until IS NOT NULL",
+                )?;
+                let mut due = Vec::new();
+                for id in ids {
+                    due.extend(
+                        find.query_row([id.0], |row| row.get::<_, i64>(0))
+                            .optional()?,
+                    );
+                }
+                due
+            }
+            None => tx
+                .prepare(
+                    "SELECT id FROM messages
+                     WHERE snoozed_until IS NOT NULL AND snoozed_until <= ?1
+                     ORDER BY snoozed_until, id",
+                )?
+                .query_map([now], |row| row.get(0))?
+                .collect::<rusqlite::Result<_>>()?,
+        };
+        for id in &due {
+            tx.execute(
+                "UPDATE messages SET snoozed_until = NULL, surfaced = ?2 WHERE id = ?1",
+                params![id, now],
+            )?;
+        }
+        tx.commit()?;
+        Ok(due.into_iter().map(LocalMessageId).collect())
+    }
+
+    /// How many messages are snoozed, and when the next of them is due.
+    pub fn snoozed(&self) -> Result<(u32, Option<i64>)> {
+        Ok(self.conn.query_row(
+            "SELECT count(*), min(snoozed_until) FROM messages
+             WHERE snoozed_until IS NOT NULL AND hidden = 0",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?)
     }
 
     /// Marks a message read or unread. Returns whether the message exists.
@@ -756,6 +845,7 @@ fn message_row(row: &Row<'_>) -> rusqlite::Result<MessageRow> {
         },
         has_attachments: row.get(13)?,
         thread: row.get(14)?,
+        snoozed_until: row.get(15)?,
     })
 }
 

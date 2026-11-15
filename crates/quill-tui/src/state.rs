@@ -549,6 +549,23 @@ pub struct Search {
     pub more: bool,
 }
 
+/// A box asking for a time, and what the time is for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WhenPrompt {
+    pub input: LineInput,
+    pub what: WhenFor,
+    /// Why what was typed would not do.
+    pub problem: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WhenFor {
+    /// When these messages come back.
+    Snooze(Vec<LocalMessageId>),
+    /// When the message being written is sent.
+    SendLater,
+}
+
 /// The list of a message's attachments, open to choose one from.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct AttachmentPicker {
@@ -672,6 +689,10 @@ pub struct State {
     pub setup: Option<Setup>,
     /// A sign-in to an account's provider, waiting on the user.
     pub sign_in: Option<SignIn>,
+    /// A time being asked for.
+    pub when: Option<WhenPrompt>,
+    /// When the next snoozed message is due back.
+    next_wake: Option<i64>,
     /// Certificates of existing accounts waiting for a decision. The first
     /// is the one on screen.
     pub certificates: VecDeque<CertificatePrompt>,
@@ -717,6 +738,8 @@ impl State {
             flash: None,
             setup: None,
             sign_in: None,
+            when: None,
+            next_wake: None,
             certificates: VecDeque::new(),
             setup_offered: false,
             accounts_known: false,
@@ -748,6 +771,9 @@ impl State {
         }
         if self.sign_in.is_some() {
             return Context::SignIn;
+        }
+        if self.when.is_some() {
+            return Context::When;
         }
         if self.setup.is_some() {
             return Context::Setup;
@@ -807,6 +833,10 @@ impl State {
                 // Dates are drawn relative to today, so only a new day shows.
                 changed = text::local_day(now, &env.tz) != text::local_day(self.now, &env.tz);
                 self.now = now;
+                // A snoozed message whose time has come is brought back.
+                if self.next_wake.take_if(|at| *at <= now).is_some() {
+                    out.data.push(DataRequest::Wake);
+                }
                 // What is being written is saved as it goes, so a crash
                 // costs a few seconds of typing at most.
                 if let Some(compose) = &self.compose
@@ -938,6 +968,14 @@ impl State {
                             return;
                         }
                     }
+                }
+            }
+            Context::When => {
+                if let Some(when) = &mut self.when
+                    && when.input.key(chord)
+                {
+                    when.problem = None;
+                    return;
                 }
             }
             Context::Folders => {
@@ -1096,6 +1134,7 @@ impl State {
             CommandId::NavOpen if context == Context::Attachments => {
                 self.use_attachment(FileUse::View, out);
             }
+            CommandId::NavOpen if context == Context::When => self.answer_when(env, out),
             CommandId::NavOpen if context == Context::Folders => {
                 if let Some(picker) = self.folders.take()
                     && let Some(choice) = self.folder_choices(&picker).get(picker.selected)
@@ -1191,7 +1230,28 @@ impl State {
                     });
                 }
             }
-            CommandId::ComposeSend => self.send(env, out),
+            CommandId::ComposeSend => self.send(env, None, out),
+            CommandId::ComposeSendLater => {
+                self.when = Some(WhenPrompt {
+                    input: LineInput::default(),
+                    what: WhenFor::SendLater,
+                    problem: None,
+                });
+            }
+            CommandId::MessageSnooze => {
+                let ids: Vec<LocalMessageId> = self
+                    .targets()
+                    .into_iter()
+                    .filter(|id| DraftId::from_message_id(*id).is_none())
+                    .collect();
+                if !ids.is_empty() {
+                    self.when = Some(WhenPrompt {
+                        input: LineInput::default(),
+                        what: WhenFor::Snooze(ids),
+                        problem: None,
+                    });
+                }
+            }
             CommandId::ComposeSave => {
                 if let Some(compose) = &self.compose {
                     out.data.push(DataRequest::SaveDraft {
@@ -1400,10 +1460,15 @@ impl State {
                 self.target_row()
                     .is_some_and(|row| DraftId::from_message_id(row.id).is_none())
             }
-            CommandId::ComposeSend => self
+            CommandId::ComposeSend | CommandId::ComposeSendLater => self
                 .compose
                 .as_ref()
                 .is_some_and(|compose| !compose.sending),
+            CommandId::MessageSnooze => self
+                .targets()
+                .iter()
+                .any(|id| DraftId::from_message_id(*id).is_none()),
+            CommandId::NavOpen if context == Context::When => true,
             // Only where the body's own selection is the one meant.
             CommandId::EditCopy | CommandId::EditCut => {
                 self.compose.as_ref().is_some_and(|compose| {
@@ -1456,6 +1521,7 @@ impl State {
                     || self.compose.is_some()
                     || self.setup.is_some()
                     || self.sign_in.is_some()
+                    || self.when.is_some()
                     || !self.certificates.is_empty()
                     || !self.notices.is_empty()
                     || self.focus == Pane::Reader
@@ -1656,6 +1722,8 @@ impl State {
         } else if !self.certificates.is_empty() {
             // Not answering is rejecting: nothing is sent to that server.
             self.certificates.pop_front();
+        } else if self.when.take().is_some() {
+            // Nothing was snoozed or sent.
         } else if self.sign_in.take().is_some() {
             // Nothing is kept of a sign-in given up on.
             out.accounts.push(AccountRequest::CancelSignIn);
@@ -1881,7 +1949,50 @@ impl State {
     }
 
     /// Hands the message over to be checked, built and put in the outbox.
-    fn send(&mut self, env: &Env, out: &mut Effects) {
+    /// Takes the time typed into the box and does what it was asked for.
+    fn answer_when(&mut self, env: &Env, out: &mut Effects) {
+        let Some(when) = &mut self.when else {
+            return;
+        };
+        let typed = when.input.text().trim().to_lowercase();
+        // A snoozed message can be had back at once.
+        if typed == "now"
+            && let WhenFor::Snooze(ids) = &when.what
+        {
+            out.data.push(DataRequest::Snooze {
+                ids: ids.clone(),
+                until: None,
+            });
+            self.when = None;
+            self.list.clear_marks();
+            return;
+        }
+        let Some(at) = crate::when::parse(&typed, self.now, &env.tz) else {
+            when.problem = Some(if typed.is_empty() {
+                "Type a time.".to_owned()
+            } else {
+                "That is not a time to come that Quill can read.".to_owned()
+            });
+            return;
+        };
+        let Some(when) = self.when.take() else {
+            return;
+        };
+        match when.what {
+            WhenFor::Snooze(ids) => {
+                out.data.push(DataRequest::Snooze {
+                    ids,
+                    until: Some(at),
+                });
+                self.list.clear_marks();
+            }
+            WhenFor::SendLater => self.send(env, Some(at), out),
+        }
+    }
+
+    /// Sends the message being written: after the undo delay, or `at` a
+    /// time the user chose.
+    fn send(&mut self, env: &Env, at: Option<i64>, out: &mut Effects) {
         let from_name = self.compose.as_ref().and_then(|compose| {
             self.accounts
                 .iter()
@@ -1907,7 +2018,10 @@ impl State {
             } else {
                 BodyFormat::Plain
             },
-            delay_seconds: i64::from(env.compose.undo_send_seconds),
+            delay_seconds: match at {
+                Some(at) => at.saturating_sub(self.now).max(0),
+                None => i64::from(env.compose.undo_send_seconds),
+            },
             utc_offset: jiff::Timestamp::from_second(self.now)
                 .map_or(0, |now| env.tz.to_offset(now).seconds()),
             // Asked a second time, with the doubts on screen: send it.
@@ -2696,9 +2810,11 @@ impl State {
                 folders,
                 drafts,
                 outbox,
+                snoozed: (snoozed, next_wake),
             } => {
+                self.next_wake = next_wake;
                 self.sidebar.entries =
-                    sidebar_entries(&accounts, &folders, drafts, outbox, self.mailbox);
+                    sidebar_entries(&accounts, &folders, [drafts, outbox, snoozed], self.mailbox);
                 if !self.sidebar.entries.is_empty() && !env.searches.is_empty() {
                     self.sidebar.entries.push(SidebarEntry::Searches);
                     self.sidebar
@@ -2934,6 +3050,17 @@ impl State {
                 }
             }
             DataEvent::Arrived(rows) => self.announce(env, rows, out),
+            DataEvent::Snoozed { count, until } => {
+                let back = text::long_date(until, &env.tz);
+                self.flash = Some((
+                    if count == 1 {
+                        format!("Snoozed. It comes back {back}.")
+                    } else {
+                        format!("Snoozed {count} messages. They come back {back}.")
+                    },
+                    false,
+                ));
+            }
             DataEvent::PageReady {
                 message,
                 page,
@@ -3164,6 +3291,7 @@ impl State {
             (Mailbox::Folder(_), None) => String::new(),
             (Mailbox::Drafts, _) => "Drafts".to_owned(),
             (Mailbox::Outbox, _) => "Outbox".to_owned(),
+            (Mailbox::Snoozed, _) => "Snoozed".to_owned(),
         }
     }
 
@@ -3179,7 +3307,7 @@ impl State {
                 })
                 .unwrap_or(0),
             Mailbox::Folder(_) => self.current_folder().map_or(0, |(_, _, _, unread)| unread),
-            Mailbox::Drafts | Mailbox::Outbox => 0,
+            Mailbox::Drafts | Mailbox::Outbox | Mailbox::Snoozed => 0,
         }
     }
 
@@ -3195,8 +3323,7 @@ impl State {
 fn sidebar_entries(
     accounts: &[AccountRow],
     folders: &[FolderRow],
-    drafts: u32,
-    outbox: u32,
+    [drafts, outbox, snoozed]: [u32; 3],
     showing: Mailbox,
 ) -> Vec<SidebarEntry> {
     if accounts.is_empty() {
@@ -3215,6 +3342,7 @@ fn sidebar_entries(
     for (mailbox, name, count) in [
         (Mailbox::Drafts, "Drafts", drafts),
         (Mailbox::Outbox, "Outbox", outbox),
+        (Mailbox::Snoozed, "Snoozed", snoozed),
     ] {
         if count > 0 || showing == mailbox {
             entries.push(SidebarEntry::Local {

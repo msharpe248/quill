@@ -209,7 +209,12 @@ fn line<'a>(
             .first()
             .map_or_else(String::new, |from| from.display_name().to_owned())
     };
-    let date = text::short_date(message.headers.date, state.now, &env.tz);
+    // A snoozed message says when it comes back, not when it came.
+    let date = text::short_date(
+        message.snoozed_until.unwrap_or(message.headers.date),
+        state.now,
+        &env.tz,
+    );
     spans.extend([
         Span::styled(text::fit(&who, columns.from), row_style),
         Span::raw(" "),

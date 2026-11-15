@@ -31,6 +31,7 @@ expression: harness.screen()
 │                          │┃                                       ┃   e                        Archive                           ┃                                                                   │
 │                          │┃                                       ┃   d                        Delete                            ┃                                                                   │
 │                          │┃                                       ┃   m                        Move to a folder                  ┃ Corp                                                              │
+│                          │┃                                       ┃   b                        Snooze until a time               ┃                                                                   │
 │                          │┃                                       ┃   x                        Select or unselect                ┃                                                                   │
 │                          │┃                                       ┃   V                        Select a range                    ┃                                                                   │
 │                          │┃                                       ┃   ctrl-a                   Select every message listed       ┃                                                                   │
@@ -52,7 +53,6 @@ expression: harness.screen()
 │                          │┃                                       ┃   A                        Add an account                    ┃                                                                   │
 │                          │┃                                       ┃   S                        Sign in to an account             ┃                                                                   │
 │                          │┃                                       ┃   ?                        Help for this context             ┃                                                                   │
-│                          │┃                                       ┃                                                              ┃                                                                   │
 │                          │┃                                       ┃                                                              ┃                                                                   │
 │                          │┃                                       ┃                                                              ┃                                                                   │
 │                          │┃                                       ┃                                                              ┃                                                                   │

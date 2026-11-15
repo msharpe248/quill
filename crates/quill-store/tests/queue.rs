@@ -1184,3 +1184,60 @@ fn senders_allowed_remote_content_are_remembered_by_address() {
     assert!(!store.block_remote_content("news@example.com").unwrap());
     assert!(!store.allows_remote_content("news@example.com").unwrap());
 }
+
+#[test]
+fn a_snoozed_message_leaves_its_folder_and_comes_back_on_top_when_due() {
+    let mut rig = Rig::new();
+    let two = rig.id(rig.inbox, "2");
+    let before = rig.store.folders().unwrap();
+    let inbox_before = before.iter().find(|folder| folder.id == rig.inbox).unwrap();
+    assert_eq!(rig.store.snooze(&[two], 5_000).unwrap(), 1);
+
+    // Out of the inbox and its counts, and in the Snoozed mailbox with
+    // when it is due.
+    assert_eq!(rig.subjects(rig.inbox), ["Message 3", "Message 1"]);
+    let after = rig.store.folders().unwrap();
+    let inbox_after = after.iter().find(|folder| folder.id == rig.inbox).unwrap();
+    assert_eq!(inbox_after.total, inbox_before.total - 1);
+    let snoozed = rig.store.messages(Mailbox::Snoozed).unwrap();
+    assert_eq!(snoozed.len(), 1);
+    assert_eq!(snoozed[0].snoozed_until, Some(5_000));
+    assert_eq!(rig.store.snoozed().unwrap(), (1, Some(5_000)));
+    // A search still finds it: it is put aside, not hidden.
+    let query = quill_core::search::parse("subject:\"Message 2\"", |_, _, _| None);
+    assert_eq!(rig.store.search(&query, 10).unwrap().len(), 1);
+
+    // Not yet.
+    assert!(rig.store.wake_snoozed(4_999, None).unwrap().is_empty());
+    assert_eq!(rig.subjects(rig.inbox).len(), 2);
+    // Now: back, and first, though it is not the newest.
+    assert_eq!(rig.store.wake_snoozed(5_000, None).unwrap(), [two]);
+    assert_eq!(
+        rig.subjects(rig.inbox),
+        ["Message 2", "Message 3", "Message 1"]
+    );
+    assert_eq!(rig.store.snoozed().unwrap(), (0, None));
+    assert!(rig.store.messages(Mailbox::Snoozed).unwrap().is_empty());
+    assert!(rig.store.wake_snoozed(9_000, None).unwrap().is_empty());
+}
+
+#[test]
+fn a_snoozed_message_can_be_brought_back_early_or_put_off_again() {
+    let mut rig = Rig::new();
+    let (one, two) = (rig.id(rig.inbox, "1"), rig.id(rig.inbox, "2"));
+    rig.store.snooze(&[one, two], 5_000).unwrap();
+    // Put off again: one time, the later one.
+    rig.store.snooze(&[one], 8_000).unwrap();
+    assert_eq!(rig.store.snoozed().unwrap(), (2, Some(5_000)));
+    // Brought back by hand, before its time; the other stays.
+    assert_eq!(rig.store.wake_snoozed(6_000, Some(&[one])).unwrap(), [one]);
+    assert_eq!(rig.subjects(rig.inbox), ["Message 1", "Message 3"]);
+    assert_eq!(rig.store.snoozed().unwrap(), (1, Some(5_000)));
+    // One that is not snoozed is not "brought back".
+    assert!(
+        rig.store
+            .wake_snoozed(100, Some(&[one]))
+            .unwrap()
+            .is_empty()
+    );
+}

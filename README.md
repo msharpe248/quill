@@ -145,6 +145,7 @@ Press `?` at any time for the keys that apply where you are. The bottom bar show
 | `d` | Delete (to Trash; from Trash, for good) | `m` | Move to a folder |
 | `U` | Undo the last move, deletion or send | `A` | Add an account |
 | `S` | Sign in to an account (Microsoft, Google) | `T` | Group or ungroup conversations |
+| `b` | Snooze until a time | | |
 | `/` | Search | `a` | List a message's attachments |
 | `v` | View the message as a web page | `B` | Open that page in the browser |
 | `i` | Load remote pictures for this message | `I` | Always load them from this sender |
@@ -161,6 +162,8 @@ The mouse works too. A click selects, a second click on what is selected opens i
 In the message list, `>` marks the cursor, `+` a selected message, `*` an unread one, `r` one you have answered, `!` a starred one and `@` one with attachments.
 
 The messages of a conversation are listed together, where the newest of them would be, in the order they were written; a reply hangs from the message above it with `└`. `T` switches that off and on, and `threads = false` under `[ui]` makes off the default. What a search finds is always listed message by message.
+
+`b` snoozes a message: it leaves its folder until the time you type, then comes back to the top as if it had just arrived, with a notification in the app. Times are typed as you would say them: `30m`, `2h`, `3d`, `tonight`, `tomorrow`, `tomorrow 9`, `fri 14:30`, `2026-12-01 9:00`. Snoozed mail waits in "Snoozed" in the sidebar; `b` there with `now` brings it straight back. Snoozing is kept on this Mac only: on the server, and in other mail programs, the message stays where it was.
 
 To act on several messages at once, select them first: `x` on each, or `V`, move, and `V` again for a run of them; `ctrl-a` selects everything listed. Archive, delete, move, read and star then apply to all of them, and one `U` takes the whole lot back. `esc` lets the selection go. From the reader, a command is always about the message being read.
 
@@ -272,6 +275,10 @@ smtp = { host = "smtp.example.com", port = 465, tls = "implicit" }
 
 The SMTP server is signed in to with the same name and password as the IMAP server unless `smtp = { ... }` has a `username` of its own.
 
+### Sending later
+
+`ctrl-l` (or `cmd-L` in the app) in a message being written asks when to send it, in the same words as a snooze: `tomorrow 8`, `mon`, `2h`. The message waits in the Outbox, which shows when it will go, and `U` or opening it from the Outbox takes it back. It is sent at that time if Quill is running then, and otherwise when Quill next runs: nothing on a server holds it.
+
 ## From a shell
 
 Quill's mail can be read and sent without its screen, for scripts and for a quick look. Each command takes `--json`.
@@ -332,10 +339,12 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `message.toggle_html` | Switch a message between its HTML and its plain text |
 | `message.open_link` | List the message's links, to open one in the browser |
 | `message.archive`, `message.delete`, `message.move` | File the message, or every selected one |
+| `message.snooze` | Put the message aside until a time |
 | `select.toggle`, `select.range`, `select.all` | Select messages to act on together |
 | `message.compose` | Write a new message |
 | `message.reply`, `message.reply_all`, `message.forward` | Answer or pass on the message |
 | `compose.send`, `compose.save` | Send the message being written, or save it as a draft |
+| `compose.send_later` | Send the message being written at a time you type |
 | `compose.attach`, `compose.bcc` | Attach a file; add blind copies |
 | `edit.undo` | Undo the last move, deletion or send |
 | `search.start` | Search |

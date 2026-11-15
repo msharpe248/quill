@@ -28,3 +28,4 @@ pub mod terminal;
 pub mod text;
 pub mod theme;
 pub mod view;
+pub mod when;

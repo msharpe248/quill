@@ -12,6 +12,7 @@ use crate::input::LineInput;
 use crate::setup::{
     ServerField, Setup, SignInStage, Step, certificate_reason, grouped_fingerprint,
 };
+use crate::state::WhenFor;
 use crate::state::{Env, State};
 use crate::text;
 
@@ -75,6 +76,48 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         }
         rows.blank();
         rows.dim("esc gives up");
+        return;
+    }
+    if let Some(when) = &state.when {
+        let title = match &when.what {
+            WhenFor::Snooze(ids) if ids.len() > 1 => {
+                format!(" Snooze {} messages until ", ids.len())
+            }
+            WhenFor::Snooze(_) => " Snooze until ".to_owned(),
+            WhenFor::SendLater => " Send at ".to_owned(),
+        };
+        let inner = dialog(frame, area, &title, env);
+        let mut rows = Rows::new(frame, inner, env);
+        if let Some(rect) = rows.row() {
+            let width = usize::from(rect.width).saturating_sub(6);
+            let (shown, column) = when.input.view(width.max(4));
+            let frame = &mut *rows.frame;
+            frame.render_widget(
+                Line::from(vec![
+                    Span::styled("When: ", env.styles.dim()),
+                    Span::styled(shown, env.styles.text()),
+                ]),
+                rect,
+            );
+            frame.set_cursor_position(ratatui::layout::Position::new(
+                rect.x + 6 + column as u16,
+                rect.y,
+            ));
+        }
+        rows.blank();
+        if let Some(problem) = &when.problem {
+            rows.warning(problem);
+            rows.blank();
+        }
+        rows.dim(&format!("Such as: {}", crate::when::EXAMPLES));
+        match &when.what {
+            WhenFor::Snooze(_) => {
+                rows.dim("\"now\" brings a snoozed message straight back.");
+            }
+            WhenFor::SendLater => rows.dim(
+                "It waits in the Outbox and goes at that time if Quill is running, or when it next is.",
+            ),
+        }
         return;
     }
     let Some(setup) = &state.setup else {

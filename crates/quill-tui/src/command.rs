@@ -19,6 +19,9 @@ pub enum Context {
     Certificate,
     /// Waiting for the user to sign in to an account's provider.
     SignIn,
+    /// Typing a time: when a snoozed message comes back, or when a
+    /// message is sent.
+    When,
     /// Choosing a folder to move a message to. Typing narrows the list.
     Folders,
     /// Writing a message. Typing goes into the field with the cursor.
@@ -41,6 +44,7 @@ impl Context {
             Self::Setup => "Add an account",
             Self::Certificate => "Certificate",
             Self::SignIn => "Signing in",
+            Self::When => "Choosing a time",
             Self::Folders => "Move to a folder",
             Self::Compose => "Writing a message",
             Self::Search => "Search",
@@ -60,6 +64,7 @@ const EVERYWHERE: &[Context] = &[
     Context::Setup,
     Context::Certificate,
     Context::SignIn,
+    Context::When,
     Context::Folders,
     Context::Compose,
     Context::Search,
@@ -110,6 +115,7 @@ pub enum CommandId {
     MessageArchive,
     MessageDelete,
     MessageMove,
+    MessageSnooze,
     SelectToggle,
     SelectRange,
     SelectAll,
@@ -127,6 +133,7 @@ pub enum CommandId {
     MessageReplyAll,
     MessageForward,
     ComposeSend,
+    ComposeSendLater,
     ComposeSave,
     ComposeAttach,
     ComposeBcc,
@@ -284,6 +291,7 @@ impl Registry {
                         Context::Links,
                         Context::Attachments,
                         Context::Setup,
+                        Context::When,
                         Context::Folders,
                         Context::Search,
                         Context::Palette,
@@ -438,6 +446,17 @@ impl Registry {
                     ),
                     "folder",
                 ),
+                with_symbol(
+                    spec(
+                        MessageSnooze,
+                        "message.snooze",
+                        "Snooze until a time",
+                        Message,
+                        Some(Menu::Message),
+                        MESSAGE,
+                    ),
+                    "clock",
+                ),
                 spec(
                     SelectToggle,
                     "select.toggle",
@@ -588,6 +607,14 @@ impl Registry {
                         COMPOSE,
                     ),
                     "paperplane",
+                ),
+                spec(
+                    ComposeSendLater,
+                    "compose.send_later",
+                    "Send at a time",
+                    Message,
+                    Some(Menu::Message),
+                    COMPOSE,
                 ),
                 spec(
                     ComposeSave,
@@ -788,6 +815,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
     ];
     const CERTIFICATE: &[Hint] = &[hint(&[NavBack], "reject")];
     const SIGNING_IN: &[Hint] = &[hint(&[NavBack], "give up")];
+    const WHEN: &[Hint] = &[hint(&[NavOpen], "set"), hint(&[NavBack], "cancel")];
     const FOLDERS: &[Hint] = &[hint(&[NavOpen], "move here"), hint(&[NavBack], "cancel")];
     const COMPOSING: &[Hint] = &[
         hint(&[ComposeSend], "send"),
@@ -802,6 +830,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         Context::Setup => SETUP,
         Context::Certificate => CERTIFICATE,
         Context::SignIn => SIGNING_IN,
+        Context::When => WHEN,
         Context::Links => LINKS,
         Context::Search => SEARCHING,
         Context::Palette => PALETTE,

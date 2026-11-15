@@ -161,7 +161,11 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
             links_height,
         ));
     }
-    if state.setup.is_some() || !state.certificates.is_empty() || state.sign_in.is_some() {
+    if state.setup.is_some()
+        || !state.certificates.is_empty()
+        || state.sign_in.is_some()
+        || state.when.is_some()
+    {
         let dialog_width = width.saturating_sub(4).min(76);
         let dialog_height = body_height.saturating_sub(2).min(18);
         areas.dialog = Some(Rect::new(
