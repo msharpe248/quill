@@ -4,10 +4,12 @@
 mod accounts;
 mod config_edit;
 mod discover;
+mod oauth;
 mod password;
 mod paths;
 mod service;
 mod setup;
+mod signin;
 
 /// The IMAP crate's own test server, for tests here that need a real one: a
 /// Dovecot started per test, with TLS in front of it under a certificate no
@@ -46,7 +48,7 @@ struct Cli {
 enum Command {
     /// Open the mail UI in this terminal
     Tui(TuiArgs),
-    /// Manage the saved passwords of the accounts in config.toml
+    /// Manage the saved passwords and sign-ins of the accounts in config.toml
     Account {
         #[command(subcommand)]
         action: AccountAction,
@@ -58,13 +60,22 @@ enum Command {
 #[derive(Subcommand)]
 enum AccountAction {
     /// List the configured accounts and whether each has a saved password
+    /// or sign-in
     List,
+    /// Sign an account in to Microsoft or Google, in the browser
+    SignIn {
+        /// The account's `name` in config.toml
+        name: String,
+        /// Sign in with a code typed on another device, not a browser here
+        #[arg(long)]
+        code: bool,
+    },
     /// Save an account's password in the Keychain
     Password {
         /// The account's `name` in config.toml
         name: String,
     },
-    /// Remove an account's password from the Keychain
+    /// Remove an account's password or sign-in from the Keychain
     Forget {
         /// The account's `name` in config.toml
         name: String,
@@ -107,7 +118,9 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         .context("cannot start the async runtime")?;
     match cli.command {
         Command::Tui(args) => runtime.block_on(tui(args)),
-        Command::Account { action, dirs } => account(action, dirs, &Keychain::new()),
+        Command::Account { action, dirs } => {
+            runtime.block_on(account(action, dirs, Arc::new(Keychain::new())))
+        }
     }
 }
 
@@ -194,8 +207,13 @@ async fn tui(args: TuiArgs) -> anyhow::Result<()> {
         .context("the terminal UI stopped")
 }
 
-/// `quill account ...`: the saved passwords of the configured accounts.
-fn account(action: AccountAction, dirs: Dirs, secrets: &dyn SecretStore) -> anyhow::Result<()> {
+/// `quill account ...`: the saved passwords and sign-ins of the configured
+/// accounts.
+async fn account(
+    action: AccountAction,
+    dirs: Dirs,
+    secrets: Arc<dyn SecretStore>,
+) -> anyhow::Result<()> {
     let paths = Paths::resolve(dirs.config_dir, dirs.data_dir, |name| {
         std::env::var_os(name)
     })?;
@@ -216,18 +234,33 @@ fn account(action: AccountAction, dirs: Dirs, secrets: &dyn SecretStore) -> anyh
         accounts::imap_config(account)
             .map_err(|reason| anyhow::anyhow!("{} cannot sync: {reason}", account.name))
     };
+    let oauth = |account: &AccountConfig| {
+        oauth::setup(account)
+            .map_err(|reason| anyhow::anyhow!("{} cannot sign in: {reason}", account.name))
+    };
     match action {
         AccountAction::List => {
             if config.accounts.is_empty() {
                 println!("No accounts in {}.", paths.config_file().display());
             }
             for account in &config.accounts {
-                let status = match accounts::imap_config(account) {
-                    Ok(imap) => match secrets.get(&accounts::imap_password_name(&imap))? {
-                        Some(_) => "password saved".to_owned(),
-                        None => "no password saved".to_owned(),
-                    },
-                    Err(reason) => format!("cannot sync: {reason}"),
+                let status = if oauth::wanted(account) {
+                    match oauth::setup(account) {
+                        Ok(Some(setup)) => match secrets.get(&setup.secret_name(account))? {
+                            Some(_) => "signed in".to_owned(),
+                            None => "not signed in".to_owned(),
+                        },
+                        Ok(None) => "not signed in".to_owned(),
+                        Err(reason) => format!("cannot sign in: {reason}"),
+                    }
+                } else {
+                    match accounts::imap_config(account) {
+                        Ok(imap) => match secrets.get(&accounts::imap_password_name(&imap))? {
+                            Some(_) => "password saved".to_owned(),
+                            None => "no password saved".to_owned(),
+                        },
+                        Err(reason) => format!("cannot sync: {reason}"),
+                    }
                 };
                 println!(
                     "{}  {}  {}  {status}",
@@ -237,8 +270,30 @@ fn account(action: AccountAction, dirs: Dirs, secrets: &dyn SecretStore) -> anyh
                 );
             }
         }
+        AccountAction::SignIn { name, code } => {
+            let terminal = signin::Terminal {
+                say: Arc::new(|line| println!("{line}")),
+                open: Box::new(|url| {
+                    // Not sandboxed here: the system's own opener.
+                    let _ = std::process::Command::new("/usr/bin/open")
+                        .arg(url)
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .status();
+                }),
+                remote: std::env::var_os("SSH_CONNECTION").is_some()
+                    || std::env::var_os("SSH_TTY").is_some(),
+            };
+            signin::sign_in(find(&name)?, secrets, code, terminal).await?;
+        }
         AccountAction::Password { name } => {
-            let imap = imap(find(&name)?)?;
+            let account = find(&name)?;
+            anyhow::ensure!(
+                !oauth::wanted(account),
+                "{name} signs in with its provider, not a password: quill account sign-in \"{name}\""
+            );
+            let imap = imap(account)?;
             let prompt = format!("Password for {} on {}: ", imap.username, imap.host);
             let secret = password::read(&prompt)?;
             anyhow::ensure!(!secret.is_empty(), "no password given; nothing was saved");
@@ -246,8 +301,13 @@ fn account(action: AccountAction, dirs: Dirs, secrets: &dyn SecretStore) -> anyh
             println!("Saved in the Keychain.");
         }
         AccountAction::Forget { name } => {
-            let imap = imap(find(&name)?)?;
-            secrets.delete(&accounts::imap_password_name(&imap))?;
+            let account = find(&name)?;
+            if let Some(setup) = oauth(account)? {
+                secrets.delete(&setup.secret_name(account))?;
+            } else {
+                let imap = imap(account)?;
+                secrets.delete(&accounts::imap_password_name(&imap))?;
+            }
             println!("Removed from the Keychain.");
         }
     }

@@ -132,14 +132,53 @@ pub struct AccountConfig {
     /// Text added to the end of new mail from this account.
     #[serde(default)]
     pub signature: Option<String>,
+    /// How the account proves who it is. A `graph` account always signs
+    /// in with OAuth, whatever this says.
+    #[serde(default)]
+    pub auth: AuthMethod,
+    /// The id of the application registered for Quill with the provider
+    /// (Microsoft Entra, or a Google Cloud project). OAuth needs one.
     #[serde(default)]
     pub oauth_client_id: Option<String>,
+    /// What Google calls the client secret of a desktop application. It
+    /// is not a secret in any useful sense, as Google says itself: every
+    /// copy of a desktop application carries it. Microsoft has none.
+    #[serde(default)]
+    pub oauth_client_secret: Option<String>,
+    /// Microsoft only: the organisation to sign in to, by id or domain
+    /// name. Without it any organisation's accounts and personal ones are
+    /// accepted.
+    #[serde(default)]
+    pub oauth_tenant: Option<String>,
+    /// Other addresses to sign in at and to reach Microsoft Graph at, for
+    /// a national cloud.
+    #[serde(default)]
+    pub oauth: Option<OAuthAddresses>,
     #[serde(default)]
     pub imap: Option<ServerConfig>,
     #[serde(default)]
     pub pop3: Option<ServerConfig>,
     #[serde(default)]
     pub smtp: Option<ServerConfig>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AuthMethod {
+    #[default]
+    Password,
+    Oauth,
+}
+
+/// Where to sign in and where Microsoft Graph is, when not at the
+/// provider's usual addresses. Each must be `https`.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct OAuthAddresses {
+    pub authorize_url: Option<String>,
+    pub token_url: Option<String>,
+    pub device_url: Option<String>,
+    pub graph_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]

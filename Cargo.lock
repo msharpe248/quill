@@ -2714,11 +2714,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-imap",
+ "async-trait",
  "clap",
  "hickory-resolver",
  "jiff",
  "quill-auth",
  "quill-core",
+ "quill-graph",
  "quill-host",
  "quill-imap",
  "quill-media",
@@ -2730,11 +2732,13 @@ dependencies = [
  "rcgen",
  "rustix",
  "rustls",
+ "serde_json",
  "tempfile",
  "time",
  "tokio",
  "tokio-rustls",
  "toml_edit",
+ "wiremock",
 ]
 
 [[package]]

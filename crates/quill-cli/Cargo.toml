@@ -16,14 +16,17 @@ workspace = true
 [dependencies]
 quill-auth.workspace = true
 quill-core.workspace = true
+quill-graph.workspace = true
 quill-host.workspace = true
 quill-imap.workspace = true
 quill-media.workspace = true
+quill-net.workspace = true
 quill-smtp.workspace = true
 quill-store.workspace = true
 quill-sync.workspace = true
 quill-tui.workspace = true
 anyhow.workspace = true
+async-trait.workspace = true
 clap.workspace = true
 hickory-resolver.workspace = true
 jiff.workspace = true
@@ -34,10 +37,11 @@ toml_edit.workspace = true
 [dev-dependencies]
 # The IMAP crate's test server is compiled into this crate's tests too.
 async-imap.workspace = true
-quill-net.workspace = true
 rcgen.workspace = true
 rustls.workspace = true
+serde_json.workspace = true
 tempfile.workspace = true
 time.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time", "macros", "net", "io-util", "process"] }
 tokio-rustls.workspace = true
+wiremock.workspace = true

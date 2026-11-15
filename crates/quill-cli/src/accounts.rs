@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use quill_auth::{SecretStore, password_name};
+use quill_auth::{OAuthHttp, SecretStore, password_name};
 use quill_core::config::{AccountConfig, AccountType, Config, TlsMode};
 use quill_core::{Backend, Error, Sender};
 use quill_imap::{ImapBackend, ImapConfig, Trust};
@@ -10,6 +10,8 @@ use quill_smtp::{Credential, SmtpAuth, SmtpConfig, SmtpSender};
 use quill_store::Store;
 use quill_sync::SyncAccount;
 use quill_tui::state::Notice;
+
+use crate::oauth;
 
 pub struct Prepared {
     pub accounts: Vec<SyncAccount>,
@@ -178,12 +180,43 @@ pub fn prepare(
 ) -> quill_store::Result<Prepared> {
     let mut accounts = Vec::new();
     let mut notices = Vec::new();
+    // Made when the first account that signs in with OAuth needs it.
+    let mut oauth_http: Option<OAuthHttp> = None;
     for account in &config.accounts {
         let name = &account.name;
+        if account.kind == AccountType::Graph {
+            let http = match &oauth_http {
+                Some(http) => Ok(http.clone()),
+                None => OAuthHttp::new(&Trust::default()).map_err(|err| err.to_string()),
+            };
+            let built = http.and_then(|http| {
+                oauth_http = Some(http.clone());
+                let setup = oauth::setup(account)?
+                    .ok_or_else(|| "it does not sign in with OAuth".to_owned())?;
+                // Registered only once it is known to be usable.
+                let id = store
+                    .upsert_account(name, &account.address, account.kind.as_str())
+                    .map_err(|err| err.to_string())?;
+                oauth::graph_account(id, account, setup, &http, secrets)
+            });
+            match built {
+                Ok(account) => accounts.push(account),
+                Err(reason) => {
+                    notices.push(Notice::error(format!("{name} cannot sync: {reason}.")));
+                }
+            }
+            continue;
+        }
         if account.kind != AccountType::Imap {
             notices.push(Notice::info(format!(
                 "{name}: {} accounts are not supported yet.",
                 account.kind.as_str()
+            )));
+            continue;
+        }
+        if oauth::wanted(account) {
+            notices.push(Notice::info(format!(
+                "{name}: signing in to a mail server with OAuth is not supported yet. An app password works meanwhile."
             )));
             continue;
         }
@@ -231,7 +264,7 @@ mod tests {
     const TWO_ACCOUNTS: &str = r#"
 [[account]]
 name = "Work"
-type = "graph"
+type = "pop3"
 address = "robin@example.com"
 
 [[account]]
@@ -251,7 +284,7 @@ imap = { host = "mail.example.com", tls = "starttls", username = "rvale" }
         assert_eq!(prepared.notices[0].kind, NoticeKind::Info);
         assert_eq!(
             prepared.notices[0].text,
-            "Work: graph accounts are not supported yet."
+            "Work: pop3 accounts are not supported yet."
         );
         // Only the account that syncs is in the store.
         let stored = store.accounts().unwrap();
@@ -261,6 +294,44 @@ imap = { host = "mail.example.com", tls = "starttls", username = "rvale" }
             ("Personal", "imap")
         );
         assert_eq!(stored[0].id, prepared.accounts[0].id);
+    }
+
+    #[test]
+    fn a_graph_account_is_built_when_it_names_its_application() {
+        let mut store = Store::open_in_memory().unwrap();
+        let text = r#"
+[[account]]
+name = "Work"
+type = "graph"
+address = "robin@example.com"
+oauth_client_id = "app-1"
+
+[[account]]
+name = "Other"
+type = "graph"
+address = "robin@example.org"
+"#;
+        let prepared = prepare(&config(text), &mut store, &secrets(), true).unwrap();
+        assert_eq!(prepared.accounts.len(), 1);
+        assert_eq!(prepared.accounts[0].name, "Work");
+        assert!(prepared.accounts[0].sender.is_some());
+        assert!(prepared.accounts[0].server_saves_sent);
+        // The one without an application says what is missing, and is not
+        // in the store.
+        assert_eq!(prepared.notices.len(), 1);
+        assert!(
+            prepared.notices[0]
+                .text
+                .starts_with("Other cannot sync: it has no `oauth_client_id`"),
+            "{}",
+            prepared.notices[0].text
+        );
+        let stored = store.accounts().unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(
+            (stored[0].name.as_str(), stored[0].kind.as_str()),
+            ("Work", "graph")
+        );
     }
 
     #[test]
