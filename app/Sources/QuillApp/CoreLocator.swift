@@ -5,6 +5,9 @@ import Foundation
 enum CoreLocator {
     static let helperName = "quill"
 
+    /// What the terminals in the app say they are.
+    static let term = "xterm-256color"
+
     static func coreURL(bundle: Bundle = .main) -> URL? {
         let helper = bundle.bundleURL
             .appendingPathComponent("Contents/Helpers", isDirectory: true)
@@ -17,7 +20,7 @@ enum CoreLocator {
     static func environment(extra: [String: String] = [:]) -> [String: String] {
         let inherited = ProcessInfo.processInfo.environment
         var environment: [String: String] = [
-            "TERM": "xterm-256color",
+            "TERM": term,
             "COLORTERM": "truecolor",
             "TERM_PROGRAM": "Quill",
             "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",

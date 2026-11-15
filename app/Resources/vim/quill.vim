@@ -1,7 +1,8 @@
 " Quill's side of writing a message in Vim.
 "
 " Quill starts Vim on a draft file (headers, a blank line, the body) with
-" g:quill_dir set to a folder of that draft's own, and sources this file.
+" QUILL_DRAFT_DIR in the environment naming a folder of that draft's own,
+" and sources this file.
 " The two talk through small files in that folder:
 "
 "   verdict   written here, one word, as Vim quits: what to do with the
@@ -19,6 +20,11 @@
 " the user names to attach, which is only checked for), or touches the
 " network. It works in Vim 8.0 and later, compatible mode off.
 
+" The folder comes in the environment, so that no path is ever written
+" into a command line for Vim to parse.
+if !exists('g:quill_dir') && !empty($QUILL_DRAFT_DIR)
+  let g:quill_dir = $QUILL_DRAFT_DIR
+endif
 if exists('g:loaded_quill') || !exists('g:quill_dir')
   finish
 endif

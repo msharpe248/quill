@@ -1,0 +1,9 @@
+{
+  "jsonrpc": "2.0",
+  "method": "pane.editor",
+  "params": {
+    "path": "/Users/robin/Library/Containers/dev.quill.Quill/Data/tmp/quill-edit-812/message.quill",
+    "dir": "/Users/robin/Library/Containers/dev.quill.Quill/Data/tmp/quill-edit-812",
+    "title": "Re: Q4 roadmap"
+  }
+}

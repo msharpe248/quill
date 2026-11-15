@@ -9,6 +9,9 @@ public enum PaneKind: String, Sendable, CaseIterable {
     /// Sanitized HTML, in a web view that runs no script and loads nothing
     /// from the network unless it was told it may.
     case web
+    /// A terminal of its own, running the Vim that ships in the app on a
+    /// message being written.
+    case editor
 }
 
 /// A key a pane may have a use for while it has the keyboard focus. Every
@@ -39,7 +42,8 @@ public enum PaneKey: Equatable, Sendable, CaseIterable {
 }
 
 /// The second pane: a header with a title and a close button, over one
-/// native viewer. `PreviewPane`, `PlayerPane` and `WebPane` are the viewers.
+/// native viewer. `PreviewPane`, `PlayerPane` and `WebPane` are the viewers;
+/// `EditorPane` holds a terminal instead.
 ///
 /// A pane knows a file and what to call it. It does not know what a message
 /// is, and it never closes itself: it asks through `onClose`.
@@ -62,7 +66,8 @@ public class PaneView: NSView {
     private let messageLabel = NSTextField(wrappingLabelWithString: "")
     private let closeButton = NSButton()
 
-    init(kind: PaneKind, title: String, content: NSView) {
+    /// `closeHint` is what the close button says of itself when pointed at.
+    init(kind: PaneKind, title: String, content: NSView, closeHint: String = "Close Pane (esc)") {
         self.kind = kind
         self.title = title
         self.content = content
@@ -82,7 +87,7 @@ public class PaneView: NSView {
 
         closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close pane")
         closeButton.isBordered = false
-        closeButton.toolTip = "Close Pane (esc)"
+        closeButton.toolTip = closeHint
         closeButton.target = self
         closeButton.action = #selector(close(_:))
         closeButton.setAccessibilityIdentifier("pane.close")
@@ -143,6 +148,11 @@ public class PaneView: NSView {
     /// it; false leaves it to the viewer inside. `esc` is not offered here:
     /// closing is the window's business, whatever the pane.
     public func handleKey(_: PaneKey) -> Bool { false }
+
+    /// Whether every key pressed while the pane has the focus belongs to
+    /// what is inside it, `esc` included: the window then takes none of
+    /// them, neither to close the pane nor to offer to `handleKey`.
+    public var takesEveryKey: Bool { false }
 
     /// The pane's state in a few words, for a scripted run's dump.
     public var summary: String { message.map { "says \"\($0)\"" } ?? "" }

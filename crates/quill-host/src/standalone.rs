@@ -93,7 +93,10 @@ impl Host for StandaloneHost {
             // a terminal has no place for them that every terminal shares.
             // Nor a spelling checker: these are never sent here, since
             // this host says it has none.
-            CoreToShell::SpellCheck(_)
+            // Nor an editor pane: in a terminal the editor is run in the
+            // terminal.
+            CoreToShell::PaneEditor(_)
+            | CoreToShell::SpellCheck(_)
             | CoreToShell::SpellSuggest(_)
             | CoreToShell::NotifyPost(_)
             | CoreToShell::NotifyClear(_)

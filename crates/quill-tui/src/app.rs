@@ -573,6 +573,8 @@ async fn event_loop(
                 HostEvent::OpenMailto(url) => Some(Action::Mailto(url)),
                 // Spelling is not asked for yet, so nothing answers.
                 HostEvent::Spelling { .. } | HostEvent::Suggestions { .. } => None,
+                // Nor is the editor pane.
+                HostEvent::EditorExited { .. } => None,
                 HostEvent::NotificationUsed { id, action } => {
                     Some(Action::Notification { id, action })
                 }

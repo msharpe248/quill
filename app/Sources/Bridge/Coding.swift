@@ -238,6 +238,17 @@ private struct SpellSuggestedParams: Codable {
     var words: [String]
 }
 
+private struct PaneEditorParams: Codable {
+    var path: String
+    var dir: String
+    var title: String
+}
+
+private struct EditorExitedParams: Codable {
+    var ran: Bool
+    var status: Int
+}
+
 private struct NoParams: Codable {}
 
 private struct Outgoing<Params: Encodable>: Encodable {
@@ -398,6 +409,12 @@ public extension CoreToShell {
                 throw BridgeError.malformed("spell.suggest: the id must not be negative and the word 1 to 200 bytes")
             }
             self = .spellSuggest(suggest)
+        case "pane.editor":
+            let params = try envelope.decode(PaneEditorParams.self, allowing: PaneEditor.allowedKeys)
+            guard let editor = PaneEditor(path: params.path, dir: params.dir, title: params.title) else {
+                throw BridgeError.malformed("pane.editor: the path and the dir must be absolute")
+            }
+            self = .paneEditor(editor)
         default:
             throw BridgeError.unknownMethod(envelope.method)
         }
@@ -437,6 +454,8 @@ public extension CoreToShell {
             encodeLine(method: "spell.check", params: check)
         case let .spellSuggest(suggest):
             encodeLine(method: "spell.suggest", params: suggest)
+        case let .paneEditor(editor):
+            encodeLine(method: "pane.editor", params: editor)
         }
     }
 }
@@ -510,6 +529,12 @@ public extension ShellToCore {
                     "spell.suggested: the id must not be negative and the words at most 20, each 1 to 200 bytes")
             }
             self = .spellSuggested(suggested)
+        case "editor.exited":
+            let params = try envelope.decode(EditorExitedParams.self, allowing: EditorExited.allowedKeys)
+            guard let exited = EditorExited(ran: params.ran, status: params.status) else {
+                throw BridgeError.malformed("editor.exited: the status must be from -255 to 255")
+            }
+            self = .editorExited(exited)
         case "app.will_quit":
             try envelope.requireOnly([])
             self = .appWillQuit
@@ -538,6 +563,8 @@ public extension ShellToCore {
             encodeLine(method: "spell.checked", params: checked)
         case let .spellSuggested(suggested):
             encodeLine(method: "spell.suggested", params: suggested)
+        case let .editorExited(exited):
+            encodeLine(method: "editor.exited", params: exited)
         case .appWillQuit:
             encodeLine(method: "app.will_quit", params: NoParams())
         }

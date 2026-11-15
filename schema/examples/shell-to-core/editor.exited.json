@@ -1,0 +1,8 @@
+{
+  "jsonrpc": "2.0",
+  "method": "editor.exited",
+  "params": {
+    "ran": true,
+    "status": 0
+  }
+}

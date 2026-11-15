@@ -35,8 +35,8 @@ private enum Examples {
             examples.map(\.name) == [
                 "clipboard.write.json", "commands.list.json", "file.open.json", "files.pick.json",
                 "files.save.json", "link.open.json", "notify.clear.json", "notify.post.json", "pane.close.json",
-                "pane.play.json", "pane.preview.json", "pane.web.json", "spell.check.json", "spell.suggest.json",
-                "state.update.json", "thumbnail.make.json",
+                "pane.editor.json", "pane.play.json", "pane.preview.json", "pane.web.json", "spell.check.json",
+                "spell.suggest.json", "state.update.json", "thumbnail.make.json",
             ])
         for (name, text) in examples {
             let message = try CoreToShell(line: text)
@@ -51,9 +51,9 @@ private enum Examples {
         let examples = try Examples.load("shell-to-core")
         #expect(
             examples.map(\.name) == [
-                "app.will_quit.json", "command.run.json", "files.dropped.json", "files.saved.json",
-                "notify.used.json", "spell.checked.json", "spell.suggested.json", "thumbnail.made.json",
-                "url.open.json",
+                "app.will_quit.json", "command.run.json", "editor.exited.json", "files.dropped.json",
+                "files.saved.json", "notify.used.json", "spell.checked.json", "spell.suggested.json",
+                "thumbnail.made.json", "url.open.json",
             ])
         for (name, text) in examples {
             let message = try ShellToCore(line: text)
@@ -78,7 +78,7 @@ private enum Examples {
         #expect(examples.count >= 6)
         for name in [
             "notification-with-no-id.json", "too-many-notification-actions.json", "url-that-is-not-mail.json",
-            "misspelt-word-with-no-length.json", "too-many-suggestions.json",
+            "misspelt-word-with-no-length.json", "too-many-suggestions.json", "editor-on-a-relative-path.json",
         ] {
             #expect(examples.contains { $0.name == name }, "\(name) is missing")
         }
@@ -439,6 +439,125 @@ private enum Examples {
                 "spell.suggested: the id must not be negative and the words at most 20, each 1 to 200 bytes")
         ) {
             try ShellToCore(line: #"{"jsonrpc":"2.0","method":"spell.suggested","params":{"id":8,"words":[""]}}"#)
+        }
+    }
+
+    @Test func theEditorDecodesToWhatItSays() throws {
+        let examples = try Dictionary(uniqueKeysWithValues: Examples.load("core-to-shell").map { ($0.name, $0.text) })
+        let folder = "/Users/robin/Library/Containers/dev.quill.Quill/Data/tmp/quill-edit-812"
+        #expect(
+            try CoreToShell(line: examples["pane.editor.json"]!)
+                == .paneEditor(PaneEditor(path: folder + "/message.quill", dir: folder, title: "Re: Q4 roadmap")!))
+
+        let answers = try Dictionary(uniqueKeysWithValues: Examples.load("shell-to-core").map { ($0.name, $0.text) })
+        #expect(
+            try ShellToCore(line: answers["editor.exited.json"]!)
+                == .editorExited(EditorExited(ran: true, status: 0)!))
+
+        // A build with no Vim in it answers at once.
+        #expect(
+            ShellToCore.editorExited(.didNotRun).line
+                == #"{"jsonrpc":"2.0","method":"editor.exited","params":{"ran":false,"status":0}}"#)
+        #expect(try ShellToCore(line: ShellToCore.editorExited(.didNotRun).line) == .editorExited(.didNotRun))
+        // `:cq`, and a Vim ended by a signal.
+        #expect(
+            ShellToCore.editorExited(EditorExited(ranWithStatus: 1)).line
+                == #"{"jsonrpc":"2.0","method":"editor.exited","params":{"ran":true,"status":1}}"#)
+        let hungUp = ShellToCore.editorExited(EditorExited(ranWithStatus: -1))
+        #expect(hungUp.line == #"{"jsonrpc":"2.0","method":"editor.exited","params":{"ran":true,"status":-1}}"#)
+        #expect(try ShellToCore(line: hungUp.line) == hungUp)
+
+        // Paths and a title keep whatever is in them through the line.
+        let awkward = PaneEditor(
+            path: "/tmp/it's \"quoted\"/line\nbreak/caf\u{E9}.quill", dir: "/tmp/it's \"quoted\"/line\nbreak",
+            title: "Re: \u{1F4EC} \"hello\"\n")!
+        #expect(!CoreToShell.paneEditor(awkward).line.contains("\n"))
+        #expect(try CoreToShell(line: CoreToShell.paneEditor(awkward).line) == .paneEditor(awkward))
+        // No title is a title.
+        #expect(
+            CoreToShell.paneEditor(PaneEditor(path: "/d/m", dir: "/d", title: "")!).line
+                == #"{"jsonrpc":"2.0","method":"pane.editor","params":{"dir":"/d","path":"/d/m","title":""}}"#)
+    }
+
+    @Test func theEditorHoldsOnlyWhatTheSchemaAllows() {
+        // Both paths absolute.
+        #expect(PaneEditor(path: "/d/message.quill", dir: "/d", title: "x") != nil)
+        #expect(PaneEditor(path: "message.quill", dir: "/d", title: "x") == nil)
+        #expect(PaneEditor(path: "/d/message.quill", dir: "d", title: "x") == nil)
+        #expect(PaneEditor(path: "/d/message.quill", dir: "", title: "x") == nil)
+        #expect(PaneEditor(path: "", dir: "/d", title: "x") == nil)
+        #expect(PaneEditor(path: "~/message.quill", dir: "/d", title: "x") == nil)
+
+        // A status from -255 to 255.
+        #expect(EditorExited.statuses == -255...255)
+        #expect(EditorExited(ran: true, status: 255)?.status == 255)
+        #expect(EditorExited(ran: true, status: -255)?.status == -255)
+        #expect(EditorExited(ran: true, status: 256) == nil)
+        #expect(EditorExited(ran: true, status: -256) == nil)
+        #expect(EditorExited(ran: false, status: 0) == .didNotRun)
+        #expect(!EditorExited.didNotRun.ran)
+        #expect(EditorExited.didNotRun.status == 0)
+        // A status that is out of range is brought into it, not dropped:
+        // the core is waiting on an answer.
+        #expect(EditorExited(ranWithStatus: 0) == EditorExited(ran: true, status: 0))
+        #expect(EditorExited(ranWithStatus: 4000) == EditorExited(ran: true, status: 255))
+        #expect(EditorExited(ranWithStatus: -4000) == EditorExited(ran: true, status: -255))
+    }
+
+    @Test func editorErrorsSayWhatIsWrong() {
+        #expect(throws: BridgeError.malformed("pane.editor: the path and the dir must be absolute")) {
+            try CoreToShell(
+                line: #"{"jsonrpc":"2.0","method":"pane.editor","params":{"path":"m.quill","dir":"/d","title":"x"}}"#)
+        }
+        #expect(throws: BridgeError.malformed("pane.editor: the path and the dir must be absolute")) {
+            try CoreToShell(
+                line: #"{"jsonrpc":"2.0","method":"pane.editor","params":{"path":"/d/m","dir":"d","title":"x"}}"#)
+        }
+        #expect(throws: BridgeError.malformed("pane.editor: missing dir")) {
+            try CoreToShell(line: #"{"jsonrpc":"2.0","method":"pane.editor","params":{"path":"/d/m","title":"x"}}"#)
+        }
+        #expect(throws: BridgeError.malformed("pane.editor: missing title")) {
+            try CoreToShell(line: #"{"jsonrpc":"2.0","method":"pane.editor","params":{"path":"/d/m","dir":"/d"}}"#)
+        }
+        #expect(throws: BridgeError.malformed("pane.editor: unexpected vimrc")) {
+            try CoreToShell(
+                line:
+                    #"{"jsonrpc":"2.0","method":"pane.editor","params":{"path":"/d/m","dir":"/d","title":"x","vimrc":"/etc/vimrc"}}"#
+            )
+        }
+        #expect(throws: BridgeError.malformed("editor.exited: the status must be from -255 to 255")) {
+            try ShellToCore(line: #"{"jsonrpc":"2.0","method":"editor.exited","params":{"ran":true,"status":256}}"#)
+        }
+        #expect(throws: BridgeError.malformed("editor.exited: the status must be from -255 to 255")) {
+            try ShellToCore(line: #"{"jsonrpc":"2.0","method":"editor.exited","params":{"ran":true,"status":-256}}"#)
+        }
+        #expect(throws: BridgeError.malformed("editor.exited: missing status")) {
+            try ShellToCore(line: #"{"jsonrpc":"2.0","method":"editor.exited","params":{"ran":true}}"#)
+        }
+        #expect(throws: BridgeError.malformed("editor.exited: missing ran")) {
+            try ShellToCore(line: #"{"jsonrpc":"2.0","method":"editor.exited","params":{"status":0}}"#)
+        }
+        #expect(throws: BridgeError.malformed("editor.exited: unexpected signal")) {
+            try ShellToCore(
+                line: #"{"jsonrpc":"2.0","method":"editor.exited","params":{"ran":true,"status":0,"signal":1}}"#)
+        }
+        // Not a whole number, not a number, and not a yes or no.
+        #expect(throws: BridgeError.self) {
+            try ShellToCore(line: #"{"jsonrpc":"2.0","method":"editor.exited","params":{"ran":true,"status":1.5}}"#)
+        }
+        #expect(throws: BridgeError.self) {
+            try ShellToCore(line: #"{"jsonrpc":"2.0","method":"editor.exited","params":{"ran":true,"status":"0"}}"#)
+        }
+        #expect(throws: BridgeError.self) {
+            try ShellToCore(line: #"{"jsonrpc":"2.0","method":"editor.exited","params":{"ran":1,"status":0}}"#)
+        }
+        // Each belongs to one direction only.
+        #expect(throws: BridgeError.unknownMethod("editor.exited")) {
+            try CoreToShell(line: #"{"jsonrpc":"2.0","method":"editor.exited","params":{"ran":true,"status":0}}"#)
+        }
+        #expect(throws: BridgeError.unknownMethod("pane.editor")) {
+            try ShellToCore(
+                line: #"{"jsonrpc":"2.0","method":"pane.editor","params":{"path":"/d/m","dir":"/d","title":"x"}}"#)
         }
     }
 

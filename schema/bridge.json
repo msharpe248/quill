@@ -24,7 +24,8 @@
         { "$ref": "#/$defs/notify.post" },
         { "$ref": "#/$defs/notify.clear" },
         { "$ref": "#/$defs/spell.check" },
-        { "$ref": "#/$defs/spell.suggest" }
+        { "$ref": "#/$defs/spell.suggest" },
+        { "$ref": "#/$defs/pane.editor" }
       ]
     },
     "shellToCore": {
@@ -37,6 +38,7 @@
         { "$ref": "#/$defs/url.open" },
         { "$ref": "#/$defs/spell.checked" },
         { "$ref": "#/$defs/spell.suggested" },
+        { "$ref": "#/$defs/editor.exited" },
         { "$ref": "#/$defs/app.will_quit" }
       ]
     },
@@ -776,6 +778,47 @@
               "maxItems": 20,
               "items": { "type": "string", "minLength": 1, "maxLength": 200 }
             }
+          }
+        }
+      }
+    },
+
+    "pane.editor": {
+      "description": "Core to shell. Run the Vim that ships in the app on a draft file, in a terminal pane of its own. `dir` is the draft's own folder, where Vim and the core leave each other notes; the shell passes it to Vim in the environment and does nothing else with it. Answered by editor.exited when Vim ends, or at once if it could not be started.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "pane.editor" },
+        "params": {
+          "type": "object",
+          "required": ["path", "dir", "title"],
+          "additionalProperties": false,
+          "properties": {
+            "path": { "type": "string", "pattern": "^/" },
+            "dir": { "type": "string", "pattern": "^/" },
+            "title": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "editor.exited": {
+      "description": "Shell to core. The answer to pane.editor. `ran` is false when Vim could not be started (this build has none in it); `status` is then 0. Otherwise `status` is what Vim exited with: 0 for a normal exit, anything else for :cq or a crash.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "editor.exited" },
+        "params": {
+          "type": "object",
+          "required": ["ran", "status"],
+          "additionalProperties": false,
+          "properties": {
+            "ran": { "type": "boolean" },
+            "status": { "type": "integer", "minimum": -255, "maximum": 255 }
           }
         }
       }

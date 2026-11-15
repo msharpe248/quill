@@ -10,6 +10,13 @@ import GhosttyTerminal
 /// closure and go to the PTY.
 @MainActor
 final class GhosttySurface: TerminalSurface {
+    /// One controller for every surface in the app, as libghostty has one
+    /// app with a surface for each terminal: the main one, and the editor
+    /// pane beside it. Made with the first surface.
+    private static var shared: TerminalController?
+    /// How the shared controller was last told the terminals look.
+    private static var sharedAppearance: TerminalAppearance?
+
     private let terminalView: DropAwareTerminalView
     private let controller: TerminalController
     private let session: InMemoryTerminalSession
@@ -45,7 +52,20 @@ final class GhosttySurface: TerminalSurface {
             // The core repaints on every resize and only reads columns and rows.
             suppressesPixelOnlyResizes: true
         )
-        controller = TerminalController(configuration: Self.configuration(for: appearance))
+        if let shared = Self.shared {
+            controller = shared
+            // The surfaces look alike: the latest appearance is everyone's.
+            // One that asks for what is already so changes nothing, and the
+            // terminals that are running are not disturbed.
+            if appearance != Self.sharedAppearance {
+                _ = shared.setTerminalConfiguration(Self.configuration(for: appearance))
+                Self.sharedAppearance = appearance
+            }
+        } else {
+            controller = TerminalController(configuration: Self.configuration(for: appearance))
+            Self.shared = controller
+            Self.sharedAppearance = appearance
+        }
         terminalView = DropAwareTerminalView(frame: .zero)
         terminalView.delegate = delegateProxy
         terminalView.controller = controller
@@ -102,14 +122,41 @@ final class GhosttySurface: TerminalSurface {
 
     func setAppearance(_ appearance: TerminalAppearance) {
         _ = controller.setTerminalConfiguration(Self.configuration(for: appearance))
+        Self.sharedAppearance = appearance
     }
 
     func visibleText() -> String? {
         session.readViewportText()
     }
 
+    func sendKeys(_ text: String) {
+        link.process?.write(Data(text.utf8))
+    }
+
     func terminate() {
-        link.process?.hangUp()
+        if let process = link.process {
+            process.hangUp()
+        } else {
+            abandonStart()
+        }
+    }
+
+    func kill() {
+        if let process = link.process {
+            process.endNow()
+        } else {
+            abandonStart()
+        }
+    }
+
+    /// Gives up on a program that is waiting for the terminal's first size
+    /// before it starts: whoever asked for it is waiting to hear how it
+    /// ended, and it will not now begin.
+    private func abandonStart() {
+        guard !started, pendingCommand != nil else { return }
+        started = true
+        pendingCommand = nil
+        onExit?(.failedToStart(reason: "stopped before it started"))
     }
 
     private static func configuration(for appearance: TerminalAppearance) -> TerminalConfiguration {

@@ -29,7 +29,8 @@ public struct TerminalCommand: Sendable, Equatable {
     }
 }
 
-/// How a terminal surface looks. Colours are `#rrggbb`.
+/// How a terminal surface looks. Colours are `#rrggbb`. Every surface in the
+/// app looks the same: an appearance given to one is given to all.
 public struct TerminalAppearance: Sendable, Equatable {
     public var fontFamily: String?
     public var fontSize: Float
@@ -87,6 +88,12 @@ public protocol TerminalSurface: AnyObject {
     /// Sends text to the program as a paste, not as key presses.
     func sendText(_ text: String)
 
+    /// Sends text to the program as if it were typed: its bytes as they
+    /// are, with nothing put around them to mark a paste, so that a program
+    /// reads `esc` as the key. Nothing is sent to a program that has not
+    /// started or has ended.
+    func sendKeys(_ text: String)
+
     /// Gives the surface keyboard focus.
     func focus()
 
@@ -95,8 +102,14 @@ public protocol TerminalSurface: AnyObject {
     /// The visible screen as text, one line per row. For tests and debugging.
     func visibleText() -> String?
 
-    /// Asks the program to stop, as closing its window would.
+    /// Asks the program to stop, as closing its window would. A program
+    /// still waiting to be started is not started, and is reported as
+    /// having failed to start.
     func terminate()
+
+    /// Ends the program at once. It is given no chance to save anything:
+    /// for a program that was asked to stop and has not.
+    func kill()
 }
 
 /// Creates a libghostty-backed surface.

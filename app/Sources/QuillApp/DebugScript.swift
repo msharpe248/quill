@@ -30,6 +30,20 @@ import Notifications
 ///   it
 /// - `notifyaction:NAME,ID` click the button of this name on the notification
 ///   of this id
+/// - `importvimrc:PATH` import this file as the user's vimrc, as if it had
+///   been chosen in the panel; inside the sandbox it must be in the app's
+///   container. Neither the alert nor the panel is ever shown to a script:
+///   the menu item itself is answered as if the user had cancelled
+/// - `typeeditor:TEXT` type text into the editor pane, as keys and not as a
+///   paste, while Vim is running there
+///
+/// The copy of the vimrc is kept in the scratch config folder when the run
+/// has one (`--core-env QUILL_CONFIG_DIR=...`), in its `vim` folder, and
+/// only otherwise in the user's own.
+///
+/// The editor pane is the real one when the build has a Vim in it, and it
+/// reaches nothing outside the window. In a build without one, the dump
+/// says the editor is not available.
 ///
 /// No notification is ever shown to a script, and the user is never asked
 /// whether Quill may show them: what the core asked for is written to the
@@ -41,7 +55,8 @@ import Notifications
 ///
 /// `press:` reaches whatever has the keyboard, a pane as well as the
 /// terminal: `press:right` steps a Quick Look pane, `press:space` plays or
-/// pauses a player, `press:esc` closes any pane.
+/// pauses a player, `press:esc` closes any pane but the editor's, where every
+/// key is Vim's.
 ///
 /// With `--dump-screen`, the terminal's text and the shell's state are
 /// written to the file afterwards and the app quits.
@@ -75,6 +90,16 @@ enum DebugScript {
         }
         // Nor show a notification, nor ask the user whether Quill may.
         controller.notifier = notifier
+        // Nor explain what importing a vimrc means and wait for a file to
+        // be chosen: the user is taken to have cancelled. `importvimrc:`
+        // is how a script imports one.
+        controller.vimrcPicker = { _, done in
+            vimrcPanelsAsked += 1
+            done(nil)
+        }
+        // Nor wait on an alert about something that could not be done. What
+        // went wrong is in the dump, where the shell noted it.
+        controller.problemReporter = { _, _, _ in }
         Task { @MainActor in
             for step in steps {
                 await perform(step, on: controller)
@@ -170,6 +195,13 @@ enum DebugScript {
             let (name, id) = split(argument, at: ",")
             controller.notificationUsed(id: id, actionIdentifier: name)
             try? await Task.sleep(for: .milliseconds(300))
+        case "importvimrc":
+            controller.importVimrc(from: URL(fileURLWithPath: argument))
+        case "typeeditor":
+            if !controller.typeIntoEditor(argument) {
+                note("no editor to type \(argument) into")
+            }
+            try? await Task.sleep(for: .milliseconds(150))
         default:
             note("unknown step \(step)")
         }
@@ -188,6 +220,7 @@ enum DebugScript {
     private static var openedFiles: [String] = []
     private static var saveDestination: URL?
     private static var savePanelsAsked: [String] = []
+    private static var vimrcPanelsAsked = 0
     private static let notifier = RecordingNotifier()
 
     /// Paths separated by commas.
@@ -279,6 +312,7 @@ enum DebugScript {
             // preview "Report" item 2 of 5, report.pdf
             // player "Clip" paused at 0:05 of 1:15
             // web "Subject" remote content blocked, loaded
+            // editor "Re: Q4 roadmap" running
             lines.append("pane: \(pane.kind.rawValue) \(pane.title.debugDescription) \(pane.summary)")
         } else {
             lines.append("pane: none")
@@ -302,6 +336,16 @@ enum DebugScript {
         // answered. The answers themselves are the core's to show.
         lines.append("spell checks: \(controller.spelling.checksAnswered)")
         lines.append("spell suggestions: \(controller.spelling.suggestionsAnswered)")
+        // editor: none | running "Re: Q4 roadmap" | exited 0 | not available
+        //         | failed to start
+        // A Vim ended by a signal is "exited" with the signal below zero.
+        lines.append("editor: \(controller.editorSlot.summary)")
+        lines.append("editor requests: \(controller.editorSlot.requests)")
+        // vimrc: none | imported, 1234 bytes
+        // vimrc imports: /path (imported, 1234 bytes); /path (refused: the file is larger than 1 MB); removed
+        lines.append("vimrc: \(controller.vimrc.size.map { "imported, \($0) bytes" } ?? "none")")
+        lines.append("vimrc imports: \(controller.vimrcResults.joined(separator: "; "))")
+        lines.append("vimrc panels asked for: \(vimrcPanelsAsked)")
         let toolbar = (controller.window?.toolbar?.items ?? [])
             .filter { $0.itemIdentifier != .flexibleSpace }
             .map { "\($0.isEnabled ? "+" : "-")\($0.itemIdentifier.rawValue)" }
@@ -323,6 +367,10 @@ enum DebugScript {
         }
         if !notes.isEmpty {
             lines.append("notes: \(notes.joined(separator: "; "))")
+        }
+        // What Vim is showing, while it runs.
+        if let editorText = controller.editorText {
+            lines.append(contentsOf: ["", "--- editor ---", editorText])
         }
         // A picture of the window beside the text, for a person to look at.
         if let frame = controller.window?.contentView?.superview,

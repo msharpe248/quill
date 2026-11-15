@@ -34,6 +34,11 @@ final class PTYProcess: @unchecked Sendable {
     private let readSource: any DispatchSourceRead
     private let exitSource: any DispatchSourceProcess
     private let onOutput: @Sendable (Data) -> Void
+    /// Whether the program has ended. Once it has, its process id and the
+    /// PTY's descriptor may belong to something else, so nothing is sent to
+    /// either. Read and written under `stateLock`.
+    private var ended = false
+    private let stateLock = NSLock()
 
     /// Starts `command` on a new PTY of `size`. `onOutput` and `onExit` are
     /// called on a private queue; `onExit` is called once, after the last
@@ -125,10 +130,17 @@ final class PTYProcess: @unchecked Sendable {
         readSource.setEventHandler { [self] in
             _ = readAvailable()
         }
-        readSource.setCancelHandler {
-            close(master)
+        readSource.setCancelHandler { [writeQueue, master] in
+            // On the queue that writes, behind any write already on its
+            // way: none may land on a descriptor that has been closed and
+            // given to something else.
+            writeQueue.async {
+                close(master)
+            }
         }
         exitSource.setEventHandler { [self] in
+            // Before the program is reaped and its id can be used again.
+            stateLock.withLock { ended = true }
             var status: Int32 = 0
             while waitpid(self.pid, &status, 0) == -1, errno == EINTR {}
             // Whatever the child wrote before it died is still in the PTY.
@@ -144,7 +156,8 @@ final class PTYProcess: @unchecked Sendable {
 
     /// Sends bytes to the program, as if typed.
     func write(_ data: Data) {
-        writeQueue.async { [master] in
+        writeQueue.async { [self] in
+            guard !stateLock.withLock({ ended }) else { return }
             data.withUnsafeBytes { buffer in
                 var offset = 0
                 while offset < buffer.count {
@@ -169,17 +182,33 @@ final class PTYProcess: @unchecked Sendable {
             ws_xpixel: size.widthPixels,
             ws_ypixel: size.heightPixels
         )
-        _ = ioctl(master, TIOCSWINSZ, &window)
-        // The kernel tells the terminal's foreground process group about a
-        // new size. In the sandbox the child is not that group, having been
-        // refused the terminal as its controlling one, so tell it directly.
-        // A second SIGWINCH outside the sandbox is harmless.
-        kill(pid, SIGWINCH)
+        stateLock.withLock {
+            guard !ended else { return }
+            _ = ioctl(master, TIOCSWINSZ, &window)
+            // The kernel tells the terminal's foreground process group about
+            // a new size. In the sandbox the child is not that group, having
+            // been refused the terminal as its controlling one, so tell it
+            // directly. A second SIGWINCH outside the sandbox is harmless.
+            kill(pid, SIGWINCH)
+        }
     }
 
     /// Asks the program to stop the way a closing terminal does.
     func hangUp() {
-        kill(pid, SIGHUP)
+        send(SIGHUP)
+    }
+
+    /// Ends the program without asking.
+    func endNow() {
+        send(SIGKILL)
+    }
+
+    /// Sends a signal to the program, unless it has already ended.
+    private func send(_ number: Int32) {
+        stateLock.withLock {
+            guard !ended else { return }
+            kill(pid, number)
+        }
     }
 
     /// Reads once from the PTY. Returns `false` at end of file or on error.

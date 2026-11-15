@@ -50,6 +50,9 @@ pub enum HostEvent {
     Spelling { id: u64, words: Vec<(usize, usize)> },
     /// The answer to [`Host::spell_suggest`].
     Suggestions { id: u64, words: Vec<String> },
+    /// The answer to [`Host::edit_draft`]: the editor ended with this
+    /// status, or (`ran` false) could not be started.
+    EditorExited { ran: bool, status: i32 },
     /// The app is quitting: flush and exit cleanly.
     WillQuit,
     /// The shell has gone. There is nothing left to draw for.
@@ -160,6 +163,16 @@ pub trait Host: Send + Sync {
     /// The answer is [`HostEvent::Suggestions`].
     fn spell_suggest(&self, id: u64, word: &str) -> bool {
         let _ = (id, word);
+        false
+    }
+
+    /// Runs the host's own Vim on a draft file, in a pane of its own, if
+    /// this host has one. `dir` is the draft's folder, where the editor
+    /// and the core leave each other notes. Returns whether the host took
+    /// it on: when not, the caller runs an editor itself. The answer is
+    /// [`HostEvent::EditorExited`].
+    fn edit_draft(&self, path: &Path, dir: &Path, title: &str) -> bool {
+        let _ = (path, dir, title);
         false
     }
 

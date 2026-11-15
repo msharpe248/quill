@@ -53,6 +53,23 @@ impl Host for ShellHost {
         let _ = self.events.send(event);
     }
 
+    fn edit_draft(&self, path: &Path, dir: &Path, title: &str) -> bool {
+        match (
+            bridge::AbsolutePath::new(path),
+            bridge::AbsolutePath::new(dir),
+        ) {
+            (Some(path), Some(dir)) => {
+                self.send(CoreToShell::PaneEditor(bridge::PaneEditor {
+                    path,
+                    dir,
+                    title: title.to_owned(),
+                }));
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn spell_check(&self, id: u64, text: &str) -> bool {
         match bridge::SpellCheck::new(id, text) {
             Some(check) => {
@@ -143,6 +160,10 @@ fn read_loop(stream: UnixStream, events: UnboundedSender<HostEvent>) {
             Ok(ShellToCore::SpellSuggested(suggested)) => HostEvent::Suggestions {
                 id: suggested.id(),
                 words: suggested.words().to_vec(),
+            },
+            Ok(ShellToCore::EditorExited(exited)) => HostEvent::EditorExited {
+                ran: exited.ran(),
+                status: exited.status(),
             },
             Ok(ShellToCore::AppWillQuit(_)) => HostEvent::WillQuit,
             Err(err) => HostEvent::Problem(format!("bridge: {err}")),

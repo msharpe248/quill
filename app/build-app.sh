@@ -8,7 +8,8 @@
 #   SANDBOX=0 app/build-app.sh  sign without the sandbox, to tell a sandbox
 #                               denial from an ordinary bug
 #
-# The bundle lands in target/app/Quill.app.
+# The bundle lands in target/app/Quill.app. It has the Vim option in it when
+# app/build-vim.sh has been run, and is built without it otherwise.
 set -euo pipefail
 
 configuration="${1:-debug}"
@@ -39,15 +40,34 @@ cp "$root/target/release/quill" "$out/Contents/Helpers/quill"
 # SwiftPM resource bundles. A signed app cannot carry them at its root, which
 # is where SwiftPM looks by default; libghostty-spm looks in Resources first.
 find "$products" -maxdepth 1 -name '*.bundle' -exec cp -R {} "$out/Contents/Resources/" \;
+# Quill's side of writing a message in Vim, and the Vim itself when
+# app/build-vim.sh has left one in target/vim.
+mkdir -p "$out/Contents/Resources/vim"
+cp "$root/app/Resources/vim/quill.vim" "$out/Contents/Resources/vim/quill.vim"
+vim="$root/target/vim"
+if [ -x "$vim/vim" ] && [ -d "$vim/runtime" ]; then
+    cp "$vim/vim" "$out/Contents/Helpers/vim"
+    cp -R "$vim/runtime" "$out/Contents/Resources/vim/runtime"
+    cp "$vim/LICENSE" "$out/Contents/Resources/vim/LICENSE"
+else
+    echo "    without the Vim option: app/build-vim.sh has not been run"
+fi
 
 echo "==> sign"
 if [ "${SANDBOX:-1}" = "1" ]; then
     codesign --force --sign - --options runtime \
         --entitlements "$root/app/Support/Helper.entitlements" "$out/Contents/Helpers/quill"
+    if [ -e "$out/Contents/Helpers/vim" ]; then
+        codesign --force --sign - --options runtime \
+            --entitlements "$root/app/Support/Helper.entitlements" "$out/Contents/Helpers/vim"
+    fi
     codesign --force --sign - --options runtime \
         --entitlements "$root/app/Support/Quill.entitlements" "$out"
 else
     codesign --force --sign - "$out/Contents/Helpers/quill"
+    if [ -e "$out/Contents/Helpers/vim" ]; then
+        codesign --force --sign - "$out/Contents/Helpers/vim"
+    fi
     codesign --force --sign - "$out"
 fi
 codesign --verify --strict "$out"

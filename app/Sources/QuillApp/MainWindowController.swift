@@ -1,12 +1,14 @@
 import AppKit
 import Bridge
+import Editor
 import Notifications
 import Panes
 import Spelling
 import TerminalKit
 
 /// The main window: the terminal surface running the core, a toolbar built
-/// from the core's commands, and a second pane for native viewers.
+/// from the core's commands, and a second pane for native viewers or for
+/// the Vim that ships in the app.
 ///
 /// Nothing here knows about mail. What the window shows around the terminal
 /// comes over the bridge as command names, a title and a count.
@@ -25,6 +27,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     /// showing another replaces it.
     private(set) var pane: PaneView?
     private var keyMonitor: Any?
+
+    /// The Vim in the editor pane, while one is running.
+    private var editor: RunningEditor?
+    /// The one place there is for an editor, and what became of the last.
+    private(set) var editorSlot = EditorSlot()
+    /// What waits for the editor to end: the core being told to stop.
+    private var afterEditor: (() -> Void)?
+    /// The user's vimrc, as Quill keeps it.
+    let vimrc: ImportedVimrc
 
     /// Hands an address to the user's browser or mail program. A scripted
     /// run replaces it, so that a check opens nothing.
@@ -78,6 +89,78 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         }
     }
 
+    /// Tells the user what importing a vimrc means, then asks which file,
+    /// and hands it to the completion; `nil` means they thought better of
+    /// it. A scripted run replaces it, so that a check never waits on an
+    /// alert or a panel.
+    var vimrcPicker: (NSWindow?, @escaping (URL?) -> Void) -> Void = { window, done in
+        let alert = NSAlert()
+        alert.messageText = "Import a vimrc for writing mail in Vim?"
+        alert.informativeText = """
+            Quill copies the file you choose into its own folder and uses the copy. Your file is \
+            not changed, and later changes to it are not picked up. Importing again replaces the copy.
+
+            Vim runs inside Quill\u{2019}s sandbox. Plugins and settings that run other programs, \
+            or that read files outside Quill\u{2019}s folder, will not work.
+            """
+        alert.addButton(withTitle: "Choose File\u{2026}")
+        alert.addButton(withTitle: "Cancel")
+        let choose: () -> Void = {
+            let panel = NSOpenPanel()
+            panel.message = "Choose a vimrc to copy into Quill"
+            panel.prompt = "Import"
+            panel.canChooseFiles = true
+            panel.canChooseDirectories = false
+            panel.allowsMultipleSelection = false
+            panel.resolvesAliases = true
+            // A vimrc is usually a file whose name starts with a dot, in
+            // the user's own home folder and not the app's.
+            panel.showsHiddenFiles = true
+            if let home = getpwuid(getuid())?.pointee.pw_dir {
+                panel.directoryURL = URL(fileURLWithPath: String(cString: home), isDirectory: true)
+            }
+            let finish: (NSApplication.ModalResponse) -> Void = { response in
+                done(response == .OK ? panel.url : nil)
+            }
+            if let window {
+                panel.beginSheetModal(for: window, completionHandler: finish)
+            } else {
+                finish(panel.runModal())
+            }
+        }
+        let answer: (NSApplication.ModalResponse) -> Void = { response in
+            if response == .alertFirstButtonReturn {
+                choose()
+            } else {
+                done(nil)
+            }
+        }
+        if let window {
+            alert.beginSheetModal(for: window) { response in
+                // Out of the way before the panel takes its place.
+                alert.window.orderOut(nil)
+                answer(response)
+            }
+        } else {
+            answer(alert.runModal())
+        }
+    }
+
+    /// Tells the user that something they asked of the shell could not be
+    /// done: a title and a sentence. A scripted run replaces it, so that a
+    /// check never waits on an alert.
+    var problemReporter: (NSWindow?, String, String) -> Void = { window, title, text in
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = title
+        alert.informativeText = text
+        if let window {
+            alert.beginSheetModal(for: window)
+        } else {
+            alert.runModal()
+        }
+    }
+
     /// Shows the notifications the core asks for. A scripted run puts a
     /// recorder here, so that a check shows nothing and never asks the user
     /// whether Quill may. Otherwise the Mac's own are put here once the
@@ -108,6 +191,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     init(options: LaunchOptions) {
         self.options = options
         surface = makeTerminalSurface()
+        let support =
+            FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent("Library/Application Support", isDirectory: true)
+        vimrc = ImportedVimrc(
+            folder: ImportedVimrc.folder(
+                applicationSupport: support, configFolder: options.coreEnvironment["QUILL_CONFIG_DIR"]))
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1180, height: 760),
@@ -150,11 +240,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         }
         // While a pane has the keyboard, esc closes it and the pane has
         // first call on the few keys it uses; every other key goes on to
-        // the viewer inside it. The terminal handles its own keys. Only
-        // this window's keys are looked at: a player gone full screen has a
-        // window of its own, where esc means leave full screen.
+        // the viewer inside it. The terminal handles its own keys, and so
+        // does the editor pane, where esc is Vim's. Only this window's keys
+        // are looked at: a player gone full screen has a window of its own,
+        // where esc means leave full screen.
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, event.window === window, let pane, paneHasFocus,
+            guard let self, event.window === window, let pane, paneHasFocus, !pane.takesEveryKey,
                 let key = PaneKey(event: event)
             else { return event }
             if key == .escape {
@@ -282,6 +373,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             spelling.check(check)
         case let .spellSuggest(suggest):
             spelling.suggest(suggest)
+        case let .paneEditor(request):
+            openEditor(request)
         }
     }
 
@@ -443,6 +536,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         coreIsRunning = false
         bridge?.close()
         bridge = nil
+        // There is nobody left to hand a draft back to. Vim is still asked
+        // to save it and go, and is not left running behind the app.
+        afterEditor = nil
+        stopEditor()
         NSApp.dockTile.badgeLabel = nil
         if terminationPending {
             terminationPending = false
@@ -467,9 +564,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     /// Asks the core to flush and exit. If it does not, it is hung up on.
+    ///
+    /// A message being written in Vim is saved and handed back first: the
+    /// core cannot take a draft back once it has gone.
     func stopCore() {
         guard coreIsRunning, !stopping else { return }
         stopping = true
+        guard editor != nil else {
+            askCoreToStop()
+            return
+        }
+        afterEditor = { [weak self] in self?.askCoreToStop() }
+        stopEditor()
+    }
+
+    private func askCoreToStop() {
         bridge?.send(.appWillQuit)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
             guard let self, coreIsRunning else { return }
@@ -551,6 +660,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     /// Puts a pane beside the terminal, in place of any pane already there,
     /// and gives it the keyboard.
     private func show(_ newPane: PaneView) {
+        // Vim keeps the pane while it runs: putting a viewer in its place
+        // would end a message being written.
+        if editor != nil, !(newPane is EditorPane) {
+            NSLog("Quill: a pane was not opened: a message is being written in the editor pane")
+            newPane.tearDown()
+            return
+        }
         newPane.onClose = { [weak self] in self?.closePane() }
         // A pane that replaces another takes its place exactly; the first
         // pane leaves the terminal the larger share.
@@ -567,7 +683,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         focus(newPane)
     }
 
+    /// Closes the pane, whoever asks: its close button, the menu, `esc` in
+    /// a viewer, or the core. The editor pane is not taken away from under
+    /// Vim: Vim is asked to save and leave, and the pane goes when it has.
     private func closePane() {
+        guard let old = pane else { return }
+        if old is EditorPane {
+            stopEditor()
+            return
+        }
+        removePane()
+    }
+
+    private func removePane() {
         guard let old = pane else { return }
         pane = nil
         old.tearDown()
@@ -606,6 +734,160 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     @objc func closePane(_: Any?) {
         closePane()
+    }
+
+    // MARK: - The editor pane
+
+    /// Runs the Vim that ships in the app on a draft, in a terminal pane of
+    /// its own. The core is always answered: now, when nothing is started,
+    /// and otherwise when Vim ends.
+    private func openEditor(_ request: PaneEditor) {
+        var vim: ShippedVim?
+        if !editorSlot.isRunning {
+            do {
+                // In the app's own bundle and nowhere else.
+                vim = try ShippedVim(inBundle: Bundle.main.bundleURL)
+            } catch {
+                NSLog("Quill: this build has no Vim to run: %@", String(describing: error))
+            }
+        }
+        switch editorSlot.request(title: request.title, available: vim != nil) {
+        case let .refuse(answer):
+            if editorSlot.isRunning {
+                NSLog("Quill: an editor was asked for while one is running; the second was not started")
+            }
+            bridge?.send(.editorExited(answer))
+        case .start:
+            guard let vim else {
+                // Not reached: a start is only answered when there is a Vim.
+                if let answer = editorSlot.ended(.failedToStart) {
+                    bridge?.send(.editorExited(answer))
+                }
+                return
+            }
+            startEditor(vim, on: request)
+        }
+    }
+
+    private func startEditor(_ vim: ShippedVim, on request: PaneEditor) {
+        let launch = VimLaunch(
+            vim: vim,
+            draft: request,
+            vimrc: vimrc.current,
+            term: CoreLocator.term,
+            // In the sandbox these are the app's container.
+            home: NSHomeDirectory(),
+            temporaryDirectory: NSTemporaryDirectory(),
+            base: ProcessInfo.processInfo.environment
+        )
+        let terminal = makeTerminalSurface()
+        let running = RunningEditor(
+            surface: terminal, pane: EditorPane(title: request.title, terminal: terminal.view))
+        editor = running
+        terminal.onExit = { [weak self, weak running] exit in
+            guard let self, let running else { return }
+            editorDidExit(exit, of: running)
+        }
+        // The same door every other link goes through.
+        terminal.onOpenLink = { [weak self] address in
+            self?.openLink(address)
+        }
+        show(running.pane)
+        // Raw from the start, as the core's terminal is: inside the sandbox
+        // Vim cannot change its terminal's modes itself.
+        terminal.start(
+            TerminalCommand(
+                executable: launch.executable,
+                arguments: launch.arguments,
+                environment: launch.environment,
+                workingDirectory: launch.workingDirectory,
+                rawTerminal: true
+            ))
+    }
+
+    /// Vim has ended, or never started: the pane goes, the keyboard is the
+    /// terminal's again, and the core is told how it went.
+    private func editorDidExit(_ exit: TerminalExit, of ended: RunningEditor) {
+        guard let running = editor, running === ended else { return }
+        editor = nil
+        let ending: EditorEnding
+        switch exit {
+        case let .exited(code):
+            ending = .exited(code: code)
+        case let .signaled(signal):
+            ending = .signaled(signal: signal)
+        case let .failedToStart(reason):
+            NSLog("Quill: Vim could not be started: %@", reason)
+            ending = .failedToStart
+        }
+        if pane === running.pane {
+            removePane()
+        }
+        if let answer = editorSlot.ended(ending) {
+            bridge?.send(.editorExited(answer))
+        }
+        let next = afterEditor
+        afterEditor = nil
+        next?()
+    }
+
+    /// Asks Vim to save what has been written and leave, as someone at the
+    /// keyboard would: `esc`, then `:wqa`. No verdict is written, so the
+    /// core is left to ask what to do with the draft. A Vim that has not
+    /// gone in two seconds is hung up on, and one that survives that is
+    /// killed: the core is waiting to hear, and is told whatever results.
+    private func stopEditor() {
+        guard let running = editor, !running.isStopping else { return }
+        running.isStopping = true
+        running.pane.setClosing()
+        running.surface.sendKeys(PoliteStop.leaveMode)
+        Task { [weak self, weak running] in
+            try? await Task.sleep(for: .seconds(PoliteStop.pause))
+            guard let self, let running, editor === running else { return }
+            running.surface.sendKeys(PoliteStop.saveAndQuit)
+            try? await Task.sleep(for: .seconds(PoliteStop.patience))
+            guard editor === running else { return }
+            NSLog("Quill: Vim did not leave when asked, and was hung up on")
+            running.surface.terminate()
+            try? await Task.sleep(for: .seconds(PoliteStop.lastResort))
+            guard editor === running else { return }
+            running.surface.kill()
+        }
+    }
+
+    // MARK: - The user's vimrc
+
+    @objc func importVimrc(_: Any?) {
+        vimrcPicker(window) { [weak self] file in
+            guard let file else { return }
+            self?.importVimrc(from: file)
+        }
+    }
+
+    /// Copies a file in as the user's vimrc, in place of any copy already
+    /// there. The Vim that is running, if one is, keeps the one it started
+    /// with.
+    func importVimrc(from file: URL) {
+        do {
+            let size = try vimrc.importFile(file)
+            note("\(file.path) (imported, \(size) bytes)", in: &vimrcResults)
+        } catch {
+            note("\(file.path) (refused: \(error))", in: &vimrcResults)
+            problemReporter(
+                window, "The vimrc was not imported",
+                "Quill could not import \(file.lastPathComponent): \(error).")
+        }
+    }
+
+    @objc func removeImportedVimrc(_: Any?) {
+        do {
+            if try vimrc.remove() {
+                note("removed", in: &vimrcResults)
+            }
+        } catch {
+            note("not removed: \(error)", in: &vimrcResults)
+            problemReporter(window, "The imported vimrc was not removed", "\(error).")
+        }
     }
 
     // MARK: - Edit menu
@@ -653,6 +935,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     /// The mail addresses passed on to the core, in order.
     private(set) var urlsPassedOn: [String] = []
 
+    /// What became of each vimrc import or removal, in order.
+    private(set) var vimrcResults: [String] = []
+
+    /// The editor pane's screen as text, while Vim is running.
+    var editorText: String? { editor?.surface.visibleText() }
+
+    /// Types into the editor pane, as keys. False when no Vim is running.
+    func typeIntoEditor(_ text: String) -> Bool {
+        guard let editor else { return false }
+        editor.surface.sendKeys(text)
+        return true
+    }
+
     /// Keeps the last hundred: the app may run for weeks.
     private func note(_ line: String, in log: inout [String]) {
         log.append(line)
@@ -669,8 +964,24 @@ extension MainWindowController: NSMenuItemValidation {
         switch item.action {
         case #selector(focusNextPane(_:)), #selector(focusPreviousPane(_:)), #selector(closePane(_:)):
             pane != nil
+        case #selector(removeImportedVimrc(_:)):
+            vimrc.current != nil
         default:
             true
         }
+    }
+}
+
+/// The Vim in the editor pane: its terminal, and the pane around it.
+@MainActor
+private final class RunningEditor {
+    let surface: any TerminalSurface
+    let pane: EditorPane
+    /// Vim has been asked to save and leave.
+    var isStopping = false
+
+    init(surface: any TerminalSurface, pane: EditorPane) {
+        self.surface = surface
+        self.pane = pane
     }
 }

@@ -42,9 +42,17 @@ let package = Package(
             name: "Spelling",
             dependencies: ["Bridge"]
         ),
+        // The Vim option: where the Vim that ships in the app is, how it is
+        // started, what the core is told when it ends, and the user's
+        // imported vimrc. Knows a draft file and its folder, never mail, and
+        // starts nothing itself.
+        .target(
+            name: "Editor",
+            dependencies: ["Bridge"]
+        ),
         .executableTarget(
             name: "QuillApp",
-            dependencies: ["TerminalKit", "Bridge", "Panes", "Notifications", "Spelling"]
+            dependencies: ["TerminalKit", "Bridge", "Panes", "Notifications", "Spelling", "Editor"]
         ),
         .testTarget(
             name: "BridgeTests",
@@ -61,6 +69,10 @@ let package = Package(
         .testTarget(
             name: "SpellingTests",
             dependencies: ["Spelling"]
+        ),
+        .testTarget(
+            name: "EditorTests",
+            dependencies: ["Editor"]
         ),
     ],
     swiftLanguageModes: [.v6]

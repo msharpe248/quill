@@ -15,6 +15,18 @@ enum MainMenu {
             keyEquivalent: "")
         app.addItem(.separator())
         append(commands.makeMenuItems(for: .app), to: app, thenSeparator: true)
+        // The vimrc for writing mail in Vim is copied in by the shell: the
+        // core cannot be shown a file outside the sandbox, and has no need
+        // of this one.
+        let importVimrc = app.addItem(
+            withTitle: "Import vimrc\u{2026}", action: #selector(MainWindowController.importVimrc(_:)),
+            keyEquivalent: "")
+        importVimrc.target = panes
+        let removeVimrc = app.addItem(
+            withTitle: "Remove Imported vimrc", action: #selector(MainWindowController.removeImportedVimrc(_:)),
+            keyEquivalent: "")
+        removeVimrc.target = panes
+        app.addItem(.separator())
         app.addItem(withTitle: "Hide Quill", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         let hideOthers = app.addItem(
             withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")

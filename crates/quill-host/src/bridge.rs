@@ -63,6 +63,10 @@ pub enum CoreToShell {
     /// `spell.suggested`.
     #[serde(rename = "spell.suggest")]
     SpellSuggest(SpellSuggest),
+    /// Run the Vim that ships in the app on a draft file. Answered by
+    /// `editor.exited`.
+    #[serde(rename = "pane.editor")]
+    PaneEditor(PaneEditor),
 }
 
 /// A message the shell sends to the core.
@@ -93,6 +97,9 @@ pub enum ShellToCore {
     /// The answer to `spell.suggest`.
     #[serde(rename = "spell.suggested")]
     SpellSuggested(SpellSuggested),
+    /// The answer to `pane.editor`.
+    #[serde(rename = "editor.exited")]
+    EditorExited(EditorExited),
     /// The app is quitting: flush and exit cleanly.
     #[serde(rename = "app.will_quit")]
     AppWillQuit(NoParams),
@@ -658,6 +665,64 @@ impl From<NotifyUsed> for NotifyUsedParams {
         Self {
             id: used.id,
             action: used.action,
+        }
+    }
+}
+
+/// A draft file for the shipped Vim to edit, and the draft's own folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PaneEditor {
+    pub path: AbsolutePath,
+    pub dir: AbsolutePath,
+    pub title: String,
+}
+
+/// How the editor ended. `ran` is false when it could not be started.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "EditorExitedParams", into = "EditorExitedParams")]
+pub struct EditorExited {
+    ran: bool,
+    status: i32,
+}
+
+impl EditorExited {
+    pub fn ran(&self) -> bool {
+        self.ran
+    }
+
+    pub fn status(&self) -> i32 {
+        self.status
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EditorExitedParams {
+    ran: bool,
+    status: i32,
+}
+
+impl TryFrom<EditorExitedParams> for EditorExited {
+    type Error = String;
+
+    fn try_from(params: EditorExitedParams) -> Result<Self, Self::Error> {
+        if (-255..=255).contains(&params.status) {
+            Ok(Self {
+                ran: params.ran,
+                status: params.status,
+            })
+        } else {
+            Err("an exit status is from -255 to 255".to_owned())
+        }
+    }
+}
+
+impl From<EditorExited> for EditorExitedParams {
+    fn from(exited: EditorExited) -> Self {
+        Self {
+            ran: exited.ran,
+            status: exited.status,
         }
     }
 }

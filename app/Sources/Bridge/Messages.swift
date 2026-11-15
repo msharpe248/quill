@@ -44,6 +44,10 @@ public enum CoreToShell: Equatable, Sendable {
     /// Ask what a misspelt word might have been meant to be. Answered by
     /// `spellSuggested`.
     case spellSuggest(SpellSuggest)
+    /// Run the Vim that ships in the app on a draft file, in a terminal pane
+    /// of its own. Answered by `editorExited` when Vim ends, or at once if
+    /// it could not be started.
+    case paneEditor(PaneEditor)
 }
 
 /// A message the shell sends to the core.
@@ -64,6 +68,8 @@ public enum ShellToCore: Equatable, Sendable {
     case spellChecked(SpellChecked)
     /// The answer to `spellSuggest`.
     case spellSuggested(SpellSuggested)
+    /// The answer to `paneEditor`.
+    case editorExited(EditorExited)
     /// The app is quitting: flush and exit cleanly.
     case appWillQuit
 }
@@ -507,6 +513,63 @@ public struct SpellSuggested: Equatable, Sendable, Codable {
     }
 
     static let allowedKeys: Set<String> = ["id", "words"]
+}
+
+/// A draft file for the shipped Vim to edit, and the draft's own folder,
+/// where Vim and the core leave each other notes. The shell passes the
+/// folder to Vim in the environment and does nothing else with it.
+public struct PaneEditor: Equatable, Sendable, Codable {
+    /// The draft file.
+    public let path: String
+    /// The draft's own folder.
+    public let dir: String
+    public let title: String
+
+    /// `nil` unless both paths are absolute.
+    public init?(path: String, dir: String, title: String) {
+        guard path.hasPrefix("/"), dir.hasPrefix("/") else { return nil }
+        self.path = path
+        self.dir = dir
+        self.title = title
+    }
+
+    static let allowedKeys: Set<String> = ["path", "dir", "title"]
+}
+
+/// How the editor ended.
+public struct EditorExited: Equatable, Sendable, Codable {
+    /// False when Vim could not be started: this build has none in it, or
+    /// it would not start. `status` is then 0.
+    public let ran: Bool
+    /// What Vim exited with: 0 for a normal exit, anything else for `:cq`
+    /// or a crash. A Vim ended by a signal is reported as the signal's
+    /// number below zero.
+    public let status: Int
+
+    public static let statuses = -255...255
+
+    /// The answer when Vim was not run.
+    public static let didNotRun = EditorExited(unchecked: false, 0)
+
+    /// `nil` unless the status is from -255 to 255.
+    public init?(ran: Bool, status: Int) {
+        guard Self.statuses.contains(status) else { return nil }
+        self.ran = ran
+        self.status = status
+    }
+
+    /// A Vim that ran and ended with this status, brought into the range
+    /// that may be reported if it is outside it.
+    public init(ranWithStatus status: Int) {
+        self.init(unchecked: true, min(max(status, Self.statuses.lowerBound), Self.statuses.upperBound))
+    }
+
+    private init(unchecked ran: Bool, _ status: Int) {
+        self.ran = ran
+        self.status = status
+    }
+
+    static let allowedKeys: Set<String> = ["ran", "status"]
 }
 
 public enum BridgeError: Error, Equatable, CustomStringConvertible {
