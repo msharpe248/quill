@@ -21,12 +21,12 @@
 //! two copies, and without `MOVE` a move is a copy followed by a removal,
 //! with a moment in between.
 //!
-//! The searches, the `\Deleted` mark and the expunge are sent through
-//! [`Command`] and not through async-imap's own methods. Those do not look
-//! at how a command ended, so a search the server refused reads as a search
-//! that found nothing. Here "nothing found" is what decides that a message
-//! is gone, or that an expunge would take nobody else's mail, and it has to
-//! be the server's answer and not the absence of one.
+//! Every command here goes through [`Command`] and not through async-imap's
+//! own methods. Those do not look at how a command ended, so a search the
+//! server refused reads as a search that found nothing. Here "nothing
+//! found" is what decides that a message is gone, or that an expunge would
+//! take nobody else's mail, and it has to be the server's answer and not the
+//! absence of one.
 //!
 //! Nothing about a selected folder is remembered between calls. Every
 //! operation selects its folder again and takes the UIDVALIDITY from that
@@ -36,13 +36,12 @@
 use std::collections::HashSet;
 
 use async_imap::Session;
-use async_imap::imap_proto::{MailboxDatum, NameAttribute, Response};
-use async_imap::types::{Capabilities, Capability};
+use async_imap::imap_proto::{Capability, MailboxDatum, NameAttribute, Response};
 use quill_core::types::{Flags, FolderId, RemoteId};
 use quill_core::{Error, Result};
 
-use crate::backend::{MessageRef, failed};
-use crate::command::{Command, Reply, Wire};
+use crate::backend::MessageRef;
+use crate::command::{Command, Outcome, Reply, Wire, uid_search};
 use crate::names;
 
 /// The optional parts of IMAP that decide how a message is moved or removed.
@@ -57,21 +56,34 @@ pub(crate) struct Extensions {
 }
 
 impl Extensions {
-    /// What the server said it can do, asked after sign-in. Only what it
-    /// advertises is used: a server that happens to accept `UID MOVE`
-    /// without saying so is not relied on.
-    pub fn of(capabilities: &Capabilities) -> Self {
-        // Capability names are not case-sensitive.
-        let has = |name: &str| {
-            capabilities.iter().any(|capability| match capability {
-                Capability::Atom(atom) => atom.eq_ignore_ascii_case(name),
-                _ => false,
-            })
+    /// Asks the server what it can do. Asked after sign-in, since what a
+    /// server offers can change once it knows who is asking.
+    ///
+    /// Only what it advertises is used: a server that happens to accept
+    /// `UID MOVE` without saying so is not relied on. A server that will
+    /// not answer the question is taken to have neither extension, which
+    /// is the cautious reading.
+    pub async fn ask<T: Wire>(session: &mut Session<T>) -> Result<Self> {
+        let mut found = Self {
+            moves: false,
+            uidplus: false,
         };
-        Self {
-            moves: has("MOVE"),
-            uidplus: has("UIDPLUS"),
-        }
+        Command::new("CAPABILITY")
+            .run_with(session, |response| {
+                if let Response::Capabilities(capabilities) = response {
+                    // Capability names are not case-sensitive.
+                    let has = |name: &str| {
+                        capabilities.iter().any(|capability| match capability {
+                            Capability::Atom(atom) => atom.eq_ignore_ascii_case(name),
+                            _ => false,
+                        })
+                    };
+                    found.moves |= has("MOVE");
+                    found.uidplus |= has("UIDPLUS");
+                }
+            })
+            .await?;
+        Ok(found)
     }
 }
 
@@ -234,20 +246,31 @@ fn flag_list(flags: Flags) -> Vec<&'static str> {
 /// is no longer in it. A folder that exists and will not open is an error,
 /// not an absence.
 async fn present<T: Wire>(session: &mut Session<T>, message: &MessageRef) -> Result<bool> {
-    let mailbox = match session.select(&message.folder).await {
-        Ok(mailbox) => mailbox,
-        Err(async_imap::error::Error::No(text)) => {
+    let reply = Command::new("SELECT")
+        .mailbox(&message.folder)?
+        .run(session)
+        .await?;
+    match reply.outcome {
+        Outcome::Ok => {}
+        Outcome::No => {
             if exists(session, &message.folder).await? {
                 return Err(Error::Backend(format!(
-                    "{} could not be opened: {text}",
-                    message.folder
+                    "{} could not be opened: {}",
+                    message.folder,
+                    reply.words("the server refused")
                 )));
             }
             return Ok(false);
         }
-        Err(other) => return Err(failed(other)),
-    };
-    let Some(validity) = mailbox.uid_validity else {
+        Outcome::Bad => {
+            return Err(Error::Backend(format!(
+                "{} could not be opened: {}",
+                message.folder,
+                reply.words("the server did not understand")
+            )));
+        }
+    }
+    let Some(validity) = reply.uid_validity else {
         return Err(Error::Backend(format!(
             "{} has no UIDVALIDITY",
             message.folder
@@ -257,34 +280,9 @@ async fn present<T: Wire>(session: &mut Session<T>, message: &MessageRef) -> Res
     if validity != message.validity || message.uid == 0 {
         return Ok(false);
     }
-    Ok(search(session, &format!("UID {}", message.uid))
+    Ok(uid_search(session, &format!("UID {}", message.uid))
         .await?
         .contains(&message.uid))
-}
-
-/// The UIDs in the selected folder that match `query`. An answer only when
-/// the server says the search worked.
-async fn search<T: Wire>(session: &mut Session<T>, query: &str) -> Result<HashSet<u32>> {
-    let mut found = HashSet::new();
-    let reply = Command::new("UID SEARCH")
-        .arg(query)
-        .run_with(session, |response| {
-            if let Response::MailboxData(MailboxDatum::Search(uids)) = response {
-                found.extend(uids.iter().copied());
-            }
-        })
-        .await?;
-    done(&reply, "the server would not search the folder")?;
-    Ok(found)
-}
-
-/// `Ok` when the server carried the command out, and its words when not.
-fn done(reply: &Reply, otherwise: &str) -> Result<()> {
-    if reply.is_ok() {
-        Ok(())
-    } else {
-        Err(Error::Backend(reply.words(otherwise)))
-    }
 }
 
 /// Whether a folder of exactly this name can be opened.
@@ -309,7 +307,7 @@ async fn exists<T: Wire>(session: &mut Session<T>, folder: &str) -> Result<bool>
             }
         })
         .await?;
-    done(&reply, "the server would not list its folders")?;
+    reply.require("the server would not list its folders")?;
     Ok(found)
 }
 
@@ -347,7 +345,7 @@ fn arrival(reply: &Reply, uid: u32, to: &FolderId) -> Option<RemoteId> {
 
 /// The UIDs marked `\Deleted` in the selected folder, other than `uid`.
 async fn others_marked<T: Wire>(session: &mut Session<T>, uid: u32) -> Result<HashSet<u32>> {
-    let mut marked = search(session, "DELETED").await?;
+    let mut marked = uid_search(session, "DELETED").await?;
     marked.remove(&uid);
     Ok(marked)
 }
@@ -384,14 +382,11 @@ async fn remove<T: Wire>(
         .arg("+FLAGS.SILENT (\\Deleted)")
         .run(session)
         .await?;
-    done(
-        &marked,
-        "the server would not mark the message for deletion",
-    )?;
+    marked.require("the server would not mark the message for deletion")?;
 
     if extensions.uidplus {
         let expunged = Command::new("UID EXPUNGE").arg(&uid).run(session).await?;
-        done(&expunged, "the server would not expunge the message")?;
+        expunged.require("the server would not expunge the message")?;
     } else {
         // Asked again, now that the next command is the expunge: another
         // mail program may have marked something since the first look.
@@ -406,10 +401,10 @@ async fn remove<T: Wire>(
             )));
         }
         let expunged = Command::new("EXPUNGE").run(session).await?;
-        done(&expunged, "the server would not expunge the folder")?;
+        expunged.require("the server would not expunge the folder")?;
     }
 
-    if search(session, &format!("UID {uid}"))
+    if uid_search(session, &format!("UID {uid}"))
         .await?
         .contains(&message.uid)
     {
@@ -428,11 +423,8 @@ mod tests {
     //! server here says exactly what its script says, and fails the test if
     //! it is sent anything the script did not expect.
 
-    use async_imap::Client;
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream};
-    use tokio::task::JoinHandle;
-
     use super::*;
+    use crate::scripted::{scripted, steps};
 
     const BOTH: Extensions = Extensions {
         moves: true,
@@ -467,64 +459,6 @@ mod tests {
 
     fn archive() -> FolderId {
         FolderId("Archive".to_owned())
-    }
-
-    /// A signed-in session with a server that follows `script`: for each
-    /// line it expects (without the tag), what it answers, with `{tag}`
-    /// standing for the tag of the command in progress. Join the handle
-    /// after dropping the session to check the whole script was played.
-    async fn scripted(script: &[(&str, &str)]) -> (Session<DuplexStream>, JoinHandle<()>) {
-        let (ours, theirs) = tokio::io::duplex(64 * 1024);
-        let mut steps = vec![(
-            "LOGIN \"robin\" \"secret\"".to_owned(),
-            "{tag} OK\r\n".to_owned(),
-        )];
-        steps.extend(
-            script
-                .iter()
-                .map(|(expect, answer)| ((*expect).to_owned(), (*answer).to_owned())),
-        );
-        let server = tokio::spawn(async move {
-            let (read, mut write) = tokio::io::split(theirs);
-            let mut lines = BufReader::new(read);
-            let mut tag = String::new();
-            // After a go-ahead the next line continues a command and has no
-            // tag of its own.
-            let mut continuing = false;
-            for (expect, answer) in steps {
-                let mut line = Vec::new();
-                lines.read_until(b'\n', &mut line).await.unwrap();
-                let line = String::from_utf8(line).unwrap();
-                assert!(!line.is_empty(), "the client hung up before {expect:?}");
-                let line = line.trim_end_matches("\r\n");
-                let said = if continuing {
-                    line
-                } else {
-                    let (theirs, rest) = line.split_once(' ').unwrap();
-                    tag = theirs.to_owned();
-                    rest
-                };
-                assert_eq!(said, expect);
-                continuing = answer.starts_with('+');
-                write
-                    .write_all(answer.replace("{tag}", &tag).as_bytes())
-                    .await
-                    .unwrap();
-            }
-            let mut extra = Vec::new();
-            lines.read_until(b'\n', &mut extra).await.unwrap();
-            assert_eq!(String::from_utf8_lossy(&extra), "", "after the script");
-        });
-        let session = Client::new(ours)
-            .login("robin", "secret")
-            .await
-            .map_err(|(err, _)| err)
-            .unwrap();
-        (session, server)
-    }
-
-    fn steps<'a>(parts: &[&[(&'a str, &'a str)]]) -> Vec<(&'a str, &'a str)> {
-        parts.iter().flat_map(|part| part.iter().copied()).collect()
     }
 
     #[tokio::test]

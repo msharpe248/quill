@@ -10,11 +10,12 @@
 //! when it can be, and as a literal when it holds bytes a quoted string may
 //! not carry.
 
+use std::collections::HashSet;
 use std::fmt::Debug;
 
 use async_imap::Session;
 use async_imap::imap_proto::rfc4315::UidSetMember;
-use async_imap::imap_proto::{RequestId, Response, ResponseCode, Status};
+use async_imap::imap_proto::{MailboxDatum, RequestId, Response, ResponseCode, Status};
 use quill_core::{Error, Result};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 
@@ -124,16 +125,43 @@ async fn write<T: Wire>(stream: &mut T, bytes: &[u8]) -> Result<()> {
     stream.write_all(bytes).await.map_err(lost)
 }
 
+/// The connection failed, or the server kept silent past the limit that
+/// `wait::Bounded` sets. Worth trying again on a new connection.
 fn lost(err: std::io::Error) -> Error {
     Error::Connection(err.to_string())
 }
 
-fn broken(err: async_imap::error::Error) -> Error {
+/// What went wrong inside async-imap, as one of our errors.
+pub(crate) fn broken(err: async_imap::error::Error) -> Error {
     use async_imap::error::Error as Imap;
     match err {
-        Imap::Io(_) | Imap::ConnectionLost => Error::Connection(err.to_string()),
+        Imap::Io(err) => lost(err),
+        Imap::ConnectionLost => Error::Connection(err.to_string()),
         other => Error::Backend(other.to_string()),
     }
+}
+
+/// The UIDs in the selected folder that match `query`.
+///
+/// An answer only when the server says the search worked. async-imap's own
+/// search does not look at how the command ended, so a search the server
+/// refused reads there as one that found nothing, and "nothing" is what
+/// tells a sync that every message has gone.
+pub(crate) async fn uid_search<T: Wire>(
+    session: &mut Session<T>,
+    query: &str,
+) -> Result<HashSet<u32>> {
+    let mut found = HashSet::new();
+    let reply = Command::new("UID SEARCH")
+        .arg(query)
+        .run_with(session, |response| {
+            if let Response::MailboxData(MailboxDatum::Search(uids)) = response {
+                found.extend(uids.iter().copied());
+            }
+        })
+        .await?;
+    reply.require("the server would not search the folder")?;
+    Ok(found)
 }
 
 enum Next {
@@ -207,6 +235,8 @@ pub(crate) struct Reply {
     pub text: String,
     /// `TRYCREATE`: the folder named does not exist.
     pub try_create: bool,
+    /// `UIDVALIDITY`: which numbering the selected folder's UIDs belong to.
+    pub uid_validity: Option<u32>,
     /// `COPYUID`: where copied or moved messages went.
     pub copied: Option<Copied>,
     /// `APPENDUID`: the UIDVALIDITY and UID of a saved message.
@@ -217,6 +247,7 @@ impl Reply {
     fn note(&mut self, code: Option<&ResponseCode<'_>>) {
         match code {
             Some(ResponseCode::TryCreate) => self.try_create = true,
+            Some(ResponseCode::UidValidity(validity)) => self.uid_validity = Some(*validity),
             Some(ResponseCode::CopyUid(validity, from, to)) => {
                 self.copied = Some(Copied {
                     validity: *validity,
@@ -238,6 +269,16 @@ impl Reply {
 
     pub fn is_ok(&self) -> bool {
         self.outcome == Outcome::Ok
+    }
+
+    /// `Ok` when the server carried the command out. When it did not, an
+    /// error in its own words, or in `otherwise` if it gave none.
+    pub fn require(&self, otherwise: &str) -> Result<()> {
+        if self.is_ok() {
+            Ok(())
+        } else {
+            Err(Error::Backend(self.words(otherwise)))
+        }
     }
 
     /// The server's words for an error message, or `fallback` when it gave

@@ -10,6 +10,13 @@
 //! module for what each one does on servers with and without `MOVE` and
 //! `UIDPLUS`.
 //!
+//! What the server says is never guessed at. A command it refuses fails the
+//! call that sent it, so a sync that could not look does not report mail
+//! gone. Mail marked `\Deleted` is left out of a sync until it is expunged
+//! or the mark is taken off. And a server that goes silent is given up on
+//! after a limit ([`ImapBackend::with_patience`]), so that one stuck
+//! connection cannot hold up every later call.
+//!
 //! Transport security follows the account's setting exactly: implicit TLS,
 //! STARTTLS with no fallback, or plaintext only when the account opts in.
 //! Credentials are never sent before the channel is as secure as that
@@ -21,7 +28,10 @@ mod command;
 mod config;
 mod connect;
 mod names;
+#[cfg(test)]
+mod scripted;
 mod uidset;
+mod wait;
 
 pub use backend::{ImapBackend, PasswordProvider};
 pub use config::{ImapConfig, Trust};
@@ -36,5 +46,7 @@ pub use uidset::UidSet;
 /// A certificate the system does not trust comes back as
 /// `Error::Certificate`: there is a server, and the user decides about it.
 pub async fn probe(config: &ImapConfig) -> Result<()> {
-    connect::connect(config).await.map(drop)
+    connect::connect(config, quill_net::PATIENCE)
+        .await
+        .map(drop)
 }

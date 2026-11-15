@@ -480,40 +480,73 @@ pub async fn fill(session: &mut Session<TcpStream>, folder: &str, count: usize) 
 /// answers BAD to the commands they add, as a server that had never heard
 /// of them would. It keeps every command it is sent, so a test can see what
 /// the backend really did.
+///
+/// It can also be told to misbehave in ways Dovecot will not: to answer NO
+/// to commands of the test's choosing, or to stop answering altogether.
 pub struct Without {
     /// Plaintext, like Dovecot's own port.
     pub port: u16,
-    commands: Arc<std::sync::Mutex<Vec<String>>>,
+    control: Arc<Control>,
+}
+
+/// What a test has asked of a [`Without`], shared with its connections.
+#[derive(Default)]
+struct Control {
+    /// Capability names, upper case.
+    hidden: Vec<String>,
+    commands: std::sync::Mutex<Vec<String>>,
+    /// Commands starting with any of these are answered NO.
+    refused: std::sync::Mutex<Vec<String>>,
+    /// While set, commands are taken and never answered.
+    silent: std::sync::atomic::AtomicBool,
 }
 
 impl Without {
     /// `hidden` are capability names: `MOVE`, `UIDPLUS`.
     pub async fn start(upstream: u16, hidden: &[&str]) -> Self {
-        let hidden: Arc<Vec<String>> =
-            Arc::new(hidden.iter().map(|name| name.to_uppercase()).collect());
-        let commands = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let control = Arc::new(Control {
+            hidden: hidden.iter().map(|name| name.to_uppercase()).collect(),
+            ..Control::default()
+        });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
-        let seen = Arc::clone(&commands);
+        let shared = Arc::clone(&control);
         tokio::spawn(async move {
             while let Ok((client, _)) = listener.accept().await {
-                let (hidden, seen) = (Arc::clone(&hidden), Arc::clone(&seen));
+                let control = Arc::clone(&shared);
                 tokio::spawn(async move {
-                    let _ = relay(client, upstream, hidden, seen).await;
+                    let _ = relay(client, upstream, control).await;
                 });
             }
         });
-        Self { port, commands }
+        Self { port, control }
     }
 
     /// Every command sent so far, without its tag, oldest first.
     pub fn commands(&self) -> Vec<String> {
-        self.commands.lock().unwrap().clone()
+        self.control.commands.lock().unwrap().clone()
     }
 
     /// Forgets the commands seen so far.
     pub fn clear(&self) {
-        self.commands.lock().unwrap().clear();
+        self.control.commands.lock().unwrap().clear();
+    }
+
+    /// From now on, answers NO to every command that starts with one of
+    /// `commands`, without passing it on. An empty list refuses nothing.
+    pub fn refuse(&self, commands: &[&str]) {
+        *self.control.refused.lock().unwrap() = commands
+            .iter()
+            .map(|command| command.to_uppercase())
+            .collect();
+    }
+
+    /// Stops answering, or starts again. While silent the relay takes what
+    /// it is sent and says nothing, like a server that has hung.
+    pub fn fall_silent(&self, silent: bool) {
+        self.control
+            .silent
+            .store(silent, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -559,12 +592,7 @@ fn hide(line: Vec<u8>, hidden: &[String]) -> Vec<u8> {
 }
 
 /// One connection through a [`Without`].
-async fn relay(
-    client: TcpStream,
-    upstream: u16,
-    hidden: Arc<Vec<String>>,
-    seen: Arc<std::sync::Mutex<Vec<String>>>,
-) -> std::io::Result<()> {
+async fn relay(client: TcpStream, upstream: u16, control: Arc<Control>) -> std::io::Result<()> {
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
     let server = TcpStream::connect(("127.0.0.1", upstream)).await?;
     let (client_read, client_write) = client.into_split();
@@ -575,7 +603,7 @@ async fn relay(
     let (answered, mut answers) = tokio::sync::mpsc::unbounded_channel::<bool>();
 
     let to_client = Arc::clone(&client_write);
-    let server_hidden = Arc::clone(&hidden);
+    let shared = Arc::clone(&control);
     let down = tokio::spawn(async move {
         let mut server = BufReader::new(server_read);
         // False while inside a response that a literal has interrupted.
@@ -592,7 +620,7 @@ async fn relay(
                 } else if !line.starts_with(b"*") {
                     let _ = answered.send(false);
                 }
-                line = hide(line, &server_hidden);
+                line = hide(line, &shared.hidden);
             }
             let mut client = to_client.lock().await;
             client.write_all(&line).await?;
@@ -613,12 +641,27 @@ async fn relay(
         }
         let text = String::from_utf8_lossy(&line).trim_end().to_owned();
         let (tag, command) = text.split_once(' ').unwrap_or((&text, ""));
-        seen.lock().unwrap().push(command.to_owned());
-        if needs_hidden(command, &hidden) {
+        control.commands.lock().unwrap().push(command.to_owned());
+        if control.silent.load(std::sync::atomic::Ordering::SeqCst) {
+            continue;
+        }
+        let refused = {
+            let upper = command.to_uppercase();
+            let refused = control.refused.lock().unwrap();
+            refused.iter().any(|start| upper.starts_with(start))
+        };
+        let answer = if needs_hidden(command, &control.hidden) {
+            Some("BAD Unknown command")
+        } else if refused {
+            Some("NO Refused for the test")
+        } else {
+            None
+        };
+        if let Some(answer) = answer {
             client_write
                 .lock()
                 .await
-                .write_all(format!("{tag} BAD Unknown command\r\n").as_bytes())
+                .write_all(format!("{tag} {answer}\r\n").as_bytes())
                 .await?;
             continue;
         }
