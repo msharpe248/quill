@@ -1013,3 +1013,49 @@ fn a_dropped_file_that_cannot_be_read_says_so_by_name_and_is_cleared_away() {
     assert!(!screen.contains("files-2"), "{screen}");
     assert!(!harness.screen().contains("Attach:"));
 }
+
+#[test]
+fn emoji_and_other_scripts_survive_being_written_and_sent() {
+    // A family joined from four people, a flag, combining marks, text
+    // written right to left, and text an input method composes.
+    let subject = "Grüße 🎉 から 東京";
+    let body = "Zoë wrote: 你好, こんにちは, 안녕하세요.\n\
+                A family: 👩‍👩‍👧‍👦. A flag: 🇯🇵. Cafe\u{301} and شكرا.";
+
+    let mut harness = wide();
+    harness.keys("c");
+    harness.type_text("pri");
+    harness.keys("enter tab tab");
+    // A subject arrives a key at a time, a body often as one paste: what an
+    // input method commits comes as text, not as key presses.
+    harness.type_text(subject);
+    harness.keys("tab");
+    harness.act(Action::Paste(body.to_owned()));
+    // Moving over a cluster and back must not split it.
+    harness.keys("left left left right right right backspace");
+    harness.type_text(".");
+    let written = harness.state.compose.as_ref().unwrap().content();
+    assert_eq!(written.subject, subject);
+    assert_eq!(written.body, body);
+
+    // Saved as a draft and taken up again, it is the same text.
+    harness.keys("escape 1 g g j enter enter");
+    let reopened = harness.state.compose.as_ref().unwrap().content();
+    assert_eq!(
+        (reopened.subject.as_str(), reopened.body.as_str()),
+        (subject, body)
+    );
+
+    // Sent, and read back as the recipient's client would read it.
+    harness.keys("cmd-enter");
+    let (_, raw) = outgoing(&mut harness);
+    // Nothing outside ASCII goes on the wire unencoded in a header.
+    let headers = raw.split("\r\n\r\n").next().unwrap();
+    assert!(headers.is_ascii(), "{headers}");
+    let parsed = quill_mime::parse(raw.as_bytes(), NOW).unwrap();
+    assert_eq!(parsed.headers.subject, subject);
+    assert_eq!(parsed.body.trim_end(), body);
+    // The HTML beside it carries the same words.
+    let html = parsed.html.unwrap();
+    assert!(html.contains("👩‍👩‍👧‍👦") && html.contains("شكرا"), "{html}");
+}

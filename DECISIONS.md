@@ -241,7 +241,15 @@ The UI stayed usable throughout, which is the acceptance. This was a server on t
 - **An account Quill cannot use yet (POP3, Graph, EWS, or IMAP with no server set) is a notice**, never a failure to start.
 - **The UI's store worker retries when the database is momentarily busy**, since the sync engine writes through its own connection.
 
-## M3, compose and send (in progress)
+## M3, compose and send
+
+Built and accepted on 2026-11-15 against the spec's three tests, with the owner away:
+
+- **Write, reply and send without the mouse**: done in a terminal and in the sandboxed app, against a scratch Dovecot and a local SMTP sink (see "The compose screen" below).
+- **Emoji and input-method text survive a round trip**: a test writes a subject and body holding a joined-family emoji, a flag, combining marks, Chinese, Japanese, Korean and Arabic, saves it as a draft, reopens it, sends it and parses what would go on the wire back to the same text. Committing text from a real input method in the app's window is not checked: nobody was there to type it. What an input method commits reaches the core as text, the path the test takes.
+- **Send and archive offline, reconcile with no duplicates**: engine tests queue moves, deletions, flag changes and mail with the server down, bring it back, and count what the server was asked: each thing once. IMAP moves and deletions are safe to repeat (see "IMAP changes to mail").
+
+Not verified, because it needs the owner: sending through a real provider. Not built, and still owed from the spec's M3 text: drafts copied to the server's Drafts folder; forward as an `.eml` attachment (forward is inline); several identities per account; several drafts open as tabs; the editor's find, paste-as-quotation, reflow and template commands; an image pasted from the clipboard as an attachment.
 
 ### SMTP
 
