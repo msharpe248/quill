@@ -2,7 +2,7 @@
 
 Read `Quill Terminal Email Client Spec.md` at the start of every session. It is the source of truth, and its "Working rules for Claude Code" section applies to all work here. Then read `DECISIONS.md` for the choices made since.
 
-Work on one milestone at a time. M0 (core skeleton) and M1 (shell spike) are built. M1's App Store validation and TestFlight step is deferred to the end by the owner's decision, because it needs an Apple Developer account; do not ask for one before then. M2 (IMAP read) is in progress: the parser, IMAP backend, sync engine, Keychain storage and `quill account` commands are built, and a configured IMAP account syncs end to end. Still to do in M2: the in-app account setup flow, the untrusted-certificate prompt, and the 50,000-message acceptance run.
+Work on one milestone at a time. M0 (core skeleton) and M1 (shell spike) are built. M1's App Store validation and TestFlight step is deferred to the end by the owner's decision, because it needs an Apple Developer account; do not ask for one before then. M2 (IMAP read) is in progress: the parser, IMAP backend, sync engine, Keychain storage and `quill account` commands are built, and a configured IMAP account syncs end to end. HTML-to-styled-text from M4 was pulled forward at the owner's request (`quill_mime::html`); the rest of M4 is not started. Still to do in M2: the in-app account setup flow, the untrusted-certificate prompt, and the 50,000-message acceptance run.
 
 Commit finished, checked work as you go. There is no remote.
 
@@ -37,6 +37,7 @@ For anything visible in the app, also build it and look: `app/build-app.sh`, the
 - Only `app/Sources/TerminalKit` imports `GhosttyTerminal`. Everything else uses the `TerminalSurface` protocol.
 - A bridge change touches `schema/bridge.json`, `schema/examples`, `crates/quill-host/src/bridge.rs` and `app/Sources/Bridge` in the same change.
 - Inside the App Sandbox a program cannot change its terminal's modes or size. `TerminalKit` does it from the PTY's master side. Do not "fix" the core to set raw mode itself.
+- The reader draws a message's HTML from the raw message (`Store::raw`), laid out for the pane's width by `quill_mime::html::render`. Mail is untrusted: every span is sanitized before drawing, and nothing is fetched.
 - Images are placed by the run loop, not drawn by views. A view leaves cells empty and returns an `ImagePlacement`.
 - UI changes show up in the insta snapshots under `crates/quill-tui/tests/snapshots/`. Regenerate with `INSTA_UPDATE=always cargo test -p quill-tui`, then read the diff.
 - Fixtures use invented people at example.com. Never real mail, never real addresses.

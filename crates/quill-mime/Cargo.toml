@@ -11,4 +11,5 @@ workspace = true
 
 [dependencies]
 quill-core.workspace = true
+html2text.workspace = true
 mail-parser.workspace = true

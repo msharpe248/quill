@@ -3,20 +3,37 @@
 //! Content addressing means the same message downloaded twice is stored
 //! once, and a file can be checked against its name.
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use sha2::{Digest, Sha256};
 
 pub struct BlobStore {
-    root: PathBuf,
+    place: Place,
+}
+
+enum Place {
+    Disk(PathBuf),
+    /// For the demo mailbox and tests, which write nothing.
+    Memory(Mutex<HashMap<String, Vec<u8>>>),
 }
 
 impl BlobStore {
     /// Blobs live under `root`, which is created on first write.
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self {
+            place: Place::Disk(root.into()),
+        }
+    }
+
+    /// Blobs held in memory, gone when the store is dropped.
+    pub fn in_memory() -> Self {
+        Self {
+            place: Place::Memory(Mutex::new(HashMap::new())),
+        }
     }
 
     /// The name a blob with these contents has.
@@ -27,17 +44,28 @@ impl BlobStore {
             .collect()
     }
 
-    fn path(&self, hash: &str) -> Option<PathBuf> {
+    fn path(root: &Path, hash: &str) -> Option<PathBuf> {
         // Only our own hashes: never a path someone else chose.
         let valid = hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit());
-        valid.then(|| self.root.join(&hash[..2]).join(&hash[2..]))
+        valid.then(|| root.join(&hash[..2]).join(&hash[2..]))
     }
 
     /// Stores `bytes` and returns their hash. Storing the same bytes again
     /// is free.
     pub fn put(&self, bytes: &[u8]) -> io::Result<String> {
         let hash = Self::hash(bytes);
-        let Some(path) = self.path(&hash) else {
+        let root = match &self.place {
+            Place::Disk(root) => root,
+            Place::Memory(blobs) => {
+                blobs
+                    .lock()
+                    .map_err(|_| io::Error::other("the blob store was poisoned"))?
+                    .entry(hash.clone())
+                    .or_insert_with(|| bytes.to_vec());
+                return Ok(hash);
+            }
+        };
+        let Some(path) = Self::path(root, &hash) else {
             return Err(io::Error::other("unreachable: a SHA-256 is 64 hex digits"));
         };
         if path.is_file() {
@@ -59,7 +87,17 @@ impl BlobStore {
 
     /// The bytes stored under `hash`, or `None` if there are none.
     pub fn get(&self, hash: &str) -> io::Result<Option<Vec<u8>>> {
-        let Some(path) = self.path(hash) else {
+        let root = match &self.place {
+            Place::Disk(root) => root,
+            Place::Memory(blobs) => {
+                return Ok(blobs
+                    .lock()
+                    .map_err(|_| io::Error::other("the blob store was poisoned"))?
+                    .get(hash)
+                    .cloned());
+            }
+        };
+        let Some(path) = Self::path(root, hash) else {
             return Ok(None);
         };
         match fs::read(path) {
@@ -95,6 +133,20 @@ fn private_file(path: &Path) -> io::Result<fs::File> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blobs_in_memory_are_stored_and_read_back() {
+        let blobs = BlobStore::in_memory();
+        let hash = blobs.put(b"Subject: hello\r\n\r\nbody\r\n").unwrap();
+        assert_eq!(hash, BlobStore::hash(b"Subject: hello\r\n\r\nbody\r\n"));
+        assert_eq!(blobs.put(b"Subject: hello\r\n\r\nbody\r\n").unwrap(), hash);
+        assert_eq!(
+            blobs.get(&hash).unwrap().as_deref(),
+            Some(&b"Subject: hello\r\n\r\nbody\r\n"[..])
+        );
+        assert_eq!(blobs.get(&"0".repeat(64)).unwrap(), None);
+        assert_eq!(blobs.get("../etc/passwd").unwrap(), None);
+    }
 
     #[test]
     fn a_blob_is_stored_under_its_hash_and_read_back() {

@@ -31,6 +31,8 @@ pub enum StoreError {
     NewerSchema { found: u32, supported: u32 },
     #[error("cannot encode addresses: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("cannot read or write a saved message: {0}")]
+    Blob(#[from] std::io::Error),
 }
 
 impl StoreError {
@@ -40,7 +42,7 @@ impl StoreError {
         use rusqlite::ErrorCode::{DatabaseBusy, DatabaseLocked};
         let code = match self {
             Self::Sqlite(err) | Self::Migration { source: err, .. } => err.sqlite_error_code(),
-            Self::NewerSchema { .. } | Self::Json(_) => None,
+            Self::NewerSchema { .. } | Self::Json(_) | Self::Blob(_) => None,
         };
         matches!(code, Some(DatabaseBusy | DatabaseLocked))
     }
@@ -100,6 +102,8 @@ pub enum Mailbox {
 
 pub struct Store {
     conn: Connection,
+    /// Where raw messages are kept, when this connection may read them.
+    blobs: Option<BlobStore>,
 }
 
 impl Store {
@@ -109,9 +113,17 @@ impl Store {
         Self::init(Connection::open(path)?)
     }
 
-    /// A private, empty database that lives as long as the `Store`.
+    /// A private, empty database that lives as long as the `Store`, with
+    /// raw messages kept in memory beside it.
     pub fn open_in_memory() -> Result<Self> {
-        Self::init(Connection::open_in_memory()?)
+        Ok(Self::init(Connection::open_in_memory()?)?.with_blobs(BlobStore::in_memory()))
+    }
+
+    /// Says where raw messages are kept, so that [`Store::raw`] can read
+    /// them and [`Store::put_message`] can save them.
+    pub fn with_blobs(mut self, blobs: BlobStore) -> Self {
+        self.blobs = Some(blobs);
+        self
     }
 
     fn init(mut conn: Connection) -> Result<Self> {
@@ -123,7 +135,7 @@ impl Store {
         // finds the other mid-write waits its turn instead of failing.
         conn.busy_timeout(std::time::Duration::from_secs(10))?;
         migrations::run(&mut conn)?;
-        Ok(Self { conn })
+        Ok(Self { conn, blobs: None })
     }
 
     pub fn schema_version(&self) -> Result<u32> {
@@ -288,6 +300,30 @@ impl Store {
             params![message.0, text],
         )?;
         Ok(())
+    }
+
+    /// Saves a whole message: its raw bytes among the blobs, when this store
+    /// has somewhere to keep them, and its text for search.
+    pub fn put_message(&mut self, message: LocalMessageId, text: &str, raw: &[u8]) -> Result<()> {
+        match &self.blobs {
+            Some(blobs) => {
+                let hash = blobs.put(raw)?;
+                self.put_downloaded(message, text, &hash)
+            }
+            None => self.put_body(message, text),
+        }
+    }
+
+    /// The message as it arrived, or `None` when it has not been downloaded
+    /// or this store has no access to the raw messages.
+    pub fn raw(&self, message: LocalMessageId) -> Result<Option<Vec<u8>>> {
+        let Some(blobs) = &self.blobs else {
+            return Ok(None);
+        };
+        match self.blob_hash(message)? {
+            Some(hash) => Ok(blobs.get(&hash)?),
+            None => Ok(None),
+        }
     }
 
     /// The body text, or `None` when it has not been downloaded.
@@ -988,6 +1024,11 @@ mod sync_support_tests {
 
     fn store_with(folders: &[&str], messages: &[(&str, &str, i64)]) -> (Store, LocalAccountId) {
         let mut store = Store::open_in_memory().unwrap();
+        let account = fill(&mut store, folders, messages);
+        (store, account)
+    }
+
+    fn fill(store: &mut Store, folders: &[&str], messages: &[(&str, &str, i64)]) -> LocalAccountId {
         let account = store
             .upsert_account("Work", "robin@example.com", "imap")
             .unwrap();
@@ -1034,7 +1075,7 @@ mod sync_support_tests {
                 )
                 .unwrap();
         }
-        (store, account)
+        account
     }
 
     fn local(store: &Store, folder: &str, remote: &str) -> LocalMessageId {
@@ -1079,6 +1120,44 @@ mod sync_support_tests {
         assert_eq!(store.body(id).unwrap().as_deref(), Some("the text"));
         assert_eq!(store.blob_hash(id).unwrap().as_deref(), Some("abc123"));
         assert_eq!(store.blob_hash(LocalMessageId(999)).unwrap(), None);
+    }
+
+    #[test]
+    fn a_whole_message_is_saved_and_read_back_raw() {
+        let (mut store, _) = store_with(&["INBOX"], &[("INBOX", "1", 50), ("INBOX", "2", 60)]);
+        let id = local(&store, "INBOX", "1");
+        let raw = b"Subject: hello\r\n\r\nthe text\r\n";
+        assert_eq!(store.raw(id).unwrap(), None);
+        store.put_message(id, "the text", raw).unwrap();
+        assert_eq!(store.body(id).unwrap().as_deref(), Some("the text"));
+        assert_eq!(store.blob_hash(id).unwrap(), Some(BlobStore::hash(raw)));
+        assert_eq!(store.raw(id).unwrap().as_deref(), Some(&raw[..]));
+        // A message with text but no raw copy has none to give.
+        let other = local(&store, "INBOX", "2");
+        store.put_body(other, "only text").unwrap();
+        assert_eq!(store.raw(other).unwrap(), None);
+    }
+
+    #[test]
+    fn a_store_without_blobs_keeps_the_text_and_has_no_raw_messages() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("quill.db");
+        let mut store = Store::open(&path).unwrap();
+        fill(&mut store, &["INBOX"], &[("INBOX", "1", 50)]);
+        let id = local(&store, "INBOX", "1");
+        store.put_message(id, "the text", b"raw").unwrap();
+        assert_eq!(store.body(id).unwrap().as_deref(), Some("the text"));
+        assert_eq!(store.raw(id).unwrap(), None);
+
+        // Another connection, told where the engine keeps raw messages,
+        // reads what the engine saved there.
+        let blobs = BlobStore::new(dir.path().join("blobs"));
+        let hash = blobs.put(b"raw bytes").unwrap();
+        store.put_downloaded(id, "the text", &hash).unwrap();
+        let reader = Store::open(&path)
+            .unwrap()
+            .with_blobs(BlobStore::new(dir.path().join("blobs")));
+        assert_eq!(reader.raw(id).unwrap().as_deref(), Some(&b"raw bytes"[..]));
     }
 
     #[test]

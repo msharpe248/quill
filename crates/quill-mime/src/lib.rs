@@ -5,16 +5,21 @@
 //! send: parsing never panics, and the text it returns is still untrusted
 //! (the UI strips control characters before drawing it).
 
-use mail_parser::MessageParser;
+pub mod html;
+
+use mail_parser::{MessageParser, PartKind};
 use quill_core::types::{Address, Headers};
 
 /// A message, read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Parsed {
     pub headers: Headers,
-    /// The body as plain text. A message with only an HTML body gets a plain
-    /// rendering of it; styled rendering of HTML arrives in M4.
+    /// The body as plain text: the plain part when the message has one,
+    /// otherwise the text of its HTML. This is what search and quoting use.
     pub body: String,
+    /// The HTML body, when the message has one that is worth showing in
+    /// place of `body`. Render it with [`html::render`].
+    pub html: Option<String>,
     pub attachments: Vec<Attachment>,
 }
 
@@ -74,14 +79,28 @@ pub fn parse(raw: &[u8], received: i64) -> Option<Parsed> {
             .unwrap_or(received),
     };
 
-    let mut body = String::new();
-    for part in message.text_bodies() {
-        let part = part.replace("\r\n", "\n");
-        if !body.is_empty() && !body.ends_with('\n') {
-            body.push('\n');
+    // Only parts that really are plain text or HTML: the parser offers a
+    // conversion of the other kind when one is missing, and Quill does its
+    // own.
+    let join = |parts: &mut dyn Iterator<Item = mail_parser::MessagePart<'_>>, html: bool| {
+        let mut joined = String::new();
+        let wanted = |part: &mail_parser::MessagePart<'_>| match part.kind() {
+            PartKind::Html => html,
+            PartKind::Text => !html,
+            _ => false,
+        };
+        for part in parts.filter(wanted) {
+            let Some(text) = part.text() else { continue };
+            if !joined.is_empty() && !joined.ends_with('\n') {
+                joined.push('\n');
+            }
+            joined.push_str(&text.replace("\r\n", "\n"));
         }
-        body.push_str(&part);
-    }
+        joined
+    };
+    let plain = join(&mut message.text_body(), false);
+    let markup = join(&mut message.html_body(), true);
+    let (body, html) = choose_body(plain, markup);
 
     let attachments = message
         .attachments()
@@ -105,8 +124,35 @@ pub fn parse(raw: &[u8], received: i64) -> Option<Parsed> {
     Some(Parsed {
         headers,
         body,
+        html,
         attachments,
     })
+}
+
+/// Decides what the reader shows, given a message's plain text and its HTML
+/// (either may be empty). Returns the plain-text body and, when the HTML is
+/// the better thing to show, the HTML.
+///
+/// HTML is shown when the message has it: senders write the HTML and let
+/// their software generate the plain part, which is often a stub ("your mail
+/// program cannot show this message") or a list of raw tracking links. The
+/// plain part wins only when the HTML renders to nothing, or to so much less
+/// that it is clearly not the whole message, such as a lone image.
+fn choose_body(plain: String, markup: String) -> (String, Option<String>) {
+    if markup.trim().is_empty() {
+        return (plain, None);
+    }
+    let Some(rendered) = html::to_text(&markup) else {
+        return (plain, None);
+    };
+    let visible = |text: &str| text.chars().filter(|c| !c.is_whitespace()).count();
+    if plain.trim().is_empty() {
+        return (rendered, Some(markup));
+    }
+    if visible(&rendered) * 4 < visible(&plain) {
+        return (plain, None);
+    }
+    (plain, Some(markup))
 }
 
 /// The year 2200, in seconds since the Unix epoch.
@@ -247,7 +293,7 @@ mod tests {
     }
 
     #[test]
-    fn the_plain_alternative_is_preferred_over_html() {
+    fn a_message_with_both_keeps_the_plain_text_and_shows_the_html() {
         let parsed = read(
             "Subject: x\n\
              Content-Type: multipart/alternative; boundary=\"b\"\n\
@@ -263,7 +309,64 @@ mod tests {
              --b--\n",
         );
         assert_eq!(parsed.body.trim_end(), "The plain version.");
+        assert_eq!(
+            parsed.html.as_deref().map(str::trim_end),
+            Some("<p>The <b>HTML</b> version.</p>")
+        );
         assert!(parsed.attachments.is_empty());
+    }
+
+    fn alternatives(plain: &str, html: &str) -> Parsed {
+        read(&format!(
+            "Subject: x\n\
+             Content-Type: multipart/alternative; boundary=\"b\"\n\
+             \n\
+             --b\n\
+             Content-Type: text/plain; charset=utf-8\n\
+             \n\
+             {plain}\n\
+             --b\n\
+             Content-Type: text/html; charset=utf-8\n\
+             \n\
+             {html}\n\
+             --b--\n"
+        ))
+    }
+
+    #[test]
+    fn a_stub_of_a_plain_part_gives_way_to_the_html() {
+        let parsed = alternatives(
+            "Your mail program cannot show this message.",
+            "<h1>Order shipped</h1><p>Your order 1042 left the warehouse today.</p>",
+        );
+        assert!(parsed.html.is_some());
+        // Search still finds what the stub says, not what it hides. The
+        // reader shows the HTML.
+        assert_eq!(
+            parsed.body.trim_end(),
+            "Your mail program cannot show this message."
+        );
+    }
+
+    #[test]
+    fn html_that_shows_almost_nothing_gives_way_to_the_plain_text() {
+        let parsed = alternatives(
+            "The quarterly figures are attached. Revenue is up four percent on last year \
+             and costs are flat, so the margin target holds.",
+            "<img src=\"cid:scan\"><p>x</p>",
+        );
+        assert_eq!(parsed.html, None);
+        assert!(parsed.body.starts_with("The quarterly figures"));
+    }
+
+    #[test]
+    fn a_plain_message_has_no_html() {
+        let parsed = read("Subject: x\n\nJust text, with <b>angle brackets</b>.\n");
+        assert_eq!(parsed.html, None);
+        assert_eq!(
+            parsed.body.trim_end(),
+            "Just text, with <b>angle brackets</b>."
+        );
     }
 
     #[test]
@@ -281,6 +384,7 @@ mod tests {
             parsed.body
         );
         assert!(parsed.body.contains("We keep it seven days."));
+        assert!(parsed.html.is_some());
         assert!(!parsed.body.contains('<'), "{:?}", parsed.body);
         assert!(!parsed.body.contains("alert"), "{:?}", parsed.body);
     }

@@ -59,7 +59,7 @@ const FOLDERS: [(&str, &str, FolderRole); 5] = [
 const SYNCED: &str = "fixture-v1";
 
 /// One fixture message. In Sent and Drafts, `who` is the recipient; everywhere
-/// else it is the sender.
+/// else it is the sender. A body that starts with `<html>` is sent as HTML.
 struct Seed {
     folder: &'static str,
     who: (&'static str, &'static str),
@@ -195,9 +195,23 @@ const WORK: &[Seed] = &[
         unread: true,
         starred: false,
         attachments: false,
-        body: "This week: why nobody agrees on what a quoted-printable soft line break is, a \
-               tour of the worst Content-Type headers seen in the wild, and a reader asks whether \
-               RFC 5322 comments can really be nested. (They can.)\n",
+        body: "<html><body>\n\
+               <div style=\"display:none\">Soft line breaks, bad headers and nested comments.</div>\n\
+               <h1>The Weekly Parser</h1>\n\
+               <p><em>Issue 88</em>: parsing email is still hard.</p>\n\
+               <h2>This week</h2>\n\
+               <ul>\n\
+               <li>Why nobody agrees on what a \
+               <a href=\"https://example.com/issue-88/soft-breaks\">quoted-printable soft line \
+               break</a> is</li>\n\
+               <li>A tour of the <b>worst</b> <code>Content-Type</code> headers seen in the \
+               wild</li>\n\
+               <li>A reader asks whether RFC 5322 comments can really be nested. (They can.)</li>\n\
+               </ul>\n\
+               <p><a href=\"https://example.com/issue-88\">Read the issue</a> or \
+               <a href=\"https://example.com/unsubscribe\">unsubscribe</a>.</p>\n\
+               <img src=\"https://example.com/open.gif\" width=\"1\" height=\"1\">\n\
+               </body></html>\n",
     },
     Seed {
         folder: "inbox",
@@ -423,7 +437,14 @@ impl FixtureBackend {
             ("Date", date),
             ("Message-ID", headers.message_id.clone().unwrap_or_default()),
             ("MIME-Version", "1.0".to_owned()),
-            ("Content-Type", "text/plain; charset=utf-8".to_owned()),
+            (
+                "Content-Type",
+                if seed.body.starts_with("<html>") {
+                    "text/html; charset=utf-8".to_owned()
+                } else {
+                    "text/plain; charset=utf-8".to_owned()
+                },
+            ),
             ("Content-Transfer-Encoding", "8bit".to_owned()),
         ] {
             raw.push_str(name);

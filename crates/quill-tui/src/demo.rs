@@ -29,7 +29,9 @@ pub async fn seed(store: &mut Store, now: i64) -> Result<(), DemoError> {
             for message in &delta.added {
                 let raw = backend.fetch_raw(&message.id).await?;
                 if let Some(local) = store.local_message_id(folder_id, &message.id)? {
-                    store.put_body(local, &plain_body(&raw, message.headers.date))?;
+                    // Kept whole, as a downloaded message is, so the reader
+                    // has its HTML to draw.
+                    store.put_message(local, &plain_body(&raw, message.headers.date), &raw)?;
                 }
             }
         }

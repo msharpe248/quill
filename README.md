@@ -10,7 +10,7 @@ Milestone 0, the core skeleton, is in place: the Rust workspace, the local store
 
 Milestone 1, the app shell, is in place too. `Quill.app` runs the core in its own libghostty terminal inside the App Sandbox, builds its menus and toolbar from the core's command list, shows files in a Quick Look pane beside the terminal, and draws images inline with the Kitty graphics protocol. App Store validation is deferred until there is a developer account to sign with.
 
-Milestone 2, reading mail over IMAP, is under way. An IMAP account in `config.toml` syncs into the local store and reads offline; see "Adding an IMAP account" below. Still to come in M2: setting an account up from inside the app, and trusting a self-signed server from a prompt. Sending arrives in M3, and Microsoft accounts with OAuth in M5.
+Milestone 2, reading mail over IMAP, is under way. An IMAP account in `config.toml` syncs into the local store and reads offline; see "Adding an IMAP account" below. HTML mail is drawn as styled text: headings, lists, emphasis, quotes and simple tables, with links numbered and listed at the end of the message. Still to come in M2: setting an account up from inside the app, and trusting a self-signed server from a prompt. Sending arrives in M3, and Microsoft accounts with OAuth in M5.
 
 ## Try it
 
@@ -156,11 +156,11 @@ Layout of the workspace:
 | Crate | Holds |
 |---|---|
 | `quill-core` | Domain types, the `Backend` trait, config, the fixture backend |
-| `quill-store` | The SQLite store: schema, migrations, queries |
+| `quill-store` | The SQLite store: schema, migrations, queries, raw message blobs |
 | `quill-tui` | The terminal UI: state, views, keymap, themes, command registry |
 | `quill-host` | What hosts the core: the app shell over the bridge, or nothing |
 | `quill-media` | Images: the Kitty graphics protocol |
-| `quill-mime` | Reading mail: RFC 5322 and MIME parsing |
+| `quill-mime` | Reading mail: RFC 5322 and MIME parsing, HTML as styled text |
 | `quill-imap` | The IMAP backend |
 | `quill-sync` | The sync engine: runs each account's backend into the store |
 | `quill-auth` | Secrets: the macOS Keychain |

@@ -38,7 +38,7 @@ fn the_demo_mailbox_starts_on_the_unified_inbox() {
     assert_eq!(harness.state.mailbox_unread(), 12);
     // The reader previews the selected message without marking it read.
     assert!(
-        matches!(&harness.state.reader.body, Body::Loaded(body) if body.starts_with("Hi Robin,"))
+        matches!(&harness.state.reader.body, Body::Loaded(body) if body.text.starts_with("Hi Robin,"))
     );
     assert_eq!(unread_in_store(&harness), 12);
     assert!(harness.row_with("Q4 roadmap").contains("> * @"));
@@ -409,12 +409,14 @@ fn resizing_rewraps_the_body_and_keeps_the_scroll_in_range() {
     assert!(harness.state.reader.lines.len() < narrow_lines);
     assert_eq!(harness.state.reader.scroll, 0);
     for line in &harness.state.reader.lines {
-        assert!(quill_tui::text::width(line) <= 82, "{line}");
+        let line = line.text();
+        assert!(quill_tui::text::width(&line) <= 82, "{line}");
     }
     harness.resize(50, 12);
     assert!(harness.state.reader.lines.len() > narrow_lines);
     for line in &harness.state.reader.lines {
-        assert!(quill_tui::text::width(line) <= 46, "{line}");
+        let line = line.text();
+        assert!(quill_tui::text::width(&line) <= 46, "{line}");
     }
 }
 
@@ -537,7 +539,7 @@ fn a_body_not_yet_downloaded_is_fetched_and_shown_when_it_lands() {
     // It lands: the reader reads it from the store.
     harness.act(Action::Sync(SyncEvent::BodyReady(id)));
     assert!(
-        matches!(&harness.state.reader.body, Body::Loaded(body) if text.starts_with(body.as_str()))
+        matches!(&harness.state.reader.body, Body::Loaded(body) if text.starts_with(body.text.as_str()))
     );
     assert!(harness.screen().contains("Hi Robin,"));
 }
@@ -1042,4 +1044,104 @@ fn no_image_without_a_message_or_room() {
     harness.env.images = true;
     harness.keys("I");
     assert!(placements(&harness).is_empty());
+}
+
+#[test]
+fn an_html_message_is_drawn_as_styled_text() {
+    use ratatui::style::Modifier;
+
+    let mut harness = Harness::demo(200, 60);
+    harness.keys("G k k enter");
+    assert_eq!(
+        harness.selected_subject(),
+        "Issue 88: Parsing email is still hard"
+    );
+    assert!(
+        matches!(&harness.state.reader.body, Body::Loaded(body) if body.html.is_some()),
+        "the reader was given the message's HTML"
+    );
+    let screen = harness.screen();
+    // Structure survives; markup, hidden preview text and the tracking
+    // image do not.
+    assert!(screen.contains("# The Weekly Parser"), "{screen}");
+    assert!(screen.contains("* A tour of the worst Content-Type headers"));
+    assert!(screen.contains("Read the issue[2] or unsubscribe[3]."));
+    assert!(screen.contains("[2] https://example.com/issue-88"));
+    assert!(!screen.contains("<h1>") && !screen.contains("display:none"));
+    assert!(!screen.contains("Soft line breaks, bad headers"));
+    assert!(!screen.contains("open.gif"));
+
+    // Emphasis is carried by text attributes, not by colour alone.
+    let buffer = harness.buffer();
+    let modifier_at = |needle: &str| {
+        let row = screen
+            .lines()
+            .position(|line| line.contains(needle))
+            .unwrap();
+        let line = screen.lines().nth(row).unwrap();
+        let column = quill_tui::text::width(&line[..line.find(needle).unwrap()]);
+        buffer[(column as u16, row as u16)].modifier
+    };
+    assert!(modifier_at("# The Weekly Parser").contains(Modifier::BOLD));
+    assert!(modifier_at("worst Content-Type").contains(Modifier::BOLD));
+    assert!(modifier_at("Issue 88: parsing").contains(Modifier::ITALIC));
+    assert!(modifier_at("Read the issue").contains(Modifier::UNDERLINED));
+    assert!(!modifier_at("A tour of").contains(Modifier::BOLD));
+}
+
+#[test]
+fn an_html_message_is_laid_out_again_for_a_narrower_pane() {
+    let mut harness = Harness::demo(200, 60);
+    harness.keys("G k k enter");
+    let wide = harness.state.reader.lines.len();
+    harness.resize(80, 24);
+    assert!(harness.state.reader.lines.len() > wide);
+    let width = harness.state.reader.wrap_width.unwrap();
+    for line in &harness.state.reader.lines {
+        let line = line.text();
+        // The list of links is clipped by the pane, not wrapped.
+        assert!(
+            quill_tui::text::width(&line) <= width || line.starts_with('['),
+            "{line}"
+        );
+    }
+}
+
+#[test]
+fn html_cannot_smuggle_escape_sequences_onto_the_screen() {
+    use quill_tui::data::LoadedBody;
+
+    let mut harness = Harness::demo(200, 60);
+    let id = harness.state.list.rows[0].id;
+    harness.act(Action::Data(DataEvent::BodyLoaded {
+        id,
+        body: Some(LoadedBody {
+            text: "plain".to_owned(),
+            html: Some("<p>before&#27;[2J&#7;after <a href=\"https://example.com/\u{1b}]0;x\u{7}\">go</a></p>".to_owned()),
+        }),
+    }));
+    for line in &harness.state.reader.lines {
+        assert!(
+            !line.text().chars().any(char::is_control),
+            "{:?}",
+            line.text()
+        );
+    }
+    assert!(harness.screen().contains("before[2Jafter go[1]"));
+}
+
+#[test]
+fn html_that_renders_to_nothing_falls_back_to_the_plain_text() {
+    use quill_tui::data::LoadedBody;
+
+    let mut harness = Harness::demo(200, 60);
+    let id = harness.state.list.rows[0].id;
+    harness.act(Action::Data(DataEvent::BodyLoaded {
+        id,
+        body: Some(LoadedBody {
+            text: "The plain words.".to_owned(),
+            html: Some("<script>nothing()</script>".to_owned()),
+        }),
+    }));
+    assert!(harness.screen().contains("The plain words."));
 }

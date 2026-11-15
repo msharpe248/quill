@@ -16,7 +16,7 @@ use clap::{Args, Parser, Subcommand};
 use jiff::tz::TimeZone;
 use quill_auth::{Keychain, SecretStore};
 use quill_core::config::{AccountConfig, Config};
-use quill_store::Store;
+use quill_store::{BlobStore, Store};
 use quill_sync::SyncOptions;
 use quill_tui::app::SyncLink;
 use quill_tui::state::Notice;
@@ -128,7 +128,9 @@ async fn tui(args: TuiArgs) -> anyhow::Result<()> {
         let open = || {
             Store::open(&database).with_context(|| format!("cannot open {}", database.display()))
         };
-        let mut store = open()?;
+        // The UI reads raw messages too: the reader draws a message's HTML
+        // from the message as it arrived.
+        let mut store = open()?.with_blobs(BlobStore::new(paths.data_dir.join("blobs")));
         let secrets: Arc<dyn SecretStore> = Arc::new(Keychain::new());
         let prepared = accounts::prepare(&loaded.config, &mut store, &secrets, loaded.config_ok)
             .context("cannot register the accounts")?;

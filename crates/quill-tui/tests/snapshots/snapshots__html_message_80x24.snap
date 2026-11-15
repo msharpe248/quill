@@ -1,0 +1,28 @@
+---
+source: crates/quill-tui/tests/snapshots.rs
+expression: harness.screen()
+---
+┌ [1] Accounts ──┐┏ [3] Reader ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+│> Unified    11 │┃ From:    The Weekly Parser <newsletter@example.com>        ┃
+│  Work          │┃ To:      Robin Vale <robin@example.com>                    ┃
+│    Inbox     7 │┃ Date:    Mon 02 Nov 2026 09:30                             ┃
+│    Drafts      │┃ Subject: Issue 88: Parsing email is still hard             ┃
+│    Sent        │┃                                                            ┃
+│    Archive     │┃ # The Weekly Parser                                        ┃
+│    Trash       │┃                                                            ┃
+│  Personal      │┃ Issue 88: parsing email is still hard.                     ┃
+│    Inbox     4 │┃                                                            ┃
+│    Drafts      │┃ ## This week                                               ┃
+│    Sent        │┃                                                            ┃
+│    Archive     │┃ * Why nobody agrees on what a quoted-printable soft line   ┃
+│    Trash       │┃   break[1] is                                              ┃
+│                │┃ * A tour of the worst Content-Type headers seen in the     ┃
+│                │┃   wild                                                     ┃
+│                │┃ * A reader asks whether RFC 5322 comments can really be    ┃
+│                │┃   nested. (They can.)                                      ┃
+│                │┃                                                            ┃
+│                │┃ Read the issue[2] or unsubscribe[3].                       ┃
+│                │┃                                                            ┃
+│                │┃ [1] https://example.com/issue-88/soft-breaks               ┃
+└────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1-16 of 18 ┛
+ j/k scroll  space page  esc back  u unread  s star  z zoom  ? help  q quit

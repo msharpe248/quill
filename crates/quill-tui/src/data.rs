@@ -33,11 +33,21 @@ pub enum DataEvent {
     /// `body` is `None` when the message's body is not in the store.
     BodyLoaded {
         id: LocalMessageId,
-        body: Option<String>,
+        body: Option<LoadedBody>,
     },
     /// Something in the store changed; views of it should reload.
     StoreChanged,
     Error(String),
+}
+
+/// A message's body as the reader needs it. Both parts are untrusted text.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LoadedBody {
+    /// The body as plain text.
+    pub text: String,
+    /// The HTML to show in its place, when the message has HTML worth
+    /// showing and its raw form is at hand.
+    pub html: Option<String>,
 }
 
 /// Runs one request against the store. This is the whole of the worker's
@@ -71,10 +81,20 @@ fn run(store: &mut Store, request: DataRequest) -> quill_store::Result<Vec<DataE
             mailbox,
             rows: store.messages(mailbox)?,
         }],
-        DataRequest::LoadBody(id) => vec![DataEvent::BodyLoaded {
-            id,
-            body: store.body(id)?,
-        }],
+        DataRequest::LoadBody(id) => {
+            let body = store.body(id)?.map(|text| LoadedBody {
+                // The HTML is read from the message as it arrived. If that
+                // cannot be had, the text is still worth showing.
+                html: store
+                    .raw(id)
+                    .ok()
+                    .flatten()
+                    .and_then(|raw| quill_mime::parse(&raw, 0))
+                    .and_then(|parsed| parsed.html),
+                text,
+            });
+            vec![DataEvent::BodyLoaded { id, body }]
+        }
         DataRequest::SetSeen { id, seen } => changed(store.set_seen(id, seen)?),
         DataRequest::SetFlagged { id, flagged } => changed(store.set_flagged(id, flagged)?),
     })
@@ -195,7 +215,10 @@ mod tests {
             handle(&mut store, DataRequest::LoadBody(id)),
             [DataEvent::BodyLoaded {
                 id,
-                body: Some("Body text".to_owned())
+                body: Some(LoadedBody {
+                    text: "Body text".to_owned(),
+                    html: None
+                })
             }]
         );
         let missing = LocalMessageId(999);
@@ -245,5 +268,45 @@ mod tests {
         drop(handle);
         // The worker exits, dropping its sender, which closes the channel.
         assert_eq!(rx.recv().await, None);
+    }
+
+    #[test]
+    fn a_downloaded_message_brings_its_html() {
+        let (mut store, _, id) = store_with_one_message();
+        let raw = b"Subject: Hello\r\nContent-Type: text/html; charset=utf-8\r\n\r\n\
+                    <p>Your hold is <b>ready</b>.</p>\r\n";
+        store.put_message(id, "Your hold is ready.", raw).unwrap();
+        match handle(&mut store, DataRequest::LoadBody(id)).as_slice() {
+            [
+                DataEvent::BodyLoaded {
+                    body: Some(body), ..
+                },
+            ] => {
+                assert_eq!(body.text, "Your hold is ready.");
+                assert_eq!(
+                    body.html.as_deref().map(str::trim_end),
+                    Some("<p>Your hold is <b>ready</b>.</p>")
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_plain_message_has_no_html_to_bring() {
+        let (mut store, _, id) = store_with_one_message();
+        store
+            .put_message(id, "Just text.", b"Subject: Hello\r\n\r\nJust text.\r\n")
+            .unwrap();
+        assert_eq!(
+            handle(&mut store, DataRequest::LoadBody(id)),
+            [DataEvent::BodyLoaded {
+                id,
+                body: Some(LoadedBody {
+                    text: "Just text.".to_owned(),
+                    html: None
+                })
+            }]
+        );
     }
 }

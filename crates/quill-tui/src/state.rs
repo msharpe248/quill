@@ -8,11 +8,12 @@ use std::collections::{BTreeSet, VecDeque};
 
 use jiff::tz::TimeZone;
 use quill_core::types::{Flags, FolderRole, LocalAccountId, LocalFolderId, LocalMessageId};
+use quill_mime::html::Line;
 use quill_store::{AccountRow, FolderRow, Mailbox, MessageRow};
 use quill_sync::{SyncEvent, SyncRequest};
 
 use crate::command::{CommandId, Context, Registry};
-use crate::data::{DataEvent, DataRequest};
+use crate::data::{DataEvent, DataRequest, LoadedBody};
 use crate::keymap::{KeyChord, Keymap, Resolution};
 use crate::layout::{self, LayoutMode};
 use crate::theme::Styles;
@@ -192,7 +193,7 @@ pub enum Body {
     Loading,
     /// Not in the store yet: being fetched from the server.
     Downloading,
-    Loaded(String),
+    Loaded(LoadedBody),
     /// Not in the store and not to be had, with the reason to show.
     Unavailable(String),
 }
@@ -201,8 +202,9 @@ pub enum Body {
 pub struct Reader {
     pub row: Option<MessageRow>,
     pub body: Body,
-    /// The body wrapped to `wrap_width`.
-    pub lines: Vec<String>,
+    /// The body laid out for `wrap_width`: wrapped plain text, or the
+    /// message's HTML as styled text.
+    pub lines: Vec<Line>,
     pub wrap_width: Option<usize>,
     pub scroll: usize,
 }
@@ -718,7 +720,10 @@ impl State {
             DataEvent::BodyLoaded { id, body } => {
                 if self.reader.row.as_ref().is_some_and(|row| row.id == id) {
                     self.reader.body = match body {
-                        Some(body) => Body::Loaded(text::sanitize_body(body.trim_end())),
+                        Some(body) => Body::Loaded(LoadedBody {
+                            text: text::sanitize_body(body.text.trim_end()),
+                            html: body.html,
+                        }),
                         None => {
                             // Not downloaded yet. Ask for it; the reader
                             // hears when it lands or why it cannot.
@@ -758,7 +763,7 @@ impl State {
             let width = layout::reader_text_width(rect);
             if self.reader.wrap_width != Some(width) {
                 self.reader.lines = match &self.reader.body {
-                    Body::Loaded(body) => text::wrap(body, width),
+                    Body::Loaded(body) => body_lines(body, width),
                     Body::None | Body::Loading | Body::Downloading | Body::Unavailable(_) => {
                         Vec::new()
                     }
@@ -921,6 +926,31 @@ fn scroll(current: usize, motion: Motion, page: usize) -> usize {
         Motion::Bottom => usize::MAX,
         Motion::PageDown => current.saturating_add(page),
         Motion::PageUp => current.saturating_sub(page),
+    }
+}
+
+/// A body laid out `width` columns wide: its HTML as styled text when it has
+/// HTML that renders, otherwise its plain text, wrapped.
+fn body_lines(body: &LoadedBody, width: usize) -> Vec<Line> {
+    let rendered = body
+        .html
+        .as_deref()
+        .and_then(|html| quill_mime::html::render(html, width));
+    match rendered {
+        Some(mut lines) => {
+            // What a stranger's HTML says is as untrusted as anything else.
+            for line in &mut lines {
+                for span in &mut line.spans {
+                    span.text = text::sanitize_line(&span.text);
+                }
+                line.spans.retain(|span| !span.text.is_empty());
+            }
+            lines
+        }
+        None => text::wrap(&body.text, width)
+            .into_iter()
+            .map(Line::plain)
+            .collect(),
     }
 }
 

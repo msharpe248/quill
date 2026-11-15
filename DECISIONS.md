@@ -123,8 +123,8 @@ The Keychain needs no entitlement for the app's own items; an access group share
 ## M2, IMAP read (in progress)
 
 - **Mail is parsed with `mail-parser` 1.0.1**, the spec's candidate. It needs Rust 1.98, so the workspace's minimum Rust version rises from 1.89 to 1.98.
-- **One function reads every message**: `quill_mime::parse` takes raw RFC 5322 bytes from any backend and returns headers, a plain-text body and the attachment list.
-- **An HTML-only message is shown through `mail-parser`'s own HTML-to-text conversion** for now. The styled conversion and sanitizer (`html2text`, `ammonia`) are M4.
+- **One function reads every message**: `quill_mime::parse` takes raw RFC 5322 bytes from any backend and returns headers, a plain-text body, the HTML when it is worth showing, and the attachment list.
+- **HTML mail is drawn as styled text now, not in M4.** The owner tried a real account on 2026-11-15, found that nearly all of it was HTML, and asked for it to be rendered as well as possible. So the "HTML to text" part of M4 is built early; the web view pane, sanitizer, remote-content rules and inline images stay in M4. See "HTML" below.
 - **A message's date falls back to when it was received** if the Date header is missing, unreadable, before 1970 or after 2200. A forged or broken date must not send a message to the far end of the list.
 - **A forwarded message (`message/rfc822`) is an attachment**, not part of the body.
 - **The demo mailbox's bodies now go through the parser**, replacing the split at the first blank line.
@@ -144,11 +144,24 @@ The Keychain needs no entitlement for the app's own items; an access group share
 - **List headers are fetched as `BODY.PEEK[HEADER.FIELDS (...)]` and read by `quill-mime`**, not taken from IMAP's `ENVELOPE`. One parser then handles every encoding, for every backend.
 - **Flags are added and removed by name** (`+FLAGS`/`-FLAGS`), never replaced wholesale, so keywords Quill does not track survive.
 - **Reading a message uses `BODY.PEEK[]`**, so downloading it does not mark it read on the server. Marking read is an explicit flag change.
-- **A folder's role comes from SPECIAL-USE, then from common names** (`Sent Items`, `Deleted Items`, `Spam` and so on) for top-level folders on servers without it. Overrides in config are still to add.
+- **A folder's role comes from SPECIAL-USE, then from common names** (`Sent Items`, `Deleted Items`, `Spam` and so on) for top-level folders on servers without it. A role the server declares for one folder is never also guessed for another, and only the first folder with a telling name gets a guessed role: a `Junk` beside the server's declared junk folder is an ordinary folder. Overrides in config are still to add.
+- **A server that keeps every folder inside the inbox loses that prefix in the names shown.** Courier-style servers list `INBOX.Sent`, `INBOX.Trash`; when every folder but the inbox starts with `INBOX` and the delimiter, the sidebar shows `Sent`, `Trash`. This is worked out from the LIST response instead of the NAMESPACE command, which `async-imap` 0.12 has no call for. The folder id sent to the server is unchanged.
+- **Levels of a folder path are shown with `/`** whatever the server's delimiter, and the inbox is shown as `Inbox`.
 - **Mailbox names are decoded from modified UTF-7 for display** with a small decoder here, and kept encoded as the folder id.
 - **One connection per account, reopened after any error.** IDLE, and with it a second connection, arrives in M6.
 - **Moving, copying and deleting return "not supported"** until the operation queue in M3.
 - **Client certificates (mutual TLS) and TLS 1.0/1.1 are not supported.** The spec lists the first as a per-account extra; it has no milestone yet.
+
+### HTML
+
+- **HTML becomes styled text with `html2text` 0.17.4** (MIT), the spec's candidate, with its `css` feature so that `display: none` is honoured: marketing mail hides a preview line that way. Colours in the mail are ignored; they assume a white page.
+- **The reader shows the HTML when a message has it**, and the plain part only when the HTML renders to nothing or to less than a quarter of the plain part's text. Senders write the HTML; the plain alternative is generated, and on the owner's mail it was often a stub ("your mail program cannot show this") or raw tracking links. Of 1,172 real messages, 1,159 are shown from their HTML. `Parsed::body` stays the plain text, for search and quoting.
+- **The HTML is read from the raw message each time it is opened**, not stored a second time in the database. The store hands the UI the raw message (`Store::raw`), the store worker parses it, and the reader lays it out for the pane's width, again on every resize. On the owner's mail the slowest layout took 6 ms, so it runs in `update`; HTML over 2 MB is not rendered and the plain text is shown.
+- **Blobs can live in memory** (`BlobStore::in_memory`), so the demo mailbox keeps raw messages like a real one and still writes nothing. `Store::open_in_memory` has them by default; a file store reads blobs only when told where they are (`with_blobs`).
+- **Links are numbered after their text and listed at the end**, each target once. A link with nothing to read (around an image with no description, say) gets no number, and anchors and `javascript:` links are never numbered. The list is drawn dim and clipped to the pane, one line per link. Opening a link by number comes with the `o` command.
+- **Layout tables are read as blocks; data tables are drawn as grids.** A message with one table inside another, or a table marked `role="presentation"`, is treated as laid out with tables. This is a guess made per message, since `html2text` cannot be told per table.
+- **Headings keep a `#` marker and are bold; an image with a description shows as `[description]`**; images without one, which are mostly spacers and tracking pixels, show nothing.
+- **Every span of rendered HTML goes through the same control-character stripping as plain text** before it is drawn.
 
 ### Testing IMAP
 

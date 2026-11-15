@@ -44,6 +44,12 @@ fn open_message_scrolled() {
 }
 
 #[test]
+fn html_message() {
+    // The newsletter, third from the end of the unified inbox, is HTML.
+    snapshot_after("html_message", "G k k enter");
+}
+
+#[test]
 fn second_message_selected() {
     snapshot_after("second_message_selected", "j");
 }

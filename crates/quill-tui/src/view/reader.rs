@@ -3,7 +3,7 @@
 use quill_core::types::Address;
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Modifier;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Padding;
 
@@ -11,6 +11,7 @@ use super::{ImagePlacement, SAMPLE_IMAGE_ID, pane_block, placeholder};
 use crate::layout;
 use crate::state::{Body, Env, Pane, State};
 use crate::text;
+use crate::theme::Styles;
 
 /// The width of the longest label and its gap: `Subject: `.
 const LABEL_WIDTH: usize = 9;
@@ -140,7 +141,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) -> Option
         }
         Body::Loaded(_) => {
             let rows = usize::from(bottom - y);
-            for (offset, text) in state
+            for (offset, line) in state
                 .reader
                 .lines
                 .iter()
@@ -149,11 +150,43 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) -> Option
                 .enumerate()
             {
                 let rect = Rect::new(inner.x, y + offset as u16, inner.width, 1);
-                frame.render_widget(Line::styled(text.as_str(), styles.text()), rect);
+                let spans: Vec<Span> = line
+                    .spans
+                    .iter()
+                    .map(|span| Span::styled(span.text.as_str(), body_style(span.style, styles)))
+                    .collect();
+                // A line wider than the pane, such as a long address in the
+                // list of links, is clipped at its edge.
+                frame.render_widget(Line::from(spans), rect);
             }
         }
     }
     image
+}
+
+/// How a piece of a message body is drawn. Every distinction is carried by
+/// a text attribute, so it survives a terminal without colour.
+fn body_style(style: quill_mime::html::Style, styles: &Styles) -> Style {
+    let mut drawn = if style.dim {
+        styles.dim()
+    } else if style.code {
+        styles.accent()
+    } else {
+        styles.text()
+    };
+    if style.bold {
+        drawn = drawn.add_modifier(Modifier::BOLD);
+    }
+    if style.italic {
+        drawn = drawn.add_modifier(Modifier::ITALIC);
+    }
+    if style.strike {
+        drawn = drawn.add_modifier(Modifier::CROSSED_OUT);
+    }
+    if style.link {
+        drawn = drawn.add_modifier(Modifier::UNDERLINED);
+    }
+    drawn
 }
 
 fn join(addresses: &[Address]) -> String {
