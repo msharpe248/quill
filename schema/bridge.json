@@ -12,7 +12,8 @@
         { "$ref": "#/$defs/commands.list" },
         { "$ref": "#/$defs/state.update" },
         { "$ref": "#/$defs/pane.preview" },
-        { "$ref": "#/$defs/pane.close" }
+        { "$ref": "#/$defs/pane.close" },
+        { "$ref": "#/$defs/url.open" }
       ]
     },
     "shellToCore": {
@@ -86,7 +87,7 @@
           "properties": {
             "context": {
               "description": "Where the keyboard focus is inside the terminal UI.",
-              "enum": ["sidebar", "list", "reader", "help"]
+              "enum": ["sidebar", "list", "reader", "help", "links"]
             },
             "enabled": {
               "description": "Names of the commands that would do something right now. Menu items and toolbar buttons for every other command are disabled.",
@@ -126,6 +127,29 @@
               "pattern": "^/"
             },
             "title": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "url.open": {
+      "description": "Core to shell. Open a web or mail address in the user's default browser or mail program. The shell opens nothing else: no other scheme, and nothing outside printable ASCII.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "url.open" },
+        "params": {
+          "type": "object",
+          "required": ["url"],
+          "additionalProperties": false,
+          "properties": {
+            "url": {
+              "description": "An http, https or mailto address.",
+              "type": "string",
+              "pattern": "^([hH][tT][tT][pP][sS]?://|[mM][aA][iI][lL][tT][oO]:)[!-~]+$"
+            }
           }
         }
       }

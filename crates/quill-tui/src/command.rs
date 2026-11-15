@@ -9,6 +9,8 @@ pub enum Context {
     List,
     Reader,
     Help,
+    /// Choosing one of a message's links to open.
+    Links,
 }
 
 impl Context {
@@ -18,6 +20,7 @@ impl Context {
             Self::List => "Message list",
             Self::Reader => "Reader",
             Self::Help => "Help",
+            Self::Links => "Links",
         }
     }
 }
@@ -28,7 +31,10 @@ const EVERYWHERE: &[Context] = &[
     Context::List,
     Context::Reader,
     Context::Help,
+    Context::Links,
 ];
+/// Where a message is in view: commands on its body apply.
+const MESSAGE: &[Context] = &[Context::List, Context::Reader];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CommandId {
@@ -49,6 +55,8 @@ pub enum CommandId {
     ViewZoom,
     MessageToggleUnread,
     MessageToggleStar,
+    MessageToggleHtml,
+    MessageOpenLink,
     DebugPreviewSample,
     DebugImageSample,
     HelpToggle,
@@ -190,7 +198,7 @@ impl Registry {
                     "Open",
                     Navigation,
                     Some(Menu::Message),
-                    &[Context::Sidebar, Context::List],
+                    &[Context::Sidebar, Context::List, Context::Links],
                 ),
                 // Before nav.back, so that a key bound to both quits from a
                 // pane and only closes the help overlay.
@@ -277,6 +285,28 @@ impl Registry {
                         &[Context::List, Context::Reader],
                     ),
                     "star",
+                ),
+                with_symbol(
+                    spec(
+                        MessageToggleHtml,
+                        "message.toggle_html",
+                        "Show as HTML or as plain text",
+                        Message,
+                        Some(Menu::Message),
+                        MESSAGE,
+                    ),
+                    "doc.plaintext",
+                ),
+                with_symbol(
+                    spec(
+                        MessageOpenLink,
+                        "message.open_link",
+                        "Open a link",
+                        Message,
+                        Some(Menu::Message),
+                        MESSAGE,
+                    ),
+                    "link",
                 ),
                 // A stand-in until messages have attachments to preview (M4):
                 // it exercises the Quick Look pane end to end.
@@ -367,6 +397,8 @@ pub fn hints(context: Context) -> &'static [Hint] {
         hint(&[NavNext, NavPrev], "scroll"),
         hint(&[NavPageDown], "page"),
         hint(&[NavBack], "back"),
+        hint(&[MessageOpenLink], "links"),
+        hint(&[MessageToggleHtml], "html/text"),
         hint(&[MessageToggleUnread], "unread"),
         hint(&[MessageToggleStar], "star"),
         hint(&[ViewZoom], "zoom"),
@@ -377,7 +409,13 @@ pub fn hints(context: Context) -> &'static [Hint] {
         hint(&[NavNext, NavPrev], "scroll"),
         hint(&[NavBack], "close"),
     ];
+    const LINKS: &[Hint] = &[
+        hint(&[NavNext, NavPrev], "move"),
+        hint(&[NavOpen], "open in browser"),
+        hint(&[NavBack], "close"),
+    ];
     match context {
+        Context::Links => LINKS,
         Context::Sidebar => SIDEBAR,
         Context::List => LIST,
         Context::Reader => READER,

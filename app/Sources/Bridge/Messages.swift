@@ -16,6 +16,8 @@ public enum CoreToShell: Equatable, Sendable {
     case panePreview(PanePreview)
     /// Close the second pane and return focus to the terminal.
     case paneClose
+    /// Open a web or mail address in the user's browser or mail program.
+    case urlOpen(UrlOpen)
 }
 
 /// A message the shell sends to the core.
@@ -73,7 +75,38 @@ public struct StateUpdate: Equatable, Sendable, Codable {
 }
 
 public enum Context: String, Equatable, Sendable, Codable {
-    case sidebar, list, reader, help
+    case sidebar, list, reader, help, links
+}
+
+public struct UrlOpen: Equatable, Sendable, Codable {
+    /// An http, https or mailto address. See `Links.isOpenable`.
+    public var url: String
+
+    public init(url: String) {
+        self.url = url
+    }
+
+    static let allowedKeys: Set<String> = ["url"]
+}
+
+/// Which addresses the shell will open, whoever asks: the core over the
+/// bridge, or the terminal reporting a click.
+public enum Links {
+    /// Only web pages and mail addresses, in printable ASCII. A message must
+    /// not be able to open a file or start another program by naming some
+    /// other scheme. This is the same rule as `quill_core::links::is_openable`.
+    public static func isOpenable(_ url: String) -> Bool {
+        let lower = url.lowercased()
+        guard let scheme = ["https://", "http://", "mailto:"].first(where: lower.hasPrefix) else {
+            return false
+        }
+        return url.utf8.count > scheme.utf8.count && url.utf8.allSatisfy { (0x21...0x7E).contains($0) }
+    }
+
+    /// The address as a URL, when it is one the shell opens.
+    public static func openable(_ url: String) -> URL? {
+        isOpenable(url) ? URL(string: url) : nil
+    }
 }
 
 public struct PanePreview: Equatable, Sendable, Codable {

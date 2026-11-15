@@ -23,6 +23,9 @@ pub enum CoreToShell {
     /// Close the second pane and return focus to the terminal.
     #[serde(rename = "pane.close")]
     PaneClose(NoParams),
+    /// Open a web or mail address in the user's browser or mail program.
+    #[serde(rename = "url.open")]
+    UrlOpen(UrlOpen),
 }
 
 /// A message the shell sends to the core.
@@ -97,6 +100,47 @@ pub enum Context {
     List,
     Reader,
     Help,
+    Links,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UrlOpen {
+    pub url: OpenableUrl,
+}
+
+/// An address Quill will open: `http`, `https` or `mailto`, in printable
+/// ASCII. It cannot be built or decoded holding anything else.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct OpenableUrl(String);
+
+impl OpenableUrl {
+    pub fn new(url: &str) -> Option<Self> {
+        quill_core::links::is_openable(url).then(|| Self(url.to_owned()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for OpenableUrl {
+    type Error = String;
+
+    fn try_from(url: String) -> Result<Self, Self::Error> {
+        if quill_core::links::is_openable(&url) {
+            Ok(Self(url))
+        } else {
+            Err("not an http, https or mailto address".to_owned())
+        }
+    }
+}
+
+impl From<OpenableUrl> for String {
+    fn from(url: OpenableUrl) -> Self {
+        url.0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

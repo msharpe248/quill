@@ -24,6 +24,11 @@ final class GhosttySurface: TerminalSurface {
         set { delegateProxy.onTitleChange = newValue }
     }
 
+    var onOpenLink: ((String) -> Void)? {
+        get { delegateProxy.onOpenLink }
+        set { delegateProxy.onOpenLink = newValue }
+    }
+
     var view: NSView { terminalView }
 
     init(appearance: TerminalAppearance) {
@@ -157,10 +162,18 @@ private final class Link: @unchecked Sendable {
 }
 
 @MainActor
-private final class DelegateProxy: TerminalSurfaceTitleDelegate {
+private final class DelegateProxy: TerminalSurfaceTitleDelegate, TerminalSurfaceOpenURLHandlingDelegate {
     var onTitleChange: ((String) -> Void)?
+    var onOpenLink: ((String) -> Void)?
 
     func terminalDidChangeTitle(_ title: String) {
         onTitleChange?(title)
+    }
+
+    /// Every clicked link is ours to decide. libghostty's own opener is never
+    /// used: it would start `open` itself, outside the app's say.
+    func terminalShouldHandleOpenURL(_ url: String, kind _: TerminalOpenURLKind) -> Bool {
+        onOpenLink?(url)
+        return true
     }
 }

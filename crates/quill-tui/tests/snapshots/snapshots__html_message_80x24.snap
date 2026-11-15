@@ -24,5 +24,5 @@ expression: harness.screen()
 │                │┃ Read the issue[2] or unsubscribe[3].                       ┃
 │                │┃                                                            ┃
 │                │┃ [1] https://example.com/issue-88/soft-breaks               ┃
-└────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1-16 of 18 ┛
- j/k scroll  space page  esc back  u unread  s star  z zoom  ? help  q quit
+└────────────────┘┗ html ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1-16 of 18 ┛
+ j/k scroll  space page  esc back  o links  t html/text  u unread  ? help

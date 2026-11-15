@@ -7,9 +7,9 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Padding;
 
-use super::{ImagePlacement, SAMPLE_IMAGE_ID, pane_block, placeholder};
+use super::{ImagePlacement, LinkPlacement, SAMPLE_IMAGE_ID, pane_block, placeholder};
 use crate::layout;
-use crate::state::{Body, Env, Pane, State};
+use crate::state::{Body, Env, Pane, Showing, State};
 use crate::text;
 use crate::theme::Styles;
 
@@ -17,8 +17,15 @@ use crate::theme::Styles;
 const LABEL_WIDTH: usize = 9;
 
 /// Draws the reader. Returns the image to place over it, if the message
-/// shows one and the terminal can draw it.
-pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) -> Option<ImagePlacement> {
+/// shows one and the terminal can draw it, and adds the link text it drew
+/// to `links`.
+pub fn render(
+    frame: &mut Frame,
+    area: Rect,
+    state: &State,
+    env: &Env,
+    links: &mut Vec<LinkPlacement>,
+) -> Option<ImagePlacement> {
     let styles = &env.styles;
     let focused = state.focus == Pane::Reader;
     let mut block = pane_block(3, "Reader", focused, styles).padding(Padding::horizontal(1));
@@ -54,6 +61,15 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) -> Option
         block = block.title_bottom(
             Line::styled(format!(" {first}-{last} of {total} "), styles.dim()).right_aligned(),
         );
+    }
+    // Which version is on show, when there is another to switch to.
+    if state.reader.has_two_versions() {
+        let version = match state.reader.showing() {
+            Some(Showing::Html) => " html ",
+            Some(Showing::Plain) => " plain text ",
+            None => "",
+        };
+        block = block.title_bottom(Line::styled(version, styles.dim()).left_aligned());
     }
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -158,6 +174,36 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) -> Option
                 // A line wider than the pane, such as a long address in the
                 // list of links, is clipped at its edge.
                 frame.render_widget(Line::from(spans), rect);
+
+                // Where the link text landed, for the run loop to mark.
+                let mut column = 0;
+                for span in &line.spans {
+                    let room = width.saturating_sub(column);
+                    if room == 0 {
+                        break;
+                    }
+                    if span.style.link {
+                        let x = inner.x + column as u16;
+                        let drawn = frame
+                            .buffer_mut()
+                            .cell((x, rect.y))
+                            .map(ratatui::buffer::Cell::style);
+                        if let Some(style) = drawn {
+                            links.push(LinkPlacement {
+                                x,
+                                y: rect.y,
+                                text: text::clip(&span.text, room).to_owned(),
+                                style,
+                                url: span
+                                    .link
+                                    .and_then(|index| state.reader.links.get(index))
+                                    .filter(|url| quill_mime::links::is_openable(url))
+                                    .cloned(),
+                            });
+                        }
+                    }
+                    column += text::width(&span.text);
+                }
             }
         }
     }

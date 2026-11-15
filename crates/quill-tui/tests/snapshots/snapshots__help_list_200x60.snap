@@ -25,14 +25,14 @@ expression: harness.screen()
 │                          │┃                                       ┃ Message                                                      ┃ply, whichever is easier.                                          │
 │                          │┃                                       ┃   u                        Mark read or unread               ┃                                                                   │
 │                          │┃                                       ┃   s                        Star or unstar                    ┃                                                                   │
+│                          │┃                                       ┃   t                        Show as HTML or as plain text     ┃                                                                   │
+│                          │┃                                       ┃   o                        Open a link                       ┃                                                                   │
 │                          │┃                                       ┃                                                              ┃                                                                   │
 │                          │┃                                       ┃ General                                                      ┃                                                                   │
-│                          │┃                                       ┃   q, ctrl-c                Quit                              ┃                                                                   │
+│                          │┃                                       ┃   q, ctrl-c                Quit                              ┃ Corp                                                              │
 │                          │┃                                       ┃   P                        Preview a sample file             ┃                                                                   │
-│                          │┃                                       ┃   I                        Show a sample image               ┃ Corp                                                              │
+│                          │┃                                       ┃   I                        Show a sample image               ┃                                                                   │
 │                          │┃                                       ┃   ?                        Help for this context             ┃                                                                   │
-│                          │┃                                       ┃                                                              ┃                                                                   │
-│                          │┃                                       ┃                                                              ┃                                                                   │
 │                          │┃                                       ┃                                                              ┃                                                                   │
 │                          │┃                                       ┃                                                              ┃                                                                   │
 │                          │┃                                       ┃                                                              ┃                                                                   │

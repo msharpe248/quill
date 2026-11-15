@@ -65,6 +65,14 @@ pub trait Host: Send + Sync {
     fn close_pane(&self) {
         self.send(CoreToShell::PaneClose(NoParams {}));
     }
+
+    /// Opens a web or mail address in the user's browser or mail program.
+    /// An address Quill does not open is ignored.
+    fn open_url(&self, url: &str) {
+        if let Some(url) = bridge::OpenableUrl::new(url) {
+            self.send(CoreToShell::UrlOpen(bridge::UrlOpen { url }));
+        }
+    }
 }
 
 /// The host for this run, the events it will send, and a problem to show the

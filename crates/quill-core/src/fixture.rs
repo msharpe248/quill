@@ -59,7 +59,8 @@ const FOLDERS: [(&str, &str, FolderRole); 5] = [
 const SYNCED: &str = "fixture-v1";
 
 /// One fixture message. In Sent and Drafts, `who` is the recipient; everywhere
-/// else it is the sender. A body that starts with `<html>` is sent as HTML.
+/// else it is the sender. With `html`, the message is sent as both: `body`
+/// as its plain part and `html` as its HTML part.
 struct Seed {
     folder: &'static str,
     who: (&'static str, &'static str),
@@ -69,6 +70,7 @@ struct Seed {
     starred: bool,
     attachments: bool,
     body: &'static str,
+    html: Option<&'static str>,
 }
 
 const HOUR: i64 = 60;
@@ -92,6 +94,7 @@ const WORK: &[Seed] = &[
                The PDF has the detail, including the dependency chart you asked for. Comments in \
                the doc or by reply, whichever is easier.\n\nThanks,\nAna\n\n-- \nAna Ruiz\n\
                Product, Example Corp\n",
+        html: None,
     },
     Seed {
         folder: "inbox",
@@ -104,6 +107,7 @@ const WORK: &[Seed] = &[
         body: "All 214 checks passed for PR #42 (store: forward-only migrations).\n\n\
                fmt      ok\nclippy   ok\ntest     ok   (212 passed, 2 ignored)\ndeny     ok\n\n\
                This message was sent by a robot. Replies go nowhere.\n",
+        html: None,
     },
     Seed {
         folder: "inbox",
@@ -115,6 +119,7 @@ const WORK: &[Seed] = &[
         attachments: true,
         body: "Robin,\n\nA few shots from the team hike attached. The one of you falling into the \
                stream is, I think, the best photograph I have ever taken.\n\nSam\n",
+        html: None,
     },
     Seed {
         folder: "inbox",
@@ -128,6 +133,7 @@ const WORK: &[Seed] = &[
                opinions, and push the planning session after lunch.\n\n\
                > Draft agenda attached. Shout if anything is missing.\n\
                > We have the room from nine until four.\n\nPriya\n",
+        html: None,
     },
     Seed {
         folder: "inbox",
@@ -139,6 +145,7 @@ const WORK: &[Seed] = &[
         attachments: true,
         body: "Hello Robin,\n\nPlease find attached invoice 2026-114 for October. Payment terms \
                are thirty days as usual.\n\nBest regards,\nTomás\n",
+        html: None,
     },
     Seed {
         folder: "inbox",
@@ -153,6 +160,7 @@ const WORK: &[Seed] = &[
                - Below that the reader should replace the list. Nobody wanted a tiny reader.\n\
                - The help overlay needs to say which pane it is describing.\n\n\
                谢谢大家 🎉\n\nJing\n",
+        html: None,
     },
     Seed {
         folder: "inbox",
@@ -164,6 +172,7 @@ const WORK: &[Seed] = &[
         attachments: false,
         body: "The mail servers will be unavailable on Sunday between 02:00 and 04:00 UTC while \
                we apply updates. Mail sent to you during the window will be delivered afterwards.\n",
+        html: None,
     },
     Seed {
         folder: "inbox",
@@ -175,6 +184,7 @@ const WORK: &[Seed] = &[
         attachments: false,
         body: "Are you around on Thursday? There is a new noodle place by the station and I \
                refuse to go alone.\n\nLena\n",
+        html: None,
     },
     Seed {
         folder: "inbox",
@@ -186,6 +196,7 @@ const WORK: &[Seed] = &[
         attachments: true,
         body: "Robin,\n\nLegal accepted everything except clause 7.2. Their counter-proposal is \
                attached with changes tracked. I think we can live with it.\n\nOmar\n",
+        html: None,
     },
     Seed {
         folder: "inbox",
@@ -195,7 +206,14 @@ const WORK: &[Seed] = &[
         unread: true,
         starred: false,
         attachments: false,
-        body: "<html><body>\n\
+        body: "The Weekly Parser, issue 88: parsing email is still hard.\n\n\
+               This week: why nobody agrees on what a quoted-printable soft line break is, a \
+               tour of the worst Content-Type headers seen in the wild, and a reader asks whether \
+               RFC 5322 comments can really be nested. (They can.)\n\n\
+               Read the issue: https://example.com/issue-88\n\
+               Unsubscribe: https://example.com/unsubscribe\n",
+        html: Some(
+            "<html><body>\n\
                <div style=\"display:none\">Soft line breaks, bad headers and nested comments.</div>\n\
                <h1>The Weekly Parser</h1>\n\
                <p><em>Issue 88</em>: parsing email is still hard.</p>\n\
@@ -212,6 +230,7 @@ const WORK: &[Seed] = &[
                <a href=\"https://example.com/unsubscribe\">unsubscribe</a>.</p>\n\
                <img src=\"https://example.com/open.gif\" width=\"1\" height=\"1\">\n\
                </body></html>\n",
+        ),
     },
     Seed {
         folder: "inbox",
@@ -223,6 +242,7 @@ const WORK: &[Seed] = &[
         attachments: false,
         body: "Robin,\n\nWelcome aboard! Your laptop is at the front desk and your first week is \
                mostly meeting people.\n\nAna\n",
+        html: None,
     },
     Seed {
         folder: "drafts",
@@ -233,6 +253,7 @@ const WORK: &[Seed] = &[
         starred: false,
         attachments: false,
         body: "Ana,\n\nTwo weeks for the offline queue is fantasy. Four, maybe.\n",
+        html: None,
     },
     Seed {
         folder: "sent",
@@ -244,6 +265,7 @@ const WORK: &[Seed] = &[
         attachments: true,
         body: "Draft agenda attached. Shout if anything is missing.\n\
                We have the room from nine until four.\n\nRobin\n",
+        html: None,
     },
     Seed {
         folder: "sent",
@@ -254,6 +276,7 @@ const WORK: &[Seed] = &[
         starred: false,
         attachments: true,
         body: "Omar,\n\nOur redlines are attached. Clause 7.2 is the one that matters.\n\nRobin\n",
+        html: None,
     },
     Seed {
         folder: "archive",
@@ -264,6 +287,7 @@ const WORK: &[Seed] = &[
         starred: false,
         attachments: false,
         body: "Flights are booked. We land at ten and the first talk is at two.\n\nLena\n",
+        html: None,
     },
     Seed {
         folder: "archive",
@@ -274,6 +298,7 @@ const WORK: &[Seed] = &[
         starred: false,
         attachments: false,
         body: "1 of 198 checks failed for PR #17.\n\nclippy   FAILED\n",
+        html: None,
     },
 ];
 
@@ -288,6 +313,7 @@ const PERSONAL: &[Seed] = &[
         attachments: false,
         body: "Your mother wants to know whether you are coming on Sunday and whether you are \
                bringing anyone. I want to know whether you still have my drill.\n\nDad\n",
+        html: None,
     },
     Seed {
         folder: "inbox",
@@ -299,6 +325,7 @@ const PERSONAL: &[Seed] = &[
         attachments: false,
         body: "Seven o'clock at the north car park. It is twelve kilometres and only the first \
                three are uphill, which is what I said last time too.\n\nMaya\n",
+        html: None,
     },
     Seed {
         folder: "inbox",
@@ -310,6 +337,7 @@ const PERSONAL: &[Seed] = &[
         attachments: false,
         body: "The item you requested is ready for collection at the Riverside branch. We will \
                keep it for seven days.\n",
+        html: None,
     },
     Seed {
         folder: "inbox",
@@ -321,6 +349,7 @@ const PERSONAL: &[Seed] = &[
         attachments: false,
         body: "Fine, but if it is another nine-hundred-page novel about a sad professor I am \
                leaving the club.\n\n> How about the one everybody is talking about?\n\nJo\n",
+        html: None,
     },
     Seed {
         folder: "inbox",
@@ -332,6 +361,7 @@ const PERSONAL: &[Seed] = &[
         attachments: false,
         body: "This is a reminder of your check-up next Tuesday at 08:40. Please let us know at \
                least a day ahead if you cannot make it.\n",
+        html: None,
     },
     Seed {
         folder: "inbox",
@@ -343,6 +373,7 @@ const PERSONAL: &[Seed] = &[
         attachments: true,
         body: "The jollof recipe is attached. Do not skip the step where you let the base fry \
                down. Everything depends on it.\n\nMaya\n",
+        html: None,
     },
     Seed {
         folder: "sent",
@@ -353,6 +384,7 @@ const PERSONAL: &[Seed] = &[
         starred: false,
         attachments: false,
         body: "How about the one everybody is talking about?\n\nRobin\n",
+        html: None,
     },
     Seed {
         folder: "archive",
@@ -363,6 +395,7 @@ const PERSONAL: &[Seed] = &[
         starred: false,
         attachments: false,
         body: "One item on your account is due back in three days.\n",
+        html: None,
     },
 ];
 
@@ -429,6 +462,7 @@ impl FixtureBackend {
             .to_zoned(jiff::tz::TimeZone::UTC);
         let date =
             jiff::fmt::rfc2822::to_string(&date).map_err(|err| Error::Backend(err.to_string()))?;
+        const BOUNDARY: &str = "quill-fixture-alternative";
         let mut raw = String::new();
         for (name, value) in [
             ("From", join(&headers.from)),
@@ -439,10 +473,9 @@ impl FixtureBackend {
             ("MIME-Version", "1.0".to_owned()),
             (
                 "Content-Type",
-                if seed.body.starts_with("<html>") {
-                    "text/html; charset=utf-8".to_owned()
-                } else {
-                    "text/plain; charset=utf-8".to_owned()
+                match seed.html {
+                    Some(_) => format!("multipart/alternative; boundary=\"{BOUNDARY}\""),
+                    None => "text/plain; charset=utf-8".to_owned(),
                 },
             ),
             ("Content-Transfer-Encoding", "8bit".to_owned()),
@@ -453,7 +486,19 @@ impl FixtureBackend {
             raw.push_str("\r\n");
         }
         raw.push_str("\r\n");
-        raw.push_str(&seed.body.replace('\n', "\r\n"));
+        match seed.html {
+            None => raw.push_str(&seed.body.replace('\n', "\r\n")),
+            Some(html) => {
+                for (kind, part) in [("plain", seed.body), ("html", html)] {
+                    raw.push_str(&format!(
+                        "--{BOUNDARY}\r\nContent-Type: text/{kind}; charset=utf-8\r\n\r\n"
+                    ));
+                    raw.push_str(&part.replace('\n', "\r\n"));
+                    raw.push_str("\r\n");
+                }
+                raw.push_str(&format!("--{BOUNDARY}--\r\n"));
+            }
+        }
         Ok(raw)
     }
 }

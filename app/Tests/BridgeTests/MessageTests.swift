@@ -34,6 +34,7 @@ private enum Examples {
         #expect(
             examples.map(\.name) == [
                 "commands.list.json", "pane.close.json", "pane.preview.json", "state.update.json",
+                "url.open.json",
             ])
         for (name, text) in examples {
             let message = try CoreToShell(line: text)
@@ -64,7 +65,7 @@ private enum Examples {
 
     @Test func invalidExamplesAreRefusedByBothTypes() throws {
         let examples = try Examples.load("invalid")
-        #expect(examples.count >= 5)
+        #expect(examples.count >= 6)
         for (name, text) in examples {
             #expect(throws: BridgeError.self, "CoreToShell accepts \(name)") { try CoreToShell(line: text) }
             #expect(throws: BridgeError.self, "ShellToCore accepts \(name)") { try ShellToCore(line: text) }
@@ -109,8 +110,29 @@ private enum Examples {
         #expect(throws: BridgeError.malformed("pane.preview: path is not absolute")) {
             try CoreToShell(line: #"{"jsonrpc":"2.0","method":"pane.preview","params":{"path":"a.pdf","title":"a"}}"#)
         }
+        #expect(throws: BridgeError.malformed("url.open: not an http, https or mailto address")) {
+            try CoreToShell(line: #"{"jsonrpc":"2.0","method":"url.open","params":{"url":"file:///etc/passwd"}}"#)
+        }
         #expect(throws: BridgeError.malformed("unexpected id")) {
             try ShellToCore(line: #"{"jsonrpc":"2.0","id":1,"method":"app.will_quit","params":{}}"#)
+        }
+    }
+
+    @Test func onlyWebAndMailAddressesAreOpenable() {
+        for url in [
+            "https://example.com/a?b=c&d=%20e#f", "HTTP://EXAMPLE.COM", "mailto:robin@example.com?subject=Hi",
+        ] {
+            #expect(Links.isOpenable(url), "\(url)")
+            #expect(Links.openable(url) != nil, "\(url)")
+        }
+        for url in [
+            "", "https://", "mailto:", "example.com", "/relative/path", "file:///etc/passwd",
+            "javascript:alert(1)", "x-apple-something://do", "tel:+15555550100", "ftp://example.com/file",
+            "https://example.com/a b", "https://example.com/\u{1B}]0;x\u{07}", "https://ex\u{430}mple.com/",
+            " https://example.com/",
+        ] {
+            #expect(!Links.isOpenable(url), "\(url)")
+            #expect(Links.openable(url) == nil, "\(url)")
         }
     }
 

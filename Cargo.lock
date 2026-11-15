@@ -2042,6 +2042,7 @@ name = "quill-host"
 version = "0.1.0"
 dependencies = [
  "jsonschema",
+ "quill-core",
  "serde",
  "serde_json",
  "tempfile",

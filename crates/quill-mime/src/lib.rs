@@ -6,6 +6,7 @@
 //! (the UI strips control characters before drawing it).
 
 pub mod html;
+pub mod links;
 
 use mail_parser::{MessageParser, PartKind};
 use quill_core::types::{Address, Headers};
@@ -17,9 +18,15 @@ pub struct Parsed {
     /// The body as plain text: the plain part when the message has one,
     /// otherwise the text of its HTML. This is what search and quoting use.
     pub body: String,
-    /// The HTML body, when the message has one that is worth showing in
-    /// place of `body`. Render it with [`html::render`].
+    /// The HTML body, when the message has one that renders to something.
+    /// Lay it out with [`html::render`].
     pub html: Option<String>,
+    /// The reader shows the HTML first. False when there is no HTML, or
+    /// when the plain part is clearly the fuller of the two.
+    pub html_first: bool,
+    /// The message has a plain-text part of its own, so `body` is the
+    /// sender's text and not a rendering of the HTML.
+    pub has_plain: bool,
     pub attachments: Vec<Attachment>,
 }
 
@@ -100,7 +107,12 @@ pub fn parse(raw: &[u8], received: i64) -> Option<Parsed> {
     };
     let plain = join(&mut message.text_body(), false);
     let markup = join(&mut message.html_body(), true);
-    let (body, html) = choose_body(plain, markup);
+    let Chosen {
+        body,
+        html,
+        html_first,
+        has_plain,
+    } = choose_body(plain, markup);
 
     let attachments = message
         .attachments()
@@ -125,34 +137,56 @@ pub fn parse(raw: &[u8], received: i64) -> Option<Parsed> {
         headers,
         body,
         html,
+        html_first,
+        has_plain,
         attachments,
     })
 }
 
+struct Chosen {
+    body: String,
+    html: Option<String>,
+    html_first: bool,
+    has_plain: bool,
+}
+
 /// Decides what the reader shows, given a message's plain text and its HTML
-/// (either may be empty). Returns the plain-text body and, when the HTML is
-/// the better thing to show, the HTML.
+/// (either may be empty).
 ///
-/// HTML is shown when the message has it: senders write the HTML and let
-/// their software generate the plain part, which is often a stub ("your mail
-/// program cannot show this message") or a list of raw tracking links. The
-/// plain part wins only when the HTML renders to nothing, or to so much less
-/// that it is clearly not the whole message, such as a lone image.
-fn choose_body(plain: String, markup: String) -> (String, Option<String>) {
-    if markup.trim().is_empty() {
-        return (plain, None);
-    }
-    let Some(rendered) = html::to_text(&markup) else {
-        return (plain, None);
+/// HTML is shown first when the message has it: senders write the HTML and
+/// let their software generate the plain part, which is often a stub ("your
+/// mail program cannot show this message") or a list of raw tracking links.
+/// The plain part comes first only when the HTML renders to so much less
+/// that it is clearly not the whole message, such as a lone image. HTML
+/// that renders to nothing is not offered at all.
+fn choose_body(plain: String, markup: String) -> Chosen {
+    let has_plain = !plain.trim().is_empty();
+    let rendered = (!markup.trim().is_empty())
+        .then(|| html::to_text(&markup))
+        .flatten();
+    let Some(rendered) = rendered else {
+        return Chosen {
+            body: plain,
+            html: None,
+            html_first: false,
+            has_plain,
+        };
     };
+    if !has_plain {
+        return Chosen {
+            body: rendered,
+            html: Some(markup),
+            html_first: true,
+            has_plain,
+        };
+    }
     let visible = |text: &str| text.chars().filter(|c| !c.is_whitespace()).count();
-    if plain.trim().is_empty() {
-        return (rendered, Some(markup));
+    Chosen {
+        html_first: visible(&rendered) * 4 >= visible(&plain),
+        body: plain,
+        html: Some(markup),
+        has_plain,
     }
-    if visible(&rendered) * 4 < visible(&plain) {
-        return (plain, None);
-    }
-    (plain, Some(markup))
 }
 
 /// The year 2200, in seconds since the Unix epoch.
@@ -339,7 +373,7 @@ mod tests {
             "Your mail program cannot show this message.",
             "<h1>Order shipped</h1><p>Your order 1042 left the warehouse today.</p>",
         );
-        assert!(parsed.html.is_some());
+        assert!(parsed.html.is_some() && parsed.html_first && parsed.has_plain);
         // Search still finds what the stub says, not what it hides. The
         // reader shows the HTML.
         assert_eq!(
@@ -355,7 +389,8 @@ mod tests {
              and costs are flat, so the margin target holds.",
             "<img src=\"cid:scan\"><p>x</p>",
         );
-        assert_eq!(parsed.html, None);
+        // The HTML is still there to switch to; it is just not shown first.
+        assert!(parsed.html.is_some() && !parsed.html_first && parsed.has_plain);
         assert!(parsed.body.starts_with("The quarterly figures"));
     }
 
@@ -363,6 +398,7 @@ mod tests {
     fn a_plain_message_has_no_html() {
         let parsed = read("Subject: x\n\nJust text, with <b>angle brackets</b>.\n");
         assert_eq!(parsed.html, None);
+        assert!(!parsed.html_first && parsed.has_plain);
         assert_eq!(
             parsed.body.trim_end(),
             "Just text, with <b>angle brackets</b>."
@@ -384,7 +420,8 @@ mod tests {
             parsed.body
         );
         assert!(parsed.body.contains("We keep it seven days."));
-        assert!(parsed.html.is_some());
+        // With no plain part there is nothing to switch to.
+        assert!(parsed.html.is_some() && parsed.html_first && !parsed.has_plain);
         assert!(!parsed.body.contains('<'), "{:?}", parsed.body);
         assert!(!parsed.body.contains("alert"), "{:?}", parsed.body);
     }

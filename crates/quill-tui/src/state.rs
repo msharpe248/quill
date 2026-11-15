@@ -14,7 +14,7 @@ use quill_sync::{SyncEvent, SyncRequest};
 
 use crate::command::{CommandId, Context, Registry};
 use crate::data::{DataEvent, DataRequest, LoadedBody};
-use crate::keymap::{KeyChord, Keymap, Resolution};
+use crate::keymap::{Key, KeyChord, Keymap, Mods, Resolution};
 use crate::layout::{self, LayoutMode};
 use crate::theme::Styles;
 use crate::{text, view};
@@ -62,10 +62,13 @@ impl Effects {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostRequest {
     /// Show the built-in sample file in the host's preview pane.
     PreviewSample,
+    /// Open a web or mail address in the user's browser or mail program.
+    /// Only ever an address `quill_mime::links::is_openable` accepts.
+    OpenUrl(String),
 }
 
 /// What the app shell mirrors: enough to enable menu items, badge the Dock
@@ -198,15 +201,57 @@ pub enum Body {
     Unavailable(String),
 }
 
+/// Which version of a message's body the reader shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Showing {
+    Html,
+    Plain,
+}
+
+/// The list of a message's links, open to choose one from.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LinkPicker {
+    pub selected: usize,
+    pub offset: usize,
+    /// The digits typed so far of a link's number.
+    pub typed: String,
+}
+
 #[derive(Debug, Default)]
 pub struct Reader {
     pub row: Option<MessageRow>,
     pub body: Body,
+    /// The version the user switched this message to, if they did.
+    pub chosen: Option<Showing>,
+    /// Where the links in the body as shown lead, in number order.
+    pub links: Vec<String>,
     /// The body laid out for `wrap_width`: wrapped plain text, or the
     /// message's HTML as styled text.
     pub lines: Vec<Line>,
     pub wrap_width: Option<usize>,
     pub scroll: usize,
+}
+
+impl Reader {
+    /// The version of the body on show, once there is a body.
+    pub fn showing(&self) -> Option<Showing> {
+        let Body::Loaded(body) = &self.body else {
+            return None;
+        };
+        Some(match (&body.html, self.chosen) {
+            (None, _) => Showing::Plain,
+            // With no plain part there is only the HTML to show.
+            (Some(_), _) if !body.has_plain => Showing::Html,
+            (Some(_), Some(chosen)) => chosen,
+            (Some(_), None) if body.html_first => Showing::Html,
+            (Some(_), None) => Showing::Plain,
+        })
+    }
+
+    /// The message came as both HTML and plain text.
+    pub fn has_two_versions(&self) -> bool {
+        matches!(&self.body, Body::Loaded(body) if body.html.is_some() && body.has_plain)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -237,6 +282,7 @@ pub struct State {
     pub list: MessageList,
     pub reader: Reader,
     pub help: Option<Help>,
+    pub links: Option<LinkPicker>,
     /// Keys pressed so far of a sequence such as `g g`.
     pub pending: Vec<KeyChord>,
     pub notices: VecDeque<Notice>,
@@ -264,6 +310,7 @@ impl State {
             list: MessageList::default(),
             reader: Reader::default(),
             help: None,
+            links: None,
             pending: Vec::new(),
             notices: VecDeque::new(),
             now,
@@ -285,6 +332,9 @@ impl State {
     pub fn context(&self) -> Context {
         if self.help.is_some() {
             return Context::Help;
+        }
+        if self.links.is_some() {
+            return Context::Links;
         }
         match self.focus {
             Pane::Sidebar => Context::Sidebar,
@@ -329,6 +379,9 @@ impl State {
             Resolution::Unbound => {
                 let broke_a_sequence = self.pending.len() > 1;
                 self.pending.clear();
+                if !broke_a_sequence && self.type_link_number(chord) {
+                    return;
+                }
                 if broke_a_sequence {
                     // The key that broke it may mean something by itself.
                     self.on_key(env, chord, out);
@@ -349,6 +402,7 @@ impl State {
             CommandId::NavBottom => self.navigate(env, Motion::Bottom, out),
             CommandId::NavPageDown => self.navigate(env, Motion::PageDown, out),
             CommandId::NavPageUp => self.navigate(env, Motion::PageUp, out),
+            CommandId::NavOpen if context == Context::Links => self.open_selected_link(out),
             CommandId::NavOpen => self.open(out),
             CommandId::NavBack => self.back(),
             CommandId::AppQuit => self.should_quit = true,
@@ -360,6 +414,18 @@ impl State {
             CommandId::ViewZoom => self.zoomed = !self.zoomed,
             CommandId::MessageToggleUnread => self.toggle_unread(out),
             CommandId::MessageToggleStar => self.toggle_star(out),
+            CommandId::MessageToggleHtml => {
+                if let Some(showing) = self.reader.showing() {
+                    self.reader.chosen = Some(match showing {
+                        Showing::Html => Showing::Plain,
+                        Showing::Plain => Showing::Html,
+                    });
+                    // Another version is another text: start at its top.
+                    self.reader.scroll = 0;
+                    self.reader.wrap_width = None;
+                }
+            }
+            CommandId::MessageOpenLink => self.links = Some(LinkPicker::default()),
             CommandId::DebugPreviewSample => out.host.push(HostRequest::PreviewSample),
             CommandId::DebugImageSample => self.sample_image = !self.sample_image,
             CommandId::HelpToggle => {
@@ -383,11 +449,15 @@ impl State {
             return false;
         }
         match id {
+            CommandId::NavOpen if context == Context::Links => !self.reader.links.is_empty(),
             CommandId::NavOpen => {
                 self.focus == Pane::Sidebar || self.list.rows.get(self.list.selected).is_some()
             }
+            CommandId::MessageToggleHtml => self.reader.has_two_versions(),
+            CommandId::MessageOpenLink => !self.reader.links.is_empty(),
             CommandId::NavBack => {
                 self.help.is_some()
+                    || self.links.is_some()
                     || !self.notices.is_empty()
                     || self.focus == Pane::Reader
                     || (self.focus == Pane::Sidebar
@@ -444,6 +514,12 @@ impl State {
         if let Some(help) = &mut self.help {
             let page = areas.help.map_or(1, layout::inner_height).max(1);
             help.scroll = scroll(help.scroll, motion, page);
+            return;
+        }
+        if let Some(picker) = &mut self.links {
+            let page = areas.links.map_or(1, layout::inner_height).max(1);
+            picker.selected = step(picker.selected, self.reader.links.len(), motion, page);
+            picker.typed.clear();
             return;
         }
         match self.focus {
@@ -538,6 +614,8 @@ impl State {
     fn back(&mut self) {
         if self.help.is_some() {
             self.help = None;
+        } else if self.links.is_some() {
+            self.links = None;
         } else if self.notices.pop_front().is_some() {
             // One notice dismissed per press.
         } else {
@@ -552,6 +630,52 @@ impl State {
                 }
                 Pane::Sidebar | Pane::List => {}
             }
+        }
+    }
+
+    /// Takes a digit typed while choosing a link as part of its number, and
+    /// moves to that link. Returns whether the key was taken.
+    fn type_link_number(&mut self, chord: KeyChord) -> bool {
+        let count = self.reader.links.len();
+        let (Some(picker), Key::Char(digit @ '0'..='9')) = (&mut self.links, chord.key) else {
+            return false;
+        };
+        if chord.mods != Mods::default() {
+            return false;
+        }
+        picker.typed.push(digit);
+        let number = |typed: &str| {
+            typed
+                .parse::<usize>()
+                .ok()
+                .filter(|n| (1..=count).contains(n))
+        };
+        // "1" then "2" is link 12 when there is one, and link 2 otherwise.
+        let chosen = number(&picker.typed).or_else(|| {
+            picker.typed = digit.to_string();
+            number(&picker.typed)
+        });
+        match chosen {
+            Some(number) => picker.selected = number - 1,
+            None => picker.typed.clear(),
+        }
+        true
+    }
+
+    /// Hands the chosen link to the host to open, if it is one Quill opens.
+    fn open_selected_link(&mut self, out: &mut Effects) {
+        let Some(picker) = self.links.take() else {
+            return;
+        };
+        let Some(url) = self.reader.links.get(picker.selected) else {
+            return;
+        };
+        if quill_mime::links::is_openable(url) {
+            out.host.push(HostRequest::OpenUrl(url.clone()));
+        } else {
+            self.notices.push_back(Notice::error(
+                "Quill only opens web (http, https) and mail (mailto) links. This is not one.",
+            ));
         }
     }
 
@@ -634,8 +758,13 @@ impl State {
                     body: Body::Loading,
                     ..Reader::default()
                 };
+                // The links on offer were the last message's.
+                self.links = None;
             }
-            None => self.reader = Reader::default(),
+            None => {
+                self.reader = Reader::default();
+                self.links = None;
+            }
         }
     }
 
@@ -722,7 +851,7 @@ impl State {
                     self.reader.body = match body {
                         Some(body) => Body::Loaded(LoadedBody {
                             text: text::sanitize_body(body.text.trim_end()),
-                            html: body.html,
+                            ..body
                         }),
                         None => {
                             // Not downloaded yet. Ask for it; the reader
@@ -762,12 +891,12 @@ impl State {
         if let Some(rect) = areas.reader {
             let width = layout::reader_text_width(rect);
             if self.reader.wrap_width != Some(width) {
-                self.reader.lines = match &self.reader.body {
-                    Body::Loaded(body) => body_lines(body, width),
-                    Body::None | Body::Loading | Body::Downloading | Body::Unavailable(_) => {
-                        Vec::new()
-                    }
+                let (lines, links) = match (&self.reader.body, self.reader.showing()) {
+                    (Body::Loaded(body), Some(showing)) => body_lines(body, showing, width),
+                    _ => (Vec::new(), Vec::new()),
                 };
+                self.reader.lines = lines;
+                self.reader.links = links;
                 self.reader.wrap_width = Some(width);
             }
             let viewport = layout::reader_body_height(
@@ -777,6 +906,24 @@ impl State {
             );
             let last = self.reader.lines.len().saturating_sub(viewport);
             self.reader.scroll = self.reader.scroll.min(last);
+        }
+        if self.reader.links.is_empty() {
+            self.links = None;
+        }
+        if let Some(picker) = &mut self.links {
+            picker.selected = picker.selected.min(self.reader.links.len() - 1);
+            // Laid out again: the picker's own size follows the links.
+            let rect = layout::compute(self, self.size, env.reader_width).links;
+            if let Some(rect) = rect
+                && let Some(picker) = &mut self.links
+            {
+                keep_visible(
+                    &mut picker.offset,
+                    picker.selected,
+                    layout::inner_height(rect),
+                    self.reader.links.len(),
+                );
+            }
         }
         if let (Some(help), Some(rect)) = (&mut self.help, areas.help) {
             let lines = view::help::lines(env, help.context).len();
@@ -929,28 +1076,38 @@ fn scroll(current: usize, motion: Motion, page: usize) -> usize {
     }
 }
 
-/// A body laid out `width` columns wide: its HTML as styled text when it has
-/// HTML that renders, otherwise its plain text, wrapped.
-fn body_lines(body: &LoadedBody, width: usize) -> Vec<Line> {
-    let rendered = body
-        .html
-        .as_deref()
-        .and_then(|html| quill_mime::html::render(html, width));
+/// A body laid out `width` columns wide, and where its links lead: its
+/// HTML as styled text when that is what is showing and it renders,
+/// otherwise its plain text, wrapped.
+fn body_lines(body: &LoadedBody, showing: Showing, width: usize) -> (Vec<Line>, Vec<String>) {
+    let rendered = match showing {
+        Showing::Html => body
+            .html
+            .as_deref()
+            .and_then(|html| quill_mime::html::render(html, width)),
+        Showing::Plain => None,
+    };
     match rendered {
-        Some(mut lines) => {
+        Some(mut rendered) => {
             // What a stranger's HTML says is as untrusted as anything else.
-            for line in &mut lines {
+            for line in &mut rendered.lines {
                 for span in &mut line.spans {
                     span.text = text::sanitize_line(&span.text);
                 }
                 line.spans.retain(|span| !span.text.is_empty());
             }
-            lines
+            for link in &mut rendered.links {
+                *link = text::sanitize_line(link);
+            }
+            (rendered.lines, rendered.links)
         }
-        None => text::wrap(&body.text, width)
-            .into_iter()
-            .map(Line::plain)
-            .collect(),
+        None => (
+            text::wrap(&body.text, width)
+                .into_iter()
+                .map(Line::plain)
+                .collect(),
+            quill_mime::links::find(&body.text),
+        ),
     }
 }
 

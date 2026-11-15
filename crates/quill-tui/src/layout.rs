@@ -50,6 +50,8 @@ pub struct Areas {
     pub reader: Option<Rect>,
     pub status: Rect,
     pub help: Option<Rect>,
+    /// The list of links to choose from, drawn over the panes.
+    pub links: Option<Rect>,
 }
 
 pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
@@ -65,6 +67,7 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
         reader: None,
         status: Rect::new(0, body_height, width, height.min(1)),
         help: None,
+        links: None,
     };
 
     let show_main = |areas: &mut Areas, rect: Rect| match state.main_pane {
@@ -107,6 +110,22 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
         }
     }
 
+    if state.links.is_some() {
+        // As tall as its links, as far as the screen allows.
+        let links_width = width.saturating_sub(4).min(100);
+        let wanted = u16::try_from(state.reader.links.len()).unwrap_or(u16::MAX);
+        let links_height = wanted
+            .saturating_add(2)
+            .min(body_height.saturating_sub(2))
+            .max(3)
+            .min(body_height);
+        areas.links = Some(Rect::new(
+            (width - links_width) / 2,
+            (body_height - links_height) / 2,
+            links_width,
+            links_height,
+        ));
+    }
     if state.help.is_some() {
         let help_width = width.saturating_sub(4).min(64);
         let help_height = body_height.saturating_sub(2);

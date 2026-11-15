@@ -38,6 +38,8 @@ For anything visible in the app, also build it and look: `app/build-app.sh`, the
 - A bridge change touches `schema/bridge.json`, `schema/examples`, `crates/quill-host/src/bridge.rs` and `app/Sources/Bridge` in the same change.
 - Inside the App Sandbox a program cannot change its terminal's modes or size. `TerminalKit` does it from the PTY's master side. Do not "fix" the core to set raw mode itself.
 - The reader draws a message's HTML from the raw message (`Store::raw`), laid out for the pane's width by `quill_mime::html::render`. Mail is untrusted: every span is sanitized before drawing, and nothing is fetched.
+- Only `quill_core::links::is_openable` decides what may be opened or written into a terminal hyperlink. The shell has the same rule in `Links.isOpenable`; change them together.
+- Link text is marked as a hyperlink by the run loop, not by views: the reader returns `LinkPlacement`s. Only underlined link text is marked; keep it that way, or a cell can keep a stale link.
 - Images are placed by the run loop, not drawn by views. A view leaves cells empty and returns an `ImagePlacement`.
 - UI changes show up in the insta snapshots under `crates/quill-tui/tests/snapshots/`. Regenerate with `INSTA_UPDATE=always cargo test -p quill-tui`, then read the diff.
 - Fixtures use invented people at example.com. Never real mail, never real addresses.

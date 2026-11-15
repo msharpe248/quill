@@ -117,6 +117,21 @@ pub fn truncate(text: &str, max: usize) -> String {
     out
 }
 
+/// The longest start of `text` that fits in `max` cells, with no ellipsis:
+/// what is left of text drawn into a space too small for it. Never splits a
+/// grapheme cluster.
+pub fn clip(text: &str, max: usize) -> &str {
+    let mut used = 0;
+    for (start, grapheme) in text.grapheme_indices(true) {
+        let w = width(grapheme);
+        if used + w > max {
+            return &text[..start];
+        }
+        used += w;
+    }
+    text
+}
+
 /// Truncates then pads with spaces on the right to exactly `cells` cells.
 pub fn fit(text: &str, cells: usize) -> String {
     let mut out = truncate(text, cells);

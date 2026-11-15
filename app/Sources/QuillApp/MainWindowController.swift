@@ -21,6 +21,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     private(set) var previewPane: PreviewPane?
     private var keyMonitor: Any?
 
+    /// Hands an address to the user's browser or mail program. A scripted
+    /// run replaces it, so that a check opens nothing.
+    var linkOpener: (URL) -> Void = { NSWorkspace.shared.open($0) }
+
     private(set) var coreIsRunning = false
     /// The app asked the core to stop, so its exit is not a failure.
     private var stopping = false
@@ -60,6 +64,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         }
         surface.onExit = { [weak self] exit in
             self?.coreDidExit(exit)
+        }
+        // A link clicked in the terminal.
+        surface.onOpenLink = { [weak self] address in
+            self?.openLink(address)
         }
         // esc in the preview pane closes it. The terminal handles its own esc.
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -135,7 +143,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             showPreview(URL(fileURLWithPath: preview.path), title: preview.title)
         case .paneClose:
             closePreview()
+        case let .urlOpen(open):
+            openLink(open.url)
         }
+    }
+
+    /// Opens a web or mail address the way the user's Mac opens them.
+    /// Whoever asks, the core or a click in the terminal, nothing else is
+    /// opened: a message cannot name a file or another app's scheme.
+    private func openLink(_ address: String) {
+        guard let url = Links.openable(address) else {
+            NSLog("Quill: did not open a link that is not an http, https or mailto address")
+            return
+        }
+        linkOpener(url)
     }
 
     private func coreDidExit(_ exit: TerminalExit) {

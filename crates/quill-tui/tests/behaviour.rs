@@ -14,7 +14,7 @@ use quill_store::Mailbox;
 use quill_tui::command::{CommandId, Context, Registry};
 use quill_tui::data::{DataEvent, DataRequest};
 use quill_tui::keymap::Keymap;
-use quill_tui::state::{Action, Body, MainPane, Notice, Pane};
+use quill_tui::state::{Action, Body, HostRequest, MainPane, Notice, Pane};
 use quill_tui::theme::ColorMode;
 use ratatui::style::Modifier;
 
@@ -935,7 +935,9 @@ fn placements(harness: &Harness) -> Vec<quill_tui::view::ImagePlacement> {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     let mut images = Vec::new();
     terminal
-        .draw(|frame| images = quill_tui::view::render(frame, &harness.state, &harness.env))
+        .draw(|frame| {
+            images = quill_tui::view::render(frame, &harness.state, &harness.env).images;
+        })
         .unwrap();
     images
 }
@@ -1118,6 +1120,8 @@ fn html_cannot_smuggle_escape_sequences_onto_the_screen() {
         body: Some(LoadedBody {
             text: "plain".to_owned(),
             html: Some("<p>before&#27;[2J&#7;after <a href=\"https://example.com/\u{1b}]0;x\u{7}\">go</a></p>".to_owned()),
+            html_first: true,
+            has_plain: true,
         }),
     }));
     for line in &harness.state.reader.lines {
@@ -1141,7 +1145,398 @@ fn html_that_renders_to_nothing_falls_back_to_the_plain_text() {
         body: Some(LoadedBody {
             text: "The plain words.".to_owned(),
             html: Some("<script>nothing()</script>".to_owned()),
+            html_first: true,
+            has_plain: true,
         }),
     }));
     assert!(harness.screen().contains("The plain words."));
+}
+
+/// Opens the demo's newsletter, which comes as both HTML and plain text.
+fn reading_the_newsletter(width: u16, height: u16) -> Harness {
+    let mut harness = Harness::demo(width, height);
+    harness.keys("G k k enter");
+    assert_eq!(
+        harness.selected_subject(),
+        "Issue 88: Parsing email is still hard"
+    );
+    harness
+}
+
+#[test]
+fn a_message_with_both_versions_switches_between_them() {
+    use quill_tui::state::Showing;
+
+    let mut harness = reading_the_newsletter(200, 60);
+    assert!(
+        harness
+            .state
+            .is_enabled(&harness.env, CommandId::MessageToggleHtml)
+    );
+    assert_eq!(harness.state.reader.showing(), Some(Showing::Html));
+    assert!(harness.screen().contains("# The Weekly Parser"));
+    assert!(harness.screen().contains(" html "));
+    let html_links = harness.state.reader.links.clone();
+
+    harness.keys("j j t");
+    assert_eq!(harness.state.reader.showing(), Some(Showing::Plain));
+    // The other version starts at its top.
+    assert_eq!(harness.state.reader.scroll, 0);
+    let screen = harness.screen();
+    assert!(screen.contains("The Weekly Parser, issue 88: parsing email is still hard."));
+    assert!(!screen.contains("# The Weekly Parser"));
+    assert!(screen.contains(" plain text "));
+    // The plain part's own links are the ones on offer now.
+    assert_eq!(
+        harness.state.reader.links,
+        [
+            "https://example.com/issue-88",
+            "https://example.com/unsubscribe"
+        ]
+    );
+    assert_ne!(harness.state.reader.links, html_links);
+
+    harness.keys("t");
+    assert_eq!(harness.state.reader.showing(), Some(Showing::Html));
+    assert!(harness.screen().contains("# The Weekly Parser"));
+
+    // The choice belongs to the message: the next one starts afresh, and so
+    // does this one when it is opened again.
+    harness.keys("t esc k j");
+    assert_eq!(harness.state.reader.showing(), Some(Showing::Html));
+}
+
+#[test]
+fn a_message_with_one_version_has_nothing_to_switch_to() {
+    use quill_tui::data::LoadedBody;
+    use quill_tui::state::Showing;
+
+    // Plain text only.
+    let mut harness = Harness::demo(200, 60);
+    harness.keys("enter");
+    assert!(
+        !harness
+            .state
+            .is_enabled(&harness.env, CommandId::MessageToggleHtml)
+    );
+    let before = harness.screen();
+    harness.keys("t");
+    assert_eq!(harness.screen(), before);
+    assert!(!before.contains(" plain text ") && !before.contains(" html "));
+
+    // HTML only: the text the store holds is a rendering of the same HTML.
+    let id = harness.state.list.rows[0].id;
+    harness.act(Action::Data(DataEvent::BodyLoaded {
+        id,
+        body: Some(LoadedBody {
+            text: "Hello.".to_owned(),
+            html: Some("<p>Hello.</p>".to_owned()),
+            html_first: true,
+            has_plain: false,
+        }),
+    }));
+    assert!(
+        !harness
+            .state
+            .is_enabled(&harness.env, CommandId::MessageToggleHtml)
+    );
+    harness.keys("t");
+    assert_eq!(harness.state.reader.showing(), Some(Showing::Html));
+}
+
+#[test]
+fn a_fuller_plain_part_is_shown_first_with_the_html_one_key_away() {
+    use quill_tui::data::LoadedBody;
+    use quill_tui::state::Showing;
+
+    let mut harness = Harness::demo(200, 60);
+    harness.keys("enter");
+    let id = harness.state.list.rows[0].id;
+    harness.act(Action::Data(DataEvent::BodyLoaded {
+        id,
+        body: Some(LoadedBody {
+            text: "The whole message, in words.".to_owned(),
+            html: Some("<p>scan</p>".to_owned()),
+            html_first: false,
+            has_plain: true,
+        }),
+    }));
+    assert_eq!(harness.state.reader.showing(), Some(Showing::Plain));
+    assert!(harness.screen().contains("The whole message, in words."));
+    harness.keys("t");
+    assert_eq!(harness.state.reader.showing(), Some(Showing::Html));
+    assert!(harness.screen().contains("scan"));
+}
+
+#[test]
+fn links_are_chosen_from_a_list_and_opened_by_the_host() {
+    let mut harness = reading_the_newsletter(200, 60);
+    assert_eq!(harness.state.context(), Context::Reader);
+    assert!(
+        harness
+            .state
+            .is_enabled(&harness.env, CommandId::MessageOpenLink)
+    );
+
+    harness.keys("o");
+    assert_eq!(harness.state.context(), Context::Links);
+    let screen = harness.screen();
+    assert!(screen.contains(" Links "));
+    assert!(screen.contains("> [1] https://example.com/issue-88/soft-breaks"));
+    assert!(screen.contains("  [3] https://example.com/unsubscribe"));
+    // The bar says what the keys do here.
+    assert!(
+        harness
+            .screen()
+            .lines()
+            .last()
+            .unwrap()
+            .contains("open in browser")
+    );
+
+    // Moving does not scroll the reader underneath.
+    let scroll = harness.state.reader.scroll;
+    harness.keys("j");
+    assert_eq!(harness.state.reader.scroll, scroll);
+    assert!(
+        harness
+            .screen()
+            .contains("> [2] https://example.com/issue-88")
+    );
+    assert!(harness.host_requests.is_empty());
+
+    harness.keys("enter");
+    assert_eq!(
+        harness.host_requests,
+        [HostRequest::OpenUrl(
+            "https://example.com/issue-88".to_owned()
+        )]
+    );
+    // Opening closes the list and leaves the reader where it was.
+    assert_eq!(harness.state.context(), Context::Reader);
+    assert!(!harness.screen().contains(" Links "));
+}
+
+#[test]
+fn a_link_is_reached_by_typing_its_number() {
+    use quill_tui::data::LoadedBody;
+
+    let mut harness = Harness::demo(200, 60);
+    harness.keys("enter");
+    let id = harness.state.list.rows[0].id;
+    let html: String = (1..=14)
+        .map(|n| format!("<p><a href=\"https://example.com/{n}\">Link {n}</a></p>"))
+        .collect();
+    harness.act(Action::Data(DataEvent::BodyLoaded {
+        id,
+        body: Some(LoadedBody {
+            text: String::new(),
+            html: Some(html),
+            html_first: true,
+            has_plain: false,
+        }),
+    }));
+    assert_eq!(harness.state.reader.links.len(), 14);
+
+    harness.keys("o 3");
+    assert_eq!(harness.state.links.as_ref().unwrap().selected, 2);
+    // "1" then "2" is link 12.
+    harness.keys("1");
+    assert_eq!(harness.state.links.as_ref().unwrap().selected, 0);
+    harness.keys("2");
+    assert_eq!(harness.state.links.as_ref().unwrap().selected, 11);
+    // There is no link 129, so "9" starts a new number.
+    harness.keys("9");
+    assert_eq!(harness.state.links.as_ref().unwrap().selected, 8);
+    // Nor a link 0 or 90: the selection stays put.
+    harness.keys("0");
+    assert_eq!(harness.state.links.as_ref().unwrap().selected, 8);
+    harness.keys("enter");
+    assert_eq!(
+        harness.host_requests,
+        [HostRequest::OpenUrl("https://example.com/9".to_owned())]
+    );
+
+    // Digits mean panes again once the list is closed.
+    harness.keys("1");
+    assert_eq!(harness.state.context(), Context::Sidebar);
+}
+
+#[test]
+fn the_link_list_closes_without_opening_anything() {
+    let mut harness = reading_the_newsletter(200, 60);
+    harness.keys("o esc");
+    assert_eq!(harness.state.context(), Context::Reader);
+    assert!(harness.host_requests.is_empty());
+
+    // It also goes when the message it listed is no longer the one open.
+    harness.keys("o");
+    assert!(harness.state.links.is_some());
+    harness.act(Action::Command(CommandId::NavBack));
+    harness.keys("esc k");
+    assert!(harness.state.links.is_none());
+}
+
+#[test]
+fn a_message_without_links_has_no_list_to_open() {
+    let mut harness = Harness::demo(200, 60);
+    harness.keys("enter");
+    assert!(harness.state.reader.links.is_empty());
+    assert!(
+        !harness
+            .state
+            .is_enabled(&harness.env, CommandId::MessageOpenLink)
+    );
+    harness.keys("o");
+    assert_eq!(harness.state.context(), Context::Reader);
+}
+
+#[test]
+fn only_web_and_mail_links_are_ever_opened() {
+    use quill_tui::data::LoadedBody;
+
+    let mut harness = Harness::demo(200, 60);
+    harness.keys("enter");
+    let id = harness.state.list.rows[0].id;
+    harness.act(Action::Data(DataEvent::BodyLoaded {
+        id,
+        body: Some(LoadedBody {
+            text: String::new(),
+            html: Some(
+                "<p><a href=\"file:///Applications/Calculator.app\">Your invoice</a> \
+                 <a href=\"x-evil://run\">Track parcel</a> \
+                 <a href=\"mailto:ana.ruiz@example.com\">Write to Ana</a></p>"
+                    .to_owned(),
+            ),
+            html_first: true,
+            has_plain: false,
+        }),
+    }));
+    // All three are listed, so where they lead can be seen.
+    harness.keys("o");
+    assert!(
+        harness
+            .screen()
+            .contains("[1] file:///Applications/Calculator.app")
+    );
+    harness.keys("enter");
+    assert!(harness.host_requests.is_empty());
+    assert!(harness.screen().contains("Quill only opens web"));
+
+    harness.keys("esc o 2 enter");
+    assert!(harness.host_requests.is_empty());
+
+    harness.keys("esc o 3 enter");
+    assert_eq!(
+        harness.host_requests,
+        [HostRequest::OpenUrl(
+            "mailto:ana.ruiz@example.com".to_owned()
+        )]
+    );
+}
+
+#[test]
+fn link_text_is_placed_for_the_terminal_to_make_clickable() {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::style::Modifier;
+
+    let overlays = |harness: &Harness| {
+        let (width, height) = harness.state.size;
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        let mut overlays = quill_tui::view::Overlays::default();
+        terminal
+            .draw(|frame| {
+                overlays = quill_tui::view::render(frame, &harness.state, &harness.env);
+            })
+            .unwrap();
+        overlays
+    };
+
+    let mut harness = reading_the_newsletter(200, 60);
+    let screen = harness.screen();
+    let links = overlays(&harness).links;
+    // The three links' text, each where the screen shows it, in the style
+    // it was drawn in. Their numbers and the list of addresses are not
+    // marked.
+    let texts: Vec<&str> = links.iter().map(|link| link.text.as_str()).collect();
+    assert_eq!(
+        texts,
+        [
+            "quoted-printable soft line break",
+            "Read the issue",
+            "unsubscribe"
+        ]
+    );
+    for link in &links {
+        let row = screen.lines().nth(usize::from(link.y)).unwrap();
+        let before: String = row.chars().take(usize::from(link.x)).collect();
+        assert_eq!(quill_tui::text::width(&before), usize::from(link.x));
+        assert!(row[before.len()..].starts_with(&link.text), "{row}");
+        assert!(link.style.add_modifier.contains(Modifier::UNDERLINED));
+    }
+    assert_eq!(
+        links[1].url.as_deref(),
+        Some("https://example.com/issue-88")
+    );
+
+    // Under the link list or help, nothing is written over the overlay.
+    harness.keys("o");
+    let covered = harness.state.links.is_some();
+    assert!(covered);
+    let area = quill_tui::layout::compute(&harness.state, harness.state.size, 0.55)
+        .links
+        .unwrap();
+    for link in overlays(&harness).links {
+        assert!(
+            !area.intersects(ratatui::layout::Rect::new(link.x, link.y, 1, 1)),
+            "{link:?}"
+        );
+    }
+
+    // Scrolled out of view, a link is not placed at all.
+    harness.keys("esc");
+    harness.resize(80, 12);
+    harness.keys("G");
+    let texts: Vec<String> = overlays(&harness)
+        .links
+        .into_iter()
+        .map(|link| link.text)
+        .collect();
+    assert!(!texts.iter().any(|text| text.contains("quoted-printable")));
+}
+
+#[test]
+fn link_text_cut_off_by_the_pane_is_placed_only_as_far_as_it_shows() {
+    use quill_tui::data::LoadedBody;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut harness = Harness::demo(80, 24);
+    harness.keys("enter");
+    let id = harness.state.list.rows[0].id;
+    // A table cell that cannot wrap is wider than the pane.
+    let cell = "x".repeat(120);
+    harness.act(Action::Data(DataEvent::BodyLoaded {
+        id,
+        body: Some(LoadedBody {
+            text: String::new(),
+            html: Some(format!(
+                "<pre><a href=\"https://example.com/long\">{cell}</a></pre>"
+            )),
+            html_first: true,
+            has_plain: false,
+        }),
+    }));
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    let mut overlays = quill_tui::view::Overlays::default();
+    terminal
+        .draw(|frame| overlays = quill_tui::view::render(frame, &harness.state, &harness.env))
+        .unwrap();
+    let width = harness.state.reader.wrap_width.unwrap();
+    assert!(!overlays.links.is_empty());
+    for link in &overlays.links {
+        assert!(quill_tui::text::width(&link.text) <= width, "{link:?}");
+        assert!(usize::from(link.x) + quill_tui::text::width(&link.text) <= 80);
+    }
 }

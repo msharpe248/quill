@@ -13,6 +13,7 @@ pub mod app;
 pub mod command;
 pub mod data;
 pub mod demo;
+pub mod hyperlink;
 pub mod keymap;
 pub mod layout;
 pub mod sample;

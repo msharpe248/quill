@@ -71,6 +71,11 @@ public protocol TerminalSurface: AnyObject {
     /// Called on the main actor when the program sets the terminal title.
     var onTitleChange: ((String) -> Void)? { get set }
 
+    /// Called on the main actor when a link in the terminal is clicked, with
+    /// the link's address as the terminal has it. Nothing is opened unless
+    /// this is set and opens it.
+    var onOpenLink: ((String) -> Void)? { get set }
+
     /// Starts the program. A surface runs one program in its lifetime.
     func start(_ command: TerminalCommand)
 

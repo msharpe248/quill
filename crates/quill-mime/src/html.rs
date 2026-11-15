@@ -24,6 +24,16 @@ pub struct Line {
 pub struct Span {
     pub text: String,
     pub style: Style,
+    /// The link this text belongs to, as a place in [`Rendered::links`].
+    pub link: Option<usize>,
+}
+
+/// A message body laid out for a width.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Rendered {
+    pub lines: Vec<Line>,
+    /// Where the numbered links lead: link `[1]` is `links[0]`.
+    pub links: Vec<String>,
 }
 
 /// How a span is drawn. What each flag looks like is the theme's business.
@@ -51,6 +61,7 @@ impl Line {
             spans: vec![Span {
                 text,
                 style: Style::default(),
+                link: None,
             }],
         }
     }
@@ -68,15 +79,16 @@ impl Line {
             .all(|span| span.text.chars().all(is_invisible))
     }
 
-    fn push(&mut self, text: &str, style: Style) {
+    fn push(&mut self, text: &str, style: Style, link: Option<usize>) {
         if text.is_empty() {
             return;
         }
         match self.spans.last_mut() {
-            Some(last) if last.style == style => last.text.push_str(text),
+            Some(last) if last.style == style && last.link == link => last.text.push_str(text),
             _ => self.spans.push(Span {
                 text: text.to_owned(),
                 style,
+                link,
             }),
         }
     }
@@ -116,7 +128,7 @@ const MIN_WIDTH: usize = 20;
 /// Renders `html` as lines no wider than `width` columns where the content
 /// allows. Returns `None` when there is nothing to show or the document
 /// cannot be rendered, so the caller can fall back to plain text.
-pub fn render(html: &str, width: usize) -> Option<Vec<Line>> {
+pub fn render(html: &str, width: usize) -> Option<Rendered> {
     if html.len() > MAX_HTML_BYTES {
         return None;
     }
@@ -136,15 +148,15 @@ pub fn render(html: &str, width: usize) -> Option<Vec<Line>> {
         .lines_from_read(html.as_bytes(), width.max(MIN_WIDTH))
         .ok()?;
     let urls = std::mem::take(&mut links.borrow_mut().urls);
-    let lines = assemble(&tagged, &urls);
-    (!lines.is_empty()).then_some(lines)
+    let rendered = assemble(&tagged, &urls);
+    (!rendered.lines.is_empty()).then_some(rendered)
 }
 
 /// `html` as plain text, for search and for quoting in a reply.
 pub fn to_text(html: &str) -> Option<String> {
-    let lines = render(html, 78)?;
+    let rendered = render(html, 78)?;
     let mut text = String::new();
-    for line in lines {
+    for line in rendered.lines {
         text.push_str(&line.text());
         text.push('\n');
     }
@@ -329,12 +341,8 @@ fn is_invisible(c: char) -> bool {
 /// Turns html2text's lines into ours: styles from the marks, final link
 /// numbers, headings in bold, runs of blank lines closed up, and the list
 /// of links at the end.
-fn assemble(tagged: &[TaggedLine<Vec<Mark>>], urls: &[String]) -> Vec<Line> {
-    // Whether each link has shown any text since its last number, and the
-    // number each link ends up with: only links that are referred to count.
-    let mut has_text = vec![false; urls.len()];
-    let mut numbers: Vec<Option<usize>> = vec![None; urls.len()];
-    let mut numbered: Vec<usize> = Vec::new();
+fn assemble(tagged: &[TaggedLine<Vec<Mark>>], urls: &[String]) -> Rendered {
+    let mut numbering = Numbering::new(urls.len());
 
     let mut lines: Vec<Line> = Vec::new();
     let mut after_heading = false;
@@ -361,13 +369,8 @@ fn assemble(tagged: &[TaggedLine<Vec<Mark>>], urls: &[String]) -> Vec<Line> {
             let mut rest = piece.s.as_str();
             while let Some(at) = rest.find(MARKER) {
                 let before = &rest[..at];
-                if let Some(id) = link
-                    && !before.chars().all(is_invisible)
-                    && let Some(seen) = has_text.get_mut(id)
-                {
-                    *seen = true;
-                }
-                line.push(before, style);
+                let target = numbering.note(link, before);
+                line.push(before, style, target);
                 rest = &rest[at + MARKER.len_utf8()..];
 
                 // "[12]" follows the marker unless wrapping tore it apart.
@@ -383,13 +386,9 @@ fn assemble(tagged: &[TaggedLine<Vec<Mark>>], urls: &[String]) -> Vec<Line> {
                 rest = rest.split_once(']').map_or("", |(_, after)| after);
                 // A link with nothing to read, such as one around an image
                 // with no description, is not worth a number.
-                if !std::mem::take(&mut has_text[id]) {
+                let Some(number) = numbering.close(id) else {
                     continue;
-                }
-                let number = *numbers[id].get_or_insert_with(|| {
-                    numbered.push(id);
-                    numbered.len()
-                });
+                };
                 let aside = Style {
                     dim: true,
                     ..Style::default()
@@ -397,16 +396,11 @@ fn assemble(tagged: &[TaggedLine<Vec<Mark>>], urls: &[String]) -> Vec<Line> {
                 // The number sits against the link's last word, whatever
                 // space the link's text ended with.
                 let gap = line.take_trailing_space();
-                line.push(&format!("[{number}]"), aside);
-                line.push(&gap, style);
+                line.push(&format!("[{number}]"), aside, Some(number - 1));
+                line.push(&gap, style, None);
             }
-            if let Some(id) = link
-                && !rest.chars().all(is_invisible)
-                && let Some(seen) = has_text.get_mut(id)
-            {
-                *seen = true;
-            }
-            line.push(rest, style);
+            let target = numbering.note(link, rest);
+            line.push(rest, style, target);
         }
         line.trim_end();
         let heading = embolden_heading(&mut line);
@@ -426,19 +420,75 @@ fn assemble(tagged: &[TaggedLine<Vec<Mark>>], urls: &[String]) -> Vec<Line> {
         lines.pop();
     }
 
-    if !lines.is_empty() && !numbered.is_empty() {
+    if !lines.is_empty() && !numbering.numbered.is_empty() {
         let aside = Style {
             dim: true,
             ..Style::default()
         };
         lines.push(Line::default());
-        for (index, id) in numbered.iter().enumerate() {
+        for (index, id) in numbering.numbered.iter().enumerate() {
             let mut line = Line::default();
-            line.push(&format!("[{}] {}", index + 1, urls[*id]), aside);
+            line.push(
+                &format!("[{}] {}", index + 1, urls[*id]),
+                aside,
+                Some(index),
+            );
             lines.push(line);
         }
     }
-    lines
+    Rendered {
+        lines,
+        links: numbering
+            .numbered
+            .iter()
+            .map(|id| urls[*id].clone())
+            .collect(),
+    }
+}
+
+/// Which links get a number. Only a link with something to read counts,
+/// and links are numbered in the order their text first appears.
+struct Numbering {
+    /// Whether each link has shown any text since its last number.
+    has_text: Vec<bool>,
+    /// The number each link ends up with, from 1.
+    numbers: Vec<Option<usize>>,
+    /// The numbered links, in order.
+    numbered: Vec<usize>,
+}
+
+impl Numbering {
+    fn new(links: usize) -> Self {
+        Self {
+            has_text: vec![false; links],
+            numbers: vec![None; links],
+            numbered: Vec::new(),
+        }
+    }
+
+    /// Notes that link `id` showed `text`. Returns the link's place in the
+    /// final list, once it has one.
+    fn note(&mut self, id: Option<usize>, text: &str) -> Option<usize> {
+        let id = id.filter(|id| *id < self.numbers.len())?;
+        if !text.chars().all(is_invisible) {
+            self.has_text[id] = true;
+            if self.numbers[id].is_none() {
+                self.numbered.push(id);
+                self.numbers[id] = Some(self.numbered.len());
+            }
+        }
+        self.numbers[id].map(|number| number - 1)
+    }
+
+    /// Ends one use of link `id`. Returns its number if that use had
+    /// anything to read.
+    fn close(&mut self, id: usize) -> Option<usize> {
+        if std::mem::take(self.has_text.get_mut(id)?) {
+            self.numbers[id]
+        } else {
+            None
+        }
+    }
 }
 
 /// A heading arrives as `# Title`. It keeps the marker, which reads well in
@@ -464,6 +514,7 @@ mod tests {
     fn text(html: &str, width: usize) -> Vec<String> {
         render(html, width)
             .unwrap_or_default()
+            .lines
             .iter()
             .map(Line::text)
             .collect()
@@ -513,8 +564,9 @@ mod tests {
 
     #[test]
     fn emphasis_becomes_style() {
-        let lines =
-            render("<p>The <b>agenda</b> is <em>nearly</em> done.</p>", 60).unwrap_or_default();
+        let lines = render("<p>The <b>agenda</b> is <em>nearly</em> done.</p>", 60)
+            .unwrap_or_default()
+            .lines;
         assert_eq!(
             styled(&lines[0]),
             [
@@ -538,7 +590,7 @@ mod tests {
         let html = "<h1>Offsite</h1><ul><li>Travel</li><li>Rooms</li></ul>\
                     <ol><li>First</li><li>Second</li></ol>\
                     <blockquote>Can we move it a week?</blockquote>";
-        let lines = render(html, 60).unwrap_or_default();
+        let lines = render(html, 60).unwrap_or_default().lines;
         let shown: Vec<String> = lines.iter().map(Line::text).collect();
         assert_eq!(
             shown,
@@ -561,7 +613,7 @@ mod tests {
         let html = "<p>See the <a href=\"https://example.com/agenda\">agenda</a> and the \
                     <a href=\"https://example.com/rooms\">room list</a>. The \
                     <a href=\"https://example.com/agenda\">agenda</a> again.</p>";
-        let lines = render(html, 100).unwrap_or_default();
+        let lines = render(html, 100).unwrap_or_default().lines;
         assert_eq!(
             lines.iter().map(Line::text).collect::<Vec<_>>(),
             [
@@ -581,6 +633,39 @@ mod tests {
             ]
         );
         assert_eq!(styled(&lines[2]), [("[1] https://example.com/agenda", DIM)]);
+    }
+
+    #[test]
+    fn link_text_numbers_and_the_list_all_know_their_target() {
+        let html = "<p>See the <a href=\"https://example.com/agenda\">agenda</a> and \
+                    <a href=\"https://example.com/\"><img src=\"logo.png\"></a>\
+                    <a href=\"https://example.com/rooms\">rooms</a>.</p>";
+        let rendered = render(html, 100).unwrap_or_default();
+        // The logo's link has nothing to read, so it is not in the list and
+        // the numbers have no gap.
+        assert_eq!(
+            rendered.links,
+            ["https://example.com/agenda", "https://example.com/rooms"]
+        );
+        let targets: Vec<(&str, Option<usize>)> = rendered.lines[0]
+            .spans
+            .iter()
+            .map(|span| (span.text.as_str(), span.link))
+            .collect();
+        assert_eq!(
+            targets,
+            [
+                ("See the ", None),
+                ("agenda", Some(0)),
+                ("[1]", Some(0)),
+                (" and ", None),
+                ("rooms", Some(1)),
+                ("[2]", Some(1)),
+                (".", None),
+            ]
+        );
+        assert_eq!(rendered.lines[2].spans[0].link, Some(0));
+        assert_eq!(rendered.lines[3].spans[0].link, Some(1));
     }
 
     #[test]
@@ -618,7 +703,8 @@ mod tests {
             "<p>Look: <img src=\"a.jpg\" alt=\"Sunset over the bay\"></p>",
             60,
         )
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .lines;
         assert_eq!(
             styled(&lines[0]),
             [("Look: ", NONE), ("[Sunset over the bay]", DIM)]

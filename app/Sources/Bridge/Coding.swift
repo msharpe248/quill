@@ -172,6 +172,12 @@ public extension CoreToShell {
         case "pane.close":
             try envelope.requireOnly([])
             self = .paneClose
+        case "url.open":
+            let open = try envelope.decode(UrlOpen.self, allowing: UrlOpen.allowedKeys)
+            guard Links.isOpenable(open.url) else {
+                throw BridgeError.malformed("url.open: not an http, https or mailto address")
+            }
+            self = .urlOpen(open)
         default:
             throw BridgeError.unknownMethod(envelope.method)
         }
@@ -187,6 +193,8 @@ public extension CoreToShell {
             encodeLine(method: "pane.preview", params: preview)
         case .paneClose:
             encodeLine(method: "pane.close", params: NoParams())
+        case let .urlOpen(open):
+            encodeLine(method: "url.open", params: open)
         }
     }
 }

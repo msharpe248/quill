@@ -23,6 +23,9 @@ enum DebugScript {
     static func runIfAsked(_ options: LaunchOptions, on controller: MainWindowController) {
         guard options.script != nil || options.dumpScreenTo != nil else { return }
         let steps = (options.script ?? "wait:2").split(separator: ";").map(String.init)
+        // A check must not open the user's browser. What would have been
+        // opened is written to the dump instead.
+        controller.linkOpener = { url in opened.append(url.absoluteString) }
         Task { @MainActor in
             for step in steps {
                 await perform(step, on: controller)
@@ -84,6 +87,7 @@ enum DebugScript {
     }
 
     private static var notes: [String] = []
+    private static var opened: [String] = []
 
     private static func note(_ text: String) {
         notes.append(text)
@@ -168,6 +172,7 @@ enum DebugScript {
         lines.append("preview: \(controller.previewPane?.fileURL?.lastPathComponent ?? "")")
         let responder = controller.window?.firstResponder.map { String(describing: type(of: $0)) }
         lines.append("keys go to: \(responder ?? "nothing")")
+        lines.append("opened: \(opened.joined(separator: " "))")
         let toolbar = (controller.window?.toolbar?.items ?? [])
             .filter { $0.itemIdentifier != .flexibleSpace }
             .map { "\($0.isEnabled ? "+" : "-")\($0.itemIdentifier.rawValue)" }

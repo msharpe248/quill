@@ -10,7 +10,7 @@ Milestone 0, the core skeleton, is in place: the Rust workspace, the local store
 
 Milestone 1, the app shell, is in place too. `Quill.app` runs the core in its own libghostty terminal inside the App Sandbox, builds its menus and toolbar from the core's command list, shows files in a Quick Look pane beside the terminal, and draws images inline with the Kitty graphics protocol. App Store validation is deferred until there is a developer account to sign with.
 
-Milestone 2, reading mail over IMAP, is under way. An IMAP account in `config.toml` syncs into the local store and reads offline; see "Adding an IMAP account" below. HTML mail is drawn as styled text: headings, lists, emphasis, quotes and simple tables, with links numbered and listed at the end of the message. Still to come in M2: setting an account up from inside the app, and trusting a self-signed server from a prompt. Sending arrives in M3, and Microsoft accounts with OAuth in M5.
+Milestone 2, reading mail over IMAP, is under way. An IMAP account in `config.toml` syncs into the local store and reads offline; see "Adding an IMAP account" below. HTML mail is drawn as styled text: headings, lists, emphasis, quotes and simple tables, with links numbered and listed at the end of the message. `t` switches a message between its HTML and its plain text when it came as both. `o` lists a message's links to open one in your browser, and in the app or a terminal that supports hyperlinks, cmd-click on a link's text opens it too. Quill opens only `http`, `https` and `mailto` links. Still to come in M2: setting an account up from inside the app, and trusting a self-signed server from a prompt. Sending arrives in M3, and Microsoft accounts with OAuth in M5.
 
 ## Try it
 
@@ -74,6 +74,7 @@ Press `?` at any time for the keys that apply where you are. The bottom bar show
 | `enter` | Open | `u` | Mark read or unread |
 | `esc` | Back, close, dismiss | `s` | Star or unstar |
 | `?` | Help for this context | `q` | Quit |
+| `t` | Show as HTML or plain text | `o` | Open a link |
 | `P` | Preview a sample file | `I` | Show a sample image |
 
 Arrow keys, `home`, `end`, `pageup` and `pagedown` work too. `ctrl-d` also pages down and `ctrl-c` also quits.
@@ -119,6 +120,8 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `focus.next`, `focus.prev` | Cycle the panes |
 | `view.zoom` | Zoom the focused pane |
 | `message.toggle_unread`, `message.toggle_star` | Change a message's flags |
+| `message.toggle_html` | Switch a message between its HTML and its plain text |
+| `message.open_link` | List the message's links, to open one in the browser |
 | `debug.preview_sample` | Preview a sample file (temporary) |
 | `debug.image_sample` | Show a sample image in the reader (temporary) |
 | `help.toggle` | Show or hide help |

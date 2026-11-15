@@ -45,9 +45,14 @@ pub enum DataEvent {
 pub struct LoadedBody {
     /// The body as plain text.
     pub text: String,
-    /// The HTML to show in its place, when the message has HTML worth
-    /// showing and its raw form is at hand.
+    /// The message's HTML, when it has HTML that renders and its raw form
+    /// is at hand.
     pub html: Option<String>,
+    /// The HTML is what to show first.
+    pub html_first: bool,
+    /// `text` is the sender's own plain text, not a rendering of the HTML,
+    /// so there are two versions to choose between.
+    pub has_plain: bool,
 }
 
 /// Runs one request against the store. This is the whole of the worker's
@@ -82,16 +87,28 @@ fn run(store: &mut Store, request: DataRequest) -> quill_store::Result<Vec<DataE
             rows: store.messages(mailbox)?,
         }],
         DataRequest::LoadBody(id) => {
-            let body = store.body(id)?.map(|text| LoadedBody {
+            let body = store.body(id)?.map(|text| {
                 // The HTML is read from the message as it arrived. If that
                 // cannot be had, the text is still worth showing.
-                html: store
+                let parsed = store
                     .raw(id)
                     .ok()
                     .flatten()
-                    .and_then(|raw| quill_mime::parse(&raw, 0))
-                    .and_then(|parsed| parsed.html),
-                text,
+                    .and_then(|raw| quill_mime::parse(&raw, 0));
+                match parsed {
+                    Some(parsed) => LoadedBody {
+                        text,
+                        html: parsed.html,
+                        html_first: parsed.html_first,
+                        has_plain: parsed.has_plain,
+                    },
+                    None => LoadedBody {
+                        text,
+                        html: None,
+                        html_first: false,
+                        has_plain: true,
+                    },
+                }
             });
             vec![DataEvent::BodyLoaded { id, body }]
         }
@@ -217,7 +234,9 @@ mod tests {
                 id,
                 body: Some(LoadedBody {
                     text: "Body text".to_owned(),
-                    html: None
+                    html: None,
+                    html_first: false,
+                    has_plain: true,
                 })
             }]
         );
@@ -283,6 +302,7 @@ mod tests {
                 },
             ] => {
                 assert_eq!(body.text, "Your hold is ready.");
+                assert!(body.html_first && !body.has_plain);
                 assert_eq!(
                     body.html.as_deref().map(str::trim_end),
                     Some("<p>Your hold is <b>ready</b>.</p>")
@@ -304,7 +324,9 @@ mod tests {
                 id,
                 body: Some(LoadedBody {
                     text: "Just text.".to_owned(),
-                    html: None
+                    html: None,
+                    html_first: false,
+                    has_plain: true,
                 })
             }]
         );

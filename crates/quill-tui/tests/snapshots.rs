@@ -50,6 +50,16 @@ fn html_message() {
 }
 
 #[test]
+fn html_message_as_plain_text() {
+    snapshot_after("html_message_as_plain_text", "G k k enter t");
+}
+
+#[test]
+fn link_picker() {
+    snapshot_after("link_picker", "G k k enter o j");
+}
+
+#[test]
 fn second_message_selected() {
     snapshot_after("second_message_selected", "j");
 }

@@ -17,18 +17,19 @@ use quill_media::kitty;
 use quill_store::Store;
 use quill_sync::{SyncEvent, SyncHandle, SyncRequest};
 use ratatui::DefaultTerminal;
+use ratatui::backend::IntoCrossterm;
 use ratatui::crossterm::cursor::MoveTo;
 use ratatui::crossterm::event::{Event, EventStream};
 use ratatui::crossterm::queue;
-use ratatui::crossterm::style::Print;
+use ratatui::crossterm::style::{Attribute, ContentStyle, Print, SetAttribute, SetStyle};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::command::{Context, Menu};
 use crate::data::{self, DataEvent, DataHandle};
 use crate::keymap::KeyChord;
 use crate::state::{Action, Effects, Env, HostRequest, HostState, Notice, State};
-use crate::view::ImagePlacement;
-use crate::{sample, terminal, view};
+use crate::view::{ImagePlacement, LinkPlacement};
+use crate::{hyperlink, sample, terminal, view};
 
 /// The sync engine, as the UI holds it: where to send requests, and where
 /// its news arrives. With no engine (the demo mailbox) there is only the
@@ -170,6 +171,35 @@ impl Images {
     }
 }
 
+/// Marks the link text of the frame just drawn as hyperlinks, by writing it
+/// again in place with its address attached. Every piece of link text is
+/// written on every frame, so each cell's link is always the current one.
+fn mark_links(links: &[LinkPlacement]) -> io::Result<()> {
+    if links.is_empty() {
+        return Ok(());
+    }
+    let mut out = stdout();
+    for link in links {
+        let style: ContentStyle = link.style.into_crossterm();
+        let open = link.url.as_deref().and_then(hyperlink::open);
+        queue!(out, MoveTo(link.x, link.y))?;
+        if let Some(open) = &open {
+            queue!(out, Print(open))?;
+        }
+        queue!(
+            out,
+            SetStyle(style),
+            Print(&link.text),
+            // The next frame starts from a terminal with no style set.
+            SetAttribute(Attribute::Reset)
+        )?;
+        if open.is_some() {
+            queue!(out, Print(hyperlink::CLOSE))?;
+        }
+    }
+    out.flush()
+}
+
 impl Io<'_> {
     fn perform(&mut self, effects: Effects) {
         for request in effects.data {
@@ -178,6 +208,7 @@ impl Io<'_> {
         for request in effects.host {
             match request {
                 HostRequest::PreviewSample => self.preview_sample(),
+                HostRequest::OpenUrl(url) => self.host.open_url(&url),
             }
         }
         for request in effects.sync {
@@ -210,6 +241,7 @@ impl Io<'_> {
                 Context::List => bridge::Context::List,
                 Context::Reader => bridge::Context::Reader,
                 Context::Help => bridge::Context::Help,
+                Context::Links => bridge::Context::Links,
             },
             enabled: current
                 .enabled
@@ -304,13 +336,17 @@ async fn event_loop(
     loop {
         // Redraw only on change.
         if state.dirty {
-            let mut images = Vec::new();
+            let mut overlays = view::Overlays::default();
             let frame = step(
                 "cannot draw",
-                terminal.draw(|frame| images = view::render(frame, &state, env)),
+                terminal.draw(|frame| overlays = view::render(frame, &state, env)),
             )?;
             let size = (frame.area.width, frame.area.height);
-            step("cannot draw an image", io.images.sync(images, size))?;
+            step("cannot mark a link", mark_links(&overlays.links))?;
+            step(
+                "cannot draw an image",
+                io.images.sync(overlays.images, size),
+            )?;
             state.dirty = false;
         }
         io.mirror(&state, env);

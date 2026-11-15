@@ -6,6 +6,7 @@ pub mod backend;
 pub mod config;
 pub mod error;
 pub mod fixture;
+pub mod links;
 pub mod types;
 
 pub use backend::Backend;

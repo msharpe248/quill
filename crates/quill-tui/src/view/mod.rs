@@ -1,6 +1,7 @@
 //! `view(State)`: draws the state and changes nothing.
 
 pub mod help;
+mod links;
 mod list;
 mod reader;
 mod sidebar;
@@ -8,6 +9,7 @@ mod status;
 
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
+use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 
@@ -29,8 +31,36 @@ pub struct ImagePlacement {
     pub area: Rect,
 }
 
-/// Draws the state into `frame`. Returns the images to place over it.
-pub fn render(frame: &mut Frame, state: &State, env: &Env) -> Vec<ImagePlacement> {
+/// A run of link text in the frame just rendered, for the run loop to mark
+/// as a hyperlink so the terminal can open it on a click.
+///
+/// Like images, hyperlinks are not something a cell can hold. The view draws
+/// the text as usual and says where it is; the run loop writes the same text
+/// again, marked. Only underlined link text is ever marked, and every piece
+/// of it is written again on every frame, so a cell cannot keep a link it
+/// no longer shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkPlacement {
+    pub x: u16,
+    pub y: u16,
+    /// The text exactly as drawn, already clipped to the pane.
+    pub text: String,
+    /// The style it was drawn in.
+    pub style: Style,
+    /// Where it leads, when that is an address Quill opens. `None` writes
+    /// the text with no link.
+    pub url: Option<String>,
+}
+
+/// What the terminal should draw over the frame just rendered.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Overlays {
+    pub images: Vec<ImagePlacement>,
+    pub links: Vec<LinkPlacement>,
+}
+
+/// Draws the state into `frame`. Returns what to place over it.
+pub fn render(frame: &mut Frame, state: &State, env: &Env) -> Overlays {
     let area = frame.area();
     frame.buffer_mut().set_style(area, env.styles.base());
     if area.width < layout::MIN_SIZE.0 || area.height < layout::MIN_SIZE.1 {
@@ -38,7 +68,7 @@ pub fn render(frame: &mut Frame, state: &State, env: &Env) -> Vec<ImagePlacement
             Paragraph::new("Quill needs a larger window").style(env.styles.dim()),
             area,
         );
-        return Vec::new();
+        return Overlays::default();
     }
 
     // Laid out for the frame's own size, which is ahead of `state.size` for
@@ -48,8 +78,9 @@ pub fn render(frame: &mut Frame, state: &State, env: &Env) -> Vec<ImagePlacement
         list::render(frame, rect, state, env);
     }
     let mut images = Vec::new();
+    let mut links = Vec::new();
     if let Some(rect) = areas.reader {
-        images.extend(reader::render(frame, rect, state, env));
+        images.extend(reader::render(frame, rect, state, env, &mut links));
     }
     if let Some(rect) = areas.sidebar {
         if areas.sidebar_overlay {
@@ -58,20 +89,35 @@ pub fn render(frame: &mut Frame, state: &State, env: &Env) -> Vec<ImagePlacement
         sidebar::render(frame, rect, state, env);
     }
     status::render(frame, areas.status, state, env);
+    if let Some(rect) = areas.links {
+        clear(frame, rect, &env.styles);
+        links::render(frame, rect, state, env);
+    }
     if let Some(rect) = areas.help {
         clear(frame, rect, &env.styles);
         help::render(frame, rect, state, env);
     }
     // The terminal draws images above text, so one under an overlay would
     // show through it. While anything covers an image, it is not placed.
-    let overlays = [areas.help, areas.sidebar.filter(|_| areas.sidebar_overlay)];
-    images.retain(|image| {
+    // Link text is written over the frame too, and must not be written over
+    // an overlay.
+    let overlays = [
+        areas.help,
+        areas.links,
+        areas.sidebar.filter(|_| areas.sidebar_overlay),
+    ];
+    let clear_of_overlays = |area: Rect| {
         overlays
             .iter()
             .flatten()
-            .all(|overlay| !overlay.intersects(image.area))
+            .all(|overlay| !overlay.intersects(area))
+    };
+    images.retain(|image| clear_of_overlays(image.area));
+    links.retain(|link| {
+        let width = u16::try_from(crate::text::width(&link.text)).unwrap_or(u16::MAX);
+        clear_of_overlays(Rect::new(link.x, link.y, width.max(1), 1))
     });
-    images
+    Overlays { images, links }
 }
 
 /// Empties a rectangle so an overlay can be drawn over what was there.
