@@ -8,10 +8,10 @@ expression: harness.screen()
 │    Inb┃ > Reply                                                    r ┃  08:35┃
 │    Dra┃   Reply to all                                             R ┃  04:30┃
 │    Sen┃   Focus the reader                                         3 ┃    Fri┃
-│    Arc┃   Focus the previous pane or field                 shift-tab ┃    Fri┃
-│    Tra┃   Archive                                                  e ┃    Fri┃
-│  Perso┃   Go to Work / Sent                                          ┃    Thu┃
-│    Inb┃   Mark read or unread                                      u ┃    Thu┃
+│    Arc┃   Mark read or unread                                      u ┃    Fri┃
+│    Tra┃   Focus the previous pane or field                 shift-tab ┃    Fri┃
+│  Perso┃   Archive                                                  e ┃    Thu┃
+│    Inb┃   Go to Work / Sent                                          ┃    Thu┃
 │    Dra┃   Write a new message                                      c ┃    Wed┃
 │    Sen┃   Go to Work / Archive                                       ┃    Tue┃
 │    Arc┃   Help for this context                                    ? ┃    Mon┃

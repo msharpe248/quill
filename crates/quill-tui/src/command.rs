@@ -422,7 +422,7 @@ impl Registry {
                         SearchStart,
                         "search.start",
                         "Search",
-                        Navigation,
+                        General,
                         Some(Menu::Mailbox),
                         PANES,
                     ),

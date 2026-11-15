@@ -12,13 +12,13 @@ expression: harness.screen()
 ┃ ┃   space, ctrl-d, paged…  Page down         ┃ ┃
 ┃ ┃   ctrl-u, pageup         Page up           ┃ ┃
 ┃ ┃   esc, q                 Back, close or d… ┃ ┃
-┃ ┃   /, cmd-f               Search            ┃ ┃
 ┃ ┃                                            ┃ ┃
 ┃ ┃ Panes                                      ┃ ┃
 ┃ ┃   1                      Focus the accoun… ┃ ┃
 ┃ ┃   2                      Focus the messag… ┃ ┃
 ┃ ┃   3                      Focus the reader  ┃ ┃
 ┃ ┃   tab                    Focus the next p… ┃ ┃
-┃ ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1-15 of 37 ┛ ┃
+┃ ┃   shift-tab              Focus the previo… ┃ ┃
+┃ ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1-15 of 38 ┛ ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
  j/k scroll  esc close
