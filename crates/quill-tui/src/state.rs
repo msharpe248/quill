@@ -4,11 +4,12 @@
 //! the state and returns the store requests the change calls for; the run
 //! loop sends those to the store worker, whose answers come back as actions.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 
 use jiff::tz::TimeZone;
-use quill_core::types::{FolderRole, LocalAccountId, LocalFolderId, LocalMessageId};
+use quill_core::types::{Flags, FolderRole, LocalAccountId, LocalFolderId, LocalMessageId};
 use quill_store::{AccountRow, FolderRow, Mailbox, MessageRow};
+use quill_sync::{SyncEvent, SyncRequest};
 
 use crate::command::{CommandId, Context, Registry};
 use crate::data::{DataEvent, DataRequest};
@@ -40,19 +41,23 @@ pub enum Action {
     /// The wall clock, in seconds since the Unix epoch.
     ClockTick(i64),
     Notify(Notice),
+    /// News from the sync engine.
+    Sync(SyncEvent),
 }
 
 /// What an action asks of the world outside the state: queries and writes
-/// for the store worker, and things only the host can do.
+/// for the store worker, things only the host can do, and things only the
+/// network can do.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Effects {
     pub data: Vec<DataRequest>,
     pub host: Vec<HostRequest>,
+    pub sync: Vec<SyncRequest>,
 }
 
 impl Effects {
     pub fn is_empty(&self) -> bool {
-        self.data.is_empty() && self.host.is_empty()
+        self.data.is_empty() && self.host.is_empty() && self.sync.is_empty()
     }
 }
 
@@ -183,10 +188,13 @@ pub struct MessageList {
 pub enum Body {
     #[default]
     None,
+    /// Being read from the store.
     Loading,
+    /// Not in the store yet: being fetched from the server.
+    Downloading,
     Loaded(String),
-    /// The message is known but its body is not in the store.
-    Missing,
+    /// Not in the store and not to be had, with the reason to show.
+    Unavailable(String),
 }
 
 #[derive(Debug, Default)]
@@ -231,6 +239,8 @@ pub struct State {
     pub pending: Vec<KeyChord>,
     pub notices: VecDeque<Notice>,
     pub now: i64,
+    /// The accounts with a sync pass in progress.
+    pub syncing: BTreeSet<LocalAccountId>,
     /// Show the built-in sample image in the reader. A stand-in until
     /// messages carry images of their own (M4).
     pub sample_image: bool,
@@ -255,6 +265,7 @@ impl State {
             pending: Vec::new(),
             notices: VecDeque::new(),
             now,
+            syncing: BTreeSet::new(),
             sample_image: false,
             should_quit: false,
             dirty: true,
@@ -295,6 +306,7 @@ impl State {
                 self.now = now;
             }
             Action::Notify(notice) => self.notices.push_back(notice),
+            Action::Sync(event) => self.on_sync(event, &mut out),
         }
         self.relayout(env);
         self.dirty |= changed;
@@ -501,10 +513,18 @@ impl State {
                 let Some(row) = self.list.rows.get(self.list.selected) else {
                     return;
                 };
-                let (id, seen) = (row.id, row.flags.seen);
-                if !seen {
+                let (id, previous) = (row.id, row.flags);
+                if !previous.seen {
                     self.set_seen_locally(id, true);
                     out.data.push(DataRequest::SetSeen { id, seen: true });
+                    out.sync.push(SyncRequest::SetFlags {
+                        id,
+                        flags: Flags {
+                            seen: true,
+                            ..previous
+                        },
+                        previous,
+                    });
                 }
                 self.sync_reader(out);
                 self.set_focus(Pane::Reader);
@@ -546,20 +566,35 @@ impl State {
         let Some(row) = self.target_row() else {
             return;
         };
-        let (id, seen) = (row.id, !row.flags.seen);
+        let (id, previous) = (row.id, row.flags);
+        let seen = !previous.seen;
         self.set_seen_locally(id, seen);
         out.data.push(DataRequest::SetSeen { id, seen });
+        out.sync.push(SyncRequest::SetFlags {
+            id,
+            flags: Flags { seen, ..previous },
+            previous,
+        });
     }
 
     fn toggle_star(&mut self, out: &mut Effects) {
         let Some(row) = self.target_row() else {
             return;
         };
-        let (id, flagged) = (row.id, !row.flags.flagged);
+        let (id, previous) = (row.id, row.flags);
+        let flagged = !previous.flagged;
         for row in self.rows_with_id(id) {
             row.flags.flagged = flagged;
         }
         out.data.push(DataRequest::SetFlagged { id, flagged });
+        out.sync.push(SyncRequest::SetFlags {
+            id,
+            flags: Flags {
+                flagged,
+                ..previous
+            },
+            previous,
+        });
     }
 
     /// Shows the change at once; the store's answer follows and agrees.
@@ -600,6 +635,43 @@ impl State {
             }
             None => self.reader = Reader::default(),
         }
+    }
+
+    fn on_sync(&mut self, event: SyncEvent, out: &mut Effects) {
+        let reading = |state: &Self, id| state.reader.row.as_ref().is_some_and(|row| row.id == id);
+        match event {
+            SyncEvent::Changed => self.reload(out),
+            SyncEvent::Syncing { account, active } => {
+                if active {
+                    self.syncing.insert(account);
+                } else {
+                    self.syncing.remove(&account);
+                }
+            }
+            SyncEvent::BodyReady(id) => {
+                if reading(self, id) {
+                    out.data.push(DataRequest::LoadBody(id));
+                }
+            }
+            SyncEvent::BodyFailed { id, reason } => {
+                if reading(self, id) {
+                    self.reader.body = Body::Unavailable(text::sanitize_line(&reason));
+                    self.reader.wrap_width = None;
+                }
+            }
+            SyncEvent::Problem { account, message } => {
+                self.notices
+                    .push_back(Notice::error(text::sanitize_line(&format!(
+                        "{account}: {message}"
+                    ))));
+            }
+        }
+    }
+
+    /// Asks the store again for everything on screen that it holds.
+    fn reload(&self, out: &mut Effects) {
+        out.data.push(DataRequest::LoadSidebar);
+        out.data.push(DataRequest::LoadMessages(self.mailbox));
     }
 
     fn on_data(&mut self, event: DataEvent, out: &mut Effects) {
@@ -647,15 +719,17 @@ impl State {
                 if self.reader.row.as_ref().is_some_and(|row| row.id == id) {
                     self.reader.body = match body {
                         Some(body) => Body::Loaded(text::sanitize_body(body.trim_end())),
-                        None => Body::Missing,
+                        None => {
+                            // Not downloaded yet. Ask for it; the reader
+                            // hears when it lands or why it cannot.
+                            out.sync.push(SyncRequest::FetchBody(id));
+                            Body::Downloading
+                        }
                     };
                     self.reader.wrap_width = None;
                 }
             }
-            DataEvent::StoreChanged => {
-                out.data.push(DataRequest::LoadSidebar);
-                out.data.push(DataRequest::LoadMessages(self.mailbox));
-            }
+            DataEvent::StoreChanged => self.reload(out),
             DataEvent::Error(message) => self.notices.push_back(Notice::error(message)),
         }
     }
@@ -685,7 +759,9 @@ impl State {
             if self.reader.wrap_width != Some(width) {
                 self.reader.lines = match &self.reader.body {
                     Body::Loaded(body) => text::wrap(body, width),
-                    Body::None | Body::Loading | Body::Missing => Vec::new(),
+                    Body::None | Body::Loading | Body::Downloading | Body::Unavailable(_) => {
+                        Vec::new()
+                    }
                 };
                 self.reader.wrap_width = Some(width);
             }

@@ -15,6 +15,7 @@ use quill_host::bridge::{self, CommandInfo, StateUpdate};
 use quill_host::{Attached, Host, HostEvent};
 use quill_media::kitty;
 use quill_store::Store;
+use quill_sync::{SyncEvent, SyncHandle, SyncRequest};
 use ratatui::DefaultTerminal;
 use ratatui::crossterm::cursor::MoveTo;
 use ratatui::crossterm::event::{Event, EventStream};
@@ -29,6 +30,26 @@ use crate::state::{Action, Effects, Env, HostRequest, HostState, Notice, State};
 use crate::view::ImagePlacement;
 use crate::{sample, terminal, view};
 
+/// The sync engine, as the UI holds it: where to send requests, and where
+/// its news arrives. With no engine (the demo mailbox) there is only the
+/// store.
+pub struct SyncLink {
+    pub handle: Option<SyncHandle>,
+    pub events: UnboundedReceiver<SyncEvent>,
+}
+
+impl SyncLink {
+    /// No engine: nothing syncs and nothing is ever downloaded.
+    pub fn none() -> Self {
+        // The sender is dropped at once, so the receiver simply stays quiet.
+        let (_, events) = unbounded_channel();
+        Self {
+            handle: None,
+            events,
+        }
+    }
+}
+
 /// Runs the UI over `store` until the user quits. `notices` are shown in the
 /// status bar at startup, for problems found while loading configuration.
 pub async fn run(
@@ -36,39 +57,42 @@ pub async fn run(
     env: Env,
     mut notices: Vec<Notice>,
     attached: Attached,
+    sync: SyncLink,
 ) -> io::Result<()> {
-    let (events_tx, mut events) = unbounded_channel();
+    let (events_tx, events) = unbounded_channel();
     let data = step(
         "cannot start the store worker",
         data::spawn(store, events_tx),
     )?;
     let Attached {
         host,
-        events: mut host_events,
+        events: host_events,
         problem,
     } = attached;
     notices.extend(problem.map(Notice::error));
 
     let mut screen = step("cannot take over the terminal", terminal::enter())?;
-    let (problems_tx, mut problems) = unbounded_channel();
+    let (injected_tx, injected) = unbounded_channel();
+    let SyncLink {
+        handle: sync_handle,
+        events: sync_events,
+    } = sync;
     let mut io = Io {
         data: &data,
         host: &host,
-        problems: problems_tx,
+        sync: sync_handle.as_ref(),
+        injected: injected_tx,
         preview_dir: None,
         last_host_state: None,
         images: Images::default(),
     };
-    let result = event_loop(
-        &mut screen,
-        &env,
-        notices,
-        &mut io,
-        &mut events,
-        &mut host_events,
-        &mut problems,
-    )
-    .await;
+    let mut inbound = Inbound {
+        data: events,
+        host: host_events,
+        sync: sync_events,
+        injected,
+    };
+    let result = event_loop(&mut screen, &env, notices, &mut io, &mut inbound).await;
     io.images.forget();
     terminal::leave();
     if let Some(dir) = io.preview_dir {
@@ -82,8 +106,9 @@ pub async fn run(
 struct Io<'a> {
     data: &'a DataHandle,
     host: &'a Arc<dyn Host>,
-    /// Failures from background work, to show as notices.
-    problems: UnboundedSender<String>,
+    sync: Option<&'a SyncHandle>,
+    /// Actions that background work feeds back into the loop.
+    injected: UnboundedSender<Action>,
     /// A private directory for files handed to the host for viewing.
     preview_dir: Option<PathBuf>,
     last_host_state: Option<HostState>,
@@ -155,6 +180,22 @@ impl Io<'_> {
                 HostRequest::PreviewSample => self.preview_sample(),
             }
         }
+        for request in effects.sync {
+            match (self.sync, request) {
+                (Some(engine), request) => {
+                    engine.send(request);
+                }
+                // With no engine a body that is not in the store never will
+                // be. Say so instead of waiting forever.
+                (None, SyncRequest::FetchBody(id)) => {
+                    let _ = self.injected.send(Action::Sync(SyncEvent::BodyFailed {
+                        id,
+                        reason: "The body of this message has not been downloaded.".to_owned(),
+                    }));
+                }
+                (None, SyncRequest::SyncNow | SyncRequest::SetFlags { .. }) => {}
+            }
+        }
     }
 
     /// Tells the host about the state it mirrors, when that has changed.
@@ -190,14 +231,16 @@ impl Io<'_> {
             })
             .clone();
         let host = Arc::clone(self.host);
-        let problems = self.problems.clone();
+        let injected = self.injected.clone();
         // Writing a file is not for the UI task.
         tokio::task::spawn_blocking(move || {
             let path = dir.join(sample::FILE_NAME);
             match sample::write(&dir, &path) {
                 Ok(()) => host.preview(&path, sample::FILE_NAME),
                 Err(err) => {
-                    let _ = problems.send(format!("Cannot write the sample file: {err}"));
+                    let _ = injected.send(Action::Notify(Notice::error(format!(
+                        "Cannot write the sample file: {err}"
+                    ))));
                 }
             }
         });
@@ -229,14 +272,22 @@ pub fn command_infos(env: &Env) -> Vec<CommandInfo> {
         .collect()
 }
 
+/// Everything the loop waits on besides the keyboard.
+struct Inbound {
+    /// Answers from the store worker.
+    data: UnboundedReceiver<DataEvent>,
+    host: UnboundedReceiver<HostEvent>,
+    sync: UnboundedReceiver<SyncEvent>,
+    /// Actions that background work feeds back into the loop.
+    injected: UnboundedReceiver<Action>,
+}
+
 async fn event_loop(
     terminal: &mut DefaultTerminal,
     env: &Env,
     notices: Vec<Notice>,
     io: &mut Io<'_>,
-    events: &mut UnboundedReceiver<DataEvent>,
-    host_events: &mut UnboundedReceiver<HostEvent>,
-    problems: &mut UnboundedReceiver<String>,
+    inbound: &mut Inbound,
 ) -> io::Result<()> {
     let size = step("cannot read the terminal size", terminal.size())?;
     let mut state = State::new((size.width, size.height), now());
@@ -270,8 +321,8 @@ async fn event_loop(
                 Some(Err(err)) => return step("cannot read input", Err(err)),
                 None => return Ok(()),
             },
-            Some(event) = events.recv() => Some(Action::Data(event)),
-            Some(event) = host_events.recv() => match event {
+            Some(event) = inbound.data.recv() => Some(Action::Data(event)),
+            Some(event) = inbound.host.recv() => match event {
                 HostEvent::RunCommand(name) => Some(match env.registry.by_name(&name) {
                     Some(spec) => Action::Command(spec.id),
                     None => Action::Notify(Notice::error(format!(
@@ -282,7 +333,8 @@ async fn event_loop(
                 HostEvent::WillQuit | HostEvent::Disconnected => return Ok(()),
                 HostEvent::Problem(text) => Some(Action::Notify(Notice::error(text))),
             },
-            Some(text) = problems.recv() => Some(Action::Notify(Notice::error(text))),
+            Some(event) = inbound.sync.recv() => Some(Action::Sync(event)),
+            Some(action) = inbound.injected.recv() => Some(action),
             _ = clock.tick() => Some(Action::ClockTick(now())),
         };
         if let Some(action) = action {

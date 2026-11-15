@@ -43,11 +43,23 @@ pub enum DataEvent {
 /// Runs one request against the store. This is the whole of the worker's
 /// logic, kept free of threads so tests can drive it directly.
 pub fn handle(store: &mut Store, request: DataRequest) -> Vec<DataEvent> {
-    match run(store, request) {
-        Ok(events) => events,
-        Err(err) => vec![DataEvent::Error(err.to_string())],
+    // The sync engine writes through a connection of its own. Finding the
+    // database busy is not a failure to report, just a reason to ask again.
+    let mut attempts = 0;
+    loop {
+        match run(store, request) {
+            Ok(events) => return events,
+            Err(err) if err.is_busy() && attempts < BUSY_RETRIES => {
+                attempts += 1;
+                thread::sleep(BUSY_PAUSE);
+            }
+            Err(err) => return vec![DataEvent::Error(err.to_string())],
+        }
     }
 }
+
+const BUSY_RETRIES: u32 = 20;
+const BUSY_PAUSE: std::time::Duration = std::time::Duration::from_millis(50);
 
 fn run(store: &mut Store, request: DataRequest) -> quill_store::Result<Vec<DataEvent>> {
     Ok(match request {

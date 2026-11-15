@@ -33,6 +33,19 @@ pub enum StoreError {
     Json(#[from] serde_json::Error),
 }
 
+impl StoreError {
+    /// Another connection held the database for longer than this one was
+    /// willing to wait. Nothing is wrong; trying again is the right answer.
+    pub fn is_busy(&self) -> bool {
+        use rusqlite::ErrorCode::{DatabaseBusy, DatabaseLocked};
+        let code = match self {
+            Self::Sqlite(err) | Self::Migration { source: err, .. } => err.sqlite_error_code(),
+            Self::NewerSchema { .. } | Self::Json(_) => None,
+        };
+        matches!(code, Some(DatabaseBusy | DatabaseLocked))
+    }
+}
+
 pub type Result<T> = std::result::Result<T, StoreError>;
 
 /// An account as stored.
@@ -132,6 +145,25 @@ impl Store {
             |row| row.get(0),
         )?;
         Ok(LocalAccountId(id))
+    }
+
+    /// Removes every account not named in `keep`, with its folders and mail.
+    /// For accounts the user has taken out of the config.
+    pub fn retain_accounts(&mut self, keep: &[&str]) -> Result<usize> {
+        let tx = self.conn.transaction()?;
+        let names: Vec<String> = {
+            let mut statement = tx.prepare("SELECT name FROM accounts")?;
+            let rows = statement.query_map([], |row| row.get(0))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        let mut removed = 0;
+        for name in names {
+            if !keep.contains(&name.as_str()) {
+                removed += tx.execute("DELETE FROM accounts WHERE name = ?1", [&name])?;
+            }
+        }
+        tx.commit()?;
+        Ok(removed)
     }
 
     /// Inserts the folder, or updates its name and role when already known.
@@ -1224,5 +1256,77 @@ mod change_detection_tests {
                 )
                 .unwrap()
         );
+    }
+}
+
+#[cfg(test)]
+mod retain_accounts_tests {
+    use super::*;
+
+    #[test]
+    fn accounts_taken_out_of_the_config_are_removed_with_their_mail() {
+        let mut store = Store::open_in_memory().unwrap();
+        for name in ["Work", "Personal", "Old"] {
+            let account = store.upsert_account(name, "r@example.com", "imap").unwrap();
+            store
+                .upsert_folder(
+                    account,
+                    &RemoteFolder {
+                        id: FolderId("INBOX".to_owned()),
+                        name: "INBOX".to_owned(),
+                        role: FolderRole::Inbox,
+                    },
+                )
+                .unwrap();
+        }
+        assert_eq!(
+            store
+                .retain_accounts(&["Work", "Personal", "Never Synced"])
+                .unwrap(),
+            1
+        );
+        let names: Vec<String> = store
+            .accounts()
+            .unwrap()
+            .into_iter()
+            .map(|a| a.name)
+            .collect();
+        assert_eq!(names, ["Work", "Personal"]);
+        assert_eq!(store.folders().unwrap().len(), 2);
+        assert_eq!(store.retain_accounts(&["Work", "Personal"]).unwrap(), 0);
+        assert_eq!(store.retain_accounts(&[]).unwrap(), 2);
+    }
+}
+
+#[cfg(test)]
+mod busy_tests {
+    use super::*;
+
+    #[test]
+    fn a_database_held_by_another_connection_is_busy_not_broken() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("quill.db");
+        let mut first = Store::open(&path).unwrap();
+        let second = Store::open(&path).unwrap();
+        // Do not wait ten seconds to find out.
+        first.conn.busy_timeout(std::time::Duration::ZERO).unwrap();
+
+        // The second connection holds the write lock...
+        second.conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let err = first
+            .upsert_account("Work", "robin@example.com", "imap")
+            .unwrap_err();
+        assert!(err.is_busy(), "{err:?}");
+        // ...and once it lets go, the same call works.
+        second.conn.execute_batch("COMMIT").unwrap();
+        first
+            .upsert_account("Work", "robin@example.com", "imap")
+            .unwrap();
+
+        let other = StoreError::NewerSchema {
+            found: 9,
+            supported: 2,
+        };
+        assert!(!other.is_busy());
     }
 }

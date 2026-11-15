@@ -14,15 +14,19 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+quill-auth.workspace = true
 quill-core.workspace = true
 quill-host.workspace = true
+quill-imap.workspace = true
 quill-media.workspace = true
 quill-store.workspace = true
+quill-sync.workspace = true
 quill-tui.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 jiff.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread"] }
+rustix.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "sync"] }
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -10,7 +10,7 @@ Milestone 0, the core skeleton, is in place: the Rust workspace, the local store
 
 Milestone 1, the app shell, is in place too. `Quill.app` runs the core in its own libghostty terminal inside the App Sandbox, builds its menus and toolbar from the core's command list, shows files in a Quick Look pane beside the terminal, and draws images inline with the Kitty graphics protocol. App Store validation is deferred until there is a developer account to sign with.
 
-There is no real mail yet. Accounts, sync and sending arrive in later milestones.
+Milestone 2, reading mail over IMAP, is under way. An IMAP account in `config.toml` syncs into the local store and reads offline; see "Adding an IMAP account" below. Still to come in M2: setting an account up from inside the app, and trusting a self-signed server from a prompt. Sending arrives in M3, and Microsoft accounts with OAuth in M5.
 
 ## Try it
 
@@ -36,6 +36,31 @@ The script builds the Rust core and the Swift shell, assembles `target/app/Quill
 Around the terminal the app adds a menu bar and toolbar built from the core's commands, the mailbox name and unread count in the title bar, the unread count on the Dock icon, and a second pane for previews. Press `P` (or the eye in the toolbar) to preview a sample file; `esc` closes the pane, and `cmd-]` moves focus between the panes. Press `I` to show a sample image in the reader.
 
 `SANDBOX=0 app/build-app.sh` signs without the sandbox, to tell a sandbox denial from an ordinary bug.
+
+## Adding an IMAP account
+
+Until account setup is built into the app, an account is a few lines in `config.toml` and a password in the Keychain:
+
+```toml
+[[account]]
+name = "Personal"
+type = "imap"
+address = "you@example.com"
+imap = { host = "imap.example.com", port = 993, tls = "implicit" }
+```
+
+```sh
+quill account password Personal   # asks for the password, saves it in the Keychain
+quill tui
+```
+
+`tls` is `"implicit"` (the default, port 993), `"starttls"` (port 143) or `"none"`. With `"starttls"`, a server that will not upgrade is refused, never used in the clear. `"none"` sends your password and mail unencrypted and says so every time Quill starts.
+
+Optional keys inside `imap = { ... }`: `username`, when you do not sign in with your address, and `fingerprint`, the SHA-256 of a self-signed server's certificate, to accept that one certificate.
+
+`quill account list` shows each account and whether it has a saved password. `quill account forget NAME` removes one. Passwords are only ever in the Keychain: not in the config, the database or the logs.
+
+Microsoft accounts (Microsoft 365, Outlook.com) do not accept a password over IMAP. They need the OAuth sign-in that arrives in M5.
 
 ## Keys
 
@@ -137,6 +162,8 @@ Layout of the workspace:
 | `quill-media` | Images: the Kitty graphics protocol |
 | `quill-mime` | Reading mail: RFC 5322 and MIME parsing |
 | `quill-imap` | The IMAP backend |
+| `quill-sync` | The sync engine: runs each account's backend into the store |
+| `quill-auth` | Secrets: the macOS Keychain |
 | `quill-cli` | The `quill` binary |
 | `app/Sources/TerminalKit` | The terminal surface. The only Swift module that imports libghostty |
 | `app/Sources/Bridge` | The shell's end of the bridge: message types and the socket server |

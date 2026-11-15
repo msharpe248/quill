@@ -124,12 +124,19 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) -> Option
             let line = Line::styled("Loading…", styles.dim());
             frame.render_widget(line, Rect::new(inner.x, y, inner.width, 1));
         }
-        Body::Missing => {
-            let line = Line::styled(
-                "The body of this message has not been downloaded.",
-                styles.dim(),
-            );
+        Body::Downloading => {
+            let line = Line::styled("Downloading…", styles.dim());
             frame.render_widget(line, Rect::new(inner.x, y, inner.width, 1));
+        }
+        Body::Unavailable(reason) => {
+            for (offset, text) in text::wrap(reason, width)
+                .iter()
+                .take(usize::from(bottom - y))
+                .enumerate()
+            {
+                let rect = Rect::new(inner.x, y + offset as u16, inner.width, 1);
+                frame.render_widget(Line::styled(text.as_str(), styles.dim()), rect);
+            }
         }
         Body::Loaded(_) => {
             let rows = usize::from(bottom - y);

@@ -16,6 +16,9 @@ use quill_tui::theme::{ColorMode, Styles, Theme};
 
 pub struct Loaded {
     pub config: Config,
+    /// `config` is what the file says, not the defaults standing in for a
+    /// file that could not be read.
+    pub config_ok: bool,
     pub env: Env,
     pub notices: Vec<Notice>,
 }
@@ -23,10 +26,13 @@ pub struct Loaded {
 pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loaded {
     let mut notices = Vec::new();
 
-    let config = Config::load(&paths.config_file()).unwrap_or_else(|err| {
-        notices.push(Notice::error(format!("{err}. Using the default settings.")));
-        Config::default()
-    });
+    let (config, config_ok) = match Config::load(&paths.config_file()) {
+        Ok(config) => (config, true),
+        Err(err) => {
+            notices.push(Notice::error(format!("{err}. Using the default settings.")));
+            (Config::default(), false)
+        }
+    };
 
     let theme = load_theme(paths, &config.ui.theme, &mut notices);
 
@@ -58,6 +64,7 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
     };
     Loaded {
         config,
+        config_ok,
         env,
         notices,
     }
@@ -144,6 +151,8 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let loaded = load_from(&dir);
         assert!(loaded.notices.is_empty(), "{:?}", loaded.notices);
+        // No file at all is a config that was read: it says "the defaults".
+        assert!(loaded.config_ok);
         assert_eq!(loaded.config, Config::default());
         assert_eq!(loaded.env.styles.theme_name(), "dark");
         assert_eq!(first_key(&loaded, CommandId::MessageToggleUnread), "u");
@@ -174,6 +183,7 @@ mod tests {
         write(&dir, "config.toml", "[ui]\ntheme = \"light\"\nkeymap = \n");
         let loaded = load_from(&dir);
         assert_eq!(loaded.config, Config::default());
+        assert!(!loaded.config_ok);
         assert_eq!(loaded.env.styles.theme_name(), "dark");
         assert_eq!(loaded.notices.len(), 1);
         assert_eq!(loaded.notices[0].kind, NoticeKind::Error);

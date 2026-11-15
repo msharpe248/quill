@@ -517,12 +517,135 @@ fn a_store_error_becomes_a_notice() {
 }
 
 #[test]
-fn a_missing_body_says_so() {
+fn a_body_not_yet_downloaded_is_fetched_and_shown_when_it_lands() {
+    use quill_sync::{SyncEvent, SyncRequest};
+    let mut harness = Harness::demo(200, 60);
+    let id = harness.state.list.rows[0].id;
+    let text = harness.store.body(id).unwrap().unwrap();
+
+    // The store has no body for it: the reader asks the engine and waits.
+    harness.act(Action::Data(DataEvent::BodyLoaded { id, body: None }));
+    assert_eq!(harness.state.reader.body, Body::Downloading);
+    assert_eq!(harness.sync_requests, [SyncRequest::FetchBody(id)]);
+    assert!(harness.screen().contains("Downloading…"));
+
+    // News of some other message's body changes nothing here.
+    let other = harness.state.list.rows[1].id;
+    harness.act(Action::Sync(SyncEvent::BodyReady(other)));
+    assert_eq!(harness.state.reader.body, Body::Downloading);
+
+    // It lands: the reader reads it from the store.
+    harness.act(Action::Sync(SyncEvent::BodyReady(id)));
+    assert!(
+        matches!(&harness.state.reader.body, Body::Loaded(body) if text.starts_with(body.as_str()))
+    );
+    assert!(harness.screen().contains("Hi Robin,"));
+}
+
+#[test]
+fn a_body_that_cannot_be_downloaded_says_why() {
+    use quill_sync::SyncEvent;
     let mut harness = Harness::demo(200, 60);
     let id = harness.state.list.rows[0].id;
     harness.act(Action::Data(DataEvent::BodyLoaded { id, body: None }));
-    assert_eq!(harness.state.reader.body, Body::Missing);
-    assert!(harness.screen().contains("has not been downloaded"));
+    harness.act(Action::Sync(SyncEvent::BodyFailed {
+        id,
+        reason: "cannot reach the server: no route to host\u{1b}[2J".to_owned(),
+    }));
+    assert!(matches!(harness.state.reader.body, Body::Unavailable(_)));
+    assert!(
+        harness
+            .screen()
+            .contains("cannot reach the server: no route to host")
+    );
+    // Moving away and back asks again.
+    harness.keys("j k");
+    assert!(matches!(&harness.state.reader.body, Body::Loaded(_)));
+}
+
+#[test]
+fn flag_changes_are_sent_to_the_server_with_what_to_restore() {
+    use quill_core::types::Flags;
+    use quill_sync::SyncRequest;
+    let mut harness = Harness::demo(200, 60);
+    let id = harness.state.list.rows[0].id;
+    let unread = Flags::default();
+    harness.keys("s");
+    assert_eq!(
+        harness.sync_requests,
+        [SyncRequest::SetFlags {
+            id,
+            flags: Flags {
+                flagged: true,
+                ..unread
+            },
+            previous: unread,
+        }]
+    );
+    harness.sync_requests.clear();
+    // Opening marks it read: one more change, from the starred state.
+    harness.keys("enter");
+    assert_eq!(
+        harness.sync_requests,
+        [SyncRequest::SetFlags {
+            id,
+            flags: Flags {
+                seen: true,
+                flagged: true,
+                ..unread
+            },
+            previous: Flags {
+                flagged: true,
+                ..unread
+            },
+        }]
+    );
+    // Opening it again changes nothing, so nothing is sent.
+    harness.sync_requests.clear();
+    harness.keys("esc enter");
+    assert!(harness.sync_requests.is_empty());
+}
+
+#[test]
+fn sync_events_reload_report_and_show_progress() {
+    use quill_sync::SyncEvent;
+    let mut harness = Harness::demo(200, 60);
+    let account = harness.state.accounts[0].id;
+    assert!(!harness.screen().contains("syncing"));
+    harness.act(Action::Sync(SyncEvent::Syncing {
+        account,
+        active: true,
+    }));
+    assert!(
+        harness
+            .screen()
+            .lines()
+            .last()
+            .unwrap()
+            .ends_with("syncing…")
+    );
+    harness.act(Action::Sync(SyncEvent::Syncing {
+        account,
+        active: false,
+    }));
+    assert!(!harness.screen().contains("syncing"));
+
+    // A change in the store reloads what is on screen.
+    let id = harness.state.list.rows[0].id;
+    harness.store.set_seen(id, true).unwrap();
+    harness.act(Action::Sync(SyncEvent::Changed));
+    assert!(harness.state.list.rows[0].flags.seen);
+    assert_eq!(harness.state.mailbox_unread(), 11);
+
+    harness.act(Action::Sync(SyncEvent::Problem {
+        account: "Work".to_owned(),
+        message: "sign-in failed: wrong password".to_owned(),
+    }));
+    assert!(
+        harness
+            .screen()
+            .contains("Work: sign-in failed: wrong password")
+    );
 }
 
 #[test]

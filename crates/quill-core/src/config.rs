@@ -160,6 +160,14 @@ pub struct ServerConfig {
     pub port: Option<u16>,
     #[serde(default)]
     pub tls: TlsMode,
+    /// The name to sign in with. `None` means the account's address.
+    #[serde(default)]
+    pub username: Option<String>,
+    /// The SHA-256 fingerprint of the one certificate to accept, for a
+    /// self-signed server: 64 hex digits, colons and a `sha256:` prefix
+    /// allowed.
+    #[serde(default)]
+    pub fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]

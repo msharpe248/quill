@@ -173,3 +173,14 @@ The Keychain needs no entitlement for the app's own items; an access group share
 - **Raw messages are filed by SHA-256 under `data/blobs/`**, written under a temporary name and renamed, with their hash recorded on the message (migration 0002). The cache budget and eviction are still to build.
 - **A flag change is written to the store first, then sent to the server; if the server refuses, the store is put back** and the user is told. This is the spec's data flow without the durable queue: a change made offline is rolled back rather than queued until M3 adds the operations table.
 - **Folders that disappear from the server are removed locally**, with their mail.
+
+### Accounts and secrets
+
+- **The Keychain is reached through `security-framework`**, the smaller of the spec's two candidates. `quill-auth` puts it behind a `SecretStore` trait, so tests use an in-memory store and another platform can supply its own.
+- **A password is filed under the service `Quill` as `imap:<username>@<host>`**, so two accounts never share one by accident, and changing an account's display name does not orphan its password.
+- **Until the setup flow exists, an account is added by hand**: a `[[account]]` in `config.toml` and `quill account password NAME`, which reads the password without echo (or from a pipe) and never takes it as an argument, where it would show in the process list and shell history.
+- **`imap = { ... }` gained `username` and `fingerprint`.** The spec's example has neither; a sign-in name that differs from the address and a pinned certificate both need somewhere to go.
+- **An account the config no longer names is removed from the store**, with its cached mail. Never when the config failed to load: an unreadable file must not be taken for "every account was removed".
+- **A plaintext account raises a warning at every start.** The spec asks for a permanent warning; a notice at each launch is what exists so far, and a standing marker on the account is still to add.
+- **An account Quill cannot use yet (POP3, Graph, EWS, or IMAP with no server set) is a notice**, never a failure to start.
+- **The UI's store worker retries when the database is momentarily busy**, since the sync engine writes through its own connection.

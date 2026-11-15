@@ -1911,17 +1911,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "quill-auth"
+version = "0.1.0"
+dependencies = [
+ "security-framework",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "quill-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
  "jiff",
+ "quill-auth",
  "quill-core",
  "quill-host",
+ "quill-imap",
  "quill-media",
  "quill-store",
+ "quill-sync",
  "quill-tui",
+ "rustix",
  "tempfile",
  "tokio",
 ]
@@ -2025,6 +2037,7 @@ dependencies = [
  "quill-media",
  "quill-mime",
  "quill-store",
+ "quill-sync",
  "ratatui",
  "rustix",
  "serde",

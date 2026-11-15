@@ -28,6 +28,8 @@ pub struct Harness {
     pub store: Store,
     /// What the UI has asked of the host so far.
     pub host_requests: Vec<HostRequest>,
+    /// What the UI has asked of the sync engine so far.
+    pub sync_requests: Vec<quill_sync::SyncRequest>,
 }
 
 impl Harness {
@@ -61,6 +63,7 @@ impl Harness {
             env,
             store,
             host_requests: Vec::new(),
+            sync_requests: Vec::new(),
         };
         let requests = harness.state.startup_requests();
         harness.pump(requests);
@@ -71,6 +74,7 @@ impl Harness {
     pub fn act(&mut self, action: Action) {
         let effects = self.state.update(&self.env, action);
         self.host_requests.extend(effects.host);
+        self.sync_requests.extend(effects.sync);
         self.pump(effects.data);
     }
 
@@ -80,6 +84,7 @@ impl Harness {
             for event in data::handle(&mut self.store, request) {
                 let effects = self.state.update(&self.env, Action::Data(event));
                 self.host_requests.extend(effects.host);
+                self.sync_requests.extend(effects.sync);
                 queue.extend(effects.data);
             }
         }

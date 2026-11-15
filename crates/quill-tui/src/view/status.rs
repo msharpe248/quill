@@ -9,6 +9,8 @@ use crate::keymap::KeySeq;
 use crate::state::{Env, NoticeKind, State};
 use crate::text;
 
+const SYNCING: &str = "syncing… ";
+
 pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
     if area.height == 0 {
         return;
@@ -96,5 +98,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
     frame.render_widget(Line::from(spans), area);
     if !pending.is_empty() {
         frame.render_widget(Line::styled(pending, styles.key()).right_aligned(), area);
+    } else if !state.syncing.is_empty() && used + SYNCING.len() < width {
+        // Work in the background shows here and blocks nothing.
+        frame.render_widget(Line::styled(SYNCING, styles.dim()).right_aligned(), area);
     }
 }
