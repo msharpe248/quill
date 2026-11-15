@@ -11,6 +11,7 @@ publish = false
 [workspace.dependencies]
 quill-auth = { path = "crates/quill-auth" }
 quill-core = { path = "crates/quill-core" }
+quill-graph = { path = "crates/quill-graph" }
 quill-host = { path = "crates/quill-host" }
 quill-imap = { path = "crates/quill-imap" }
 quill-media = { path = "crates/quill-media" }
@@ -44,6 +45,9 @@ pulldown-cmark = { version = "0.13.6", default-features = false }
 jsonschema = { version = "0.61.2", default-features = false }
 ratatui = "0.30.2"
 rcgen = "0.14.10"
+# TLS comes from Quill's own rustls configuration (ring, the system's trust
+# store): no provider is built in, so no second crypto library is linked.
+reqwest = { version = "0.13.5", default-features = false, features = ["form", "http2", "json", "query", "rustls-no-provider"] }
 ring = "0.17.14"
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-platform-verifier = "0.7.1"
@@ -62,6 +66,7 @@ tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring
 toml = "1.2"
 unicode-segmentation = "1.13"
 unicode-width = "0.2.3"
+wiremock = "0.6.5"
 x509-parser = "0.18.1"
 
 [workspace.lints.rust]
