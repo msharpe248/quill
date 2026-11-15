@@ -11,6 +11,7 @@ use crate::StoreError;
 pub(crate) const MIGRATIONS: &[(u32, &str)] = &[
     (1, include_str!("../migrations/0001_initial.sql")),
     (2, include_str!("../migrations/0002_blob_hash.sql")),
+    (3, include_str!("../migrations/0003_operations.sql")),
 ];
 
 #[cfg(test)]

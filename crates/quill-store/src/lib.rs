@@ -3,9 +3,15 @@
 //! All calls block on disk. Run them on the store worker, never on the UI task.
 
 mod blobs;
+mod contacts;
+mod drafts;
 mod migrations;
+mod queue;
 
 pub use blobs::BlobStore;
+pub use contacts::Contact;
+pub use drafts::{DraftAttachment, DraftContent, DraftId, DraftRow, DraftState, Outgoing};
+pub use queue::{OperationId, QueuedKind, QueuedOperation, is_placeholder};
 
 use std::path::Path;
 
@@ -205,8 +211,13 @@ impl Store {
         {
             if delta.reset {
                 // The server has renumbered the folder: nothing held for it
-                // can be matched to a message any more.
-                touched += tx.execute("DELETE FROM messages WHERE folder_id = ?1", [folder.0])?;
+                // can be matched to a message any more. A message moved here
+                // that the server has not heard about yet is not the
+                // server's to renumber, and stays.
+                touched += tx.execute(
+                    "DELETE FROM messages WHERE folder_id = ?1 AND remote_id NOT LIKE 'local:op%'",
+                    [folder.0],
+                )?;
             }
             // `WHERE` on the update keeps a re-sent, unchanged message from
             // counting as a change.
@@ -229,8 +240,24 @@ impl Store {
                     OR flagged <> excluded.flagged OR answered <> excluded.answered
                     OR draft <> excluded.draft OR has_attachments <> excluded.has_attachments",
             )?;
+            // A message moved out of this folder here, which the server
+            // has not been told about yet, is still listed by the server.
+            // It is not brought back.
+            let pending = queue::Pending::of(&tx, folder)?;
+            let sent_folder: bool = tx
+                .query_row(
+                    "SELECT role = 'sent' FROM folders WHERE id = ?1",
+                    [folder.0],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .unwrap_or(false);
             for message in &delta.added {
+                if pending.departed.contains(&message.id.0) {
+                    continue;
+                }
                 touched += insert_message(&mut insert, folder, message)?;
+                contacts::harvest(&tx, &message.headers, sent_folder)?;
             }
             let mut update = tx.prepare(
                 "UPDATE messages SET seen = ?3, flagged = ?4, answered = ?5, draft = ?6
@@ -258,6 +285,9 @@ impl Store {
                  ON CONFLICT (folder_id) DO UPDATE SET cursor = excluded.cursor",
                 params![folder.0, delta.next_cursor.0],
             )?;
+            // Flags changed here and not yet on the server win over what
+            // the server still says.
+            queue::reapply_flags(&tx, folder)?;
         }
         tx.commit()?;
         Ok(touched > 0)
@@ -359,8 +389,9 @@ impl Store {
     pub fn folders(&self) -> Result<Vec<FolderRow>> {
         let mut statement = self.conn.prepare(
             "SELECT f.id, f.account_id, f.name, f.role,
-                    (SELECT count(*) FROM messages m WHERE m.folder_id = f.id AND m.seen = 0),
-                    (SELECT count(*) FROM messages m WHERE m.folder_id = f.id)
+                    (SELECT count(*) FROM messages m
+                     WHERE m.folder_id = f.id AND m.seen = 0 AND m.hidden = 0),
+                    (SELECT count(*) FROM messages m WHERE m.folder_id = f.id AND m.hidden = 0)
              FROM folders f
              ORDER BY f.account_id,
                       CASE f.role
@@ -394,7 +425,7 @@ impl Store {
             Mailbox::Unified => {
                 let mut statement = self.conn.prepare(&format!(
                     "SELECT {COLUMNS} FROM messages m JOIN folders f ON f.id = m.folder_id
-                     WHERE f.role = 'inbox' {ORDER}"
+                     WHERE f.role = 'inbox' AND m.hidden = 0 {ORDER}"
                 ))?;
                 statement
                     .query_map([], message_row)?
@@ -403,7 +434,7 @@ impl Store {
             Mailbox::Folder(folder) => {
                 let mut statement = self.conn.prepare(&format!(
                     "SELECT {COLUMNS} FROM messages m JOIN folders f ON f.id = m.folder_id
-                     WHERE m.folder_id = ?1 {ORDER}"
+                     WHERE m.folder_id = ?1 AND m.hidden = 0 {ORDER}"
                 ))?;
                 statement
                     .query_map([folder.0], message_row)?
@@ -511,7 +542,8 @@ impl Store {
     ) -> Result<Vec<LocalMessageId>> {
         let mut statement = self.conn.prepare(
             "SELECT m.id FROM messages m JOIN folders f ON f.id = m.folder_id
-             WHERE f.account_id = ?1 AND m.date >= ?2
+             WHERE f.account_id = ?1 AND m.date >= ?2 AND m.hidden = 0
+               AND m.remote_id NOT LIKE 'local:op%'
                AND NOT EXISTS (SELECT 1 FROM bodies b WHERE b.message_id = m.id)
              ORDER BY m.date DESC, m.id DESC LIMIT ?3",
         )?;
@@ -1231,7 +1263,10 @@ mod sync_support_tests {
             .unwrap();
         }
         let store = Store::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 2);
+        assert_eq!(
+            store.schema_version().unwrap(),
+            migrations::latest_version()
+        );
         assert_eq!(store.accounts().unwrap().len(), 1);
     }
 }
