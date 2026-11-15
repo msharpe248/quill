@@ -89,8 +89,11 @@ impl Host for StandaloneHost {
             // There are no menus, toolbar or Dock badge to keep up to date,
             // and no pane to close: `qlmanage` owns its own window. Nor a
             // file panel: the UI asks for a path instead. The clipboard is
-            // the terminal's, and is asked for there.
-            CoreToShell::CommandsList(_)
+            // the terminal's, and is asked for there. Nor notifications:
+            // a terminal has no place for them that every terminal shares.
+            CoreToShell::NotifyPost(_)
+            | CoreToShell::NotifyClear(_)
+            | CoreToShell::CommandsList(_)
             | CoreToShell::StateUpdate(_)
             | CoreToShell::PaneClose(_)
             | CoreToShell::FilesPick(_)

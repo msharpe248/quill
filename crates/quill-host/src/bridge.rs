@@ -49,13 +49,20 @@ pub enum CoreToShell {
     /// Put text on the system clipboard.
     #[serde(rename = "clipboard.write")]
     ClipboardWrite(ClipboardWrite),
+    /// Show a notification. What the user does with it arrives as
+    /// `notify.used`.
+    #[serde(rename = "notify.post")]
+    NotifyPost(Notification),
+    /// Take notifications down.
+    #[serde(rename = "notify.clear")]
+    NotifyClear(NotifyClear),
 }
 
 /// A message the shell sends to the core.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "method", content = "params")]
 pub enum ShellToCore {
-    /// A menu item, toolbar button or notification action was used.
+    /// A menu item or toolbar button was used.
     #[serde(rename = "command.run")]
     CommandRun(CommandRun),
     /// The user chose files in the open panel or dropped them on the window.
@@ -67,6 +74,12 @@ pub enum ShellToCore {
     /// The answer to `files.save`.
     #[serde(rename = "files.saved")]
     FilesSaved(FilesSaved),
+    /// A notification, or one of its actions, was clicked.
+    #[serde(rename = "notify.used")]
+    NotifyUsed(NotifyUsed),
+    /// The Mac asked Quill to open a `mailto:` address.
+    #[serde(rename = "url.open")]
+    UrlOpen(UrlOpen),
     /// The app is quitting: flush and exit cleanly.
     #[serde(rename = "app.will_quit")]
     AppWillQuit(NoParams),
@@ -418,6 +431,263 @@ pub struct FilesSaved {
 #[serde(deny_unknown_fields)]
 pub struct CommandRun {
     pub name: String,
+}
+
+/// The longest id a notification may have, and the longest name an action
+/// may have.
+pub const MAX_NOTIFICATION_ID: usize = 128;
+pub const MAX_ACTION_NAME: usize = 64;
+/// The most buttons a notification may carry.
+pub const MAX_ACTIONS: usize = 4;
+
+/// A notification to show. It cannot be built or decoded with an empty or
+/// overlong id, no title, or more actions than a notification can carry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "NotificationParams", into = "NotificationParams")]
+pub struct Notification {
+    id: String,
+    title: String,
+    subtitle: Option<String>,
+    body: String,
+    actions: Vec<NotificationAction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NotificationAction {
+    /// What comes back in `notify.used`.
+    pub name: String,
+    /// What the button says.
+    pub title: String,
+    /// Using it brings the window forward: what it starts needs the user
+    /// there, as a reply does.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub foreground: bool,
+}
+
+impl Notification {
+    pub fn new(
+        id: &str,
+        title: &str,
+        subtitle: Option<&str>,
+        body: &str,
+        actions: &[(&str, &str, bool)],
+    ) -> Option<Self> {
+        Self::try_from(NotificationParams {
+            id: id.to_owned(),
+            title: title.to_owned(),
+            subtitle: subtitle.map(str::to_owned),
+            body: body.to_owned(),
+            actions: actions
+                .iter()
+                .map(|(name, title, foreground)| NotificationAction {
+                    name: (*name).to_owned(),
+                    title: (*title).to_owned(),
+                    foreground: *foreground,
+                })
+                .collect(),
+        })
+        .ok()
+    }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NotificationParams {
+    id: String,
+    title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    subtitle: Option<String>,
+    body: String,
+    actions: Vec<NotificationAction>,
+}
+
+fn valid_notification_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= MAX_NOTIFICATION_ID
+}
+
+impl TryFrom<NotificationParams> for Notification {
+    type Error = String;
+
+    fn try_from(params: NotificationParams) -> Result<Self, Self::Error> {
+        if !valid_notification_id(&params.id) {
+            return Err(format!(
+                "a notification's id is 1 to {MAX_NOTIFICATION_ID} bytes"
+            ));
+        }
+        if params.title.is_empty() {
+            return Err("a notification needs a title".to_owned());
+        }
+        if params.actions.len() > MAX_ACTIONS {
+            return Err(format!("a notification has at most {MAX_ACTIONS} actions"));
+        }
+        if params.actions.iter().any(|action| {
+            action.name.is_empty() || action.name.len() > MAX_ACTION_NAME || action.title.is_empty()
+        }) {
+            return Err(format!(
+                "an action needs a title and a name of 1 to {MAX_ACTION_NAME} bytes"
+            ));
+        }
+        Ok(Self {
+            id: params.id,
+            title: params.title,
+            subtitle: params.subtitle,
+            body: params.body,
+            actions: params.actions,
+        })
+    }
+}
+
+impl From<Notification> for NotificationParams {
+    fn from(notification: Notification) -> Self {
+        Self {
+            id: notification.id,
+            title: notification.title,
+            subtitle: notification.subtitle,
+            body: notification.body,
+            actions: notification.actions,
+        }
+    }
+}
+
+/// Notifications to take down: at least one, each by a valid id.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "NotifyClearParams", into = "NotifyClearParams")]
+pub struct NotifyClear {
+    ids: Vec<String>,
+}
+
+impl NotifyClear {
+    pub fn new(ids: Vec<String>) -> Option<Self> {
+        Self::try_from(NotifyClearParams { ids }).ok()
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NotifyClearParams {
+    ids: Vec<String>,
+}
+
+impl TryFrom<NotifyClearParams> for NotifyClear {
+    type Error = String;
+
+    fn try_from(params: NotifyClearParams) -> Result<Self, Self::Error> {
+        if params.ids.is_empty() || !params.ids.iter().all(|id| valid_notification_id(id)) {
+            return Err("at least one id, each 1 to 128 bytes".to_owned());
+        }
+        Ok(Self { ids: params.ids })
+    }
+}
+
+impl From<NotifyClear> for NotifyClearParams {
+    fn from(clear: NotifyClear) -> Self {
+        Self { ids: clear.ids }
+    }
+}
+
+/// What the user did with a notification.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "NotifyUsedParams", into = "NotifyUsedParams")]
+pub struct NotifyUsed {
+    id: String,
+    action: Option<String>,
+}
+
+impl NotifyUsed {
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// The action chosen; `None` when the notification itself was clicked.
+    pub fn action(&self) -> Option<&str> {
+        self.action.as_deref()
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NotifyUsedParams {
+    id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    action: Option<String>,
+}
+
+impl TryFrom<NotifyUsedParams> for NotifyUsed {
+    type Error = String;
+
+    fn try_from(params: NotifyUsedParams) -> Result<Self, Self::Error> {
+        if !valid_notification_id(&params.id) {
+            return Err(format!(
+                "a notification's id is 1 to {MAX_NOTIFICATION_ID} bytes"
+            ));
+        }
+        if params
+            .action
+            .as_ref()
+            .is_some_and(|action| action.is_empty() || action.len() > MAX_ACTION_NAME)
+        {
+            return Err(format!("an action's name is 1 to {MAX_ACTION_NAME} bytes"));
+        }
+        Ok(Self {
+            id: params.id,
+            action: params.action,
+        })
+    }
+}
+
+impl From<NotifyUsed> for NotifyUsedParams {
+    fn from(used: NotifyUsed) -> Self {
+        Self {
+            id: used.id,
+            action: used.action,
+        }
+    }
+}
+
+/// The longest address the Mac may ask Quill to open.
+pub const MAX_OPENED_URL: usize = 8192;
+
+/// A `mailto:` address the Mac asked Quill to open. It cannot be decoded
+/// holding any other kind.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "UrlOpenParams", into = "UrlOpenParams")]
+pub struct UrlOpen {
+    url: String,
+}
+
+impl UrlOpen {
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UrlOpenParams {
+    url: String,
+}
+
+impl TryFrom<UrlOpenParams> for UrlOpen {
+    type Error = String;
+
+    fn try_from(params: UrlOpenParams) -> Result<Self, Self::Error> {
+        if params.url.starts_with("mailto:") && params.url.len() <= MAX_OPENED_URL {
+            Ok(Self { url: params.url })
+        } else {
+            Err("only a mailto address can be opened".to_owned())
+        }
+    }
+}
+
+impl From<UrlOpen> for UrlOpenParams {
+    fn from(open: UrlOpen) -> Self {
+        Self { url: open.url }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

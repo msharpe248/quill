@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "method": "notify.clear",
+  "params": {
+    "ids": [
+      "message:4127",
+      "message:4128"
+    ]
+  }
+}

@@ -96,6 +96,13 @@ private struct Envelope {
         }
     }
 
+    /// An optional field is left out, never null.
+    func requireNotNull(_ key: String) throws {
+        if params.object?[key] == .null {
+            throw BridgeError.malformed("\(method): \(key) is null")
+        }
+    }
+
     func requireOnly(_ allowed: Set<String>) throws {
         let extra = paramKeys.subtracting(allowed)
         guard extra.isEmpty else {
@@ -176,6 +183,34 @@ private struct FilesSavedParams: Codable {
 
 private struct ClipboardWriteParams: Codable {
     var text: String
+}
+
+private struct NotifyActionParams: Codable {
+    var name: String
+    var title: String
+    /// Left out when false, as the core leaves it out.
+    var foreground: Bool?
+}
+
+private struct NotifyPostParams: Codable {
+    var id: String
+    var title: String
+    var subtitle: String?
+    var body: String
+    var actions: [NotifyActionParams]
+}
+
+private struct NotifyClearParams: Codable {
+    var ids: [String]
+}
+
+private struct NotifyUsedParams: Codable {
+    var id: String
+    var action: String?
+}
+
+private struct UrlOpenParams: Codable {
+    var url: String
 }
 
 private struct NoParams: Codable {}
@@ -288,6 +323,43 @@ public extension CoreToShell {
         case "clipboard.write":
             let params = try envelope.decode(ClipboardWriteParams.self, allowing: ["text"])
             self = .clipboardWrite(text: params.text)
+        case "notify.post":
+            let params = try envelope.decode(NotifyPostParams.self, allowing: NotifyPost.allowedKeys)
+            try envelope.requireNotNull("subtitle")
+            // Each action is checked as strictly as the message itself.
+            if case let .array(actions)? = envelope.params.object?["actions"] {
+                for action in actions {
+                    let extra = Set((action.object ?? [:]).keys).subtracting(NotifyAction.allowedKeys)
+                    guard extra.isEmpty else {
+                        throw BridgeError.malformed(
+                            "notify.post: unexpected \(extra.sorted().joined(separator: ", "))")
+                    }
+                }
+            }
+            let actions = try params.actions.map { action in
+                guard
+                    let action = NotifyAction(
+                        name: action.name, title: action.title, foreground: action.foreground ?? false)
+                else {
+                    throw BridgeError.malformed("notify.post: an action needs a title and a name of 1 to 64 bytes")
+                }
+                return action
+            }
+            guard
+                let post = NotifyPost(
+                    id: params.id, title: params.title, subtitle: params.subtitle, body: params.body,
+                    actions: actions)
+            else {
+                throw BridgeError.malformed(
+                    "notify.post: the id must be 1 to 128 bytes, the title not empty and the actions at most 4")
+            }
+            self = .notifyPost(post)
+        case "notify.clear":
+            let params = try envelope.decode(NotifyClearParams.self, allowing: NotifyClear.allowedKeys)
+            guard let clear = NotifyClear(ids: params.ids) else {
+                throw BridgeError.malformed("notify.clear: there must be an id, and each 1 to 128 bytes")
+            }
+            self = .notifyClear(clear)
         default:
             throw BridgeError.unknownMethod(envelope.method)
         }
@@ -319,6 +391,10 @@ public extension CoreToShell {
             encodeLine(method: "files.pick", params: NoParams())
         case let .clipboardWrite(text):
             encodeLine(method: "clipboard.write", params: ClipboardWriteParams(text: text))
+        case let .notifyPost(post):
+            encodeLine(method: "notify.post", params: post)
+        case let .notifyClear(clear):
+            encodeLine(method: "notify.clear", params: clear)
         }
     }
 }
@@ -348,6 +424,20 @@ public extension ShellToCore {
         case "files.saved":
             let params = try envelope.decode(FilesSavedParams.self, allowing: ["name", "saved"])
             self = .filesSaved(name: params.name, saved: params.saved)
+        case "notify.used":
+            let params = try envelope.decode(NotifyUsedParams.self, allowing: NotifyUsed.allowedKeys)
+            try envelope.requireNotNull("action")
+            guard let used = NotifyUsed(id: params.id, action: params.action) else {
+                throw BridgeError.malformed(
+                    "notify.used: the id must be 1 to 128 bytes and the action's name 1 to 64")
+            }
+            self = .notifyUsed(used)
+        case "url.open":
+            let params = try envelope.decode(UrlOpenParams.self, allowing: UrlOpen.allowedKeys)
+            guard let open = UrlOpen(url: params.url) else {
+                throw BridgeError.malformed("url.open: not a mailto address of at most 8192 bytes")
+            }
+            self = .urlOpen(open)
         case "app.will_quit":
             try envelope.requireOnly([])
             self = .appWillQuit
@@ -368,6 +458,10 @@ public extension ShellToCore {
             encodeLine(method: "thumbnail.made", params: ThumbnailMadeParams(id: id, ok: ok))
         case let .filesSaved(name, saved):
             encodeLine(method: "files.saved", params: FilesSavedParams(name: name, saved: saved))
+        case let .notifyUsed(used):
+            encodeLine(method: "notify.used", params: used)
+        case let .urlOpen(open):
+            encodeLine(method: "url.open", params: open)
         case .appWillQuit:
             encodeLine(method: "app.will_quit", params: NoParams())
         }

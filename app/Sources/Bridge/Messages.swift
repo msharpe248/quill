@@ -34,6 +34,11 @@ public enum CoreToShell: Equatable, Sendable {
     case filesPick
     /// Put text on the system clipboard.
     case clipboardWrite(text: String)
+    /// Show a notification, in place of any earlier one with the same id.
+    /// What the user does with it goes back as `notifyUsed`.
+    case notifyPost(NotifyPost)
+    /// Take notifications down, shown or waiting.
+    case notifyClear(NotifyClear)
 }
 
 /// A message the shell sends to the core.
@@ -46,6 +51,10 @@ public enum ShellToCore: Equatable, Sendable {
     case thumbnailMade(id: Int, ok: Bool)
     /// The answer to `filesSave`.
     case filesSaved(name: String, saved: Bool)
+    /// The user clicked a notification, or one of its actions.
+    case notifyUsed(NotifyUsed)
+    /// The Mac asked Quill to open a mail address.
+    case urlOpen(UrlOpen)
     /// The app is quitting: flush and exit cleanly.
     case appWillQuit
 }
@@ -235,6 +244,152 @@ public struct FilesSave: Equatable, Sendable, Codable {
     }
 
     static let allowedKeys: Set<String> = ["path", "name"]
+}
+
+/// A notification to show. The shell shows the words as plain text and hands
+/// the id, and an action's name, back in `NotifyUsed`. It knows nothing else
+/// about them.
+public struct NotifyPost: Equatable, Sendable, Codable {
+    /// The core's name for the notification.
+    public var id: String
+    public var title: String
+    public var subtitle: String?
+    public var body: String
+    /// Buttons on the notification, in order. None is allowed.
+    public var actions: [NotifyAction]
+
+    /// The longest id, in bytes.
+    public static let longestID = 128
+    /// The most buttons a notification may carry.
+    public static let mostActions = 4
+
+    static func isID(_ id: String) -> Bool {
+        (1...longestID).contains(id.utf8.count)
+    }
+
+    /// `nil` unless the id is 1 to 128 bytes, there is a title and there
+    /// are at most four actions.
+    public init?(id: String, title: String, subtitle: String? = nil, body: String, actions: [NotifyAction] = []) {
+        guard Self.isID(id), !title.isEmpty, actions.count <= Self.mostActions else { return nil }
+        self.id = id
+        self.title = title
+        self.subtitle = subtitle
+        self.body = body
+        self.actions = actions
+    }
+
+    static let allowedKeys: Set<String> = ["id", "title", "subtitle", "body", "actions"]
+}
+
+/// A button on a notification.
+public struct NotifyAction: Equatable, Sendable, Codable {
+    /// What comes back in `NotifyUsed`.
+    public var name: String
+    /// What the button says.
+    public var title: String
+    /// Using it brings Quill's window forward: what it starts needs the
+    /// user there, as a reply does.
+    public var foreground: Bool
+
+    /// The longest name, in bytes.
+    public static let longestName = 64
+
+    static func isName(_ name: String) -> Bool {
+        (1...longestName).contains(name.utf8.count)
+    }
+
+    /// `nil` unless the name is 1 to 64 bytes and there is a title.
+    public init?(name: String, title: String, foreground: Bool = false) {
+        guard Self.isName(name), !title.isEmpty else { return nil }
+        self.name = name
+        self.title = title
+        self.foreground = foreground
+    }
+
+    static let allowedKeys: Set<String> = ["name", "title", "foreground"]
+
+    private enum CodingKeys: String, CodingKey {
+        case name, title, foreground
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        name = try values.decode(String.self, forKey: .name)
+        title = try values.decode(String.self, forKey: .title)
+        foreground = try values.decodeIfPresent(Bool.self, forKey: .foreground) ?? false
+    }
+
+    /// `foreground` is written only when it is set, as the core writes it.
+    public func encode(to encoder: any Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(name, forKey: .name)
+        try values.encode(title, forKey: .title)
+        if foreground {
+            try values.encode(true, forKey: .foreground)
+        }
+    }
+}
+
+/// Notifications to take down: at least one, each by its id.
+public struct NotifyClear: Equatable, Sendable, Codable {
+    public var ids: [String]
+
+    /// `nil` unless there is at least one id and each is 1 to 128 bytes.
+    public init?(ids: [String]) {
+        guard !ids.isEmpty, ids.allSatisfy(NotifyPost.isID) else { return nil }
+        self.ids = ids
+    }
+
+    static let allowedKeys: Set<String> = ["ids"]
+}
+
+/// What the user did with a notification.
+public struct NotifyUsed: Equatable, Sendable, Codable {
+    public var id: String
+    /// The name of the action chosen; `nil` when the notification itself
+    /// was clicked.
+    public var action: String?
+
+    /// `nil` unless the id is 1 to 128 bytes and the action's name, if
+    /// there is one, 1 to 64.
+    public init?(id: String, action: String? = nil) {
+        guard NotifyPost.isID(id), action.map(NotifyAction.isName) ?? true else { return nil }
+        self.id = id
+        self.action = action
+    }
+
+    static let allowedKeys: Set<String> = ["id", "action"]
+}
+
+/// A mail address the Mac asked Quill to open: a `mailto:` link clicked in
+/// another application. It cannot hold any other kind of address.
+public struct UrlOpen: Equatable, Sendable, Codable {
+    public var url: String
+
+    /// The longest address passed on, in bytes.
+    public static let longestURL = 8192
+
+    private static let scheme = Array("mailto:".utf8)
+
+    /// `nil` unless the address starts `mailto:`, in lower case, and is at
+    /// most 8192 bytes.
+    public init?(url: String) {
+        guard url.utf8.starts(with: Self.scheme), url.utf8.count <= Self.longestURL else { return nil }
+        self.url = url
+    }
+
+    /// An address as the Mac hands it over, where the scheme may be in
+    /// either case: `MAILTO:robin@example.com` is passed on as
+    /// `mailto:robin@example.com`. `nil` for every other scheme.
+    public init?(handedOver address: String) {
+        let bytes = address.utf8
+        let lowered = bytes.prefix(Self.scheme.count).map { (0x41...0x5A).contains($0) ? $0 + 0x20 : $0 }
+        guard lowered == Self.scheme else { return nil }
+        // The scheme is ASCII, so what follows it starts on a character.
+        self.init(url: "mailto:" + String(decoding: bytes.dropFirst(Self.scheme.count), as: UTF8.self))
+    }
+
+    static let allowedKeys: Set<String> = ["url"]
 }
 
 public enum BridgeError: Error, Equatable, CustomStringConvertible {

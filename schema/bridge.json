@@ -20,7 +20,9 @@
         { "$ref": "#/$defs/pane.web" },
         { "$ref": "#/$defs/thumbnail.make" },
         { "$ref": "#/$defs/file.open" },
-        { "$ref": "#/$defs/files.save" }
+        { "$ref": "#/$defs/files.save" },
+        { "$ref": "#/$defs/notify.post" },
+        { "$ref": "#/$defs/notify.clear" }
       ]
     },
     "shellToCore": {
@@ -29,6 +31,8 @@
         { "$ref": "#/$defs/files.dropped" },
         { "$ref": "#/$defs/thumbnail.made" },
         { "$ref": "#/$defs/files.saved" },
+        { "$ref": "#/$defs/notify.used" },
+        { "$ref": "#/$defs/url.open" },
         { "$ref": "#/$defs/app.will_quit" }
       ]
     },
@@ -471,7 +475,7 @@
     },
 
     "command.run": {
-      "description": "Shell to core. A menu item, toolbar button or notification action was used.",
+      "description": "Shell to core. A menu item or toolbar button was used.",
       "type": "object",
       "required": ["jsonrpc", "method", "params"],
       "additionalProperties": false,
@@ -555,6 +559,122 @@
             },
             "saved": {
               "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+
+    "notify.post": {
+      "description": "Core to shell. Show a notification, in place of any earlier one with the same id. The shell shows the words as plain text and returns the id, and an action's name, in notify.used. It knows nothing else about them.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "notify.post" },
+        "params": {
+          "type": "object",
+          "required": ["id", "title", "body", "actions"],
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "description": "The core's name for the notification.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "title": { "type": "string", "minLength": 1 },
+            "subtitle": { "type": "string" },
+            "body": { "type": "string" },
+            "actions": {
+              "description": "Buttons on the notification, in order. None is allowed.",
+              "type": "array",
+              "maxItems": 4,
+              "items": {
+                "type": "object",
+                "required": ["name", "title"],
+                "additionalProperties": false,
+                "properties": {
+                  "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+                  "title": { "type": "string", "minLength": 1 },
+                  "foreground": {
+                    "description": "Using this action brings Quill's window forward: what it starts needs the user there, as a reply does. Left out, the action is done in the background.",
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "notify.clear": {
+      "description": "Core to shell. Take down the notifications with these ids, shown or waiting. One that is not there is not an error.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "notify.clear" },
+        "params": {
+          "type": "object",
+          "required": ["ids"],
+          "additionalProperties": false,
+          "properties": {
+            "ids": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string", "minLength": 1, "maxLength": 128 }
+            }
+          }
+        }
+      }
+    },
+
+    "notify.used": {
+      "description": "Shell to core. The user clicked a notification, or one of its actions.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "notify.used" },
+        "params": {
+          "type": "object",
+          "required": ["id"],
+          "additionalProperties": false,
+          "properties": {
+            "id": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "action": {
+              "description": "The name of the action chosen. Left out when the notification itself was clicked.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            }
+          }
+        }
+      }
+    },
+
+    "url.open": {
+      "description": "Shell to core. The Mac asked Quill to open a mail address: a mailto link clicked in another application. Only mailto addresses are passed on.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "url.open" },
+        "params": {
+          "type": "object",
+          "required": ["url"],
+          "additionalProperties": false,
+          "properties": {
+            "url": {
+              "type": "string",
+              "pattern": "^mailto:",
+              "maxLength": 8192
             }
           }
         }

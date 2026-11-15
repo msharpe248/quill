@@ -39,6 +39,11 @@ pub enum HostEvent {
     Thumbnail { id: u64, ok: bool },
     /// The answer to [`Host::save_file`].
     Saved { name: String, saved: bool },
+    /// The user clicked a notification (`action` is `None`) or one of its
+    /// actions.
+    NotificationUsed { id: String, action: Option<String> },
+    /// The Mac asked Quill to open a `mailto:` address.
+    OpenMailto(String),
     /// The app is quitting: flush and exit cleanly.
     WillQuit,
     /// The shell has gone. There is nothing left to draw for.
@@ -122,6 +127,18 @@ pub trait Host: Send + Sync {
     fn save_file(&self, path: &Path, name: &str) -> bool {
         let _ = (path, name);
         false
+    }
+
+    /// Shows a notification, where the host has them.
+    fn notify(&self, notification: bridge::Notification) {
+        self.send(CoreToShell::NotifyPost(notification));
+    }
+
+    /// Takes notifications down by their ids.
+    fn clear_notifications(&self, ids: Vec<String>) {
+        if let Some(clear) = bridge::NotifyClear::new(ids) {
+            self.send(CoreToShell::NotifyClear(clear));
+        }
     }
 
     /// Hands an event straight back to the core, for a host that can

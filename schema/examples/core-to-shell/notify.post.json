@@ -1,0 +1,25 @@
+{
+  "jsonrpc": "2.0",
+  "method": "notify.post",
+  "params": {
+    "id": "message:4127",
+    "title": "Ana Ruiz",
+    "subtitle": "Work",
+    "body": "Q4 roadmap",
+    "actions": [
+      {
+        "name": "archive",
+        "title": "Archive"
+      },
+      {
+        "name": "read",
+        "title": "Mark as Read"
+      },
+      {
+        "name": "reply",
+        "title": "Reply",
+        "foreground": true
+      }
+    ]
+  }
+}

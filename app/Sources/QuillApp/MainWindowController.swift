@@ -1,5 +1,6 @@
 import AppKit
 import Bridge
+import Notifications
 import Panes
 import TerminalKit
 
@@ -75,6 +76,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             finish(panel.runModal())
         }
     }
+
+    /// Shows the notifications the core asks for. A scripted run puts a
+    /// recorder here, so that a check shows nothing and never asks the user
+    /// whether Quill may. Otherwise the Mac's own are put here once the
+    /// window is up.
+    var notifier: (any Notifier)?
 
     private(set) var coreIsRunning = false
     /// The app asked the core to stop, so its exit is not a failure.
@@ -152,6 +159,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         surface.focus()
         startCore()
         DebugScript.runIfAsked(options, on: self)
+        if notifier == nil {
+            // Now, not when the first notification is posted: a click on
+            // one left from an earlier run is only heard by an app that is
+            // listening before it has finished launching. Nothing is asked
+            // of the user until there is a notification to show.
+            let system = SystemNotifier.forThisApp()
+            system?.onResponse = { [weak self] id, actionIdentifier in
+                self?.notificationUsed(id: id, actionIdentifier: actionIdentifier)
+            }
+            notifier = system
+        }
     }
 
     // MARK: - The core
@@ -240,7 +258,48 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 self?.deliver(files: files)
                 self?.surface.focus()
             }
+        case let .notifyPost(notification):
+            notifier?.post(notification)
+        case let .notifyClear(clear):
+            notifier?.clear(ids: clear.ids)
         }
+    }
+
+    /// Tells the core what the user did with a notification, given the
+    /// Mac's name for it. A click on the notification itself also brings
+    /// the window forward; a button does its work where the window is.
+    /// Putting a notification away tells the core nothing.
+    func notificationUsed(id: String, actionIdentifier: String) {
+        guard let bridge, let used = NotificationResponse.used(id: id, actionIdentifier: actionIdentifier) else {
+            return
+        }
+        if used.action == nil {
+            bringForward()
+        }
+        note(used.action.map { "\(used.id) > \($0)" } ?? used.id, in: &notificationsUsed)
+        bridge.send(.notifyUsed(used))
+    }
+
+    /// Passes on to the core the mail addresses among what the Mac asked
+    /// Quill to open: a `mailto:` link clicked in another application.
+    /// Nothing else is passed on, whatever it is. An address that arrives
+    /// before the core has connected waits in the bridge until it has.
+    func open(urls: [URL]) {
+        guard let bridge else { return }
+        for url in urls {
+            guard let open = UrlOpen(handedOver: url.absoluteString) else {
+                NSLog("Quill: left alone an address that is not a mailto address, or is too long")
+                continue
+            }
+            bringForward()
+            note(open.url, in: &urlsPassedOn)
+            bridge.send(.urlOpen(open))
+        }
+    }
+
+    private func bringForward() {
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
     }
 
     /// Gives the core files the user chose or dropped.
@@ -566,6 +625,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     /// What became of the latest `thumbnail.make` requests, in order.
     private(set) var thumbnailResults: [String] = []
+
+    /// The notifications the user clicked, in order: `id`, or `id > action`
+    /// for one of its buttons.
+    private(set) var notificationsUsed: [String] = []
+
+    /// The mail addresses passed on to the core, in order.
+    private(set) var urlsPassedOn: [String] = []
 
     /// Keeps the last hundred: the app may run for weeks.
     private func note(_ line: String, in log: inout [String]) {

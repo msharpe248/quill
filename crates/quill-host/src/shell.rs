@@ -107,6 +107,11 @@ fn read_loop(stream: UnixStream, events: UnboundedSender<HostEvent>) {
                 name: saved.name,
                 saved: saved.saved,
             },
+            Ok(ShellToCore::NotifyUsed(used)) => HostEvent::NotificationUsed {
+                id: used.id().to_owned(),
+                action: used.action().map(str::to_owned),
+            },
+            Ok(ShellToCore::UrlOpen(open)) => HostEvent::OpenMailto(open.url().to_owned()),
             Ok(ShellToCore::AppWillQuit(_)) => HostEvent::WillQuit,
             Err(err) => HostEvent::Problem(format!("bridge: {err}")),
         };

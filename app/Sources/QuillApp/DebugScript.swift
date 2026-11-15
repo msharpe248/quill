@@ -1,5 +1,6 @@
 import AppKit
 import Bridge
+import Notifications
 
 /// Drives the running app from the command line, for checks that need the
 /// real window, menus and terminal but no person:
@@ -23,6 +24,16 @@ import Bridge
 ///   to save a file; without it the answer is that the user cancelled. No
 ///   panel is ever shown to a script, so inside the sandbox the place must
 ///   be in the app's container
+/// - `openurl:URL`    hand an address over as the Mac does when a `mailto:`
+///   link is clicked in another application
+/// - `notifyclick:ID` click the notification of this id, as the Mac reports
+///   it
+/// - `notifyaction:NAME,ID` click the button of this name on the notification
+///   of this id
+///
+/// No notification is ever shown to a script, and the user is never asked
+/// whether Quill may show them: what the core asked for is written to the
+/// dump instead.
 ///
 /// `press:` reaches whatever has the keyboard, a pane as well as the
 /// terminal: `press:right` steps a Quick Look pane, `press:space` plays or
@@ -58,6 +69,8 @@ enum DebugScript {
             saveDestination = nil
             done(destination)
         }
+        // Nor show a notification, nor ask the user whether Quill may.
+        controller.notifier = notifier
         Task { @MainActor in
             for step in steps {
                 await perform(step, on: controller)
@@ -137,13 +150,29 @@ enum DebugScript {
         case "saveto":
             // Where the save panel will answer when it is next asked for.
             saveDestination = argument.isEmpty ? nil : URL(fileURLWithPath: argument)
+        case "openurl":
+            // By the door the Mac itself uses.
+            if let url = URL(string: argument), let open = NSApp.delegate?.application(_:open:) {
+                open(NSApp, [url])
+            } else {
+                note("cannot open \(argument)")
+            }
+            try? await Task.sleep(for: .milliseconds(300))
+        case "notifyclick":
+            controller.notificationUsed(id: argument, actionIdentifier: NotificationResponse.click)
+            try? await Task.sleep(for: .milliseconds(300))
+        case "notifyaction":
+            // The name first: an id may have a comma in it.
+            let (name, id) = split(argument, at: ",")
+            controller.notificationUsed(id: id, actionIdentifier: name)
+            try? await Task.sleep(for: .milliseconds(300))
         default:
             note("unknown step \(step)")
         }
     }
 
-    private static func split(_ step: String) -> (String, String) {
-        guard let colon = step.firstIndex(of: ":") else { return (step, "") }
+    private static func split(_ step: String, at separator: Character = ":") -> (String, String) {
+        guard let colon = step.firstIndex(of: separator) else { return (step, "") }
         return (String(step[..<colon]), String(step[step.index(after: colon)...]))
     }
 
@@ -155,6 +184,7 @@ enum DebugScript {
     private static var openedFiles: [String] = []
     private static var saveDestination: URL?
     private static var savePanelsAsked: [String] = []
+    private static let notifier = RecordingNotifier()
 
     /// Paths separated by commas.
     private static func paths(_ argument: String) -> [URL] {
@@ -259,6 +289,11 @@ enum DebugScript {
         lines.append("save panels asked for: \(savePanelsAsked.map { $0.debugDescription }.joined(separator: " "))")
         lines.append("saved: \(controller.saveResults.joined(separator: "; "))")
         lines.append("thumbnails: \(controller.thumbnailResults.joined(separator: ", "))")
+        // notified: message:4127 | Ana Ruiz | Work | Q4 roadmap | actions: archive,read,reply
+        // cleared: message:4127 message:4128
+        lines.append(contentsOf: notifier.lines)
+        lines.append("notifications used: \(controller.notificationsUsed.joined(separator: "; "))")
+        lines.append("urls passed on: \(controller.urlsPassedOn.joined(separator: " "))")
         let toolbar = (controller.window?.toolbar?.items ?? [])
             .filter { $0.itemIdentifier != .flexibleSpace }
             .map { "\($0.isEnabled ? "+" : "-")\($0.itemIdentifier.rawValue)" }

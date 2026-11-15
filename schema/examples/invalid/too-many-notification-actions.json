@@ -1,0 +1,31 @@
+{
+  "jsonrpc": "2.0",
+  "method": "notify.post",
+  "params": {
+    "id": "message:1",
+    "title": "Ana Ruiz",
+    "body": "Q4 roadmap",
+    "actions": [
+      {
+        "name": "a",
+        "title": "A"
+      },
+      {
+        "name": "b",
+        "title": "B"
+      },
+      {
+        "name": "c",
+        "title": "C"
+      },
+      {
+        "name": "d",
+        "title": "D"
+      },
+      {
+        "name": "e",
+        "title": "E"
+      }
+    ]
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "jsonrpc": "2.0",
+  "method": "notify.used",
+  "params": {
+    "id": "message:4127",
+    "action": "archive"
+  }
+}

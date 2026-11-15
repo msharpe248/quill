@@ -1,0 +1,7 @@
+{
+  "jsonrpc": "2.0",
+  "method": "url.open",
+  "params": {
+    "url": "https://example.com/"
+  }
+}

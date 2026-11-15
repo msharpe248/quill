@@ -3,6 +3,9 @@ import AppKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var mainWindow: MainWindowController?
+    /// Addresses the Mac handed over before there was a window to take
+    /// them: Quill was started by a click on a `mailto:` link.
+    private var waitingURLs: [URL] = []
 
     func applicationDidFinishLaunching(_: Notification) {
         let options = LaunchOptions(arguments: CommandLine.arguments)
@@ -14,6 +17,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         controller.onCommandsChanged = { [weak self] in self?.installMenu() }
         controller.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
+        controller.open(urls: waitingURLs)
+        waitingURLs = []
+    }
+
+    /// The Mac asks Quill to open addresses: `mailto:` is the only scheme
+    /// `Info.plist` says it takes. The window decides what is passed on.
+    func application(_: NSApplication, open urls: [URL]) {
+        if let mainWindow {
+            mainWindow.open(urls: urls)
+        } else {
+            waitingURLs += urls
+        }
     }
 
     private func installMenu() {

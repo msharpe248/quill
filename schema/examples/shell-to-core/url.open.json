@@ -1,0 +1,7 @@
+{
+  "jsonrpc": "2.0",
+  "method": "url.open",
+  "params": {
+    "url": "mailto:ana.ruiz@example.com?subject=Q4%20roadmap&cc=kit@example.com"
+  }
+}

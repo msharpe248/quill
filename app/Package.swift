@@ -29,9 +29,15 @@ let package = Package(
             name: "Panes",
             dependencies: ["Bridge"]
         ),
+        // Notifications: the Mac's, and a recorder to stand in for them.
+        // Knows ids, words and the names of buttons, never mail.
+        .target(
+            name: "Notifications",
+            dependencies: ["Bridge"]
+        ),
         .executableTarget(
             name: "QuillApp",
-            dependencies: ["TerminalKit", "Bridge", "Panes"]
+            dependencies: ["TerminalKit", "Bridge", "Panes", "Notifications"]
         ),
         .testTarget(
             name: "BridgeTests",
@@ -40,6 +46,10 @@ let package = Package(
         .testTarget(
             name: "PanesTests",
             dependencies: ["Panes"]
+        ),
+        .testTarget(
+            name: "NotificationsTests",
+            dependencies: ["Notifications"]
         ),
     ],
     swiftLanguageModes: [.v6]
