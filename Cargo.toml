@@ -15,6 +15,7 @@ quill-imap = { path = "crates/quill-imap" }
 quill-media = { path = "crates/quill-media" }
 quill-mime = { path = "crates/quill-mime" }
 quill-store = { path = "crates/quill-store" }
+quill-sync = { path = "crates/quill-sync" }
 quill-tui = { path = "crates/quill-tui" }
 
 anyhow = "1.0.104"

@@ -8,8 +8,10 @@ use rusqlite::Connection;
 use crate::StoreError;
 
 /// `(version, sql)`, contiguous from 1.
-pub(crate) const MIGRATIONS: &[(u32, &str)] =
-    &[(1, include_str!("../migrations/0001_initial.sql"))];
+pub(crate) const MIGRATIONS: &[(u32, &str)] = &[
+    (1, include_str!("../migrations/0001_initial.sql")),
+    (2, include_str!("../migrations/0002_blob_hash.sql")),
+];
 
 #[cfg(test)]
 pub(crate) fn latest_version() -> u32 {

@@ -161,3 +161,15 @@ The Keychain needs no entitlement for the app's own items; an access group share
 
 - **Licences added to the allow-list**: ISC and BSD-3-Clause (the TLS stack: `ring`, `rustls-webpki`, `subtle`) and CDLA-Permissive-2.0 (the bundled certificate-authority list that the platform verifier carries for other platforms). All are permissive.
 - **`RUSTSEC-2026-0441` is ignored**: `pin-utils`, a two-macro crate that `async-imap` uses, was archived because the standard library replaced it. It is unmaintained, not vulnerable.
+
+### Sync engine
+
+- **The sync engine is its own crate, `quill-sync`**, not part of `quill-core` as the spec's layout has it. The engine needs the store and the parser, and both of those depend on `quill-core`; putting it in the core would turn that dependency round or hide it behind traits with one implementation each.
+- **The engine has its own database connection.** The UI's store worker has another. SQLite's WAL mode lets both work at once, and a ten-second busy timeout makes a writer wait for the other instead of failing.
+- **Each account syncs in its own task; requests from the UI run in theirs.** A body the user opens during a long first sync waits for one batch, not for the whole mailbox.
+- **A pass that finds nothing new emits no change event**, so an idle mailbox redraws nothing. `Store::apply_delta` now reports whether anything really changed.
+- **The same failure is reported once**, not at every interval, and again only after a pass has succeeded in between.
+- **Bodies of the last 30 days are fetched ahead**, at most 2,000 a pass, as the spec's IMAP notes ask. Older bodies are fetched when opened.
+- **Raw messages are filed by SHA-256 under `data/blobs/`**, written under a temporary name and renamed, with their hash recorded on the message (migration 0002). The cache budget and eviction are still to build.
+- **A flag change is written to the store first, then sent to the server; if the server refuses, the store is put back** and the user is told. This is the spec's data flow without the durable queue: a change made offline is rolled back rather than queued until M3 adds the operations table.
+- **Folders that disappear from the server are removed locally**, with their mail.

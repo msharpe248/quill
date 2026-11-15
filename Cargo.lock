@@ -1994,8 +1994,22 @@ dependencies = [
  "quill-core",
  "rusqlite",
  "serde_json",
+ "sha2",
  "tempfile",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "quill-sync"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "quill-core",
+ "quill-mime",
+ "quill-store",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

@@ -2,12 +2,15 @@
 //!
 //! All calls block on disk. Run them on the store worker, never on the UI task.
 
+mod blobs;
 mod migrations;
+
+pub use blobs::BlobStore;
 
 use std::path::Path;
 
 use quill_core::types::{
-    Address, Flags, FolderRole, Headers, LocalAccountId, LocalFolderId, LocalMessageId,
+    Address, Flags, FolderId, FolderRole, Headers, LocalAccountId, LocalFolderId, LocalMessageId,
     RemoteFolder, RemoteId, RemoteMessage, SyncCursor, SyncDelta,
 };
 use rusqlite::types::Type;
@@ -63,6 +66,17 @@ pub struct MessageRow {
     pub has_attachments: bool,
 }
 
+/// Where a message lives on its server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MessageLocation {
+    pub account: LocalAccountId,
+    pub folder: LocalFolderId,
+    pub remote_folder: FolderId,
+    pub remote: RemoteId,
+    pub flags: Flags,
+    pub date: i64,
+}
+
 /// Which messages a list shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Mailbox {
@@ -92,6 +106,9 @@ impl Store {
         conn.pragma_update_and_check(None, "journal_mode", "WAL", |_| Ok(()))?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.pragma_update(None, "foreign_keys", true)?;
+        // The UI and the sync engine each hold a connection. A writer that
+        // finds the other mid-write waits its turn instead of failing.
+        conn.busy_timeout(std::time::Duration::from_secs(10))?;
         migrations::run(&mut conn)?;
         Ok(Self { conn })
     }
@@ -135,15 +152,20 @@ impl Store {
     }
 
     /// Applies a folder sync and stores its cursor, atomically. Applying the
-    /// same delta twice leaves the store unchanged.
-    pub fn apply_delta(&mut self, folder: LocalFolderId, delta: &SyncDelta) -> Result<()> {
+    /// same delta twice leaves the store unchanged. Returns whether any
+    /// message was added, removed or changed, so that a sync which found
+    /// nothing new need not make anything redraw.
+    pub fn apply_delta(&mut self, folder: LocalFolderId, delta: &SyncDelta) -> Result<bool> {
         let tx = self.conn.transaction()?;
+        let mut touched = 0;
         {
             if delta.reset {
                 // The server has renumbered the folder: nothing held for it
                 // can be matched to a message any more.
-                tx.execute("DELETE FROM messages WHERE folder_id = ?1", [folder.0])?;
+                touched += tx.execute("DELETE FROM messages WHERE folder_id = ?1", [folder.0])?;
             }
+            // `WHERE` on the update keeps a re-sent, unchanged message from
+            // counting as a change.
             let mut insert = tx.prepare(
                 "INSERT INTO messages (folder_id, remote_id, message_id, subject, from_addrs,
                      to_addrs, cc_addrs, date, size, seen, flagged, answered, draft,
@@ -155,18 +177,25 @@ impl Store {
                      cc_addrs = excluded.cc_addrs, date = excluded.date, size = excluded.size,
                      seen = excluded.seen, flagged = excluded.flagged,
                      answered = excluded.answered, draft = excluded.draft,
-                     has_attachments = excluded.has_attachments",
+                     has_attachments = excluded.has_attachments
+                 WHERE message_id IS NOT excluded.message_id OR subject <> excluded.subject
+                    OR from_addrs <> excluded.from_addrs OR to_addrs <> excluded.to_addrs
+                    OR cc_addrs <> excluded.cc_addrs OR date <> excluded.date
+                    OR size <> excluded.size OR seen <> excluded.seen
+                    OR flagged <> excluded.flagged OR answered <> excluded.answered
+                    OR draft <> excluded.draft OR has_attachments <> excluded.has_attachments",
             )?;
             for message in &delta.added {
-                insert_message(&mut insert, folder, message)?;
+                touched += insert_message(&mut insert, folder, message)?;
             }
             let mut update = tx.prepare(
                 "UPDATE messages SET seen = ?3, flagged = ?4, answered = ?5, draft = ?6
-                 WHERE folder_id = ?1 AND remote_id = ?2",
+                 WHERE folder_id = ?1 AND remote_id = ?2
+                   AND (seen <> ?3 OR flagged <> ?4 OR answered <> ?5 OR draft <> ?6)",
             )?;
             for change in &delta.changed {
                 let flags = change.flags;
-                update.execute(params![
+                touched += update.execute(params![
                     folder.0,
                     change.id.0,
                     flags.seen,
@@ -178,7 +207,7 @@ impl Store {
             let mut delete =
                 tx.prepare("DELETE FROM messages WHERE folder_id = ?1 AND remote_id = ?2")?;
             for id in &delta.removed {
-                delete.execute(params![folder.0, id.0])?;
+                touched += delete.execute(params![folder.0, id.0])?;
             }
             tx.execute(
                 "INSERT INTO sync_state (folder_id, cursor) VALUES (?1, ?2)
@@ -187,7 +216,7 @@ impl Store {
             )?;
         }
         tx.commit()?;
-        Ok(())
+        Ok(touched > 0)
     }
 
     /// Where the last sync of `folder` stopped, if it has ever synced.
@@ -325,6 +354,126 @@ impl Store {
         Ok(changed > 0)
     }
 
+    /// Where a message lives on its server, and its flags as last known.
+    pub fn message_location(&self, message: LocalMessageId) -> Result<Option<MessageLocation>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT f.account_id, f.id, f.remote_id, m.remote_id,
+                        m.seen, m.flagged, m.answered, m.draft, m.date
+                 FROM messages m JOIN folders f ON f.id = m.folder_id
+                 WHERE m.id = ?1",
+                [message.0],
+                |row| {
+                    Ok(MessageLocation {
+                        account: LocalAccountId(row.get(0)?),
+                        folder: LocalFolderId(row.get(1)?),
+                        remote_folder: FolderId(row.get(2)?),
+                        remote: RemoteId(row.get(3)?),
+                        flags: Flags {
+                            seen: row.get(4)?,
+                            flagged: row.get(5)?,
+                            answered: row.get(6)?,
+                            draft: row.get(7)?,
+                        },
+                        date: row.get(8)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    /// Sets all four flags of a message. Returns whether the message exists.
+    pub fn set_flags(&mut self, message: LocalMessageId, flags: Flags) -> Result<bool> {
+        let changed = self.conn.execute(
+            "UPDATE messages SET seen = ?2, flagged = ?3, answered = ?4, draft = ?5 WHERE id = ?1",
+            params![
+                message.0,
+                flags.seen,
+                flags.flagged,
+                flags.answered,
+                flags.draft
+            ],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Records the downloaded message: its extracted text, and the hash its
+    /// raw bytes are filed under.
+    pub fn put_downloaded(
+        &mut self,
+        message: LocalMessageId,
+        text: &str,
+        blob_hash: &str,
+    ) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        tx.execute(
+            "INSERT INTO bodies (message_id, text) VALUES (?1, ?2)
+             ON CONFLICT (message_id) DO UPDATE SET text = excluded.text",
+            params![message.0, text],
+        )?;
+        tx.execute(
+            "UPDATE messages SET blob_hash = ?2 WHERE id = ?1",
+            params![message.0, blob_hash],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The hash of a message's raw bytes, if it has been downloaded.
+    pub fn blob_hash(&self, message: LocalMessageId) -> Result<Option<String>> {
+        let hash: Option<Option<String>> = self
+            .conn
+            .query_row(
+                "SELECT blob_hash FROM messages WHERE id = ?1",
+                [message.0],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(hash.flatten())
+    }
+
+    /// Messages of an account dated at or after `since` whose bodies have
+    /// not been downloaded, newest first, at most `limit` of them.
+    pub fn messages_without_body(
+        &self,
+        account: LocalAccountId,
+        since: i64,
+        limit: usize,
+    ) -> Result<Vec<LocalMessageId>> {
+        let mut statement = self.conn.prepare(
+            "SELECT m.id FROM messages m JOIN folders f ON f.id = m.folder_id
+             WHERE f.account_id = ?1 AND m.date >= ?2
+               AND NOT EXISTS (SELECT 1 FROM bodies b WHERE b.message_id = m.id)
+             ORDER BY m.date DESC, m.id DESC LIMIT ?3",
+        )?;
+        let rows = statement.query_map(
+            params![account.0, since, i64::try_from(limit).unwrap_or(i64::MAX)],
+            |row| Ok(LocalMessageId(row.get(0)?)),
+        )?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Removes the folders of `account` that are not in `keep`, with their
+    /// messages. For folders deleted on the server.
+    pub fn retain_folders(&mut self, account: LocalAccountId, keep: &[FolderId]) -> Result<usize> {
+        let tx = self.conn.transaction()?;
+        let existing: Vec<(i64, String)> = {
+            let mut statement =
+                tx.prepare("SELECT id, remote_id FROM folders WHERE account_id = ?1")?;
+            let rows = statement.query_map([account.0], |row| Ok((row.get(0)?, row.get(1)?)))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        let mut removed = 0;
+        for (id, remote) in existing {
+            if !keep.iter().any(|folder| folder.0 == remote) {
+                removed += tx.execute("DELETE FROM folders WHERE id = ?1", [id])?;
+            }
+        }
+        tx.commit()?;
+        Ok(removed)
+    }
+
     /// Stars or unstars a message. Returns whether the message exists.
     pub fn set_flagged(&mut self, message: LocalMessageId, flagged: bool) -> Result<bool> {
         let changed = self.conn.execute(
@@ -339,10 +488,10 @@ fn insert_message(
     insert: &mut rusqlite::Statement<'_>,
     folder: LocalFolderId,
     message: &RemoteMessage,
-) -> Result<()> {
+) -> Result<usize> {
     let headers = &message.headers;
     let flags = message.flags;
-    insert.execute(params![
+    Ok(insert.execute(params![
         folder.0,
         message.id.0,
         headers.message_id,
@@ -357,8 +506,7 @@ fn insert_message(
         flags.answered,
         flags.draft,
         message.has_attachments,
-    ])?;
-    Ok(())
+    ])?)
 }
 
 fn message_row(row: &Row<'_>) -> rusqlite::Result<MessageRow> {
@@ -796,6 +944,285 @@ mod reset_tests {
         assert_eq!(
             store.sync_cursor(a).unwrap(),
             Some(SyncCursor("v2".to_owned()))
+        );
+    }
+}
+
+#[cfg(test)]
+mod sync_support_tests {
+    use quill_core::types::{FolderRole, Headers, RemoteFolder};
+
+    use super::*;
+
+    fn store_with(folders: &[&str], messages: &[(&str, &str, i64)]) -> (Store, LocalAccountId) {
+        let mut store = Store::open_in_memory().unwrap();
+        let account = store
+            .upsert_account("Work", "robin@example.com", "imap")
+            .unwrap();
+        for folder in folders {
+            let id = store
+                .upsert_folder(
+                    account,
+                    &RemoteFolder {
+                        id: FolderId((*folder).to_owned()),
+                        name: (*folder).to_owned(),
+                        role: FolderRole::Other,
+                    },
+                )
+                .unwrap();
+            let added = messages
+                .iter()
+                .filter(|(in_folder, _, _)| in_folder == folder)
+                .map(|(_, remote, date)| RemoteMessage {
+                    id: RemoteId((*remote).to_owned()),
+                    headers: Headers {
+                        message_id: None,
+                        subject: (*remote).to_owned(),
+                        from: Vec::new(),
+                        to: Vec::new(),
+                        cc: Vec::new(),
+                        date: *date,
+                    },
+                    flags: Flags::default(),
+                    size: 1,
+                    has_attachments: false,
+                })
+                .collect();
+            store
+                .apply_delta(
+                    id,
+                    &SyncDelta {
+                        reset: false,
+                        added,
+                        changed: Vec::new(),
+                        removed: Vec::new(),
+                        has_more: false,
+                        next_cursor: SyncCursor("c".to_owned()),
+                    },
+                )
+                .unwrap();
+        }
+        (store, account)
+    }
+
+    fn local(store: &Store, folder: &str, remote: &str) -> LocalMessageId {
+        let folder = store
+            .folders()
+            .unwrap()
+            .into_iter()
+            .find(|row| row.name == folder)
+            .unwrap();
+        store
+            .local_message_id(folder.id, &RemoteId(remote.to_owned()))
+            .unwrap()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_message_knows_where_it_lives_remotely() {
+        let (mut store, account) = store_with(&["INBOX"], &[("INBOX", "7;1;INBOX", 50)]);
+        let id = local(&store, "INBOX", "7;1;INBOX");
+        let wanted = Flags {
+            seen: true,
+            flagged: false,
+            answered: true,
+            draft: false,
+        };
+        assert!(store.set_flags(id, wanted).unwrap());
+        let location = store.message_location(id).unwrap().unwrap();
+        assert_eq!(location.account, account);
+        assert_eq!(location.remote_folder, FolderId("INBOX".to_owned()));
+        assert_eq!(location.remote, RemoteId("7;1;INBOX".to_owned()));
+        assert_eq!((location.flags, location.date), (wanted, 50));
+        assert_eq!(store.message_location(LocalMessageId(999)).unwrap(), None);
+        assert!(!store.set_flags(LocalMessageId(999), wanted).unwrap());
+    }
+
+    #[test]
+    fn a_download_records_text_and_blob_hash_together() {
+        let (mut store, _) = store_with(&["INBOX"], &[("INBOX", "1", 50)]);
+        let id = local(&store, "INBOX", "1");
+        assert_eq!(store.blob_hash(id).unwrap(), None);
+        store.put_downloaded(id, "the text", "abc123").unwrap();
+        assert_eq!(store.body(id).unwrap().as_deref(), Some("the text"));
+        assert_eq!(store.blob_hash(id).unwrap().as_deref(), Some("abc123"));
+        assert_eq!(store.blob_hash(LocalMessageId(999)).unwrap(), None);
+    }
+
+    #[test]
+    fn messages_without_bodies_are_found_newest_first_within_the_window() {
+        let (mut store, account) = store_with(
+            &["INBOX", "Archive"],
+            &[
+                ("INBOX", "old", 10),
+                ("INBOX", "recent", 100),
+                ("Archive", "newest", 200),
+                ("INBOX", "has-body", 150),
+            ],
+        );
+        let with_body = local(&store, "INBOX", "has-body");
+        store.put_body(with_body, "text").unwrap();
+        let found = store.messages_without_body(account, 50, 10).unwrap();
+        assert_eq!(
+            found,
+            [
+                local(&store, "Archive", "newest"),
+                local(&store, "INBOX", "recent")
+            ]
+        );
+        assert_eq!(
+            store.messages_without_body(account, 50, 1).unwrap().len(),
+            1
+        );
+        assert!(
+            store
+                .messages_without_body(LocalAccountId(99), 0, 10)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn folders_gone_from_the_server_are_removed_with_their_mail() {
+        let (mut store, account) = store_with(
+            &["INBOX", "Old Project"],
+            &[("INBOX", "1", 1), ("Old Project", "2", 2)],
+        );
+        let removed = store
+            .retain_folders(account, &[FolderId("INBOX".to_owned())])
+            .unwrap();
+        assert_eq!(removed, 1);
+        let names: Vec<String> = store
+            .folders()
+            .unwrap()
+            .into_iter()
+            .map(|f| f.name)
+            .collect();
+        assert_eq!(names, ["INBOX"]);
+        let left: i64 = store
+            .conn
+            .query_row("SELECT count(*) FROM messages", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(left, 1);
+    }
+
+    #[test]
+    fn a_version_one_database_is_migrated_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("quill.db");
+        {
+            let mut conn = Connection::open(&path).unwrap();
+            migrations::apply(&mut conn, &migrations::MIGRATIONS[..1]).unwrap();
+            conn.execute(
+                "INSERT INTO accounts (name, address, kind) VALUES ('Work', 'r@example.com', 'demo')",
+                [],
+            )
+            .unwrap();
+        }
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), 2);
+        assert_eq!(store.accounts().unwrap().len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod change_detection_tests {
+    use quill_core::types::{FlagChange, FolderRole, Headers, RemoteFolder};
+
+    use super::*;
+
+    #[test]
+    fn apply_delta_reports_whether_anything_really_changed() {
+        let mut store = Store::open_in_memory().unwrap();
+        let account = store
+            .upsert_account("Work", "robin@example.com", "imap")
+            .unwrap();
+        let folder = store
+            .upsert_folder(
+                account,
+                &RemoteFolder {
+                    id: FolderId("INBOX".to_owned()),
+                    name: "INBOX".to_owned(),
+                    role: FolderRole::Inbox,
+                },
+            )
+            .unwrap();
+        let message = RemoteMessage {
+            id: RemoteId("1".to_owned()),
+            headers: Headers {
+                message_id: None,
+                subject: "hello".to_owned(),
+                from: Vec::new(),
+                to: Vec::new(),
+                cc: Vec::new(),
+                date: 5,
+            },
+            flags: Flags::default(),
+            size: 1,
+            has_attachments: false,
+        };
+        let delta =
+            |added: Vec<RemoteMessage>, changed: Vec<FlagChange>, removed: Vec<RemoteId>| {
+                SyncDelta {
+                    reset: false,
+                    added,
+                    changed,
+                    removed,
+                    has_more: false,
+                    next_cursor: SyncCursor("c".to_owned()),
+                }
+            };
+        let flags = |seen| FlagChange {
+            id: RemoteId("1".to_owned()),
+            flags: Flags {
+                seen,
+                ..Flags::default()
+            },
+        };
+
+        assert!(
+            store
+                .apply_delta(folder, &delta(vec![message.clone()], vec![], vec![]))
+                .unwrap()
+        );
+        // The same message again, and its flags as they already are: nothing.
+        assert!(
+            !store
+                .apply_delta(folder, &delta(vec![message], vec![], vec![]))
+                .unwrap()
+        );
+        assert!(
+            !store
+                .apply_delta(folder, &delta(vec![], vec![flags(false)], vec![]))
+                .unwrap()
+        );
+        assert!(
+            !store
+                .apply_delta(folder, &delta(vec![], vec![], vec![]))
+                .unwrap()
+        );
+        // A real flag change, then a removal.
+        assert!(
+            store
+                .apply_delta(folder, &delta(vec![], vec![flags(true)], vec![]))
+                .unwrap()
+        );
+        assert!(
+            store
+                .apply_delta(
+                    folder,
+                    &delta(vec![], vec![], vec![RemoteId("1".to_owned())])
+                )
+                .unwrap()
+        );
+        // Removing what is already gone is nothing too.
+        assert!(
+            !store
+                .apply_delta(
+                    folder,
+                    &delta(vec![], vec![], vec![RemoteId("1".to_owned())])
+                )
+                .unwrap()
         );
     }
 }
