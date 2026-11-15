@@ -207,6 +207,20 @@ pub fn wrap(text: &str, max: usize) -> Vec<String> {
 
 /// A compact date for a list column: the time today, the weekday within the
 /// last week, the day and month this year, otherwise the month and year.
+/// A file's size in the unit that keeps the number short: `937 bytes`,
+/// `214 KB`, `3.2 MB`.
+pub fn file_size(bytes: u64) -> String {
+    if bytes >= 1024 * 1024 {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    } else if bytes >= 1024 {
+        format!("{} KB", bytes / 1024)
+    } else if bytes == 1 {
+        "1 byte".to_owned()
+    } else {
+        format!("{bytes} bytes")
+    }
+}
+
 pub fn short_date(ts: i64, now: i64, tz: &TimeZone) -> String {
     let (Ok(then), Ok(today)) = (Timestamp::from_second(ts), Timestamp::from_second(now)) else {
         return String::new();

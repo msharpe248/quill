@@ -16,6 +16,7 @@ use quill_store::{
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::compose::Prefill;
+use crate::files::{self, AttachedFile, ExtractedFile, Files};
 use crate::outgoing::{self, Response, SendRequest};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,6 +72,32 @@ pub enum DataRequest {
     },
     /// Take a draft, or mail from the outbox, up again.
     OpenDraft(DraftId),
+    /// Write a message's attachments where a viewer can read them: all of
+    /// them when they are to be looked at, so the viewer can step from one
+    /// to the next, and otherwise the one at `part` alone.
+    Extract {
+        message: LocalMessageId,
+        part: u32,
+        then: FileUse,
+    },
+    /// Save one attachment in the Downloads folder.
+    SaveAttachment {
+        message: LocalMessageId,
+        part: u32,
+    },
+}
+
+/// What a file taken out of a message is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileUse {
+    /// To look at or play, in the host's pane.
+    View,
+    /// To open in the application the Mac opens its kind with.
+    Open,
+    /// To save where the user chooses, in the host's panel.
+    Save,
+    /// To draw in the reader, above the message's text.
+    Picture,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,6 +143,13 @@ pub enum DataEvent {
     AttachFailed(String),
     /// A message to start writing: a reply, a forward, or a draft.
     ComposeReady(Box<Prefill>),
+    /// Files are out of the message and readable. `index` is the one that
+    /// was asked for.
+    Extracted {
+        files: Vec<ExtractedFile>,
+        index: usize,
+        then: FileUse,
+    },
     /// The message to answer has not been downloaded: this is the request
     /// to make again once it has.
     RespondNeedsBody(Box<DataRequest>),
@@ -141,16 +175,24 @@ pub struct LoadedBody {
     /// `text` is the sender's own plain text, not a rendering of the HTML,
     /// so there are two versions to choose between.
     pub has_plain: bool,
+    /// The files attached to the message.
+    pub files: Vec<AttachedFile>,
 }
 
 /// Runs one request against the store. This is the whole of the worker's
 /// logic, kept free of threads so tests can drive it directly.
 pub fn handle(store: &mut Store, request: DataRequest) -> Vec<DataEvent> {
+    handle_with(store, &Files::default(), request)
+}
+
+/// As [`handle`], with somewhere to put files. Without it, a request that
+/// needs to write one says that it cannot.
+pub fn handle_with(store: &mut Store, files: &Files, request: DataRequest) -> Vec<DataEvent> {
     // The sync engine writes through a connection of its own. Finding the
     // database busy is not a failure to report, just a reason to ask again.
     let mut attempts = 0;
     loop {
-        match run(store, &request) {
+        match run(store, files, &request) {
             Ok(events) => return events,
             Err(err) if err.is_busy() && attempts < BUSY_RETRIES => {
                 attempts += 1;
@@ -164,7 +206,11 @@ pub fn handle(store: &mut Store, request: DataRequest) -> Vec<DataEvent> {
 const BUSY_RETRIES: u32 = 20;
 const BUSY_PAUSE: std::time::Duration = std::time::Duration::from_millis(50);
 
-fn run(store: &mut Store, request: &DataRequest) -> quill_store::Result<Vec<DataEvent>> {
+fn run(
+    store: &mut Store,
+    files: &Files,
+    request: &DataRequest,
+) -> quill_store::Result<Vec<DataEvent>> {
     Ok(match request.clone() {
         DataRequest::Contacts { typed } => outgoing::contacts(store, typed)?,
         DataRequest::SaveDraft {
@@ -216,6 +262,7 @@ fn run(store: &mut Store, request: &DataRequest) -> quill_store::Result<Vec<Data
                         html: None,
                         html_first: false,
                         has_plain: true,
+                        files: Vec::new(),
                     }
                 });
             vec![DataEvent::BodyLoaded { id, body }]
@@ -235,12 +282,14 @@ fn run(store: &mut Store, request: &DataRequest) -> quill_store::Result<Vec<Data
                         html: parsed.html,
                         html_first: parsed.html_first,
                         has_plain: parsed.has_plain,
+                        files: files::attached(&parsed.attachments),
                     },
                     None => LoadedBody {
                         text,
                         html: None,
                         html_first: false,
                         has_plain: true,
+                        files: Vec::new(),
                     },
                 }
             });
@@ -285,6 +334,29 @@ fn run(store: &mut Store, request: &DataRequest) -> quill_store::Result<Vec<Data
             }
         }
         DataRequest::MoveTo { id, folder } => moved(store, id, folder, "Moved")?,
+        DataRequest::Extract {
+            message,
+            part,
+            then,
+        } => {
+            // To look at: every file, so the viewer can go from one to the
+            // next. For anything else, the one asked for.
+            let all = then == FileUse::View;
+            match files::extract(store, files, message, part, all) {
+                Ok((extracted, index)) => vec![DataEvent::Extracted {
+                    files: extracted,
+                    index,
+                    then,
+                }],
+                Err(problem) => vec![flash(&problem.0)],
+            }
+        }
+        DataRequest::SaveAttachment { message, part } => {
+            match files::save(store, files, message, part) {
+                Ok(name) => vec![flash(&format!("Saved {name} in Downloads."))],
+                Err(problem) => vec![flash(&problem.0)],
+            }
+        }
         DataRequest::Undo => {
             let at = now();
             if let Some(operation) = store.undoable(at)?
@@ -423,7 +495,11 @@ impl DataHandle {
 }
 
 /// Moves the store onto its own thread. Answers arrive on `events`.
-pub fn spawn(mut store: Store, events: UnboundedSender<DataEvent>) -> std::io::Result<DataHandle> {
+pub fn spawn(
+    mut store: Store,
+    files: Files,
+    events: UnboundedSender<DataEvent>,
+) -> std::io::Result<DataHandle> {
     let (requests, queue) = mpsc::channel::<DataRequest>();
     let worker = thread::Builder::new()
         .name("quill-store".to_owned())
@@ -431,7 +507,7 @@ pub fn spawn(mut store: Store, events: UnboundedSender<DataEvent>) -> std::io::R
             while let Ok(request) = queue.recv() {
                 // With nobody left to hear the answers, what was asked is
                 // still done: a draft saved on the way out is saved.
-                for event in handle(&mut store, request) {
+                for event in handle_with(&mut store, &files, request) {
                     if events.send(event).is_err() {
                         break;
                     }
@@ -462,7 +538,7 @@ mod tests {
             .upsert_account("Work", "robin@example.com", "demo")
             .unwrap();
         let (events, listener) = tokio::sync::mpsc::unbounded_channel();
-        let handle = spawn(store, events).unwrap();
+        let handle = spawn(store, Files::default(), events).unwrap();
         // The UI has gone.
         drop(listener);
         for subject in ["One", "Two"] {
@@ -561,6 +637,7 @@ mod tests {
                     html: None,
                     html_first: false,
                     has_plain: true,
+                    files: Vec::new(),
                 })
             }]
         );
@@ -602,7 +679,7 @@ mod tests {
     async fn the_worker_thread_answers_over_the_channel_and_stops_when_dropped() {
         let (store, mailbox, _) = store_with_one_message();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let handle = spawn(store, tx).unwrap();
+        let handle = spawn(store, Files::default(), tx).unwrap();
         assert!(handle.send(DataRequest::LoadMessages(mailbox)));
         match rx.recv().await {
             Some(DataEvent::MessagesLoaded { rows, .. }) => assert_eq!(rows.len(), 1),
@@ -651,6 +728,7 @@ mod tests {
                     html: None,
                     html_first: false,
                     has_plain: true,
+                    files: Vec::new(),
                 })
             }]
         );

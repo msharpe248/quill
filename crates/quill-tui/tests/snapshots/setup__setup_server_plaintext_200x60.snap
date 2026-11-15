@@ -7,23 +7,23 @@ expression: harness.screen()
 │  Work                    │┃      W Build Bot             [quill] PR #42 passed                            08:51┃│ To:      Robin Vale <robin@example.com>                                            │
 │    Inbox               8 │┃  *   P Peter Vale            Sunday dinner                                    08:35┃│ Date:    Sat 14 Nov 2026 09:14                                                     │
 │    Drafts                │┃  *   P Maya Okafor           Trail run Saturday                               04:30┃│ Subject: Q4 roadmap                                                                │
-│    Sent                  │┃  * @ W Sam Lee               Photos from Sat                                    Fri┃│                                                                                    │
-│    Archive               │┃  *   P Riverside Library     Your hold is ready                                 Fri┃│ Hi Robin,                                                                          │
-│    Trash                 │┃  *   W Priya Nair            Re: Offsite agenda                                 Fri┃│                                                                                    │
-│  Personal                │┃  *!@ W Tomás Ortega          Invoice 2026-114                                   Thu┃│ Here is the draft roadmap for Q4. The short version: we ship the sync rewrite in   │
-│    Inbox               4 │┃      P Jo Park               Re: Book club pick                                 Thu┃│ October, spend November on search, and keep December for whatever the first two    │
-│    Drafts                │┃  *   W 陈静 Chen Jing        Design review notes 设计评审                       Wed┃│ months break.                                                                      │
-│    Sent                  │┃      W IT Helpdesk           Scheduled maintenance Sunday                       Tue┃│                                                                                    │
-│    Archive               │┃  *   W Lena Fischer          Lunch on Thursday?                                 Mon┃│ Three things I would like your eyes on before Thursday:                            │
-│    Trash                 │┃  *   P Hillcrest Dental      Appointment reminder                               Sun┃│                                                                                    │
-│                          │┃  *!@ W Omar Haddad           Re: Contract redlines                           Nov 06┃│ 1. The search milestone assumes the index format is settled. Is it?                │
-│                          │┃  *   W The Weekly Parser     Issue 88: Parsing email is still hard           Nov 02┃│ 2. I have pencilled in two weeks for the offline queue. Tell me if that is         │
-│                          │┃   !@ P Maya Okafor           Recipe you asked for                            Oct 25┃│ fantasy.                                                                           │
-│                          │┃      W Ana Ruiz              Welcome to the team                           Oct 2025┃│ 3. The on-call rota over the holidays is still empty.                              │
+│    Sent                  │┃  * @ W Sam Lee               Photos from Sat                                    Fri┃│ Attach:  roadmap.pdf (937 bytes)  (a lists them)                                   │
+│    Archive               │┃  *   P Riverside Library     Your hold is ready                                 Fri┃│                                                                                    │
+│    Trash                 │┃  *   W Priya Nair            Re: Offsite agenda                                 Fri┃│ Hi Robin,                                                                          │
+│  Personal                │┃  *!@ W Tomás Ortega          Invoice 2026-114                                   Thu┃│                                                                                    │
+│    Inbox               4 │┃      P Jo Park               Re: Book club pick                                 Thu┃│ Here is the draft roadmap for Q4. The short version: we ship the sync rewrite in   │
+│    Drafts                │┃  *   W 陈静 Chen Jing        Design review notes 设计评审                       Wed┃│ October, spend November on search, and keep December for whatever the first two    │
+│    Sent                  │┃      W IT Helpdesk           Scheduled maintenance Sunday                       Tue┃│ months break.                                                                      │
+│    Archive               │┃  *   W Lena Fischer          Lunch on Thursday?                                 Mon┃│                                                                                    │
+│    Trash                 │┃  *   P Hillcrest Dental      Appointment reminder                               Sun┃│ Three things I would like your eyes on before Thursday:                            │
+│                          │┃  *!@ W Omar Haddad           Re: Contract redlines                           Nov 06┃│                                                                                    │
+│                          │┃  *   W The Weekly Parser     Issue 88: Parsing email is still hard           Nov 02┃│ 1. The search milestone assumes the index format is settled. Is it?                │
+│                          │┃   !@ P Maya Okafor           Recipe you asked for                            Oct 25┃│ 2. I have pencilled in two weeks for the offline queue. Tell me if that is         │
+│                          │┃      W Ana Ruiz              Welcome to the team                           Oct 2025┃│ fantasy.                                                                           │
+│                          │┃                                                                                    ┃│ 3. The on-call rota over the holidays is still empty.                              │
 │                          │┃                                                                                    ┃│                                                                                    │
-│                          │┃                                                                                    ┃│ The PDF has the detail, including the dependency chart you asked for. Comments in  │
-│                          │┃                                 ┏ Add an account: the server ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓hichever is easier.                                          │
-│                          │┃                                 ┃ Found in the DNS records of example.com.                                 ┃                                                             │
+│                          │┃                                 ┏ Add an account: the server ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓, including the dependency chart you asked for. Comments in  │
+│                          │┃                                 ┃ Found in the DNS records of example.com.                                 ┃hichever is easier.                                          │
 │                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┃ Name:      Example                                                       ┃                                                             │
 │                          │┃                                 ┃ Server:    imap.example.com                                              ┃                                                             │

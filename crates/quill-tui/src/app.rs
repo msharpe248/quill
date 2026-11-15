@@ -27,11 +27,12 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::command::{Context, Menu};
 use crate::data::{self, DataEvent, DataHandle};
+use crate::files::Files;
 use crate::keymap::KeyChord;
 use crate::setup::{AccountEvent, AccountRequest};
 use crate::state::{Action, Effects, Env, HostRequest, HostState, Notice, State};
 use crate::view::{ImagePlacement, LinkPlacement};
-use crate::{hyperlink, sample, terminal, view};
+use crate::{hyperlink, terminal, view};
 
 /// The sync engine, as the UI holds it: where to send requests, and where
 /// its news arrives. With no engine (the demo mailbox) there is only the
@@ -84,9 +85,16 @@ pub async fn run(
     accounts: AccountsLink,
 ) -> io::Result<()> {
     let (events_tx, events) = unbounded_channel();
+    // Files taken out of messages for viewing go in a folder of this run's
+    // own, made when the first is written and removed at the end.
+    let view_dir = std::env::temp_dir().join(format!("quill-view-{}", std::process::id()));
+    let files = Files {
+        view_dir: Some(view_dir.clone()),
+        downloads: env.downloads.clone(),
+    };
     let data = step(
         "cannot start the store worker",
-        data::spawn(store, events_tx),
+        data::spawn(store, files, events_tx),
     )?;
     let Attached {
         host,
@@ -111,9 +119,10 @@ pub async fn run(
         sync: sync_handle.as_deref(),
         accounts: account_requests,
         injected: injected_tx,
-        preview_dir: None,
+        preview_dir: view_dir,
         last_host_state: None,
         images: Images::default(),
+        thumbnails: std::collections::HashMap::new(),
     };
     let mut inbound = Inbound {
         data: events,
@@ -125,10 +134,9 @@ pub async fn run(
     let result = event_loop(&mut screen, &env, notices, &mut io, &mut inbound).await;
     io.images.forget();
     terminal::leave();
-    if let Some(dir) = io.preview_dir {
-        // Files written for viewing do not outlive the run.
-        let _ = std::fs::remove_dir_all(dir);
-    }
+    // Files written for viewing do not outlive the run. The store worker
+    // has finished by now: the loop waits for it on the way out.
+    let _ = std::fs::remove_dir_all(&io.preview_dir);
     result
 }
 
@@ -141,16 +149,34 @@ struct Io<'a> {
     /// Actions that background work feeds back into the loop.
     injected: UnboundedSender<Action>,
     /// A private directory for files handed to the host for viewing.
-    preview_dir: Option<PathBuf>,
+    preview_dir: PathBuf,
     last_host_state: Option<HostState>,
     images: Images,
+    /// Pictures the host has been asked to make, by the id asked under,
+    /// and where each will be written.
+    thumbnails: std::collections::HashMap<u64, PathBuf>,
 }
+
+/// The most pictures the terminal is left holding at once. Each is a few
+/// megabytes of its memory; beyond this the oldest is taken back.
+const PICTURES_KEPT: usize = 6;
+
+/// The largest a picture is kept at, in pixels: enough to fill the reader
+/// on a sharp display, and small enough to send in one go.
+const PICTURE_PIXELS: (u32, u32) = (800, 500);
+
+/// Pictures decoded and waiting to be sent to the terminal, by the id
+/// they will be known by. Filled by the tasks that decode, emptied by the
+/// run loop as it sends.
+type Decoded = Arc<std::sync::Mutex<std::collections::HashMap<u32, quill_media::Image>>>;
 
 /// What the terminal has been asked to draw over the frame.
 #[derive(Default)]
 struct Images {
-    /// The sample image's pixels are with the terminal.
-    transmitted: bool,
+    decoded: Decoded,
+    /// The pictures the terminal holds, oldest first, with their sizes in
+    /// pixels.
+    sent: Vec<(u32, (u32, u32))>,
     placed: Vec<ImagePlacement>,
     /// The terminal size the placements were made at. A resize clears the
     /// screen, and the images with it.
@@ -168,34 +194,62 @@ impl Images {
         for old in &self.placed {
             queue!(out, Print(kitty::clear(old.id)))?;
         }
+        let mut shown = Vec::with_capacity(wanted.len());
         for image in &wanted {
-            if !self.transmitted {
-                // The pixels go once; placing the image again is a few bytes.
-                queue!(
-                    out,
-                    Print(kitty::transmit(image.id, &quill_media::sample::image()))
-                )?;
-                self.transmitted = true;
+            if !self.sent.iter().any(|(id, _)| *id == image.id) {
+                // The pixels go once; placing the picture again is a few
+                // bytes. They are let go of here: the terminal has them.
+                let pixels = self
+                    .decoded
+                    .lock()
+                    .ok()
+                    .and_then(|mut decoded| decoded.remove(&image.id));
+                let Some(pixels) = pixels else {
+                    // Nothing to send for it: it is not drawn.
+                    continue;
+                };
+                queue!(out, Print(kitty::transmit(image.id, &pixels)))?;
+                self.sent.push((image.id, (pixels.width, pixels.height)));
             }
             queue!(
                 out,
                 MoveTo(image.area.x, image.area.y),
                 Print(kitty::place(image.id, image.area.width, image.area.height))
             )?;
+            shown.push(*image);
+        }
+        // The terminal is not left holding every picture ever looked at.
+        while self.sent.len() > PICTURES_KEPT {
+            let (oldest, _) = self.sent.remove(0);
+            if shown.iter().any(|image| image.id == oldest) {
+                // On screen now: keep it, and stop looking.
+                self.sent.insert(0, (oldest, (0, 0)));
+                break;
+            }
+            queue!(out, Print(kitty::forget(oldest)))?;
         }
         out.flush()?;
-        self.placed = wanted;
+        self.placed = shown;
         self.size = size;
         Ok(())
     }
 
+    /// The size of a picture the terminal already holds.
+    fn held(&self, id: u32) -> Option<(u32, u32)> {
+        self.sent
+            .iter()
+            .find(|(sent, size)| *sent == id && *size != (0, 0))
+            .map(|(_, size)| *size)
+    }
+
     /// Frees what the terminal is holding for us.
     fn forget(&mut self) {
-        if self.transmitted {
+        if !self.sent.is_empty() {
             let mut out = stdout();
-            let _ = queue!(out, Print(kitty::forget(view::SAMPLE_IMAGE_ID)));
+            for (id, _) in self.sent.drain(..) {
+                let _ = queue!(out, Print(kitty::forget(id)));
+            }
             let _ = out.flush();
-            self.transmitted = false;
             self.placed.clear();
         }
     }
@@ -237,9 +291,29 @@ impl Io<'_> {
         }
         for request in effects.host {
             match request {
-                HostRequest::PreviewSample => self.preview_sample(),
                 HostRequest::OpenUrl(url) => self.host.open_url(&url),
                 HostRequest::PickFiles => self.host.pick_files(),
+                HostRequest::Preview { files, index } => {
+                    let files: Vec<(&std::path::Path, &str)> = files
+                        .iter()
+                        .map(|(path, title)| (path.as_path(), title.as_str()))
+                        .collect();
+                    self.host.preview(&files, index);
+                }
+                HostRequest::Play { path, title } => self.host.play(&path, &title),
+                HostRequest::OpenFile(path) => self.host.open_file(&path),
+                HostRequest::LoadPicture {
+                    id,
+                    path,
+                    content_type,
+                } => self.load_picture(id, path, &content_type),
+                HostRequest::SaveFile { path, name } => {
+                    // Only asked for where the host has a panel. Should it
+                    // not, say so rather than nothing.
+                    if !self.host.save_file(&path, &name) {
+                        let _ = self.injected.send(Action::FileSaved { name, saved: false });
+                    }
+                }
                 // Quill's own shell takes the text itself. Anywhere else
                 // the terminal owns the clipboard and is asked to take it
                 // (OSC 52), which the terminals Quill is meant for do.
@@ -288,6 +362,9 @@ impl Io<'_> {
                 Context::Reader => bridge::Context::Reader,
                 Context::Help => bridge::Context::Help,
                 Context::Links => bridge::Context::Links,
+                // A list to choose from over the reader, as the links are.
+                // The shell has no use yet for telling the two apart.
+                Context::Attachments => bridge::Context::Links,
                 Context::Setup => bridge::Context::Setup,
                 Context::Certificate => bridge::Context::Certificate,
                 Context::Folders => bridge::Context::Folders,
@@ -305,26 +382,60 @@ impl Io<'_> {
         self.last_host_state = Some(current);
     }
 
-    fn preview_sample(&mut self) {
-        let dir = self
-            .preview_dir
-            .get_or_insert_with(|| {
-                std::env::temp_dir().join(format!("quill-preview-{}", std::process::id()))
-            })
-            .clone();
-        let host = Arc::clone(self.host);
+    /// Gets a picture ready to draw: from the terminal's own memory if it
+    /// has it, by decoding it, or by asking the host for a picture of it.
+    fn load_picture(&mut self, id: u32, path: PathBuf, content_type: &str) {
+        if let Some(size) = self.images.held(id) {
+            let _ = self.injected.send(Action::PictureLoaded {
+                id,
+                size: Some(size),
+            });
+        } else if quill_media::decode::can_decode(content_type) {
+            self.decode_picture(id, path);
+        } else if self.host.is_shell() {
+            // A kind only the system can read. The host writes a PNG of it
+            // beside the file, and that is decoded like any other.
+            let out = path.with_file_name(format!("picture-{id}.png"));
+            self.thumbnails.insert(u64::from(id), out.clone());
+            self.host
+                .thumbnail(u64::from(id), &path, &out, PICTURE_PIXELS.0);
+        } else {
+            let _ = self.injected.send(Action::PictureLoaded { id, size: None });
+        }
+    }
+
+    /// The host has answered a request for a picture of a file.
+    fn thumbnail_made(&mut self, id: u64, ok: bool) {
+        let Some(path) = self.thumbnails.remove(&id) else {
+            return;
+        };
+        let Ok(id) = u32::try_from(id) else {
+            return;
+        };
+        if ok {
+            self.decode_picture(id, path);
+        } else {
+            let _ = self.injected.send(Action::PictureLoaded { id, size: None });
+        }
+    }
+
+    /// Reads and decodes a picture file off the UI task, and says when the
+    /// pixels are ready to send.
+    fn decode_picture(&self, id: u32, path: PathBuf) {
+        let decoded = Arc::clone(&self.images.decoded);
         let injected = self.injected.clone();
-        // Writing a file is not for the UI task.
         tokio::task::spawn_blocking(move || {
-            let path = dir.join(sample::FILE_NAME);
-            match sample::write(&dir, &path) {
-                Ok(()) => host.preview(&[(path.as_path(), sample::FILE_NAME)], 0),
-                Err(err) => {
-                    let _ = injected.send(Action::Notify(Notice::error(format!(
-                        "Cannot write the sample file: {err}"
-                    ))));
+            let image = std::fs::read(&path).ok().and_then(|bytes| {
+                quill_media::decode::decode(&bytes, PICTURE_PIXELS.0, PICTURE_PIXELS.1)
+            });
+            let size = image.map(|image| {
+                let size = (image.width, image.height);
+                if let Ok(mut decoded) = decoded.lock() {
+                    decoded.insert(id, image);
                 }
-            }
+                size
+            });
+            let _ = injected.send(Action::PictureLoaded { id, size });
         });
     }
 }
@@ -423,9 +534,11 @@ async fn event_loop(
                 HostEvent::Files { paths, temporary } => {
                     Some(Action::Files { paths, temporary })
                 }
-                // Until the reader shows attachments, nothing asks for
-                // either of these.
-                HostEvent::Thumbnail { .. } | HostEvent::Saved { .. } => None,
+                HostEvent::Saved { name, saved } => Some(Action::FileSaved { name, saved }),
+                HostEvent::Thumbnail { id, ok } => {
+                    io.thumbnail_made(id, ok);
+                    None
+                }
                 // Either way there is nothing left to draw for.
                 HostEvent::WillQuit | HostEvent::Disconnected => break,
                 HostEvent::Problem(text) => Some(Action::Notify(Notice::error(text))),
@@ -493,6 +606,8 @@ mod tests {
             accounts: false,
             cmd_keys: true,
             file_panel: false,
+            thumbnails: false,
+            downloads: None,
             compose: crate::state::ComposeSettings::default(),
             identities: std::collections::HashMap::new(),
         }

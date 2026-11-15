@@ -7,15 +7,16 @@ expression: harness.screen()
 │  Work          │┃ To:      Robin Vale <robin@example.com>                    ┃
 │    Inbox     7 │┃ Date:    Sat 14 Nov 2026 09:14                             ┃
 │    Drafts      │┃ Subject: Q4 roadmap                                        ┃
+│    Sent        │┃ Attach:  roadmap.pdf (937 bytes)  (a lists them)           ┃
+│    Archive     │┃                                                            ┃
+│    Trash       │┃ search, and keep December for whatever the first two       ┃
+│  Personal      │┃ months break.                                              ┃
+│    Inbox     4 │┃                                                            ┃
+│    Drafts      │┃ Three things I would like your eyes on before Thursday:    ┃
 │    Sent        │┃                                                            ┃
-│    Archive     │┃ search, and keep December for whatever the first two       ┃
-│    Trash       │┃ months break.                                              ┃
-│  Personal      │┃                                                            ┃
-│    Inbox     4 │┃ Three things I would like your eyes on before Thursday:    ┃
-│    Drafts      │┃                                                            ┃
-│    Sent        │┃ 1. The search milestone assumes the index format is        ┃
-│    Archive     │┃ settled. Is it?                                            ┃
-│    Trash       │┃ 2. I have pencilled in two weeks for the offline queue.    ┃
+│    Archive     │┃ 1. The search milestone assumes the index format is        ┃
+│    Trash       │┃ settled. Is it?                                            ┃
+│                │┃ 2. I have pencilled in two weeks for the offline queue.    ┃
 │                │┃ Tell me if that is fantasy.                                ┃
 │                │┃ 3. The on-call rota over the holidays is still empty.      ┃
 │                │┃                                                            ┃
@@ -23,6 +24,5 @@ expression: harness.screen()
 │                │┃ asked for. Comments in the doc or by reply, whichever is   ┃
 │                │┃ easier.                                                    ┃
 │                │┃                                                            ┃
-│                │┃ Thanks,                                                    ┃
-└────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5-20 of 25 ┛
+└────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 5-19 of 25 ┛
  j/k scroll  space page  esc back  r reply  e archive  d delete  ? help

@@ -7,6 +7,7 @@ expression: harness.screen()
 ┃ To:      Robin Vale <robin@example.com>                                                                                                                                                              ┃
 ┃ Date:    Sat 14 Nov 2026 09:14                                                                                                                                                                       ┃
 ┃ Subject: Q4 roadmap                                                                                                                                                                                  ┃
+┃ Attach:  roadmap.pdf (937 bytes)  (a lists them)                                                                                                                                                     ┃
 ┃                                                                                                                                                                                                      ┃
 ┃ Hi Robin,                                                                                                                                                                                            ┃
 ┃                                                                                                                                                                                                      ┃
@@ -59,6 +60,5 @@ expression: harness.screen()
 ┃                                                                                                                                                                                                      ┃
 ┃                                                                                                                                                                                                      ┃
 ┃                                                                                                                                                                                                      ┃
-┃                                                                                                                                                                                                      ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
- j/k scroll  space page  esc back  r reply  e archive  d delete  o links  t html/text  u unread  s star  z zoom  ? help  q quit
+ j/k scroll  space page  esc back  r reply  e archive  d delete  a files  o links  t html/text  u unread  s star  z zoom  ? help  q quit

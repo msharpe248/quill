@@ -7,12 +7,12 @@ expression: harness.screen()
 ┃  Work                    ┃│    @ To: Omar Haddad       Contract redlines                                 Nov 05││ To:      Priya Nair <priya.nair@example.com>                                       │
 ┃    Inbox               8 ┃│                                                                                    ││ Date:    Fri 13 Nov 2026 02:30                                                     │
 ┃    Drafts                ┃│                                                                                    ││ Subject: Offsite agenda                                                            │
-┃>   Sent                  ┃│                                                                                    ││                                                                                    │
-┃    Archive               ┃│                                                                                    ││ Draft agenda attached. Shout if anything is missing.                               │
-┃    Trash                 ┃│                                                                                    ││ We have the room from nine until four.                                             │
-┃  Personal                ┃│                                                                                    ││                                                                                    │
-┃    Inbox               4 ┃│                                                                                    ││ Robin                                                                              │
-┃    Drafts                ┃│                                                                                    ││                                                                                    │
+┃>   Sent                  ┃│                                                                                    ││ Attach:  offsite-agenda.txt (210 bytes), chart.png (833 bytes)  (a lists them)     │
+┃    Archive               ┃│                                                                                    ││                                                                                    │
+┃    Trash                 ┃│                                                                                    ││ Draft agenda attached. Shout if anything is missing.                               │
+┃  Personal                ┃│                                                                                    ││ We have the room from nine until four.                                             │
+┃    Inbox               4 ┃│                                                                                    ││                                                                                    │
+┃    Drafts                ┃│                                                                                    ││ Robin                                                                              │
 ┃    Sent                  ┃│                                                                                    ││                                                                                    │
 ┃    Archive               ┃│                                                                                    ││                                                                                    │
 ┃    Trash                 ┃│                                                                                    ││                                                                                    │

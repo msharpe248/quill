@@ -7,7 +7,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Padding;
 
-use super::{ImagePlacement, LinkPlacement, SAMPLE_IMAGE_ID, pane_block, placeholder};
+use super::{ImagePlacement, LinkPlacement, pane_block, placeholder};
 use crate::layout;
 use crate::state::{Body, Env, Pane, Showing, State};
 use crate::text;
@@ -53,7 +53,7 @@ pub fn render(
 
     let has_cc = !row.headers.cc.is_empty();
     let image_rows = state.reader_image_rows(env, area);
-    let viewport = layout::reader_body_height(area, has_cc, image_rows);
+    let viewport = layout::reader_body_height(area, state.reader_header_rows(), image_rows);
     let total = state.reader.lines.len();
     if total > viewport && viewport > 0 {
         let first = state.reader.scroll + 1;
@@ -84,6 +84,20 @@ pub fn render(
     }
     headers.push(("Date:", text::long_date(row.headers.date, &env.tz)));
     headers.push(("Subject:", row.headers.subject.clone()));
+    // The files, by name, as many as fit; the list has them all.
+    let files = state.reader.files();
+    if !files.is_empty() {
+        let key = env
+            .hint_key(crate::command::CommandId::MessageAttachments)
+            .map_or_else(String::new, |key| format!("  ({key} lists them)"));
+        let named = files
+            .iter()
+            .map(|file| format!("{} ({})", file.name, text::file_size(file.size)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let room = width.saturating_sub(LABEL_WIDTH + text::width(&key));
+        headers.push(("Attach:", format!("{}{key}", text::truncate(&named, room))));
+    }
 
     let mut y = inner.y;
     let bottom = inner.y + inner.height;
@@ -112,24 +126,17 @@ pub fn render(
         return None;
     }
 
-    // An inline image: cells left empty for the terminal to draw over, or
-    // one row naming the image where the terminal cannot draw it.
+    // The message's picture: cells left empty for the terminal to draw
+    // over. Where the terminal draws no pictures there is none here, and
+    // the file is in the list like any other.
     let mut image = None;
-    if image_rows > 0 {
-        let sample = (quill_media::sample::WIDTH, quill_media::sample::HEIGHT);
-        if env.images {
-            let rows = image_rows as u16;
-            let columns = (u32::from(rows) * 2 * sample.0 / sample.1).min(u32::from(inner.width));
-            image = Some(ImagePlacement {
-                id: SAMPLE_IMAGE_ID,
-                area: Rect::new(inner.x, y, columns as u16, rows),
-            });
-        } else {
-            let name = format!("[image: sample, {}x{}]", sample.0, sample.1);
-            let line = Line::styled(text::truncate(&name, width), styles.dim());
-            frame.render_widget(line, Rect::new(inner.x, y, inner.width, 1));
-        }
-        y += image_rows as u16 + 1;
+    let (columns, rows) = state.reader_picture_cells(env, area);
+    if let (Some(picture), true) = (&state.reader.picture, rows > 0) {
+        image = Some(ImagePlacement {
+            id: picture.id,
+            area: Rect::new(inner.x, y, columns.min(inner.width), rows),
+        });
+        y += rows + 1;
         if y >= bottom {
             return image;
         }

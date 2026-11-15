@@ -299,15 +299,7 @@ fn label(name: &str, focused: bool, styles: &Styles) -> Span<'static> {
 
 /// A file as the header lists it: its name and size.
 fn described(attachment: &DraftAttachment) -> String {
-    let size = attachment.size;
-    let size = if size >= 1024 * 1024 {
-        format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
-    } else if size >= 1024 {
-        format!("{} KB", size / 1024)
-    } else {
-        format!("{size} bytes")
-    };
-    format!("{} ({size})", attachment.name)
+    format!("{} ({})", attachment.name, text::file_size(attachment.size))
 }
 
 /// How a piece of the body is drawn. Every distinction also has a text

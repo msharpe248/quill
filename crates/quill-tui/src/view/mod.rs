@@ -1,5 +1,6 @@
 //! `view(State)`: draws the state and changes nothing.
 
+mod attachments;
 mod compose;
 mod folders;
 pub mod help;
@@ -19,9 +20,6 @@ use ratatui::widgets::{Block, BorderType, Clear, Paragraph};
 use crate::layout;
 use crate::state::{Env, State};
 use crate::theme::Styles;
-
-/// The id the built-in sample image is known to the terminal by.
-pub const SAMPLE_IMAGE_ID: u32 = 1;
 
 /// Where the terminal should draw an image over the frame just rendered.
 ///
@@ -101,6 +99,8 @@ pub fn render(frame: &mut Frame, state: &State, env: &Env) -> Overlays {
         clear(frame, rect, &env.styles);
         if state.folders.is_some() {
             folders::render(frame, rect, state, env);
+        } else if state.attachments.is_some() {
+            attachments::render(frame, rect, state, env);
         } else {
             links::render(frame, rect, state, env);
         }

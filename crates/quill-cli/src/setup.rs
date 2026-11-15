@@ -65,6 +65,12 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
         accounts: false,
         cmd_keys: false,
         file_panel: false,
+        thumbnails: false,
+        // The usual place for what is downloaded. Inside the app's sandbox
+        // this is not the user's own folder, and the app asks with a panel.
+        downloads: std::env::var_os("HOME")
+            .filter(|home| !home.is_empty())
+            .map(|home| std::path::Path::new(&home).join("Downloads")),
         compose: ComposeSettings {
             markdown: config.compose.format == ComposeFormat::Markdown,
             reply_above: config.compose.reply_position == ReplyPosition::Above,

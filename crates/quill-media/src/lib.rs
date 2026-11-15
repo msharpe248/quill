@@ -2,11 +2,12 @@
 //!
 //! Quill draws images with the Kitty graphics protocol and nothing else: its
 //! own shell's terminal always has it, so there are no iTerm2, Sixel or
-//! half-block code paths. Decoding real image files and the thumbnail cache
-//! arrive with message rendering in M4.
+//! half-block code paths. [`decode`] turns a picture from a message into
+//! pixels; pictures it cannot read (HEIC, a PDF's first page, a video's
+//! poster frame) are made into PNGs by the app shell first.
 
+pub mod decode;
 pub mod kitty;
-pub mod sample;
 
 /// Pixels, eight bits each of red, green, blue and alpha, row by row from the
 /// top left.

@@ -47,7 +47,7 @@ rcgen = "0.14.10"
 ring = "0.17.14"
 rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-platform-verifier = "0.7.1"
-rustix = { version = "1.1.6", features = ["termios"] }
+rustix = { version = "1.1.6", features = ["fs", "termios"] }
 rusqlite = { version = "0.42", features = ["bundled"] }
 sha2 = "0.10.9"
 stringprep = "0.1.5"

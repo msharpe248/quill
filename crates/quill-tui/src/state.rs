@@ -5,6 +5,7 @@
 //! loop sends those to the store worker, whose answers come back as actions.
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::path::PathBuf;
 
 use jiff::tz::TimeZone;
 use quill_core::types::{FolderRole, LocalAccountId, LocalFolderId, LocalMessageId};
@@ -15,8 +16,9 @@ use quill_sync::{SyncEvent, SyncRequest};
 
 use crate::command::{CommandId, Context, Registry};
 use crate::compose::{Compose, Did, Field, Prefill};
-use crate::data::{DataEvent, DataRequest, LoadedBody};
+use crate::data::{DataEvent, DataRequest, FileUse, LoadedBody};
 use crate::editor::Editor;
+use crate::files::{AttachedFile, ExtractedFile};
 use crate::input::LineInput;
 use crate::keymap::{Key, KeyChord, Keymap, Mods, Resolution};
 use crate::layout::{self, LayoutMode};
@@ -42,9 +44,15 @@ pub struct Env {
     /// Whether keys held with `cmd` can arrive: they do from Quill's own
     /// window, and a terminal program keeps them for itself.
     pub cmd_keys: bool,
+    /// Whether the host can make a picture of a file Quill cannot decode
+    /// itself: a HEIC photo, the first page of a PDF, a frame of a video.
+    pub thumbnails: bool,
     /// Whether the host has a panel to choose files in. Without one a
     /// file to attach is named by its path.
     pub file_panel: bool,
+    /// Where a saved attachment goes when the host has no panel to ask
+    /// with: the user's Downloads folder.
+    pub downloads: Option<std::path::PathBuf>,
     /// How mail is written and sent, from the config.
     pub compose: ComposeSettings,
     /// Who the user is on each account, by the account's name.
@@ -113,6 +121,17 @@ pub enum Action {
         paths: Vec<String>,
         temporary: bool,
     },
+    /// The host's save panel has been answered.
+    FileSaved {
+        name: String,
+        saved: bool,
+    },
+    /// A picture asked for with [`HostRequest::LoadPicture`] is ready to be
+    /// drawn, at this many pixels, or could not be made.
+    PictureLoaded {
+        id: u32,
+        size: Option<(u32, u32)>,
+    },
 }
 
 /// What an action asks of the world outside the state: queries and writes
@@ -138,8 +157,6 @@ impl Effects {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostRequest {
-    /// Show the built-in sample file in the host's preview pane.
-    PreviewSample,
     /// Open a web or mail address in the user's browser or mail program.
     /// Only ever an address `quill_mime::links::is_openable` accepts.
     OpenUrl(String),
@@ -147,6 +164,27 @@ pub enum HostRequest {
     Copy(String),
     /// Ask the user to choose files with the host's own panel.
     PickFiles,
+    /// Show files in the host's viewer, starting with the one at `index`.
+    /// Each is a path and what to call it.
+    Preview {
+        files: Vec<(PathBuf, String)>,
+        index: usize,
+    },
+    /// Play a sound or a video.
+    Play { path: PathBuf, title: String },
+    /// Open a file in the application the Mac opens its kind with. Only
+    /// ever on the user's own key press.
+    OpenFile(PathBuf),
+    /// Ask the user where to save a copy of a file, with the host's panel.
+    SaveFile { path: PathBuf, name: String },
+    /// Get a picture ready to draw under `id`: decode the file at `path`,
+    /// or have the host picture it when it is not a kind Quill decodes.
+    /// Answered by [`Action::PictureLoaded`].
+    LoadPicture {
+        id: u32,
+        path: PathBuf,
+        content_type: String,
+    },
 }
 
 /// What the app shell mirrors: enough to enable menu items, badge the Dock
@@ -322,6 +360,54 @@ pub struct FolderChoice {
     pub name: String,
 }
 
+/// The picture the reader draws above a message's text: the first of its
+/// files that is one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Picture {
+    /// What the terminal knows the picture by.
+    pub id: u32,
+    /// Which part of the message it is.
+    pub part: u32,
+    pub name: String,
+    /// Its size in pixels once it is ready to draw. `None`: still being
+    /// read.
+    pub size: Option<(u32, u32)>,
+}
+
+/// The number the terminal keeps a message's picture under. The same
+/// message and part always give the same number, so a picture already sent
+/// is not sent again. Zero is never used: the protocol keeps it for "none".
+fn picture_id(message: LocalMessageId, part: u32) -> u32 {
+    let mixed = (message.0 as u64)
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        .wrapping_add(u64::from(part).wrapping_mul(0xC2B2_AE3D_27D4_EB4F));
+    // The top bits are the best mixed.
+    ((mixed >> 33) as u32) | 1
+}
+
+/// Sound or moving pictures: something to play, not to look at.
+fn is_playable(content_type: &str) -> bool {
+    content_type.starts_with("audio/") || content_type.starts_with("video/")
+}
+
+/// Whether a file of this kind can be drawn in the reader: a picture
+/// Quill decodes itself, or, with a host that makes thumbnails, one it
+/// can be given a picture of.
+fn is_picturable(content_type: &str, thumbnails: bool) -> bool {
+    quill_media::decode::can_decode(content_type)
+        || (thumbnails
+            && (content_type.starts_with("image/")
+                || content_type.starts_with("video/")
+                || content_type == "application/pdf"))
+}
+
+/// The list of a message's attachments, open to choose one from.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AttachmentPicker {
+    pub selected: usize,
+    pub offset: usize,
+}
+
 /// The list of a message's links, open to choose one from.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LinkPicker {
@@ -344,9 +430,19 @@ pub struct Reader {
     pub lines: Vec<Line>,
     pub wrap_width: Option<usize>,
     pub scroll: usize,
+    /// The picture drawn above the text, when the message has one.
+    pub picture: Option<Picture>,
 }
 
 impl Reader {
+    /// The files attached to the message on show.
+    pub fn files(&self) -> &[AttachedFile] {
+        match &self.body {
+            Body::Loaded(body) => &body.files,
+            _ => &[],
+        }
+    }
+
     /// The version of the body on show, once there is a body.
     pub fn showing(&self) -> Option<Showing> {
         let Body::Loaded(body) = &self.body else {
@@ -397,6 +493,7 @@ pub struct State {
     pub reader: Reader,
     pub help: Option<Help>,
     pub links: Option<LinkPicker>,
+    pub attachments: Option<AttachmentPicker>,
     pub folders: Option<FolderPicker>,
     /// The message being written, in the reader's place.
     pub compose: Option<Compose>,
@@ -423,9 +520,6 @@ pub struct State {
     pub now: i64,
     /// The accounts with a sync pass in progress.
     pub syncing: BTreeSet<LocalAccountId>,
-    /// Show the built-in sample image in the reader. A stand-in until
-    /// messages carry images of their own (M4).
-    pub sample_image: bool,
     pub should_quit: bool,
     /// The screen no longer matches the state and needs a redraw.
     pub dirty: bool,
@@ -445,6 +539,7 @@ impl State {
             reader: Reader::default(),
             help: None,
             links: None,
+            attachments: None,
             folders: None,
             compose: None,
             compose_pending: None,
@@ -458,7 +553,6 @@ impl State {
             notices: VecDeque::new(),
             now,
             syncing: BTreeSet::new(),
-            sample_image: false,
             should_quit: false,
             dirty: true,
         }
@@ -487,6 +581,9 @@ impl State {
         if self.links.is_some() {
             return Context::Links;
         }
+        if self.attachments.is_some() {
+            return Context::Attachments;
+        }
         if self.folders.is_some() {
             return Context::Folders;
         }
@@ -508,7 +605,19 @@ impl State {
             Action::Key(chord) => self.on_key(env, chord, &mut out),
             Action::Command(id) => self.run(env, id, &mut out),
             Action::Resize(width, height) => self.size = (width, height),
-            Action::Data(event) => self.on_data(event, &mut out),
+            Action::Data(event) => self.on_data(env, event, &mut out),
+            Action::PictureLoaded { id, size } => {
+                if let Some(picture) = &mut self.reader.picture
+                    && picture.id == id
+                {
+                    match size {
+                        Some(size) => picture.size = Some(size),
+                        // Not a picture after all. The file is still in
+                        // the list.
+                        None => self.reader.picture = None,
+                    }
+                }
+            }
             Action::ClockTick(now) => {
                 // Dates are drawn relative to today, so only a new day shows.
                 changed = text::local_day(now, &env.tz) != text::local_day(self.now, &env.tz);
@@ -552,6 +661,16 @@ impl State {
                 }
                 _ => {}
             },
+            Action::FileSaved { name, saved } => {
+                self.flash = Some((
+                    if saved {
+                        text::sanitize_line(&format!("Saved {name}."))
+                    } else {
+                        "Not saved.".to_owned()
+                    },
+                    false,
+                ));
+            }
             Action::Files { paths, temporary } => {
                 // Files are for a message: the one being written, or a new
                 // one started for them.
@@ -710,6 +829,9 @@ impl State {
             CommandId::NavPageDown => self.navigate(env, Motion::PageDown, out),
             CommandId::NavPageUp => self.navigate(env, Motion::PageUp, out),
             CommandId::NavOpen if context == Context::Links => self.open_selected_link(out),
+            CommandId::NavOpen if context == Context::Attachments => {
+                self.use_attachment(FileUse::View, out);
+            }
             CommandId::NavOpen if context == Context::Folders => {
                 if let Some(picker) = self.folders.take()
                     && let Some(choice) = self.folder_choices(&picker).get(picker.selected)
@@ -829,8 +951,21 @@ impl State {
                 }
             }
             CommandId::MessageOpenLink => self.links = Some(LinkPicker::default()),
-            CommandId::DebugPreviewSample => out.host.push(HostRequest::PreviewSample),
-            CommandId::DebugImageSample => self.sample_image = !self.sample_image,
+            CommandId::MessageAttachments => {
+                self.attachments = Some(AttachmentPicker::default());
+            }
+            CommandId::AttachmentOpen => self.use_attachment(FileUse::Open, out),
+            CommandId::AttachmentSave => {
+                if env.file_panel {
+                    // The host asks where; the file is made ready for it.
+                    self.use_attachment(FileUse::Save, out);
+                } else if let Some((message, file)) = self.chosen_attachment() {
+                    out.data.push(DataRequest::SaveAttachment {
+                        message,
+                        part: file.part,
+                    });
+                }
+            }
             CommandId::HelpToggle => {
                 self.help = match self.help {
                     Some(_) => None,
@@ -853,6 +988,9 @@ impl State {
         }
         match id {
             CommandId::NavOpen if context == Context::Links => !self.reader.links.is_empty(),
+            CommandId::NavOpen if context == Context::Attachments => {
+                self.chosen_attachment().is_some()
+            }
             CommandId::NavOpen if context == Context::Setup => true,
             CommandId::NavOpen if context == Context::Folders => self
                 .folders
@@ -891,9 +1029,21 @@ impl State {
             }
             CommandId::MessageToggleHtml => self.reader.has_two_versions(),
             CommandId::MessageOpenLink => !self.reader.links.is_empty(),
+            // The files listed are those of the message in the reader, so
+            // from the list it must be the one under the cursor.
+            CommandId::MessageAttachments => {
+                !self.reader.files().is_empty()
+                    && (context == Context::Reader
+                        || self.target_row().map(|row| row.id)
+                            == self.reader.row.as_ref().map(|row| row.id))
+            }
+            CommandId::AttachmentOpen | CommandId::AttachmentSave => {
+                self.chosen_attachment().is_some()
+            }
             CommandId::NavBack => {
                 self.help.is_some()
                     || self.links.is_some()
+                    || self.attachments.is_some()
                     || self.folders.is_some()
                     || self.compose.is_some()
                     || self.setup.is_some()
@@ -962,6 +1112,11 @@ impl State {
             picker.typed.clear();
             return;
         }
+        if let Some(picker) = &mut self.attachments {
+            let page = areas.links.map_or(1, layout::inner_height).max(1);
+            picker.selected = step(picker.selected, self.reader.files().len(), motion, page);
+            return;
+        }
         if let Some(picker) = &self.folders {
             let count = self.folder_choices(picker).len();
             let page = areas.links.map_or(1, layout::inner_height).max(1);
@@ -1010,11 +1165,11 @@ impl State {
                 }
             }
             Pane::Reader => {
-                let has_cc = self.reader_has_cc();
+                let header = self.reader_header_rows();
                 let page = areas
                     .reader
                     .map_or(1, |rect| {
-                        layout::reader_body_height(rect, has_cc, self.reader_image_rows(env, rect))
+                        layout::reader_body_height(rect, header, self.reader_image_rows(env, rect))
                     })
                     .saturating_sub(1)
                     .max(1);
@@ -1069,6 +1224,8 @@ impl State {
             }
         } else if self.links.is_some() {
             self.links = None;
+        } else if self.attachments.is_some() {
+            self.attachments = None;
         } else if self.folders.is_some() {
             self.folders = None;
         } else if let Some(compose) = self.compose.take() {
@@ -1120,6 +1277,26 @@ impl State {
                 }]
             }
             _ => Vec::new(),
+        }
+    }
+
+    /// The message in the reader and the file the attachment list's cursor
+    /// is on, when the list is open.
+    fn chosen_attachment(&self) -> Option<(LocalMessageId, &AttachedFile)> {
+        let picker = self.attachments?;
+        let message = self.reader.row.as_ref()?.id;
+        let file = self.reader.files().get(picker.selected)?;
+        Some((message, file))
+    }
+
+    /// Asks for the chosen attachment to be written where it can be used.
+    fn use_attachment(&mut self, then: FileUse, out: &mut Effects) {
+        if let Some((message, file)) = self.chosen_attachment() {
+            out.data.push(DataRequest::Extract {
+                message,
+                part: file.part,
+                then,
+            });
         }
     }
 
@@ -1537,7 +1714,7 @@ impl State {
         out.data.push(DataRequest::LoadMessages(self.mailbox));
     }
 
-    fn on_data(&mut self, event: DataEvent, out: &mut Effects) {
+    fn on_data(&mut self, env: &Env, event: DataEvent, out: &mut Effects) {
         match event {
             DataEvent::SidebarLoaded {
                 accounts,
@@ -1600,6 +1777,29 @@ impl State {
                         }
                     };
                     self.reader.wrap_width = None;
+                    // The first picture among the files is drawn above
+                    // the text, where the terminal can draw one.
+                    self.reader.picture = None;
+                    let first = self
+                        .reader
+                        .files()
+                        .iter()
+                        .find(|file| is_picturable(&file.content_type, env.thumbnails))
+                        .filter(|_| env.images)
+                        .map(|file| (file.part, file.name.clone()));
+                    if let Some((part, name)) = first {
+                        self.reader.picture = Some(Picture {
+                            id: picture_id(id, part),
+                            part,
+                            name,
+                            size: None,
+                        });
+                        out.data.push(DataRequest::Extract {
+                            message: id,
+                            part,
+                            then: FileUse::Picture,
+                        });
+                    }
                 }
             }
             DataEvent::StoreChanged => self.reload(out),
@@ -1643,6 +1843,55 @@ impl State {
                 }
             }
             DataEvent::ComposeReady(prefill) => self.compose_pending = Some(prefill),
+            DataEvent::Extracted { files, index, then } => {
+                let Some(chosen) = files.get(index).cloned() else {
+                    return;
+                };
+                match then {
+                    // Sound and video are played; everything else is
+                    // looked at, with the other files a step away.
+                    FileUse::View if is_playable(&chosen.content_type) => {
+                        out.host.push(HostRequest::Play {
+                            path: chosen.path,
+                            title: chosen.name,
+                        });
+                    }
+                    FileUse::View => {
+                        let shown: Vec<&ExtractedFile> = files
+                            .iter()
+                            .filter(|file| !is_playable(&file.content_type))
+                            .collect();
+                        let index = shown
+                            .iter()
+                            .position(|file| file.path == chosen.path)
+                            .unwrap_or(0);
+                        out.host.push(HostRequest::Preview {
+                            files: shown
+                                .into_iter()
+                                .map(|file| (file.path.clone(), file.name.clone()))
+                                .collect(),
+                            index,
+                        });
+                    }
+                    FileUse::Picture => {
+                        // Still the picture of the message on show?
+                        if let Some(picture) = &self.reader.picture
+                            && picture.name == chosen.name
+                        {
+                            out.host.push(HostRequest::LoadPicture {
+                                id: picture.id,
+                                path: chosen.path,
+                                content_type: chosen.content_type,
+                            });
+                        }
+                    }
+                    FileUse::Open => out.host.push(HostRequest::OpenFile(chosen.path)),
+                    FileUse::Save => out.host.push(HostRequest::SaveFile {
+                        path: chosen.path,
+                        name: chosen.name,
+                    }),
+                }
+            }
             DataEvent::RespondNeedsBody(request) => {
                 if let DataRequest::Respond { id, .. } = *request {
                     self.respond_pending = Some((id, *request));
@@ -1687,7 +1936,7 @@ impl State {
             }
             let viewport = layout::reader_body_height(
                 rect,
-                self.reader_has_cc(),
+                self.reader_header_rows(),
                 self.reader_image_rows(env, rect),
             );
             let last = self.reader.lines.len().saturating_sub(viewport);
@@ -1701,6 +1950,24 @@ impl State {
         }
         if self.reader.links.is_empty() {
             self.links = None;
+        }
+        let files = self.reader.files().len();
+        if files == 0 {
+            self.attachments = None;
+        }
+        if let Some(picker) = &mut self.attachments {
+            picker.selected = picker.selected.min(files - 1);
+            let rect = layout::compute(self, self.size, env.reader_width).links;
+            if let Some(rect) = rect
+                && let Some(picker) = &mut self.attachments
+            {
+                keep_visible(
+                    &mut picker.offset,
+                    picker.selected,
+                    layout::inner_height(rect),
+                    files,
+                );
+            }
         }
         if let Some(picker) = &self.folders {
             let count = self.folder_choices(picker).len();
@@ -1741,10 +2008,30 @@ impl State {
         }
     }
 
-    /// The rows of the reader given over to an inline image.
+    /// The cells of the reader given over to its picture: columns and
+    /// rows, both zero when there is none to draw or no room for it.
+    pub fn reader_picture_cells(&self, env: &Env, reader: ratatui::layout::Rect) -> (u16, u16) {
+        let size = self
+            .reader
+            .picture
+            .as_ref()
+            .and_then(|picture| picture.size);
+        match size {
+            Some(size) if env.images => {
+                layout::reader_picture_cells(reader, self.reader_header_rows(), size)
+            }
+            _ => (0, 0),
+        }
+    }
+
+    /// The rows of the reader given over to its picture.
     pub fn reader_image_rows(&self, env: &Env, reader: ratatui::layout::Rect) -> usize {
-        let shown = self.sample_image && self.reader.row.is_some();
-        layout::reader_image_height(reader, self.reader_has_cc(), shown, env.images)
+        usize::from(self.reader_picture_cells(env, reader).1)
+    }
+
+    /// How many rows the reader's headers take for the message on show.
+    pub fn reader_header_rows(&self) -> usize {
+        layout::reader_header_height(self.reader_has_cc(), !self.reader.files().is_empty())
     }
 
     pub fn reader_has_cc(&self) -> bool {

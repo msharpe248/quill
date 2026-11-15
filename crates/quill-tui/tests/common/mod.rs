@@ -11,6 +11,7 @@ use quill_core::config::KeymapPreset;
 use quill_store::Store;
 use quill_tui::command::Registry;
 use quill_tui::data::{self, DataRequest};
+use quill_tui::files::Files;
 use quill_tui::keymap::Keymap;
 use quill_tui::state::{Action, Env, HostRequest, State};
 use quill_tui::theme::{ColorMode, Styles, Theme};
@@ -32,6 +33,10 @@ pub struct Harness {
     pub sync_requests: Vec<quill_sync::SyncRequest>,
     /// What the UI has asked of the accounts service so far.
     pub account_requests: Vec<quill_tui::setup::AccountRequest>,
+    /// Folders the store worker may write files in: one for viewing, one
+    /// standing in for Downloads. Both go when the harness does.
+    pub files: Files,
+    _scratch: tempfile::TempDir,
 }
 
 impl Harness {
@@ -42,6 +47,30 @@ impl Harness {
             height,
             Keymap::preset(KeymapPreset::Vim),
             ColorMode::TrueColor,
+        )
+    }
+
+    /// The demo mailbox in a terminal that draws pictures, and with a host
+    /// that makes thumbnails if `thumbnails`. Set from the start, because
+    /// the first message is read as the mailbox opens.
+    pub fn with_pictures(width: u16, height: u16, thumbnails: bool) -> Self {
+        let mut store = Store::open_in_memory().unwrap();
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(demo::seed(&mut store, NOW))
+            .unwrap();
+        Self::over_with(
+            store,
+            width,
+            height,
+            Keymap::preset(KeymapPreset::Vim),
+            ColorMode::TrueColor,
+            false,
+            |env| {
+                env.images = true;
+                env.thumbnails = thumbnails;
+            },
         )
     }
 
@@ -82,7 +111,19 @@ impl Harness {
         mode: ColorMode,
         accounts: bool,
     ) -> Self {
-        let env = Env {
+        Self::over_with(store, width, height, keymap, mode, accounts, |_| {})
+    }
+
+    fn over_with(
+        store: Store,
+        width: u16,
+        height: u16,
+        keymap: Keymap,
+        mode: ColorMode,
+        accounts: bool,
+        adjust: impl FnOnce(&mut Env),
+    ) -> Self {
+        let mut env = Env {
             registry: Registry::builtin(),
             keymap,
             styles: Styles::new(Theme::builtin("dark").unwrap(), mode),
@@ -94,9 +135,13 @@ impl Harness {
             cmd_keys: true,
             // Tests name files by path unless they say otherwise.
             file_panel: false,
+            thumbnails: false,
+            downloads: None,
             compose: quill_tui::state::ComposeSettings::default(),
             identities: std::collections::HashMap::new(),
         };
+        adjust(&mut env);
+        let scratch = tempfile::tempdir().unwrap();
         let mut harness = Self {
             state: State::new((width, height), NOW),
             env,
@@ -104,6 +149,11 @@ impl Harness {
             host_requests: Vec::new(),
             sync_requests: Vec::new(),
             account_requests: Vec::new(),
+            files: Files {
+                view_dir: Some(scratch.path().join("view")),
+                downloads: Some(scratch.path().join("Downloads")),
+            },
+            _scratch: scratch,
         };
         let requests = harness.state.startup_requests();
         harness.pump(requests);
@@ -122,7 +172,7 @@ impl Harness {
     pub fn pump(&mut self, requests: Vec<DataRequest>) {
         let mut queue: VecDeque<DataRequest> = requests.into();
         while let Some(request) = queue.pop_front() {
-            for event in data::handle(&mut self.store, request) {
+            for event in data::handle_with(&mut self.store, &self.files, request) {
                 let effects = self.state.update(&self.env, Action::Data(event));
                 self.host_requests.extend(effects.host);
                 self.sync_requests.extend(effects.sync);
@@ -179,6 +229,19 @@ impl Harness {
             })
             .unwrap();
         terminal.backend().buffer().clone()
+    }
+
+    /// What the view asks the terminal to draw over the frame: pictures.
+    pub fn placements(&self) -> Vec<quill_tui::view::ImagePlacement> {
+        let (width, height) = self.state.size;
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        let mut images = Vec::new();
+        terminal
+            .draw(|frame| {
+                images = view::render(frame, &self.state, &self.env).images;
+            })
+            .unwrap();
+        images
     }
 
     /// The screen as text, one line per row, trailing spaces trimmed.

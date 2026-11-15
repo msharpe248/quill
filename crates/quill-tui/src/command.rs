@@ -11,6 +11,8 @@ pub enum Context {
     Help,
     /// Choosing one of a message's links to open.
     Links,
+    /// Choosing one of a message's attachments to view, open or save.
+    Attachments,
     /// Adding an account. Typing goes into the field with the cursor.
     Setup,
     /// Deciding about a server certificate that was not trusted.
@@ -29,6 +31,7 @@ impl Context {
             Self::Reader => "Reader",
             Self::Help => "Help",
             Self::Links => "Links",
+            Self::Attachments => "Attachments",
             Self::Setup => "Add an account",
             Self::Certificate => "Certificate",
             Self::Folders => "Move to a folder",
@@ -44,6 +47,7 @@ const EVERYWHERE: &[Context] = &[
     Context::Reader,
     Context::Help,
     Context::Links,
+    Context::Attachments,
     Context::Setup,
     Context::Certificate,
     Context::Folders,
@@ -58,6 +62,7 @@ const PANES_AND_FORMS: &[Context] = &[
     Context::Compose,
 ];
 const COMPOSE: &[Context] = &[Context::Compose];
+const ATTACHMENTS: &[Context] = &[Context::Attachments];
 /// The panes, and the message being written in the reader's place.
 const PANES_AND_COMPOSE: &[Context] = &[
     Context::Sidebar,
@@ -92,6 +97,9 @@ pub enum CommandId {
     MessageArchive,
     MessageDelete,
     MessageMove,
+    MessageAttachments,
+    AttachmentSave,
+    AttachmentOpen,
     MessageCompose,
     MessageReply,
     MessageReplyAll,
@@ -105,8 +113,6 @@ pub enum CommandId {
     EditSelectAll,
     EditUndo,
     AccountAdd,
-    DebugPreviewSample,
-    DebugImageSample,
     HelpToggle,
 }
 
@@ -253,6 +259,7 @@ impl Registry {
                         Context::Sidebar,
                         Context::List,
                         Context::Links,
+                        Context::Attachments,
                         Context::Setup,
                         Context::Folders,
                     ],
@@ -398,6 +405,30 @@ impl Registry {
                     ),
                     "folder",
                 ),
+                spec(
+                    MessageAttachments,
+                    "message.attachments",
+                    "List the attachments",
+                    Message,
+                    Some(Menu::Message),
+                    MESSAGE,
+                ),
+                spec(
+                    AttachmentSave,
+                    "attachment.save",
+                    "Save the attachment",
+                    Message,
+                    Some(Menu::Message),
+                    ATTACHMENTS,
+                ),
+                spec(
+                    AttachmentOpen,
+                    "attachment.open",
+                    "Open the attachment in its application",
+                    Message,
+                    Some(Menu::Message),
+                    ATTACHMENTS,
+                ),
                 with_symbol(
                     spec(
                         MessageCompose,
@@ -520,31 +551,6 @@ impl Registry {
                     ),
                     "person.crop.circle.badge.plus",
                 ),
-                // A stand-in until messages have attachments to preview (M4):
-                // it exercises the Quick Look pane end to end.
-                with_symbol(
-                    spec(
-                        DebugPreviewSample,
-                        "debug.preview_sample",
-                        "Preview a sample file",
-                        General,
-                        Some(Menu::View),
-                        PANES,
-                    ),
-                    "eye",
-                ),
-                // Likewise a stand-in: it proves the terminal draws images.
-                with_symbol(
-                    spec(
-                        DebugImageSample,
-                        "debug.image_sample",
-                        "Show a sample image",
-                        General,
-                        Some(Menu::View),
-                        PANES,
-                    ),
-                    "photo",
-                ),
                 with_symbol(
                     spec(
                         HelpToggle,
@@ -616,6 +622,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         hint(&[MessageReply], "reply"),
         hint(&[MessageArchive], "archive"),
         hint(&[MessageDelete], "delete"),
+        hint(&[MessageAttachments], "files"),
         hint(&[MessageOpenLink], "links"),
         hint(&[MessageToggleHtml], "html/text"),
         hint(&[MessageToggleUnread], "unread"),
@@ -626,6 +633,13 @@ pub fn hints(context: Context) -> &'static [Hint] {
     ];
     const HELP: &[Hint] = &[
         hint(&[NavNext, NavPrev], "scroll"),
+        hint(&[NavBack], "close"),
+    ];
+    const ATTACHED: &[Hint] = &[
+        hint(&[NavNext, NavPrev], "move"),
+        hint(&[NavOpen], "view"),
+        hint(&[AttachmentSave], "save"),
+        hint(&[AttachmentOpen], "open in its app"),
         hint(&[NavBack], "close"),
     ];
     const LINKS: &[Hint] = &[
@@ -653,6 +667,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         Context::Setup => SETUP,
         Context::Certificate => CERTIFICATE,
         Context::Links => LINKS,
+        Context::Attachments => ATTACHED,
         Context::Sidebar => SIDEBAR,
         Context::List => LIST,
         Context::Reader => READER,

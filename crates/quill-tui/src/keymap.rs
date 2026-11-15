@@ -302,6 +302,9 @@ const VIM: PresetTable = &[
     (CommandId::MessageArchive, &["e"]),
     (CommandId::MessageDelete, &["d"]),
     (CommandId::MessageMove, &["m"]),
+    (CommandId::MessageAttachments, &["a"]),
+    (CommandId::AttachmentSave, &["s"]),
+    (CommandId::AttachmentOpen, &["O"]),
     (CommandId::MessageCompose, &["c"]),
     (CommandId::MessageReply, &["r"]),
     (CommandId::MessageReplyAll, &["R"]),
@@ -318,8 +321,6 @@ const VIM: PresetTable = &[
     (CommandId::EditSelectAll, &["cmd-a"]),
     (CommandId::EditUndo, &["U"]),
     (CommandId::AccountAdd, &["A"]),
-    (CommandId::DebugPreviewSample, &["P"]),
-    (CommandId::DebugImageSample, &["I"]),
     (CommandId::HelpToggle, &["?"]),
 ];
 
@@ -346,6 +347,9 @@ const MUTT: PresetTable = &[
     (CommandId::MessageArchive, &["e"]),
     (CommandId::MessageDelete, &["d"]),
     (CommandId::MessageMove, &["s"]),
+    (CommandId::MessageAttachments, &["v"]),
+    (CommandId::AttachmentSave, &["s"]),
+    (CommandId::AttachmentOpen, &["O"]),
     (CommandId::MessageCompose, &["m"]),
     (CommandId::MessageReply, &["r"]),
     (CommandId::MessageReplyAll, &["g"]),
@@ -362,8 +366,6 @@ const MUTT: PresetTable = &[
     (CommandId::EditSelectAll, &["cmd-a"]),
     (CommandId::EditUndo, &["U"]),
     (CommandId::AccountAdd, &["A"]),
-    (CommandId::DebugPreviewSample, &["P"]),
-    (CommandId::DebugImageSample, &["I"]),
     (CommandId::HelpToggle, &["?"]),
 ];
 

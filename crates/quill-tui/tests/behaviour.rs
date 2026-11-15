@@ -380,20 +380,21 @@ fn zoom_fills_the_screen_with_the_focused_pane_and_toggles_off() {
 fn the_reader_scrolls_and_stops_at_the_end_of_the_body() {
     let mut harness = Harness::demo(80, 24);
     harness.keys("enter");
-    assert!(harness.row_with("of 25").contains("1-16 of 25"));
+    // Five header rows (the message has a file) leave fifteen for the text.
+    assert!(harness.row_with("of 25").contains("1-15 of 25"));
     harness.keys("j");
     assert_eq!(harness.state.reader.scroll, 1);
     harness.keys("G");
-    assert_eq!(harness.state.reader.scroll, 9);
-    assert!(harness.row_with("of 25").contains("10-25 of 25"));
+    assert_eq!(harness.state.reader.scroll, 10);
+    assert!(harness.row_with("of 25").contains("11-25 of 25"));
     assert!(harness.screen().contains("Product, Example Corp"));
     harness.keys("j j space");
-    assert_eq!(harness.state.reader.scroll, 9);
+    assert_eq!(harness.state.reader.scroll, 10);
     harness.keys("g g");
     assert_eq!(harness.state.reader.scroll, 0);
-    // A page is fifteen lines, but only nine are left below the first screen.
+    // A page is fourteen lines, but only ten are left below the first screen.
     harness.keys("space");
-    assert_eq!(harness.state.reader.scroll, 9);
+    assert_eq!(harness.state.reader.scroll, 10);
     harness.keys("k k ctrl-u");
     assert_eq!(harness.state.reader.scroll, 0);
 }
@@ -911,146 +912,6 @@ fn opening_a_message_changes_what_the_host_mirrors() {
 }
 
 #[test]
-fn the_preview_command_asks_the_host_and_touches_no_data() {
-    use quill_tui::state::HostRequest;
-    let mut harness = Harness::demo(200, 60);
-    let effects = harness
-        .state
-        .update(&harness.env, Action::Key("P".parse().unwrap()));
-    assert!(effects.data.is_empty());
-    assert_eq!(effects.host, [HostRequest::PreviewSample]);
-    // Not while help is open.
-    harness.keys("? P");
-    assert!(harness.host_requests.is_empty());
-    harness.act(Action::Command(CommandId::DebugPreviewSample));
-    assert!(harness.host_requests.is_empty());
-    harness.keys("esc");
-    harness.act(Action::Command(CommandId::DebugPreviewSample));
-    assert_eq!(harness.host_requests, [HostRequest::PreviewSample]);
-}
-
-/// Renders the harness and returns what the view asks the terminal to draw.
-fn placements(harness: &Harness) -> Vec<quill_tui::view::ImagePlacement> {
-    use ratatui::Terminal;
-    use ratatui::backend::TestBackend;
-    let (width, height) = harness.state.size;
-    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-    let mut images = Vec::new();
-    terminal
-        .draw(|frame| {
-            images = quill_tui::view::render(frame, &harness.state, &harness.env).images;
-        })
-        .unwrap();
-    images
-}
-
-#[test]
-fn the_sample_image_is_placed_in_the_reader_above_the_body() {
-    let mut harness = Harness::demo(200, 60);
-    harness.env.images = true;
-    assert!(placements(&harness).is_empty());
-
-    harness.keys("I");
-    let images = placements(&harness);
-    assert_eq!(images.len(), 1);
-    let image = images[0];
-    assert_eq!(image.id, quill_tui::view::SAMPLE_IMAGE_ID);
-    // Ten rows, forty columns: the 2:1 picture keeps its shape in 1:2 cells.
-    assert_eq!((image.area.width, image.area.height), (40, 10));
-
-    // The cells under it are left empty, and the body starts below it.
-    let screen = harness.screen();
-    let rows: Vec<&str> = screen.lines().collect();
-    let top = usize::from(image.area.y);
-    assert!(rows[top - 2].contains("Subject: Q4 roadmap"));
-    for row in &rows[top..top + 10] {
-        let inside: String = row
-            .chars()
-            .skip(usize::from(image.area.x))
-            .take(40)
-            .collect();
-        assert!(inside.trim().is_empty(), "{row}");
-    }
-    assert!(rows[top + 11].contains("Hi Robin,"));
-
-    harness.keys("I");
-    assert!(placements(&harness).is_empty());
-    assert!(
-        harness
-            .screen()
-            .lines()
-            .nth(top)
-            .unwrap()
-            .contains("Hi Robin,")
-    );
-}
-
-#[test]
-fn an_image_is_not_placed_under_an_overlay() {
-    let mut harness = Harness::demo(200, 60);
-    harness.env.images = true;
-    harness.keys("I");
-    assert_eq!(placements(&harness).len(), 1);
-    // Help sits in the middle of the screen, clear of the reader's image,
-    // at this size; at 100 columns it covers it.
-    harness.resize(100, 30);
-    assert_eq!(placements(&harness).len(), 1);
-    harness.keys("?");
-    assert!(placements(&harness).is_empty());
-    harness.keys("?");
-    assert_eq!(placements(&harness).len(), 1);
-
-    // The narrow layout's sidebar overlay covers the reader's left edge.
-    harness.resize(50, 24);
-    harness.keys("3");
-    assert_eq!(placements(&harness).len(), 1);
-    harness.keys("1");
-    assert!(placements(&harness).is_empty());
-}
-
-#[test]
-fn a_terminal_without_images_gets_a_row_naming_the_image() {
-    let mut harness = Harness::demo(200, 60);
-    assert!(!harness.env.images);
-    harness.keys("I");
-    assert!(placements(&harness).is_empty());
-    let screen = harness.screen();
-    assert!(screen.contains("[image: sample, 320x160]"));
-    assert!(screen.contains("Hi Robin,"));
-}
-
-#[test]
-fn the_image_takes_room_from_the_body_and_the_scroll_knows() {
-    let mut harness = Harness::demo(80, 24);
-    harness.env.images = true;
-    harness.keys("enter");
-    assert!(harness.row_with("of 25").contains("1-16 of 25"));
-    harness.keys("I");
-    // Eight rows of image and a blank line leave seven for the text.
-    assert!(harness.row_with("of 25").contains("1-7 of 25"));
-    harness.keys("G");
-    assert_eq!(harness.state.reader.scroll, 18);
-    assert!(harness.screen().contains("Product, Example Corp"));
-    // Hiding the image gives the rows back and the scroll stays in range.
-    harness.keys("I");
-    assert_eq!(harness.state.reader.scroll, 9);
-}
-
-#[test]
-fn no_image_without_a_message_or_room() {
-    let mut harness = Harness::demo(200, 60);
-    harness.env.images = true;
-    harness.keys("I 1 j j j j j");
-    assert!(harness.state.reader.row.is_none());
-    assert!(placements(&harness).is_empty());
-    // A reader too short for a picture shows only text.
-    let mut harness = Harness::demo(120, 10);
-    harness.env.images = true;
-    harness.keys("I");
-    assert!(placements(&harness).is_empty());
-}
-
-#[test]
 fn an_html_message_is_drawn_as_styled_text() {
     use ratatui::style::Modifier;
 
@@ -1124,6 +985,7 @@ fn html_cannot_smuggle_escape_sequences_onto_the_screen() {
             html: Some("<p>before&#27;[2J&#7;after <a href=\"https://example.com/\u{1b}]0;x\u{7}\">go</a></p>".to_owned()),
             html_first: true,
             has_plain: true,
+            files: Vec::new(),
         }),
     }));
     for line in &harness.state.reader.lines {
@@ -1149,6 +1011,7 @@ fn html_that_renders_to_nothing_falls_back_to_the_plain_text() {
             html: Some("<script>nothing()</script>".to_owned()),
             html_first: true,
             has_plain: true,
+            files: Vec::new(),
         }),
     }));
     assert!(harness.screen().contains("The plain words."));
@@ -1235,6 +1098,7 @@ fn a_message_with_one_version_has_nothing_to_switch_to() {
             html: Some("<p>Hello.</p>".to_owned()),
             html_first: true,
             has_plain: false,
+            files: Vec::new(),
         }),
     }));
     assert!(
@@ -1261,6 +1125,7 @@ fn a_fuller_plain_part_is_shown_first_with_the_html_one_key_away() {
             html: Some("<p>scan</p>".to_owned()),
             html_first: false,
             has_plain: true,
+            files: Vec::new(),
         }),
     }));
     assert_eq!(harness.state.reader.showing(), Some(Showing::Plain));
@@ -1336,6 +1201,7 @@ fn a_link_is_reached_by_typing_its_number() {
             html: Some(html),
             html_first: true,
             has_plain: false,
+            files: Vec::new(),
         }),
     }));
     assert_eq!(harness.state.reader.links.len(), 14);
@@ -1412,6 +1278,7 @@ fn only_web_and_mail_links_are_ever_opened() {
             ),
             html_first: true,
             has_plain: false,
+            files: Vec::new(),
         }),
     }));
     // All three are listed, so where they lead can be seen.
@@ -1528,6 +1395,7 @@ fn link_text_cut_off_by_the_pane_is_placed_only_as_far_as_it_shows() {
             )),
             html_first: true,
             has_plain: false,
+            files: Vec::new(),
         }),
     }));
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();

@@ -7,15 +7,16 @@ expression: harness.screen()
 │  Work          │┃ To:      Robin Vale <robin@example.com>                    ┃
 │    Inbox     7 │┃ Date:    Sat 14 Nov 2026 09:14                             ┃
 │    Drafts      │┃ Subject: Q4 roadmap                                        ┃
-│    Sent        │┃                                                            ┃
-│    Archive     │┃ Hi Robin,                                                  ┃
-│    Trash       │┃                                                            ┃
-│  Personal      │┃ Here is the draft roadmap for Q4. The short version: we    ┃
-│    Inbox     4 │┃ ship the sync rewrite in October, spend November on        ┃
-│    Drafts      │┃ search, and keep December for whatever the first two       ┃
-│    Sent        │┃ months break.                                              ┃
+│    Sent        │┃ Attach:  roadmap.pdf (937 bytes)  (a lists them)           ┃
 │    Archive     │┃                                                            ┃
-│    Trash       │┃ Three things I would like your eyes on before Thursday:    ┃
+│    Trash       │┃ Hi Robin,                                                  ┃
+│  Personal      │┃                                                            ┃
+│    Inbox     4 │┃ Here is the draft roadmap for Q4. The short version: we    ┃
+│    Drafts      │┃ ship the sync rewrite in October, spend November on        ┃
+│    Sent        │┃ search, and keep December for whatever the first two       ┃
+│    Archive     │┃ months break.                                              ┃
+│    Trash       │┃                                                            ┃
+│                │┃ Three things I would like your eyes on before Thursday:    ┃
 │                │┃                                                            ┃
 │                │┃ 1. The search milestone assumes the index format is        ┃
 │                │┃ settled. Is it?                                            ┃
@@ -23,6 +24,5 @@ expression: harness.screen()
 │                │┃ Tell me if that is fantasy.                                ┃
 │                │┃ 3. The on-call rota over the holidays is still empty.      ┃
 │                │┃                                                            ┃
-│                │┃ The PDF has the detail, including the dependency chart you ┃
-└────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1-16 of 25 ┛
+└────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1-15 of 25 ┛
  j/k scroll  space page  esc back  r reply  e archive  d delete  ? help

@@ -115,19 +115,23 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
         }
     }
 
-    if state.links.is_some() || state.folders.is_some() {
+    if state.links.is_some() || state.folders.is_some() || state.attachments.is_some() {
         // As tall as what it lists, as far as the screen allows. The folder
         // picker has a line to type on above its list, and keeps its
         // height as typing narrows it, so the box does not jump about.
-        let links_width =
-            width
-                .saturating_sub(4)
-                .min(if state.folders.is_some() { 60 } else { 100 });
+        let links_width = width.saturating_sub(4).min(if state.folders.is_some() {
+            60
+        } else if state.attachments.is_some() {
+            76
+        } else {
+            100
+        });
         let wanted = match &state.folders {
             Some(picker) => {
                 let all = crate::state::FolderPicker::for_message(picker.message);
                 state.folder_choices(&all).len() + 1
             }
+            None if state.attachments.is_some() => state.reader.files().len(),
             None => state.reader.links.len(),
         };
         let wanted = u16::try_from(wanted).unwrap_or(u16::MAX);
@@ -229,33 +233,47 @@ pub fn reader_text_width(rect: Rect) -> usize {
 }
 
 /// The reader's header lines: From, To, Date and Subject, plus Cc when the
-/// message has one.
-pub fn reader_header_height(has_cc: bool) -> usize {
-    if has_cc { 5 } else { 4 }
+/// message has one and a line naming its files when it has any.
+pub fn reader_header_height(has_cc: bool, has_files: bool) -> usize {
+    4 + usize::from(has_cc) + usize::from(has_files)
 }
 
-/// The most rows an inline image may take in the reader.
-const IMAGE_ROWS: usize = 10;
+/// How tall a cell is taken to be, in pixels of a picture, when deciding
+/// how many rows a picture is worth: a picture is never drawn at more than
+/// twice its own size.
+const PIXELS_PER_ROW: u32 = 20;
 
-/// The rows the reader gives an inline image, between the header and the
-/// body. `drawn` is whether the terminal can draw it; where it cannot, one
-/// row names the image instead.
-pub fn reader_image_height(rect: Rect, has_cc: bool, shown: bool, drawn: bool) -> usize {
-    let available = inner_height(rect).saturating_sub(reader_header_height(has_cc) + 1);
-    match (shown, drawn) {
-        (false, _) => 0,
-        (true, false) => available.min(1),
-        // Never more than half the pane: the text matters more.
-        (true, true) if available >= 4 => IMAGE_ROWS.min(available / 2),
-        (true, true) => 0,
+/// The cells the reader gives a picture of `pixels` (width, height),
+/// between the header and the body: as wide as the pane allows and never
+/// more than half its height, since the text matters more, with the
+/// picture's own shape kept for cells twice as tall as they are wide.
+/// `(0, 0)` when there is no room worth using.
+pub fn reader_picture_cells(rect: Rect, header: usize, pixels: (u32, u32)) -> (u16, u16) {
+    let (width, height) = (u64::from(pixels.0.max(1)), u64::from(pixels.1.max(1)));
+    let columns_available = reader_text_width(rect) as u64;
+    let rows_available = inner_height(rect).saturating_sub(header + 1) as u64;
+    if rows_available < 4 || columns_available < 4 {
+        return (0, 0);
     }
+    let natural = u64::from(pixels.1.div_ceil(PIXELS_PER_ROW)).max(1);
+    let mut rows = (rows_available / 2).min(natural * 2).max(1);
+    let mut columns = rows * 2 * width / height;
+    if columns > columns_available {
+        // Too wide at that height: as wide as fits, and shorter.
+        columns = columns_available;
+        rows = (columns * height / (2 * width)).max(1);
+    }
+    (
+        u16::try_from(columns.max(1)).unwrap_or(u16::MAX),
+        u16::try_from(rows).unwrap_or(u16::MAX),
+    )
 }
 
 /// The rows the reader's body gets, below the header and a blank line, and
 /// below the image and another blank line when there is one.
-pub fn reader_body_height(rect: Rect, has_cc: bool, image_rows: usize) -> usize {
+pub fn reader_body_height(rect: Rect, header: usize, image_rows: usize) -> usize {
     let image = if image_rows > 0 { image_rows + 1 } else { 0 };
-    inner_height(rect).saturating_sub(reader_header_height(has_cc) + 1 + image)
+    inner_height(rect).saturating_sub(header + 1 + image)
 }
 
 #[cfg(test)]
@@ -390,30 +408,45 @@ mod tests {
         let rect = Rect::new(0, 0, 62, 23);
         assert_eq!(inner_height(rect), 21);
         assert_eq!(reader_text_width(rect), 58);
-        assert_eq!(reader_body_height(rect, false, 0), 16);
-        assert_eq!(reader_body_height(rect, true, 0), 15);
-        assert_eq!(reader_body_height(Rect::new(0, 0, 10, 3), true, 0), 0);
+        assert_eq!(reader_body_height(rect, 4, 0), 16);
+        assert_eq!(reader_body_height(rect, 5, 0), 15);
+        assert_eq!(reader_body_height(Rect::new(0, 0, 10, 3), 5, 0), 0);
+        // A line of files in the header is a line less of body.
+        assert_eq!(reader_header_height(false, false), 4);
+        assert_eq!(reader_header_height(true, true), 6);
+        assert_eq!(
+            reader_body_height(rect, reader_header_height(false, true), 0),
+            15
+        );
     }
 
     #[test]
-    fn an_inline_image_takes_at_most_half_the_reader() {
-        let tall = Rect::new(0, 0, 62, 60);
-        assert_eq!(reader_image_height(tall, false, false, true), 0);
-        assert_eq!(reader_image_height(tall, false, true, true), 10);
-        // Where the terminal cannot draw it, one row names it.
-        assert_eq!(reader_image_height(tall, false, true, false), 1);
-        // 16 rows below the header: the image gets 8, a gap 1, the body 7.
+    fn a_picture_takes_at_most_half_the_reader_and_keeps_its_shape() {
+        // 58 columns and 55 rows below the header to work with.
+        let tall = Rect::new(0, 0, 62, 62);
+        // 320 x 200 pixels is ten rows at its own size: drawn at up to
+        // twice that, 20 rows, which is 64 columns; cut to the 58 there
+        // are, and shorter to match.
+        assert_eq!(reader_picture_cells(tall, 4, (320, 200)), (58, 18));
+        // A picture taller than it is wide is limited by height.
+        assert_eq!(reader_picture_cells(tall, 4, (200, 800)), (13, 27));
+        // A small one is not blown up past twice its size.
+        assert_eq!(reader_picture_cells(tall, 4, (60, 40)), (12, 4));
+        // 16 rows below the header: the picture gets 8, the body the rest.
         let short = Rect::new(0, 0, 62, 23);
-        assert_eq!(reader_image_height(short, false, true, true), 8);
-        assert_eq!(reader_body_height(short, false, 8), 7);
+        assert_eq!(reader_picture_cells(short, 4, (320, 200)), (25, 8));
+        assert_eq!(reader_body_height(short, 4, 8), 7);
         // Too small to be worth it.
         assert_eq!(
-            reader_image_height(Rect::new(0, 0, 62, 10), false, true, true),
-            0
+            reader_picture_cells(Rect::new(0, 0, 62, 9), 4, (320, 200)),
+            (0, 0)
         );
         assert_eq!(
-            reader_image_height(Rect::new(0, 0, 62, 3), true, true, false),
-            0
+            reader_picture_cells(Rect::new(0, 0, 6, 40), 4, (320, 200)),
+            (0, 0)
         );
+        // Nonsense sizes do not divide by zero.
+        let (columns, rows) = reader_picture_cells(tall, 4, (0, 0));
+        assert!(columns >= 1 && rows >= 1);
     }
 }
