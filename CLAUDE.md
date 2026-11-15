@@ -2,7 +2,7 @@
 
 Read `Quill Terminal Email Client Spec.md` at the start of every session. It is the source of truth, and its "Working rules for Claude Code" section applies to all work here. Then read `DECISIONS.md` for the choices made since.
 
-Work on one milestone at a time. M0 (core skeleton) and M1 (shell spike) are built. M1's App Store validation and TestFlight step is deferred to the end by the owner's decision, because it needs an Apple Developer account; do not ask for one before then. M2 (IMAP read) is in progress: the parser, IMAP backend, sync engine, Keychain storage and `quill account` commands are built, and a configured IMAP account syncs end to end. HTML-to-styled-text from M4 was pulled forward at the owner's request (`quill_mime::html`); the rest of M4 is not started. Still to do in M2: the in-app account setup flow, the untrusted-certificate prompt, and the 50,000-message acceptance run.
+Work on one milestone at a time. M0 (core skeleton) and M1 (shell spike) are built. M1's App Store validation and TestFlight step is deferred to the end by the owner's decision, because it needs an Apple Developer account; do not ask for one before then. M2 (IMAP read) is in progress: the parser, IMAP backend, sync engine, Keychain storage and `quill account` commands are built, and a configured IMAP account syncs end to end. HTML-to-styled-text from M4 was pulled forward at the owner's request (`quill_mime::html`); the rest of M4 is not started. The 50,000-message acceptance run passed (results in `DECISIONS.md`). Still to do in M2: the in-app account setup flow and the untrusted-certificate prompt.
 
 Commit finished, checked work as you go. There is no remote.
 

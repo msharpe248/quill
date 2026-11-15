@@ -192,6 +192,26 @@ The Keychain needs no entitlement for the app's own items; an access group share
 - **A flag change is written to the store first, then sent to the server; if the server refuses, the store is put back** and the user is told. This is the spec's data flow without the durable queue: a change made offline is rolled back rather than queued until M3 adds the operations table.
 - **Folders that disappear from the server are removed locally**, with their mail.
 
+### The 50,000-message acceptance run
+
+Run on 2026-11-15 against a local Dovecot holding 50,000 invented messages (a third of them HTML), through the release build in a terminal:
+
+| Measure | Result |
+|---|---|
+| First 500 headers in the store | 1.9 s |
+| All 50,000 headers in the store | 6.5 s |
+| Bodies fetched ahead (the newest 2,000 of the last 30 days) | done before the sync indicator cleared |
+| Jump to the bottom of the list, then back to the top | on screen within 0.05 s |
+| Reopened with the server stopped | the same list, 0.4 s after launch; a fetched body opens |
+| Memory, reopened offline | 56 MB |
+| Memory during the first sync | 455 MB resident at the end, 689 MB peak footprint |
+| Data directory | 31 MB |
+
+The UI stayed usable throughout, which is the acceptance. This was a server on the same machine, so it measures Quill and not a network.
+
+- **The first sync uses far more memory than the result needs.** Every batch of 500 reloads the whole list, so 100 lists of up to 50,000 rows pass through while it runs. It falls back once the process restarts (56 MB). Loading only the rows near the cursor is the fix and is not done yet.
+- **An unread count is never cut short.** The run showed 15,055 as `150…` in an 80-column window. The count column now widens to fit and the folder name gives way.
+
 ### Accounts and secrets
 
 - **The Keychain is reached through `security-framework`**, the smaller of the spec's two candidates. `quill-auth` puts it behind a `SecretStore` trait, so tests use an in-memory store and another platform can supply its own.

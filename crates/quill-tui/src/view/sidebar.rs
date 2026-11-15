@@ -8,7 +8,7 @@ use super::{pane_block, placeholder};
 use crate::state::{Env, Pane, SidebarEntry, State};
 use crate::text;
 
-/// Cells kept on the right for an unread count and a margin.
+/// The fewest cells kept on the right for an unread count and a margin.
 const COUNT_WIDTH: usize = 5;
 
 pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
@@ -23,7 +23,21 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
     }
 
     let width = usize::from(inner.width);
-    let label_width = width.saturating_sub(COUNT_WIDTH);
+    // The column is as wide as the largest count needs. A number is never
+    // cut short: "150…" for 15,055 would be a wrong number, so a long count
+    // takes its room from the names beside it.
+    let widest = state
+        .sidebar
+        .entries
+        .iter()
+        .map(|entry| match entry {
+            SidebarEntry::Unified { unread } | SidebarEntry::Folder { unread, .. } => *unread,
+            SidebarEntry::Account { .. } => 0,
+        })
+        .max()
+        .unwrap_or(0);
+    let count_width = COUNT_WIDTH.max(widest.to_string().len() + 2);
+    let label_width = width.saturating_sub(count_width);
     let visible = state
         .sidebar
         .entries
@@ -38,7 +52,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         let cursor = if selected { "> " } else { "  " };
         let line = match entry {
             SidebarEntry::Unified { unread } => {
-                counted_row(cursor, "Unified", *unread, label_width, env)
+                counted_row(cursor, "Unified", *unread, label_width, count_width, env)
             }
             SidebarEntry::Account { index, name } => Line::from(vec![
                 Span::raw(cursor),
@@ -47,9 +61,14 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
                     styles.account(*index),
                 ),
             ]),
-            SidebarEntry::Folder { name, unread, .. } => {
-                counted_row(cursor, &format!("  {name}"), *unread, label_width, env)
-            }
+            SidebarEntry::Folder { name, unread, .. } => counted_row(
+                cursor,
+                &format!("  {name}"),
+                *unread,
+                label_width,
+                count_width,
+                env,
+            ),
         };
         frame.render_widget(line, rect);
         if selected {
@@ -64,6 +83,7 @@ fn counted_row<'a>(
     label: &str,
     unread: u32,
     label_width: usize,
+    count_width: usize,
     env: &Env,
 ) -> Line<'a> {
     let style = if unread > 0 {
@@ -79,6 +99,6 @@ fn counted_row<'a>(
     Line::from(vec![
         Span::raw(cursor),
         Span::styled(text::fit(label, label_width.saturating_sub(2)), style),
-        Span::styled(text::fit_right(&count, COUNT_WIDTH - 1), style),
+        Span::styled(text::fit_right(&count, count_width - 1), style),
     ])
 }

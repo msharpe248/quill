@@ -1540,3 +1540,60 @@ fn link_text_cut_off_by_the_pane_is_placed_only_as_far_as_it_shows() {
         assert!(usize::from(link.x) + quill_tui::text::width(&link.text) <= 80);
     }
 }
+
+#[test]
+fn a_large_unread_count_is_shown_whole() {
+    use quill_core::types::{FolderId, FolderRole, RemoteFolder};
+
+    let mut harness = Harness::demo(80, 24);
+    // 15,055 unread in a folder of the first account.
+    let account = harness.store.accounts().unwrap()[0].id;
+    let folder = harness
+        .store
+        .upsert_folder(
+            account,
+            &RemoteFolder {
+                id: FolderId("bulk".to_owned()),
+                name: "Mailing lists".to_owned(),
+                role: FolderRole::Other,
+            },
+        )
+        .unwrap();
+    let added = (0..15_055)
+        .map(|n| RemoteMessage {
+            id: RemoteId(format!("bulk-{n}")),
+            headers: Headers {
+                message_id: None,
+                subject: format!("Digest {n}"),
+                from: vec![Address::new("List", "list@example.com")],
+                to: Vec::new(),
+                cc: Vec::new(),
+                date: NOW - i64::from(n),
+            },
+            flags: Flags::default(),
+            size: 1,
+            has_attachments: false,
+        })
+        .collect();
+    harness
+        .store
+        .apply_delta(
+            folder,
+            &SyncDelta {
+                reset: false,
+                added,
+                changed: Vec::new(),
+                removed: Vec::new(),
+                has_more: false,
+                next_cursor: SyncCursor("c".to_owned()),
+            },
+        )
+        .unwrap();
+    harness.act(Action::Data(DataEvent::StoreChanged));
+
+    // The whole number, never "150…": the name gives way instead.
+    let row = harness.row_with("15055");
+    assert!(row.contains("Mail… 15055 │"), "{row}");
+    // Small counts still end at the same column.
+    assert!(harness.row_with("Unified").contains(" 12 │"));
+}
