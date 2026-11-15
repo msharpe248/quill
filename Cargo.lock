@@ -2695,8 +2695,17 @@ checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
 name = "quill-auth"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "quill-core",
+ "quill-net",
+ "reqwest",
+ "ring",
  "security-framework",
+ "serde_json",
  "thiserror 2.0.21",
+ "tokio",
+ "wiremock",
 ]
 
 [[package]]

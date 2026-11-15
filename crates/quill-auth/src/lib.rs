@@ -1,11 +1,22 @@
-//! Where Quill keeps secrets.
+//! Where Quill keeps secrets, and how it signs in where a password will
+//! not do.
 //!
 //! Passwords and tokens live only in the macOS Keychain. They are never
 //! written to config files, the database, logs or crash reports, and this
 //! crate is the only place that touches them at rest.
+//!
+//! [`oauth`] is signing in with OAuth 2.0: the browser and device code
+//! flows, and the tokens that come of them.
+
+pub mod oauth;
 
 use std::collections::HashMap;
 use std::sync::Mutex;
+
+pub use oauth::{
+    BrowserSignIn, DevicePrompt, DeviceSignIn, OAuthClient, OAuthHttp, OAuthProvider, OAuthTokens,
+    RedirectHost, Secret, SignInMethod, sign_in,
+};
 
 /// The Keychain service every Quill item is filed under.
 pub const SERVICE: &str = "Quill";
@@ -32,6 +43,14 @@ pub trait SecretStore: Send + Sync {
 /// the server, so two accounts never share a secret by accident.
 pub fn password_name(protocol: &str, username: &str, host: &str) -> String {
     format!("{protocol}:{username}@{host}")
+}
+
+/// The name an account's OAuth refresh token is kept under: the provider
+/// (an [`OAuthProvider`]'s `name`) and the account, so that the same
+/// address signed in to two providers keeps two tokens. It cannot collide
+/// with a [`password_name`], whose protocols are never called `oauth`.
+pub fn oauth_name(provider: &str, account: &str) -> String {
+    format!("oauth:{provider}:{account}")
 }
 
 /// The user's login Keychain.
@@ -175,6 +194,22 @@ mod tests {
         assert_ne!(
             password_name("imap", "robin", "a.example.com"),
             password_name("smtp", "robin", "a.example.com")
+        );
+    }
+
+    #[test]
+    fn oauth_names_keep_providers_and_accounts_apart() {
+        assert_eq!(
+            oauth_name("microsoft", "robin@example.com"),
+            "oauth:microsoft:robin@example.com"
+        );
+        assert_ne!(
+            oauth_name("microsoft", "robin@example.com"),
+            oauth_name("google", "robin@example.com")
+        );
+        assert_ne!(
+            oauth_name("google", "robin@example.com"),
+            oauth_name("google", "sam@example.com")
         );
     }
 
