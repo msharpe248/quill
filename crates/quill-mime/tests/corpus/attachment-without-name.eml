@@ -1,0 +1,29 @@
+From: Sam Lee <sam.lee@example.com>
+To: Robin Vale <robin@example.org>
+Subject: A file with no name
+Date: Sat, 14 Nov 2026 10:15:00 +0000
+Message-ID: <noname.1@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="nn"
+
+--nn
+Content-Type: text/plain
+
+Two files follow, and neither says what it is called.
+--nn
+Content-Type: application/octet-stream
+Content-Disposition: attachment
+Content-Transfer-Encoding: base64
+
+AAECAwQFBgcICQ==
+--nn
+Content-Disposition: attachment
+Content-Transfer-Encoding: base64
+
+3q2+7w==
+--nn
+Content-Type: application/x-unknown-thing; name="   "
+Content-Disposition: attachment; filename="   "
+
+spaces for a name
+--nn--

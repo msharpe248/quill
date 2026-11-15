@@ -40,7 +40,7 @@ jiff = "0.2.44"
 html2text = { version = "0.17.4", features = ["css"] }
 image = { version = "0.25.10", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 mail-builder = { version = "2.0.1", default-features = false }
-mail-parser = "1.0.1"
+mail-parser = { version = "1.0.1", features = ["full_encoding"] }
 pulldown-cmark = { version = "0.13.6", default-features = false }
 jsonschema = { version = "0.61.2", default-features = false }
 ratatui = "0.30.2"

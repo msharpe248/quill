@@ -1,0 +1,11 @@
+From: Sam Lee <sam.lee@example.com>
+To: Robin Vale <robin@example.org>
+Subject: ]0;Terminal owned]52;c;cm0gLXJmIH4=Invoice[2J[H overdue[1;31m]8;;https://evil.example/\
+Comments: 2J0;title C1 forms
+Date: Sat, 14 Nov 2026 10:40:00 +0000
+Message-ID: <esc.subject[0m@example.com>
+In-Reply-To: <before]0;x@example.com>
+References: <one[31m@example.com> <two@example.com>
+
+The subject of this message tries to retitle the window, write to the
+clipboard, clear the screen and start a hyperlink.

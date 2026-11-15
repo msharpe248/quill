@@ -1,0 +1,23 @@
+From: Sam Lee <sam.lee@example.com>
+To: Robin Vale <robin@example.org>
+Subject: Some lines end one way,
+ some the other
+Date: Sat, 14 Nov 2026 10:21:00 +0000
+Message-ID: <mixed-endings.1@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="mx"
+
+--mx
+Content-Type: text/plain; charset=utf-8
+
+First line, CRLF.
+Second line, LF.
+Third line, CRLF.
+--mx
+Content-Type: text/plain; name="unix.txt"
+Content-Disposition: attachment; filename="unix.txt"
+
+one
+two
+three
+--mx--

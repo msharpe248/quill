@@ -1,0 +1,29 @@
+From: Sam Lee <sam.lee@example.com>
+To: Robin Vale <robin@example.org>
+Subject: Odd boundaries
+Date: Sat, 14 Nov 2026 10:13:00 +0000
+Message-ID: <oddb.1@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary=""; boundary="second one wins?";
+ boundary*0="or "; boundary*1="this"
+
+--
+Content-Type: text/plain
+
+After an empty boundary.
+--second one wins?
+Content-Type: text/plain
+
+After the second.
+--or this
+Content-Type: multipart/alternative; boundary="
+Content-Type: multipart/alternative; boundary=--
+Content-Type: multipart/alternative; boundary="a boundary that is far longer than the seventy characters the standard allows for one of these things, to see what happens"
+
+--a boundary that is far longer than the seventy characters the standard allows for one of these things, to see what happens
+Content-Type: text/plain
+
+Inside the long one.
+----
+--
+----

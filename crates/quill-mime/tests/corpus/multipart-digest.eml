@@ -1,0 +1,45 @@
+From: Roadmap list <roadmap-request@example.org>
+To: roadmap@example.org
+Subject: Roadmap Digest, Vol 12, Issue 3
+Date: Sat, 14 Nov 2026 10:05:00 +0000
+Message-ID: <digest.1@example.org>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="digest-outer"
+
+--digest-outer
+Content-Type: text/plain; charset=utf-8
+
+Today's topics:
+
+   1. Launch week (Ana Ruiz)
+   2. Re: Launch week (Sam Lee)
+--digest-outer
+Content-Type: multipart/digest; boundary="digest-inner"
+
+--digest-inner
+
+From: Ana Ruiz <ana.ruiz@example.com>
+Subject: Launch week
+Date: Fri, 13 Nov 2026 16:00:00 +0000
+Message-ID: <launch.1@example.com>
+
+Week 47, then.
+--digest-inner
+Content-Type: message/rfc822
+
+From: Sam Lee <sam.lee@example.com>
+Subject: Re: Launch week
+Date: Fri, 13 Nov 2026 16:30:00 +0000
+Message-ID: <launch.2@example.com>
+In-Reply-To: <launch.1@example.com>
+Content-Type: text/plain; charset=utf-8
+
+> Week 47, then.
+
+Agreed.
+--digest-inner--
+--digest-outer
+Content-Type: text/plain; charset=utf-8
+
+End of Roadmap Digest, Vol 12, Issue 3
+--digest-outer--

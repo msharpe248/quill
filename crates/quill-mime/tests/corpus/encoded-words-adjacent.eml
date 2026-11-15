@@ -1,0 +1,13 @@
+From: =?UTF-8?Q?Tom=C3=A1s?= =?UTF-8?Q?_Ortega?= <tomas.ortega@example.com>
+To: =?ISO-8859-1?Q?Ren=E9e?= =?UTF-8?B?IOKYlQ==?= <renee@example.org>,
+ =?UTF-8?B?6ZmI6Z2Z?= <chen.jing@example.com>
+Subject: =?UTF-8?Q?Tom=C3=A1s_sent?=
+ =?UTF-8?Q?_you_the?= =?UTF-8?B?IOKYlSA=?=
+	=?ISO-8859-1?Q?caf=E9?= budget =?UTF-8?Q?=F0=9F=8E=89?=
+Date: Sat, 14 Nov 2026 09:40:00 +0000
+Message-ID: <ew.1@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+Adjacent encoded words join with nothing between them; an encoded word
+and plain text keep their space.

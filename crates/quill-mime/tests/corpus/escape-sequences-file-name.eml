@@ -1,0 +1,37 @@
+From: Sam Lee <sam.lee@example.com>
+To: Robin Vale <robin@example.org>
+Subject: Files with dangerous names
+Date: Sat, 14 Nov 2026 10:42:00 +0000
+Message-ID: <esc.file@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="esc-f"
+
+--esc-f
+Content-Type: text/plain; charset=utf-8
+
+Four files. None is what its name pretends.
+--esc-f
+Content-Type: application/octet-stream; name="invoice‮fdp.exe"
+Content-Disposition: attachment; filename="invoice‮fdp.exe"
+Content-Transfer-Encoding: base64
+
+TVqQAAMAAAAEAAAA
+--esc-f
+Content-Type: application/pdf; name="report[2J]0;owned.pdf"
+Content-Disposition: attachment; filename="report[2J]0;owned.pdf"
+Content-ID: <file[31m@example.com>
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQK
+--esc-f
+Content-Type: application/zip
+Content-Disposition: attachment; filename*=UTF-8''photos%1B%5B2J%E2%80%AEgpj.zip%00%07%0D%0A
+Content-Transfer-Encoding: base64
+
+UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA==
+--esc-f
+Content-Type: text/plain; name="=?UTF-8?B?bm90ZXMbXTUyO2M7Y20wPQfigad0eHQuc2Ny4oGpCXRhYgpsaW5l?="
+Content-Disposition: attachment; filename="=?UTF-8?B?bm90ZXMbXTUyO2M7Y20wPQfigad0eHQuc2Ny4oGpCXRhYgpsaW5l?="
+
+A name with a tab and a line break hidden in base64.
+--esc-f--

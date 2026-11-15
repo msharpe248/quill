@@ -1,0 +1,29 @@
+From: Robin Vale <robin@example.org>
+To: Ana Ruiz <ana.ruiz@example.com>
+Subject: Re: Q4 roadmap review
+Date: Sat, 14 Nov 2026 10:02:00 +0000
+Message-ID: <q4-roadmap.3@example.org>
+In-Reply-To: <q4-roadmap.2@example.com>
+References: <q4-roadmap.1@example.com> <q4-roadmap.2@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+Looks good. Two things, both small, inline below; the full notes are at https://example.org/notes/q4-roadmap?rev=3#comments and you can reach the whole group at mailto:roadmap@example.org if that is easier.
+
+On Sat, 14 Nov 2026 at 09:40, Ana Ruiz wrote:
+> Thanks for the quick read. I have moved the launch to week 47 and kept the freeze where it was, which leaves four working days for the checks.
+>
+> On Sat, 14 Nov 2026 at 09:20, Robin Vale wrote:
+> > Can we move the launch a week? The freeze lands on the same day as the audit.
+> >
+> > > Original plan: https://example.com/plans/q4 (launch in week 46).
+>> Also: who owns the rollback?
+
+Four days is tight but fine.
+	Tabbed line	with columns
+
+-- 
+Robin Vale
+Example Org · https://example.org/people/robin
+> not a quote, part of the signature

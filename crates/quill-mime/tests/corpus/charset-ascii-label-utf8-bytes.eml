@@ -1,0 +1,10 @@
+From: Sam Lee <sam.lee@example.com>
+To: Robin Vale <robin@example.org>
+Subject: Says ASCII, is not
+Date: Sat, 14 Nov 2026 09:34:00 +0000
+Message-ID: <charset.ascii@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+Labelled seven-bit ASCII, but: Tomás, 陈静, ☕ and 🎉.

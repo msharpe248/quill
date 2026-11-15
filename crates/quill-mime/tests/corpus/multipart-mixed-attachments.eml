@@ -1,0 +1,38 @@
+From: Sam Lee <sam.lee@example.com>
+To: Robin Vale <robin@example.org>
+Subject: Invoice 2026-114 and the photos
+Date: Sat, 14 Nov 2026 10:01:00 +0000
+Message-ID: <mixed.1@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="----=_Part_114"
+
+------=_Part_114
+Content-Type: text/plain; charset=utf-8
+
+Please find the invoice attached, with two photos of the delivery.
+------=_Part_114
+Content-Type: application/pdf; name="invoice 2026-114.pdf"
+Content-Disposition: attachment; filename="invoice 2026-114.pdf"; size=29
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKJSBub3QgcmVhbGx5IGEgUERGCg==
+------=_Part_114
+Content-Type: IMAGE/PNG; name=delivery-1.png
+Content-Disposition: ATTACHMENT; FILENAME=delivery-1.png
+Content-Transfer-Encoding: BASE64
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==
+------=_Part_114
+Content-Type: text/csv; charset=utf-8; name="line items.csv"
+Content-Disposition: attachment; filename="line items.csv"
+Content-Transfer-Encoding: quoted-printable
+
+item,cost
+Train,48
+Caf=C3=A9,12
+------=_Part_114
+Content-Type: text/plain; charset=utf-8
+Content-Disposition: inline
+
+A second piece of text after the files, which is still part of the body.
+------=_Part_114--

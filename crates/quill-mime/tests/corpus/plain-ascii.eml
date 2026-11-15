@@ -1,0 +1,21 @@
+Return-Path: <ana.ruiz@example.com>
+Received: from mail.example.com (mail.example.com [192.0.2.10])
+	by mx.example.org with ESMTPS id 4XyZ12abc
+	for <robin@example.org>; Sat, 14 Nov 2026 09:14:03 +0000 (UTC)
+From: Ana Ruiz <ana.ruiz@example.com>
+To: Robin Vale <robin@example.org>
+Cc: Sam Lee <sam.lee@example.com>, "Nair, Priya" <priya.nair@example.com>
+Subject: Q4 roadmap review
+Date: Sat, 14 Nov 2026 09:14:00 +0000
+Message-ID: <q4-roadmap.1@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+Hi Robin,
+
+Here is the draft of the Q4 roadmap. Could you look it over before
+Thursday's review?
+
+Thanks,
+Ana

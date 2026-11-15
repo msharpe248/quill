@@ -1,0 +1,42 @@
+From: Chen Jing <chen.jing@example.com>
+To: Robin Vale <robin@example.org>
+Subject: Quarterly report
+Date: Sat, 14 Nov 2026 09:50:00 +0800
+Message-ID: <rfc2231.1@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_cont"
+
+--=_cont
+Content-Type: text/plain; charset=utf-8
+
+The report is attached. Its name comes in three pieces.
+--=_cont
+Content-Type: application/pdf;
+ name*0*=UTF-8''%E5%AD%A3%E5%BA%A6;
+ name*1*=%E6%8A%A5%E5%91%8A%20Q4;
+ name*2=" final.pdf"
+Content-Disposition: attachment;
+ filename*0*=UTF-8''%E5%AD%A3%E5%BA%A6;
+ filename*1*=%E6%8A%A5%E5%91%8A%20Q4;
+ filename*2=" final.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKJSBub3QgcmVhbGx5IGEgUERGCg==
+--=_cont
+Content-Type: text/plain
+Content-Disposition: attachment;
+ filename*0="a name long enough that the program which sent it ";
+ filename*1="decided to cut it into continuations without ";
+ filename*2="any encoding at all.txt"
+
+Plain continuations.
+--=_cont
+Content-Type: application/octet-stream
+Content-Disposition: attachment;
+ filename*2="out of order";
+ filename*0="pieces ";
+ filename*5=" with a gap.bin"
+Content-Transfer-Encoding: base64
+
+AAECAwQ=
+--=_cont--

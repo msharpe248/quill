@@ -1,0 +1,33 @@
+From: Ana Ruiz <ana.ruiz@example.com>
+To: Robin Vale <robin@example.org>
+Subject: Offsite agenda
+Date: Sat, 14 Nov 2026 10:00:00 +0000
+Message-ID: <alt.1@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="alt-1"
+
+This is a message in MIME format. If you can read this, your mail
+program does not understand it.
+
+--alt-1
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+Offsite agenda
+
+* Travel
+* Rooms
+
+The agenda is at https://example.com/agenda and the room list at
+https://example.com/rooms. Can we move it a week?
+--alt-1
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+<html><body><h1>Offsite agenda</h1><ul><li>Travel</li><li>Rooms</li></ul>
+<p>The <a href=3D"https://example.com/agenda">agenda</a> and the
+<a href=3D"https://example.com/rooms">room list</a> are up.</p>
+<blockquote>Can we move it a week?</blockquote></body></html>
+--alt-1--
+
+Text after the last boundary, which is not part of the message.

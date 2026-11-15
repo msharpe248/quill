@@ -1,0 +1,12 @@
+From: Sam Lee <sam.lee@example.com>
+To: Robin Vale <robin@example.org>
+Subject: =?ISO-2022-JP?B?GyRCG1syShtdMDtvd25lZAcbKEIgcGxhaW4gG1szMW0=?=
+Date: Sat, 14 Nov 2026 10:44:00 +0000
+Message-ID: <esc.jp@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=iso-2022-jp
+Content-Transfer-Encoding: 7bit
+
+A charset that is made of escape sequences, with some that are not its own:
+$B$3$s$K$A$O(B then [2J]0;owned and $B[31m(B and an unfinished $
+(J half-width (I1234(B $(D"/(B end

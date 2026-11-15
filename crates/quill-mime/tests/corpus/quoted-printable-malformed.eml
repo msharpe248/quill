@@ -1,0 +1,14 @@
+From: Sam Lee <sam.lee@example.com>
+To: Robin Vale <robin@example.org>
+Subject: Broken quoted-printable
+Date: Sat, 14 Nov 2026 09:21:00 +0000
+Message-ID: <qp.2@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=iso-8859-1
+Content-Transfer-Encoding: quoted-printable
+
+An escape with bad digits: =ZZ and =G1 and =1.
+A lower-case one: caf=e9. An equals at the very end of the text: =
+=
+=A
+=

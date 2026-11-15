@@ -1,0 +1,12 @@
+From: Sam Lee <sam.lee@example.com>
+To: Robin Vale <robin@example.org>
+Subject: =?UTF-8?Q?Caf=E9_r=E9union?= says UTF-8, is Latin-1
+Date: Sat, 14 Nov 2026 09:33:00 +0000
+Message-ID: <charset.wrong@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+Labelled UTF-8, written in Latin-1: café, réunion, à bientôt.
+A lone continuation byte €, a truncated sequence â‚, an overlong À¯,
+a surrogate í € and a five-byte form øˆ€€€.

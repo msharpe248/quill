@@ -1,0 +1,28 @@
+From: Ana Ruiz <ana.ruiz@example.com>
+To: Robin Vale <robin@example.org>
+Subject: Signed: the contract terms
+Date: Sat, 14 Nov 2026 10:06:00 +0000
+Message-ID: <signed.1@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/signed; protocol="application/pkcs7-signature";
+ micalg=sha-256; boundary="signed-1"
+
+This is a cryptographically signed message in MIME format.
+
+--signed-1
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+The terms are as we discussed: thirty days, renewable.
+
+Ana
+--signed-1
+Content-Type: application/pkcs7-signature; name="smime.p7s"
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="smime.p7s"
+Content-Description: S/MIME Cryptographic Signature
+
+MIAGCSqGSIb3DQEHAqCAMIACAQExDzANBglghkgBZQMEAgEFADCABgkqhkiG9w0BBwEAAKCA
+MIIDnotARealSignatureJustBytesThatLookLikeOneAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+--signed-1--

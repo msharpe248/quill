@@ -1,0 +1,15 @@
+From: Priya Nair <priya.nair@example.com>
+To: Robin Vale <robin@example.org>
+Subject: Car park, again
+Date: Sat, 14 Nov 2026 09:23:00 +0530
+Message-ID: <b64.2@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: base64
+
+U2V2ZW4gbydjbG9jayBhdCB0
+  aGUgbm9ydGgg !!! Y2FyIHBhcmsu
+====
+Cg
+-- not base64 at all --
+=

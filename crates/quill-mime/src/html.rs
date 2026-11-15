@@ -5,13 +5,19 @@
 //! at the end, and layout, colour, scripts and remote content are left
 //! behind. Nothing is fetched and nothing is run.
 //!
-//! The text that comes back is still untrusted. The UI strips control
-//! characters from every span before drawing it.
+//! The text that comes back is safe to draw: no control characters and no
+//! escape sequences, however the message spelt them. A link whose text
+//! names one place while it leads to another gets a line under it saying
+//! where it really goes.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use html2text::render::{TaggedLine, TextDecorator};
+
+use crate::disguise::{self, Disguise};
+use crate::{clean, guard, plain};
 
 /// One line of a rendered message.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -46,8 +52,13 @@ pub struct Style {
     pub code: bool,
     /// The text of a link.
     pub link: bool,
-    /// Asides: link numbers, the list of links, image descriptions.
+    /// Asides: link numbers, the list of links, image descriptions, and a
+    /// plain-text signature.
     pub dim: bool,
+    /// How deeply the line is quoted: 0 for the sender's own words, 1 for
+    /// what they are answering, and so on. Every span of a line has the
+    /// same depth, the `>` markers included.
+    pub quote: u8,
 }
 
 impl Line {
@@ -123,32 +134,48 @@ impl Line {
 pub const MAX_HTML_BYTES: usize = 2 * 1024 * 1024;
 
 /// The narrowest the text is laid out. A narrower pane clips it.
-const MIN_WIDTH: usize = 20;
+pub(crate) const MIN_WIDTH: usize = 20;
 
 /// Renders `html` as lines no wider than `width` columns where the content
 /// allows. Returns `None` when there is nothing to show or the document
-/// cannot be rendered, so the caller can fall back to plain text.
+/// cannot be rendered, so the caller can fall back to plain text: one that
+/// is too large, or nested so deeply that laying it out would take longer
+/// than anyone would wait.
 pub fn render(html: &str, width: usize) -> Option<Rendered> {
     if html.len() > MAX_HTML_BYTES {
         return None;
     }
+    let width = width.max(MIN_WIDTH);
     let links = Rc::new(RefCell::new(Links::default()));
     let decorator = Decorator {
         links: Rc::clone(&links),
     };
     let mut config = html2text::config::with_decorator(decorator)
+        // For `style="display:none"`, which is all of the message's CSS
+        // that is left by the time the renderer looks: see `guard`.
         .use_doc_css()
         // A table that cannot fit is clipped by the pane, not refused.
-        .allow_width_overflow();
+        .allow_width_overflow()
+        // Struck-out text is marked by its style. Left to itself the
+        // renderer also puts a combining stroke after every character,
+        // which no search would ever match.
+        .unicode_strikeout(false);
     if is_laid_out_with_tables(html) {
         // Tables used for layout read best as one block after another.
         config = config.raw_mode(true);
     }
-    let tagged = config
-        .lines_from_read(html.as_bytes(), width.max(MIN_WIDTH))
-        .ok()?;
+    // Escape sequences go before the parser can take them apart.
+    let html = clean::markup(html);
+    // Parsed against the clock, then stripped of what the renderer cannot
+    // be trusted with and measured before it is laid out: see `guard`.
+    let dom = config.parse_html(guard::Source::new(&html)).ok()?;
+    if !guard::prepare(&dom) {
+        return None;
+    }
+    let tree = config.dom_to_render_tree(&dom).ok()?;
+    let tagged = config.render_to_lines(tree, width).ok()?;
     let urls = std::mem::take(&mut links.borrow_mut().urls);
-    let rendered = assemble(&tagged, &urls);
+    let rendered = assemble(&tagged, &urls, width);
     (!rendered.lines.is_empty()).then_some(rendered)
 }
 
@@ -206,6 +233,8 @@ enum Mark {
 struct Links {
     /// Every distinct target, in the order first met.
     urls: Vec<String>,
+    /// Where each target is in `urls`.
+    known: HashMap<String, usize>,
     /// The links currently open, innermost last. `None` is a link that goes
     /// nowhere worth numbering.
     open: Vec<Option<usize>>,
@@ -224,17 +253,22 @@ impl TextDecorator for Decorator {
     type Annotation = Mark;
 
     fn decorate_link_start(&mut self, url: &str) -> (String, Mark) {
+        // The address is shown in the list of links, so it is cleaned like
+        // any other text from the message.
+        let url = clean::header(url);
         let url = url.trim();
         let mut links = self.links.borrow_mut();
         if !is_worth_numbering(url) {
             links.open.push(None);
             return (String::new(), Mark::None);
         }
-        let id = match links.urls.iter().position(|known| known == url) {
-            Some(id) => id,
+        let id = match links.known.get(url) {
+            Some(id) => *id,
             None => {
+                let id = links.urls.len();
                 links.urls.push(url.to_owned());
-                links.urls.len() - 1
+                links.known.insert(url.to_owned(), id);
+                id
             }
         };
         links.open.push(Some(id));
@@ -322,10 +356,17 @@ impl TextDecorator for Decorator {
 }
 
 /// A link to somewhere a reader could go. Anchors within the page and
-/// script links are not.
+/// script links are not, however the word "javascript" is spaced out.
 fn is_worth_numbering(url: &str) -> bool {
-    let lower = url.to_ascii_lowercase();
-    !(url.is_empty() || lower.starts_with('#') || lower.starts_with("javascript:"))
+    let lower: String = url
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    !(lower.is_empty()
+        || lower.starts_with('#')
+        || lower.starts_with("javascript:")
+        || lower.starts_with("vbscript:"))
 }
 
 /// Characters that take up a place in the text and show nothing: spaces,
@@ -338,16 +379,20 @@ fn is_invisible(c: char) -> bool {
         )
 }
 
-/// Turns html2text's lines into ours: styles from the marks, final link
-/// numbers, headings in bold, runs of blank lines closed up, and the list
-/// of links at the end.
-fn assemble(tagged: &[TaggedLine<Vec<Mark>>], urls: &[String]) -> Rendered {
+/// Turns html2text's lines into ours: text cleaned of anything a terminal
+/// would act on, styles from the marks, final link numbers, headings in
+/// bold, quote depths, runs of blank lines closed up, warnings under links
+/// that are not what they say, and the list of links at the end.
+fn assemble(tagged: &[TaggedLine<Vec<Mark>>], urls: &[String], width: usize) -> Rendered {
     let mut numbering = Numbering::new(urls.len());
+    let mut shown = Shown::default();
 
     let mut lines: Vec<Line> = Vec::new();
     let mut after_heading = false;
     for tagged_line in tagged {
         let mut line = Line::default();
+        // The links found out on this line.
+        let mut disguised: Vec<(usize, Disguise)> = Vec::new();
         for piece in tagged_line.tagged_strings() {
             let mut style = Style::default();
             let mut link = None;
@@ -366,10 +411,19 @@ fn assemble(tagged: &[TaggedLine<Vec<Mark>>], urls: &[String]) -> Rendered {
                 }
             }
 
-            let mut rest = piece.s.as_str();
+            // An entity can spell any character, so the text is cleaned
+            // here, after the parser has decoded it. A span is part of one
+            // line: what is left of a tab or a line break is a space.
+            let text = clean::body(&piece.s);
+            let text = match text.contains(['\n', '\t']) {
+                true => text.replace(['\n', '\t'], " "),
+                false => text.into_owned(),
+            };
+            let mut rest = text.as_str();
             while let Some(at) = rest.find(MARKER) {
                 let before = &rest[..at];
                 let target = numbering.note(link, before);
+                shown.text(link, before);
                 line.push(before, style, target);
                 rest = &rest[at + MARKER.len_utf8()..];
 
@@ -384,6 +438,7 @@ fn assemble(tagged: &[TaggedLine<Vec<Mark>>], urls: &[String]) -> Rendered {
                     continue;
                 };
                 rest = rest.split_once(']').map_or("", |(_, after)| after);
+                disguised.extend(shown.end(id, urls));
                 // A link with nothing to read, such as one around an image
                 // with no description, is not worth a number.
                 let Some(number) = numbering.close(id) else {
@@ -400,10 +455,12 @@ fn assemble(tagged: &[TaggedLine<Vec<Mark>>], urls: &[String]) -> Rendered {
                 line.push(&gap, style, None);
             }
             let target = numbering.note(link, rest);
+            shown.text(link, rest);
             line.push(rest, style, target);
         }
         line.trim_end();
         let heading = embolden_heading(&mut line);
+        mark_quote(&mut line);
         // One blank line between blocks is enough, and none to start with.
         let blank = line.is_blank();
         if blank && lines.last().is_none_or(Line::is_blank) {
@@ -415,6 +472,13 @@ fn assemble(tagged: &[TaggedLine<Vec<Mark>>], urls: &[String]) -> Rendered {
         }
         after_heading = heading;
         lines.push(if blank { Line::default() } else { line });
+        for (id, disguise) in disguised {
+            warn(&mut lines, &numbering, id, &disguise, width);
+        }
+    }
+    // A link whose end was torn apart by wrapping is still judged.
+    if let Some((id, disguise)) = shown.finish(urls) {
+        warn(&mut lines, &numbering, id, &disguise, width);
     }
     while lines.last().is_some_and(Line::is_blank) {
         lines.pop();
@@ -443,6 +507,125 @@ fn assemble(tagged: &[TaggedLine<Vec<Mark>>], urls: &[String]) -> Rendered {
             .iter()
             .map(|id| urls[*id].clone())
             .collect(),
+    }
+}
+
+/// Longer than any name a link could be showing.
+const MAX_NAME_BYTES: usize = 1024;
+
+/// What the links have shown so far, so that each can be compared with
+/// where it leads once its text is complete.
+#[derive(Default)]
+struct Shown {
+    /// The link being read: its place in the list of targets and its text
+    /// so far.
+    open: Option<(usize, String)>,
+    /// Whether that link has been judged since it last showed any text.
+    judged: bool,
+    /// Whether other text has been shown since it was judged.
+    apart: bool,
+}
+
+impl Shown {
+    /// Notes `text` shown by `link`, or by no link.
+    fn text(&mut self, link: Option<usize>, text: &str) {
+        if text.chars().all(is_invisible) {
+            return;
+        }
+        let Some(id) = link else {
+            self.apart = true;
+            return;
+        };
+        match &mut self.open {
+            // More of the same link, or the same target again with nothing
+            // between: one name as far as a reader can see, so it is judged
+            // as one. Splitting a name over two links hides nothing.
+            Some((open, shown)) if *open == id && !(self.judged && self.apart) => {
+                if self.judged {
+                    // Everything up to the last space has been judged, and
+                    // a name has no spaces in it. Only the word that may
+                    // still be going on is kept, and that only while it
+                    // could be a name: a page of a thousand links to one
+                    // place must not be read a thousand times over.
+                    let word = shown
+                        .char_indices()
+                        .rev()
+                        .find(|(_, c)| c.is_whitespace())
+                        .map_or(0, |(at, c)| at + c.len_utf8());
+                    shown.drain(..word);
+                    if shown.len() > MAX_NAME_BYTES {
+                        shown.clear();
+                    }
+                }
+                shown.push_str(text);
+            }
+            _ => self.open = Some((id, text.to_owned())),
+        }
+        self.judged = false;
+        self.apart = false;
+    }
+
+    /// The link `id` has ended. Returns it if it is not what it says.
+    fn end(&mut self, id: usize, urls: &[String]) -> Option<(usize, Disguise)> {
+        let (open, shown) = self.open.as_ref()?;
+        if *open != id || self.judged {
+            return None;
+        }
+        self.judged = true;
+        self.apart = false;
+        let found = disguise::find(shown, urls.get(id)?)?;
+        Some((id, found))
+    }
+
+    /// The document has ended, perhaps with a link still open.
+    fn finish(&mut self, urls: &[String]) -> Option<(usize, Disguise)> {
+        let (id, _) = self.open.as_ref()?;
+        let id = *id;
+        self.end(id, urls)
+    }
+}
+
+/// Adds the line that says where a disguised link really goes. It is text,
+/// so it survives a terminal with no colour, and bold, so it is not taken
+/// for part of the message.
+fn warn(
+    lines: &mut Vec<Line>,
+    numbering: &Numbering,
+    id: usize,
+    disguise: &Disguise,
+    width: usize,
+) {
+    let Some(number) = numbering.numbers.get(id).copied().flatten() else {
+        return;
+    };
+    let loud = Style {
+        bold: true,
+        ..Style::default()
+    };
+    // Rows after the first are set in, so a long warning reads as one.
+    let rows = plain::wrap_text(&disguise.warning(number), width.saturating_sub(2));
+    for (index, row) in rows.iter().enumerate() {
+        let mut line = Line::default();
+        let indent = if index == 0 { "" } else { "  " };
+        line.push(&format!("{indent}{row}"), loud, Some(number - 1));
+        lines.push(line);
+    }
+}
+
+/// Gives every span of a quoted line its depth. A line of code that
+/// happens to start with `>` is a prompt, not a quote.
+fn mark_quote(line: &mut Line) {
+    let Some(first) = line.spans.first() else {
+        return;
+    };
+    if first.style.code {
+        return;
+    }
+    let (depth, _) = plain::quote_prefix(&first.text);
+    if depth > 0 {
+        for span in &mut line.spans {
+            span.style.quote = depth;
+        }
     }
 }
 
@@ -534,6 +717,7 @@ mod tests {
         code: false,
         link: false,
         dim: false,
+        quote: 0,
     };
     const DIM: Style = Style { dim: true, ..NONE };
     const LINK: Style = Style { link: true, ..NONE };
@@ -544,6 +728,7 @@ mod tests {
         code: false,
         link: false,
         dim: false,
+        quote: 0,
     };
 
     #[test]
@@ -583,6 +768,37 @@ mod tests {
                 (" done.", NONE),
             ]
         );
+    }
+
+    #[test]
+    fn struck_out_text_is_styled_and_still_the_same_text() {
+        let lines = render("<p>Was <s>forty</s>, now <del>thirty</del>.</p>", 60)
+            .unwrap_or_default()
+            .lines;
+        let struck = Style {
+            strike: true,
+            ..NONE
+        };
+        assert_eq!(
+            styled(&lines[0]),
+            [
+                ("Was ", NONE),
+                ("forty", struck),
+                (", now ", NONE),
+                ("thirty", struck),
+                (".", NONE),
+            ]
+        );
+    }
+
+    #[test]
+    fn script_links_are_not_numbered_however_they_are_spelt() {
+        let html = "<p><a href=\"javascript:steal()\">one</a> <a href=\"jaVa&#9;sCript:steal()\">two</a> \
+                    <a href=\" java\nscript:steal()\">three</a> <a href=\"vbscript:steal()\">four</a> \
+                    <a href=\"#top\">five</a> <a href=\"\">six</a> <a href=\"https://example.com/\">seven</a></p>";
+        let rendered = render(html, 80).unwrap_or_default();
+        assert_eq!(rendered.links, ["https://example.com/"]);
+        assert_eq!(text(html, 80)[0], "one two three four five six seven[1]");
     }
 
     #[test]
@@ -768,6 +984,298 @@ mod tests {
         assert!(render("<p>narrow</p>", 0).is_some());
         assert!(render("<b><i><a href='x'>unclosed", 40).is_some());
         assert_eq!(render(&"x".repeat(MAX_HTML_BYTES + 1), 80), None);
+    }
+
+    #[test]
+    fn nesting_too_deep_to_lay_out_is_refused_not_attempted() {
+        // Each of these would take minutes at full size, or the stack. None
+        // is shown as HTML; the reader falls back to the plain text.
+        for tag in ["div", "b", "blockquote", "sup", "span"] {
+            let deep = format!("<{tag}>").repeat(7_000) + "deep";
+            assert_eq!(render(&deep, 80), None, "{tag}");
+        }
+        // Many small pieces of text, each inside a few thousand elements.
+        let heavy = "<i>".repeat(3_000) + &"<b>x</b> ".repeat(2_000);
+        assert_eq!(render(&heavy, 80), None);
+        // A long flat document is none of those things.
+        let flat = "<p>One <b>paragraph</b> of many.</p>".repeat(20_000);
+        assert_eq!(
+            render(&flat, 80).map(|shown| shown.lines.len()),
+            Some(39_999)
+        );
+    }
+
+    #[test]
+    fn a_document_that_cannot_be_parsed_in_time_is_abandoned() {
+        // A hundred thousand elements, each inside the last: hours of work
+        // for the parser at two megabytes, and minutes at this size.
+        let deep = "<div>".repeat(100_000) + "deep";
+        let started = std::time::Instant::now();
+        assert_eq!(render(&deep, 80), None);
+        assert!(started.elapsed() < 4 * guard::allowance(deep.len()));
+
+        // Forty kilobytes that would become four million elements: every
+        // paragraph reopens every unclosed `<b>` before it.
+        let growing: String = (0..3_000).map(|n| format!("<b id={n}><p>x")).collect();
+        let started = std::time::Instant::now();
+        assert_eq!(render(&growing, 80), None);
+        assert!(started.elapsed() < 4 * guard::allowance(growing.len()));
+    }
+
+    #[test]
+    fn escape_sequences_never_reach_a_span() {
+        // Written raw, and spelt with references so that only the parser
+        // sees them for what they are.
+        let html = "<p>\u{1b}]0;pwned\u{7}Hello &#27;[2J<b>&#x1b;]52;c;cm0gLXJmIH4=&#7;Robin</b>\
+                    &#0;&#8;&#127;.</p>\
+                    <p><a href=\"https://example.com/&#27;[31m&#x202e;a\">the &#27;]8;;https://evil.example/&#27;\\agenda</a></p>\
+                    <pre>one&#13;two</pre>\
+                    <p><img src=\"a.png\" alt=\"&#27;]0;x&#7;A chart\"></p>";
+        let rendered = render(html, 60).unwrap_or_default();
+        assert_eq!(
+            rendered.lines.iter().map(Line::text).collect::<Vec<_>>(),
+            [
+                "Hello Robin\u{fffd}.",
+                "",
+                "the agenda[1]",
+                "",
+                "one",
+                "two",
+                "",
+                "[A chart]",
+                "",
+                "[1] https://example.com/a",
+            ]
+        );
+        assert_eq!(rendered.links, ["https://example.com/a"]);
+        let text = to_text(html).unwrap_or_default();
+        assert!(!text.contains(|c: char| clean::is_control(c) && c != '\n'));
+
+        // Whatever the parser makes of a reference, no control character
+        // comes out, in text or in a link.
+        let every: String = (0u32..=0x9f)
+            .map(|code| {
+                format!("<a href=\"https://example.com/&#{code};\">a&#{code};b</a> &#x{code:x}; ")
+            })
+            .collect();
+        let rendered = render(&every, 60).unwrap_or_default();
+        assert!(!rendered.links.is_empty());
+        for text in rendered
+            .lines
+            .iter()
+            .flat_map(|line| &line.spans)
+            .map(|span| &span.text)
+            .chain(&rendered.links)
+        {
+            assert!(!text.contains(clean::is_control), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn quoted_blocks_know_their_depth() {
+        let html = "<p>Sounds good.</p><blockquote>Can we <b>move</b> it?\
+                    <blockquote>To Friday.</blockquote></blockquote>\
+                    <p>&gt; typed by hand</p><pre>&gt; ls</pre>";
+        let lines = render(html, 60).unwrap_or_default().lines;
+        let depths: Vec<(String, u8)> = lines
+            .iter()
+            .filter(|line| !line.is_blank())
+            .map(|line| {
+                let depth = line.spans[0].style.quote;
+                assert!(line.spans.iter().all(|span| span.style.quote == depth));
+                (line.text(), depth)
+            })
+            .collect();
+        assert_eq!(
+            depths,
+            [
+                ("Sounds good.".to_owned(), 0),
+                ("> Can we move it?".to_owned(), 1),
+                // The gap between the two is part of the quote.
+                (">".to_owned(), 1),
+                ("> > To Friday.".to_owned(), 2),
+                ("> typed by hand".to_owned(), 1),
+                // A prompt in a block of code is not a quote.
+                ("> ls".to_owned(), 0),
+            ]
+        );
+    }
+
+    /// The warnings a document draws, each as one string however many rows
+    /// it took.
+    fn warnings(html: &str, width: usize) -> Vec<String> {
+        let rendered = render(html, width).unwrap_or_default();
+        let mut found: Vec<String> = Vec::new();
+        let mut inside = false;
+        for line in &rendered.lines {
+            let text = line.text();
+            let loud = line.spans.len() == 1 && line.spans[0].style == BOLD;
+            if loud && text.starts_with("! [") {
+                found.push(text.clone());
+                inside = true;
+            } else if loud && inside && text.starts_with("  ") {
+                if let Some(last) = found.last_mut() {
+                    last.push(' ');
+                    last.push_str(text.trim_start());
+                }
+            } else {
+                inside = false;
+                continue;
+            }
+            // It opens what the link opens, and fits the pane.
+            assert!(
+                line.spans[0]
+                    .link
+                    .is_some_and(|at| at < rendered.links.len())
+            );
+            assert!(text.chars().count() <= width.max(MIN_WIDTH), "{text:?}");
+        }
+        found
+    }
+
+    #[test]
+    fn a_link_that_names_another_place_says_where_it_goes() {
+        let html = "<p>Your account is locked. Sign in at \
+                    <a href=\"https://evil.example/login\">www.mybank.example</a> to unlock it.</p>";
+        let rendered = render(html, 80).unwrap_or_default();
+        assert_eq!(
+            rendered.lines.iter().map(Line::text).collect::<Vec<_>>(),
+            [
+                "Your account is locked. Sign in at www.mybank.example[1] to unlock it.",
+                "! [1] goes to evil.example, not www.mybank.example",
+                "",
+                "[1] https://evil.example/login",
+            ]
+        );
+        // Text, so it is there without colour; bold, and it opens what the
+        // link opens.
+        assert_eq!(
+            styled(&rendered.lines[1]),
+            [("! [1] goes to evil.example, not www.mybank.example", BOLD)]
+        );
+        assert_eq!(rendered.lines[1].spans[0].link, Some(0));
+    }
+
+    #[test]
+    fn each_kind_of_disguise_is_warned_about() {
+        for (text, href, warning) in [
+            (
+                "https://mybank.example/login",
+                "http://203.0.113.9/login",
+                "! [1] goes to 203.0.113.9, not mybank.example",
+            ),
+            (
+                "<b>mybank</b>.example",
+                "https://mybank.example.evil.example/",
+                "! [1] goes to mybank.example.evil.example, not mybank.example",
+            ),
+            (
+                "myb&#x430;nk.example",
+                "https://mybank.example/",
+                "! [1] goes to mybank.example, not myb\u{430}nk.example",
+            ),
+            (
+                "www.my&#8203;bank&NoBreak;.example",
+                "https://evil.example/",
+                "! [1] goes to evil.example, not www.mybank.example",
+            ),
+            (
+                "https://mybank.example@evil.example/",
+                "https://mybank.example@evil.example/",
+                "! [1] goes to evil.example",
+            ),
+            (
+                "ana@example.com",
+                "mailto:eve@example.com",
+                "! [1] goes to eve@example.com, not ana@example.com",
+            ),
+            (
+                "www.mybank.example",
+                "file:///Applications/Calculator.app",
+                "! [1] goes to file:///Applications/Calculator.app, not www.mybank.example",
+            ),
+        ] {
+            let html = format!("<p>Sign in: <a href=\"{href}\">{text}</a> now.</p>");
+            assert_eq!(warnings(&html, 100), [warning], "{html}");
+        }
+    }
+
+    #[test]
+    fn honest_links_are_not_warned_about() {
+        for (text, href) in [
+            ("click here", "https://evil.example/"),
+            ("Sign in to MyBank", "https://evil.example/"),
+            ("www.example.com", "https://www.example.com/sale?id=1"),
+            ("example.com", "https://www.example.com/"),
+            ("example.com", "https://mail.example.com/"),
+            ("https://example.com/agenda", "https://example.com/agenda"),
+            ("ana@example.com", "mailto:ana@example.com"),
+            ("the report.pdf", "https://example.com/files/report.pdf"),
+        ] {
+            let html = format!("<p>See <a href=\"{href}\">{text}</a> today.</p>");
+            assert!(warnings(&html, 100).is_empty(), "{html}");
+        }
+    }
+
+    #[test]
+    fn a_disguise_is_seen_however_the_link_is_laid_out() {
+        // Wrapped over several rows, in a quote, in a table, twice over,
+        // and split across two links to the same place.
+        let wrapped = "<p>Please confirm your details by signing in to your account at \
+                       <a href=\"https://evil.example/\">https://www.mybank.example/accounts/confirm/details</a></p>";
+        for width in [20, 30, 50, 80] {
+            assert_eq!(
+                warnings(wrapped, width),
+                ["! [1] goes to evil.example, not www.mybank.example"],
+                "at {width}"
+            );
+        }
+        let quoted =
+            "<blockquote><a href=\"https://evil.example/\">mybank.example</a></blockquote>";
+        assert_eq!(
+            warnings(quoted, 60),
+            ["! [1] goes to evil.example, not mybank.example"]
+        );
+        let table = "<table><tr><td>Bank</td><td><a href=\"https://evil.example/\">mybank.example</a></td></tr></table>";
+        assert_eq!(warnings(table, 60).len(), 1);
+        let twice = "<p><a href=\"https://evil.example/\">mybank.example</a> and \
+                     <a href=\"https://evil.example/\">click here</a> and \
+                     <a href=\"https://evil.example/\">mybank.example</a></p>";
+        assert_eq!(warnings(twice, 100).len(), 2);
+        let split = "<p><a href=\"https://evil.example/\">www.mybank</a>\
+                     <a href=\"https://evil.example/\">.example</a></p>";
+        assert!(
+            warnings(split, 100)
+                .iter()
+                .any(|warning| warning == "! [1] goes to evil.example, not www.mybank.example"),
+            "{:?}",
+            warnings(split, 100)
+        );
+        // Split over three, with words either side.
+        let pieces = "<p><a href=\"https://evil.example/\">Sign in at www.</a>\
+                      <a href=\"https://evil.example/\">mybank</a>\
+                      <a href=\"https://evil.example/\">.example today</a></p>";
+        assert!(
+            warnings(pieces, 100)
+                .iter()
+                .any(|warning| warning == "! [1] goes to evil.example, not www.mybank.example"),
+            "{:?}",
+            warnings(pieces, 100)
+        );
+        // A marker of the message's own inside the text changes nothing.
+        let forged = "<p><a href=\"https://evil.example/\">www.mybank&#x2060;[1].example</a></p>";
+        assert!(!warnings(forged, 100).is_empty());
+    }
+
+    #[test]
+    fn a_page_of_links_to_one_place_is_read_once_through() {
+        // Each link's text is judged with what ran into it from the link
+        // before. That must not add up.
+        let html = "<a href=\"https://example.com/\">example.com/</a>".repeat(20_000);
+        let started = std::time::Instant::now();
+        let rendered = render(&html, 80).unwrap_or_default();
+        assert!(started.elapsed().as_secs() < 30);
+        assert_eq!(rendered.links, ["https://example.com/"]);
     }
 
     #[test]

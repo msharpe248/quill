@@ -1,0 +1,22 @@
+From: Riverside Library <holds@example.org>
+To: Robin Vale <robin@example.org>
+Subject: Your hold is ready
+Date: Sat, 14 Nov 2026 10:30:00 +0000
+Message-ID: <hold.1@example.org>
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Your hold is ready</title>
+<style>body { font-family: sans-serif } .small { color: #666; font-size: 12px }</style></head>
+<body>
+<h1>Your hold is ready</h1>
+<p>Hello Robin,</p>
+<p>The book you asked for, <em>The Sea, the Sea</em>, is waiting at the <b>Riverside</b> branch. We keep it for seven days.</p>
+<ul><li>Pick up by: 21 November</li><li>Desk hours: 9 to 6</li></ul>
+<p>You can <a href="https://example.org/holds/1042">manage your holds</a> or <a href="mailto:holds@example.org">write to us</a>.</p>
+<p class="small">Riverside Library · 1 River Street</p>
+</body>
+</html>

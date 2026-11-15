@@ -1,0 +1,50 @@
+From: Priya Nair <priya.nair@example.com>
+To: Robin Vale <robin@example.org>
+Subject: Fwd: Fwd: Re: Fwd: the contract
+Date: Sat, 14 Nov 2026 10:03:00 +0530
+Message-ID: <nested.1@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="level-1"
+
+--level-1
+Content-Type: multipart/related; boundary="level-2"
+
+--level-2
+Content-Type: multipart/alternative; boundary="level-3"
+
+--level-3
+Content-Type: text/plain; charset=utf-8
+
+The text at the bottom of five levels.
+--level-3
+Content-Type: multipart/related; boundary="level-4"
+
+--level-4
+Content-Type: multipart/mixed; boundary="level-5"
+
+--level-5
+Content-Type: text/html; charset=utf-8
+
+<p>The <b>HTML</b> at the bottom of five levels. <img src="cid:deep@example.com" alt="Deep"></p>
+--level-5
+Content-Type: text/plain; name="note.txt"
+Content-Disposition: attachment; filename="note.txt"
+
+A file five levels down.
+--level-5--
+--level-4
+Content-Type: image/png
+Content-ID: <deep@example.com>
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==
+--level-4--
+--level-3--
+--level-2--
+--level-1
+Content-Type: application/pdf; name="contract.pdf"
+Content-Disposition: attachment; filename="contract.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQK
+--level-1--

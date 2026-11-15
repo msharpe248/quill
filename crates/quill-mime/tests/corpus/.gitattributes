@@ -1,0 +1,2 @@
+# Line endings and stray bytes are what these messages are for.
+*.eml -text

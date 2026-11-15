@@ -1,0 +1,11 @@
+From: Sam Lee <sam.lee@example.com>
+To: Robin Vale <robin@example.org>
+Subject: =?x-klingon-9?Q?nuqneH_=E9=F1?= what charset is this
+Date: Sat, 14 Nov 2026 09:32:00 +0000
+Message-ID: <charset.unknown@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=x-klingon-9
+Content-Transfer-Encoding: 8bit
+
+The label on this text names no charset anyone knows.
+Bytes above 127: ιρό€ÿ and the ASCII around them should survive.

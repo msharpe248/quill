@@ -1,0 +1,12 @@
+From: Sam Lee <sam.lee@example.com>
+To: Robin Vale <robin@example.org>
+Subject: =?UTF-16?B?//5TAGkAeAB0AGUAZQBuACAAYgBpAHQAcwAgABUm?=
+Date: Sat, 14 Nov 2026 09:31:00 +0000
+Message-ID: <charset.utf-16@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-16
+Content-Transfer-Encoding: base64
+
+//5TAGUAbgB0ACAAZgByAG8AbQAgAGEAIABwAHIAbwBnAHIAYQBtACAAdABoAGEAdAAgAHcAcgBp
+AHQAZQBzACAAVQBUAEYALQAxADYALgAKAFQAbwBtAOEAcwAsACAASJZZlyAAYQBuAGQAIAA82Inf
+IABhAGwAbAAgAGYAaQB0AC4ACgA=

@@ -2,18 +2,27 @@
 //! whichever backend the bytes came from.
 //!
 //! Nothing here trusts its input. A message is whatever a stranger chose to
-//! send: parsing never panics, and the text it returns is still untrusted
-//! (the UI strips control characters before drawing it).
+//! send: parsing never panics, and every piece of text it returns has had
+//! its control characters and escape sequences taken out ([`clean`]), so
+//! that drawing it cannot do anything to the terminal. [`html`] and
+//! [`plain`] lay a body out for the reader, and [`sanitize`] makes the HTML
+//! safe for a web view.
 //!
 //! Writing mail is here too: [`compose`] turns what the user wrote into a
 //! complete message, [`reply`] starts a reply or a forward from a message
 //! that was read, and [`markdown`] makes the HTML alternative.
 
+pub mod clean;
 pub mod compose;
+mod disguise;
+mod guard;
 pub mod html;
 pub mod links;
 pub mod markdown;
+pub mod plain;
 pub mod reply;
+pub mod sanitize;
+mod width;
 
 pub use compose::{
     BodyFormat, Outgoing, OutgoingAttachment, Warning, build, envelope, new_message_id, warnings,
@@ -89,28 +98,55 @@ pub fn attachment_bytes(raw: &[u8], part: u32) -> Option<Vec<u8>> {
 /// `content_id` is the address without the `cid:`, with or without angle
 /// brackets.
 pub fn part_by_content_id(raw: &[u8], content_id: &str) -> Option<(String, Vec<u8>)> {
-    let wanted = content_id.trim().trim_matches(|c| c == '<' || c == '>');
-    if wanted.is_empty() {
-        return None;
-    }
+    // Ids are compared as `parse` reports them, so one that had control
+    // characters taken out of it still finds its part.
+    let wanted = content_id_of(content_id)?;
     let message = MessageParser::default().parse(raw)?;
-    let part = message.parts().find(|part| {
-        part.content_id()
-            .is_some_and(|id| id.trim().trim_matches(|c| c == '<' || c == '>') == wanted)
-    })?;
+    let part = message
+        .parts()
+        .find(|part| part.content_id().and_then(content_id_of).as_ref() == Some(&wanted))?;
     Some((media_type(&part), part.decoded().into_owned()))
+}
+
+/// A `Content-ID` as Quill reports it: cleaned, and without its angle
+/// brackets. `None` for one with nothing in it.
+fn content_id_of(id: &str) -> Option<String> {
+    let id = clean::header(id);
+    let id = id.trim().trim_matches(|c| c == '<' || c == '>').trim();
+    (!id.is_empty()).then(|| id.to_owned())
 }
 
 /// A part's media type in lower case, such as `image/png`. A part that
 /// does not say is a file of unknown kind.
 fn media_type(part: &mail_parser::MessagePart<'_>) -> String {
-    part.content_type().map_or_else(
+    let kind = part.content_type().map_or_else(
         || "application/octet-stream".to_owned(),
         |kind| match kind.subtype() {
             Some(subtype) => format!("{}/{subtype}", kind.ctype()).to_ascii_lowercase(),
             None => kind.ctype().to_ascii_lowercase(),
         },
-    )
+    );
+    match clean::header(&kind) {
+        std::borrow::Cow::Borrowed(_) => kind,
+        std::borrow::Cow::Owned(cleaned) => cleaned,
+    }
+}
+
+/// Whether `part` is a multipart that was not taken apart: it calls itself
+/// one, and the parser hands it over as a single piece.
+fn is_unsplit_multipart(part: &mail_parser::MessagePart<'_>) -> bool {
+    !part.is_multipart()
+        && part
+            .content_type()
+            .is_some_and(|kind| kind.ctype().eq_ignore_ascii_case("multipart"))
+}
+
+/// A header's text as Quill shows it: cleaned, and without the space
+/// around it. `None` when nothing is left.
+fn header_text(text: &str) -> Option<String> {
+    let text = clean::header(text);
+    let text = text.trim();
+    (!text.is_empty()).then(|| text.to_owned())
 }
 
 /// Reads a raw message. `received` (seconds since the Unix epoch) stands in
@@ -126,14 +162,9 @@ pub fn parse(raw: &[u8], received: i64) -> Option<Parsed> {
             // Groups are flattened: "Friends: a@x, b@x;" is two addresses.
             list.mailboxes()
                 .filter_map(|mailbox| {
-                    let email = mailbox.address()?.trim();
-                    (!email.is_empty()).then(|| Address {
-                        name: mailbox
-                            .name()
-                            .map(str::trim)
-                            .filter(|name| !name.is_empty())
-                            .map(str::to_owned),
-                        email: email.to_owned(),
+                    Some(Address {
+                        name: mailbox.name().and_then(header_text),
+                        email: header_text(mailbox.address()?)?,
                     })
                 })
                 .collect()
@@ -144,10 +175,9 @@ pub fn parse(raw: &[u8], received: i64) -> Option<Parsed> {
     let headers = Headers {
         message_id: message
             .message_id()
-            .map(str::trim)
-            .filter(|id| !id.is_empty())
+            .and_then(header_text)
             .map(|id| format!("<{id}>")),
-        subject: message.subject().unwrap_or_default().trim().to_owned(),
+        subject: message.subject().and_then(header_text).unwrap_or_default(),
         from: addresses(message.from()),
         to: addresses(message.to()),
         cc: addresses(message.cc()),
@@ -163,8 +193,7 @@ pub fn parse(raw: &[u8], received: i64) -> Option<Parsed> {
     let identifiers = |list: Option<mail_parser::TextList<'_>>| -> Vec<String> {
         list.map(|list| {
             list.iter()
-                .map(str::trim)
-                .filter(|id| !id.is_empty())
+                .filter_map(header_text)
                 .map(|id| format!("<{id}>"))
                 .collect()
         })
@@ -188,12 +217,32 @@ pub fn parse(raw: &[u8], received: i64) -> Option<Parsed> {
             if !joined.is_empty() && !joined.ends_with('\n') {
                 joined.push('\n');
             }
-            joined.push_str(&text.replace("\r\n", "\n"));
+            // Cleaned here, once, for everything downstream: the body
+            // that is searched and quoted, and the HTML that is laid out
+            // and sanitized.
+            joined.push_str(&match html {
+                true => clean::markup(&text),
+                false => clean::body(&text),
+            });
         }
         joined
     };
-    let plain = join(&mut message.text_body(), false);
+    let mut plain = join(&mut message.text_body(), false);
     let markup = join(&mut message.html_body(), true);
+    // A multipart whose parts could not be told apart (no boundary was
+    // given, or it is nested deeper than the parser goes) comes back as one
+    // lump. It is shown as the text it is; as a file it would be a file
+    // called nothing that no program opens.
+    for part in message.attachments().filter(is_unsplit_multipart) {
+        let lump = part.decoded();
+        let text = String::from_utf8_lossy(&lump);
+        if !text.trim().is_empty() {
+            if !plain.is_empty() && !plain.ends_with('\n') {
+                plain.push('\n');
+            }
+            plain.push_str(&clean::body(&text));
+        }
+    }
     let Chosen {
         body,
         html,
@@ -203,19 +252,25 @@ pub fn parse(raw: &[u8], received: i64) -> Option<Parsed> {
 
     let attachments = message
         .attachments()
+        .filter(|part| !is_unsplit_multipart(part))
         .map(|part| Attachment {
             part: part.id(),
-            name: part
-                .attachment_name()
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-                .map(str::to_owned),
-            content_type: media_type(&part),
+            // A file name is where a direction override does its work:
+            // `header_text` takes those out with the control characters.
+            name: part.attachment_name().and_then(header_text),
+            content_type: match part.content_type() {
+                // Inside a digest, a part that does not say what it is is
+                // a message.
+                None if part
+                    .parent()
+                    .is_some_and(|parent| parent.is_content_type("multipart", "digest")) =>
+                {
+                    "message/rfc822".to_owned()
+                }
+                _ => media_type(&part),
+            },
             size: part.decoded_len(),
-            content_id: part
-                .content_id()
-                .map(|id| id.trim().trim_matches(|c| c == '<' || c == '>').to_owned())
-                .filter(|id| !id.is_empty()),
+            content_id: part.content_id().and_then(content_id_of),
             inline: part.is_inline(),
         })
         .collect();
@@ -627,6 +682,137 @@ mod tests {
         // Parsing does not interpret them and does not lose the text around them.
         assert!(parsed.headers.subject.contains("Free money"));
         assert!(parsed.body.contains("here"));
+    }
+
+    #[test]
+    fn escape_sequences_are_taken_out_of_everything_that_is_drawn() {
+        // A window title, a clipboard write, a hyperlink, clear screen, and
+        // the eight-bit forms of the same, in every place text comes from.
+        let raw = "From: \"\u{1b}]8;;https://evil.example/\u{7}Your \u{1b}[1mBank\u{1b}]8;;\u{7}\" <ana.ruiz@example.com>\r\n\
+                   To: =?UTF-8?Q?=1B=5D0=3Bowned=07Robin_=1B=5B2JVale?= <robin\u{1b}[0m@example.com>\r\n\
+                   Cc: \"Sam\u{9b}31m \u{202e}eeL\" <sam.lee@example.com>\r\n\
+                   Reply-To: \"Priya\u{7}\u{8}\u{7f} Nair\" <priya.nair@example.com>\r\n\
+                   Subject: \u{1b}]0;owned\u{7}\u{1b}]52;c;cm0gLXJmIH4=\u{7}Invoice\u{1b}[2J\u{1b}[H overdue\u{9d}0;x\u{9c}\r\n\
+                   Message-ID: <id\u{1b}[31m@example.com>\r\n\
+                   In-Reply-To: <earlier\u{1b}]0;x\u{7}@example.com>\r\n\
+                   References: <one\u{1b}c@example.com> <two\u{0}@example.com>\r\n\
+                   Content-Type: multipart/mixed; boundary=\"b\"\r\n\
+                   \r\n\
+                   --b\r\n\
+                   Content-Type: text/plain; charset=utf-8\r\n\
+                   \r\n\
+                   \u{1b}]0;owned\u{7}Dear Robin,\u{1b}[2J\r\n\
+                   \u{1b}]52;c;cm0gLXJmIH4=\u{7}Pay Ana 100\rPay Eve 900\r\n\
+                   \tTabs and\u{b} \u{9b}5mblinks\u{85}.\r\n\
+                   --b\r\n\
+                   Content-Type: text/html; charset=utf-8\r\n\
+                   \r\n\
+                   <p>\u{1b}]0;owned\u{7}Dear &#27;[2JRobin,&#x1b;]52;c;cm0gLXJmIH4=&#7;</p>\r\n\
+                   --b\r\n\
+                   Content-Type: application/pdf; name=\"in\u{1b}[2Jvoice\u{202e}fdp.exe\"\r\n\
+                   Content-Disposition: attachment; filename=\"in\u{1b}[2Jvoice\u{202e}fdp.exe\"\r\n\
+                   Content-ID: <file\u{1b}]0;x\u{7}@example.com>\r\n\
+                   \r\n\
+                   \u{1b}[2J kept as it is\r\n\
+                   --b--\r\n";
+        let parsed = parse(raw.as_bytes(), RECEIVED).expect("a message");
+        assert_eq!(parsed.headers.subject, "Invoice overdue");
+        assert_eq!(
+            parsed.headers.from,
+            [Address::new("Your Bank", "ana.ruiz@example.com")]
+        );
+        assert_eq!(
+            parsed.headers.to,
+            [Address::new("Robin Vale", "robin@example.com")]
+        );
+        // The override that would have drawn "eeL" as "Lee" is gone too.
+        assert_eq!(
+            parsed.headers.cc,
+            [Address::new("Sam eeL", "sam.lee@example.com")]
+        );
+        assert_eq!(
+            parsed.reply_to,
+            [Address::new("Priya Nair", "priya.nair@example.com")]
+        );
+        assert_eq!(
+            parsed.headers.message_id.as_deref(),
+            Some("<id@example.com>")
+        );
+        assert_eq!(parsed.in_reply_to.as_deref(), Some("<earlier@example.com>"));
+        assert_eq!(
+            parsed.references,
+            ["<one@example.com>", "<two@example.com>"]
+        );
+        assert_eq!(
+            parsed.body,
+            "Dear Robin,\nPay Ana 100\nPay Eve 900\n\tTabs and blinks."
+        );
+        assert_eq!(
+            parsed.html.as_deref().map(str::trim_end),
+            Some("<p>Dear Robin,</p>")
+        );
+
+        let file = &parsed.attachments[0];
+        assert_eq!(file.name.as_deref(), Some("invoicefdp.exe"));
+        assert_eq!(file.content_id.as_deref(), Some("file@example.com"));
+        // The id as reported finds the part, and the file's own bytes are
+        // nobody's to clean.
+        assert!(part_by_content_id(raw.as_bytes(), "file@example.com").is_some());
+        assert_eq!(
+            attachment_bytes(raw.as_bytes(), file.part).as_deref(),
+            Some(&b"\x1b[2J kept as it is"[..])
+        );
+    }
+
+    #[test]
+    fn a_multipart_that_cannot_be_taken_apart_is_shown_as_text() {
+        // No boundary was named, so there is no telling the parts apart.
+        let parsed = read(
+            "Subject: x\n\
+             Content-Type: multipart/mixed\n\
+             \n\
+             --guess\n\
+             Content-Type: text/plain\n\
+             \n\
+             What the sender wrote.\n\
+             --guess--\n",
+        );
+        assert!(
+            parsed.body.contains("What the sender wrote."),
+            "{:?}",
+            parsed.body
+        );
+        assert!(parsed.has_plain && parsed.attachments.is_empty());
+        // One that promised parts and has nothing is not a file either.
+        let empty = read("Subject: x\nContent-Type: multipart/mixed; boundary=\"b\"\n");
+        assert!(empty.body.is_empty() && empty.attachments.is_empty());
+    }
+
+    #[test]
+    fn a_part_of_a_digest_that_does_not_say_what_it_is_is_a_message() {
+        let parsed = read(
+            "Subject: Digest\n\
+             Content-Type: multipart/digest; boundary=\"d\"\n\
+             \n\
+             --d\n\
+             \n\
+             From: Ana Ruiz <ana.ruiz@example.com>\n\
+             Subject: First\n\
+             \n\
+             One.\n\
+             --d\n\
+             Content-Type: text/plain\n\
+             Content-Disposition: attachment\n\
+             \n\
+             Says what it is.\n\
+             --d--\n",
+        );
+        let kinds: Vec<&str> = parsed
+            .attachments
+            .iter()
+            .map(|file| file.content_type.as_str())
+            .collect();
+        assert_eq!(kinds, ["message/rfc822", "text/plain"]);
     }
 
     #[test]

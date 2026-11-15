@@ -1,0 +1,24 @@
+From: Sam Lee <sam.lee@example.com>
+To: Robin Vale <robin@example.org>
+Subject: About boundaries
+Date: Sat, 14 Nov 2026 10:11:00 +0000
+Message-ID: <frontier.1@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="frontier"
+
+--frontier
+Content-Type: text/plain; charset=utf-8
+
+A boundary only counts at the start of a line. This --frontier is in the
+middle of one, and so is this: x--frontier--
+ --frontier (after a space)
+--frontierX is a longer word that starts the same way.
+--frontie is a shorter one.
+-- frontier has a space in it.
+The text carries on after all of them.
+--frontier
+Content-Type: text/plain; name="notes.txt"
+Content-Disposition: attachment; filename="notes.txt"
+
+--frontier-- would end the message if it were not... it is. Hm.
+--frontier--

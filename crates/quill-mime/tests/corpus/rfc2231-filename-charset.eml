@@ -1,0 +1,39 @@
+From: =?ISO-8859-1?Q?Tom=E1s_Ortega?= <tomas.ortega@example.com>
+To: Robin Vale <robin@example.org>
+Subject: =?ISO-8859-1?Q?Presentaci=F3n?=
+Date: Sat, 14 Nov 2026 09:51:00 +0100
+Message-ID: <rfc2231.2@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="=_charset"
+
+--=_charset
+Content-Type: text/plain; charset=utf-8
+
+Three files, each named a different way.
+--=_charset
+Content-Type: application/vnd.ms-powerpoint
+Content-Disposition: attachment;
+ filename*=iso-8859-1'es'Presentaci%F3n%20de%20oto%F1o.ppt
+Content-Transfer-Encoding: base64
+
+0M8R4KGxGuE=
+--=_charset
+Content-Type: image/png; name="=?UTF-8?B?4piVIGZvdG8ucG5n?="
+Content-Disposition: attachment; filename="=?UTF-8?B?4piVIGZvdG8ucG5n?="
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==
+--=_charset
+Content-Type: text/plain; name="both.txt"
+Content-Disposition: attachment; filename="fallback.txt";
+ filename*=UTF-8''%E2%9C%93%20preferred.txt
+
+When both forms are given, the encoded one is the name.
+--=_charset
+Content-Type: application/octet-stream
+Content-Disposition: attachment;
+ filename*=no-such-charset''%FF%FE%20odd.bin; filename*=UTF-8''%E0%A4%A
+Content-Transfer-Encoding: base64
+
+AAEC
+--=_charset--

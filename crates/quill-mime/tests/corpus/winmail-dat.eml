@@ -1,0 +1,22 @@
+From: Omar Haddad <omar.haddad@example.com>
+To: Robin Vale <robin@example.org>
+Subject: Minutes (sent from a program that wraps everything)
+Date: Sat, 14 Nov 2026 10:37:00 +0200
+Message-ID: <tnef.1@example.com>
+X-MS-TNEF-Correlator: <tnef.1@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="tnef-1"
+
+--tnef-1
+Content-Type: text/plain; charset=utf-8
+
+The minutes are attached.
+--tnef-1
+Content-Type: application/ms-tnef; name="winmail.dat"
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="winmail.dat"
+
+eJ8+IgEAAQaQCAAEAAAAAAABAAEAAQeQBgAIAAAA5AQAAAAAAADoAG1pbnV0ZXMuZG9jAG5vdCBh
+IHJlYWwgYXR0YWNobWVudCB0YWJsZW1pbnV0ZXMuZG9jAG5vdCBhIHJlYWwgYXR0YWNobWVudCB0
+YWJsZW1pbnV0ZXMuZG9jAG5vdCBhIHJlYWwgYXR0YWNobWVudCB0YWJsZQ==
+--tnef-1--

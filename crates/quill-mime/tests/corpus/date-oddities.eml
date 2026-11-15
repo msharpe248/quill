@@ -1,0 +1,11 @@
+From: Sam Lee <sam.lee@example.com>
+To: Robin Vale <robin@example.org>
+Subject: Date oddities
+Date: Sat, 31 Feb 2026 25:61:61 +9999 (not a real moment)
+Resent-Date: 14 Nov 26 10:27 GMT
+Received: by mx.example.org; Thu, 01 Jan 1970 00:00:00 -0000
+Received: by mx.example.org; Fri, 31 Dec 9999 23:59:59 +1400
+Received: by mx.example.org; 99999999999999999999 Foo 99999999999999999999
+Message-ID: <date.1@example.com>
+
+The date above names a day and a time that do not exist.

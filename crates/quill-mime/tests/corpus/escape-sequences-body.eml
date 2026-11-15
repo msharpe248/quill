@@ -1,0 +1,35 @@
+From: Sam Lee <sam.lee@example.com>
+To: Robin Vale <robin@example.org>
+Subject: Escapes in the body
+Date: Sat, 14 Nov 2026 10:43:00 +0000
+Message-ID: <esc.body@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="esc-b"
+
+--esc-b
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+]0;Terminal ownedDear Robin,[2J[3J[H
+]52;c;cm0gLXJmIH4=Nothing was copied to your clipboard.
+]8;;https://evil.example/\https://www.mybank.example/]8;;\ is a real link.
+Pay Ana 100Pay Eve 900
+[1;31mRed[0m, [?1049halternate screen, c reset, P1$r q\ device string.
+Eight-bit: 2J0;titlex done. Backspaces: secretpublic. Bell DEL FF VT SO.
+> [31mquoted[0m line with https://example.com/[0m in it
+-- 
+[5mBlinking signature[0m
+--esc-b
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: 8bit
+
+<html><head><title>]0;owned</title></head><body>
+<p>]0;Terminal ownedDear Robin,&#27;[2J&#x1b;[3J&#x1B;[H</p>
+<p>&#27;]52;c;cm0gLXJmIH4=&#7;Nothing was copied to your clipboard.</p>
+<p><a href="https://example.com/&#27;[31m" title="&#27;]0;owned&#7;tip">&#27;]8;;https://evil.example/&#27;\A link&#27;]8;;&#27;\</a></p>
+<p>Pay Ana 100&#13;Pay Eve 900</p>
+<pre>&#27;[1;31mRed&#27;[0m	&#155;2J &#x9d;0;title&#x9c; &#8;&#8;&#127;&#12;&#11;&#14;&#0;</pre>
+<img src="x.png" alt="&#27;]0;owned&#7;A chart">
+<!-- [2J --><script>[2J</script><style>p::after { content: '[2J' }</style>
+</body></html>
+--esc-b--

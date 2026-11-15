@@ -1,0 +1,12 @@
+From: Tanaka Yuki <tanaka.yuki@example.com>
+To: Robin Vale <robin@example.org>
+Subject: =?UTF-8?B?5pel5pys6A==?=
+ =?UTF-8?B?qp7jga7ku7blkI0=?=
+Comments: =?UTF-8?Q?caf=C3?= =?UTF-8?Q?=A9?=
+Date: Sat, 14 Nov 2026 09:41:00 +0900
+Message-ID: <ew.2@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+The subject's bytes were cut between two encoded words in the middle of
+a character, which the standard forbids and programs do anyway.

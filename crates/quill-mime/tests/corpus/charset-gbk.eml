@@ -1,0 +1,10 @@
+From: Chen Jing <chen.jing@example.com>
+To: Robin Vale <robin@example.org>
+Subject: =?GBK?B?lf7XaLxv5JvT6+lG?=
+Date: Sat, 14 Nov 2026 09:30:00 +0000
+Message-ID: <charset.gbk@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=GBK
+Content-Transfer-Encoding: 8bit
+
+这封邮件用 GBK 编码，含有 GB2312 没有的字：镕、堃、喆。

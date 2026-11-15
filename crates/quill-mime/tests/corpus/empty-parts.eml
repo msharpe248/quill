@@ -1,0 +1,36 @@
+From: Sam Lee <sam.lee@example.com>
+To: Robin Vale <robin@example.org>
+Subject: Empty parts
+Date: Sat, 14 Nov 2026 10:14:00 +0000
+Message-ID: <empty.1@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="e"
+
+--e
+--e
+
+--e
+Content-Type: text/plain
+
+--e
+Content-Type: text/html
+
+--e
+Content-Type: application/octet-stream; name="empty.bin"
+Content-Disposition: attachment; filename="empty.bin"
+Content-Transfer-Encoding: base64
+
+--e
+Content-Type: multipart/alternative; boundary="inner-e"
+
+--inner-e--
+--e
+Content-Type: text/plain
+
+The only part with anything in it.
+--e
+Content-Type: image/png; name=""
+Content-Disposition: attachment; filename=""
+Content-ID: <>
+
+--e--

@@ -1,0 +1,25 @@
+From: TomÃ¡s Ortega <tomas.ortega@example.com>
+To: é™ˆé™ <chen.jing@example.com>, "RenÃ©e â˜•" <renee@example.org>
+Subject: Raw UTF-8 in a header: cafÃ©, æ—¥æœ¬èª, ğŸ‰
+X-Latin-1: café à la carte © ÿ
+Comments: €şÿ bytes that are no encoding at all
+Date: Sat, 14 Nov 2026 10:22:00 +0000
+Message-ID: <8bit.1@example.com>
+Content-Type: multipart/mixed; boundary="b8"
+
+--b8
+Content-Type: text/plain; charset=utf-8
+
+Headers are meant to be ASCII. These were not.
+--b8
+Content-Type: application/pdf; name="rÃ©sumÃ© de TomÃ¡s.pdf"
+Content-Disposition: attachment; filename="rÃ©sumÃ© de TomÃ¡s.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQK
+--b8
+Content-Type: text/plain; name="café.txt"
+Content-Disposition: attachment; filename="café.txt"
+
+Latin-1 in a file name.
+--b8--

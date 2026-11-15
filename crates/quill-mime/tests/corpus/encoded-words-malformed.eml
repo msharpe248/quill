@@ -1,0 +1,10 @@
+From: =?UTF-8?B?!!!not base64!!!?= <sam.lee@example.com>
+To: =?UTF-8?X?no-such-encoding?= <robin@example.org>, =?UTF-8?Q?unterminated <a@example.org>
+Cc: =??Q?no_charset?= <b@example.org>, =?UTF-8?Q??= <c@example.org>, =?UTF-8??= <d@example.org>
+Subject: =?UTF-8?Q?bad_=ZZ_hex_=4?= =?UTF-8?B??= =?UTF-8?Q?=?UTF-8?Q?nested?=?= =?=?= =? ?= =?UTF-8?Q?a b?= ?= =?utf-8?q?lower_case_works?=
+Date: Sat, 14 Nov 2026 09:42:00 +0000
+Message-ID: <ew.3@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=utf-8
+
+None of that should stop the message being read.

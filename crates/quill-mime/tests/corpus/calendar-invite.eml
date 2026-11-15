@@ -1,0 +1,64 @@
+From: Ana Ruiz <ana.ruiz@example.com>
+To: Robin Vale <robin@example.org>, Sam Lee <sam.lee@example.com>
+Subject: Invitation: Offsite: Q4 planning @ Thu 3 Dec 2026 09:30
+Date: Sat, 14 Nov 2026 10:08:00 +0000
+Message-ID: <invite.1@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="cal-outer"
+
+--cal-outer
+Content-Type: multipart/alternative; boundary="cal-inner"
+
+--cal-inner
+Content-Type: text/plain; charset=utf-8
+
+You are invited to: Offsite: Q4 planning
+When: Thursday 3 December 2026, 09:30 to 17:00 (Europe/Madrid)
+Where: Riverside room, Example Works
+--cal-inner
+Content-Type: text/html; charset=utf-8
+
+<p>You are invited to <b>Offsite: Q4 planning</b>.</p>
+<p>When: Thursday 3 December 2026, 09:30 to 17:00<br>Where: Riverside room</p>
+--cal-inner
+Content-Type: text/calendar; charset=utf-8; method=REQUEST
+
+BEGIN:VCALENDAR
+PRODID:-//Example Works//Calendar 1.0//EN
+VERSION:2.0
+METHOD:REQUEST
+BEGIN:VEVENT
+UID:offsite-2026@example.com
+DTSTAMP:20261114T100800Z
+DTSTART;TZID=Europe/Madrid:20261203T093000
+DTEND;TZID=Europe/Madrid:20261203T170000
+SUMMARY:Offsite: Q4 planning
+LOCATION:Riverside room\, Example Works
+ORGANIZER;CN=Ana Ruiz:mailto:ana.ruiz@example.com
+ATTENDEE;CN=Robin Vale;RSVP=TRUE;PARTSTAT=NEEDS-ACTION:mailto:robin@exampl
+ e.org
+ATTENDEE;CN=Sam Lee;RSVP=TRUE:mailto:sam.lee@example.com
+DESCRIPTION:Agenda at https://example.com/agenda\nBring a laptop.
+SEQUENCE:0
+STATUS:CONFIRMED
+END:VEVENT
+END:VCALENDAR
+--cal-inner--
+--cal-outer
+Content-Type: application/ics; name="invite.ics"
+Content-Disposition: attachment; filename="invite.ics"
+Content-Transfer-Encoding: base64
+
+QkVHSU46VkNBTEVOREFSDQpQUk9ESUQ6LS8vRXhhbXBsZSBXb3Jrcy8vQ2FsZW5kYXIgMS4wLy9F
+Tg0KVkVSU0lPTjoyLjANCk1FVEhPRDpSRVFVRVNUDQpCRUdJTjpWRVZFTlQNClVJRDpvZmZzaXRl
+LTIwMjZAZXhhbXBsZS5jb20NCkRUU1RBTVA6MjAyNjExMTRUMTAwODAwWg0KRFRTVEFSVDtUWklE
+PUV1cm9wZS9NYWRyaWQ6MjAyNjEyMDNUMDkzMDAwDQpEVEVORDtUWklEPUV1cm9wZS9NYWRyaWQ6
+MjAyNjEyMDNUMTcwMDAwDQpTVU1NQVJZOk9mZnNpdGU6IFE0IHBsYW5uaW5nDQpMT0NBVElPTjpS
+aXZlcnNpZGUgcm9vbVwsIEV4YW1wbGUgV29ya3MNCk9SR0FOSVpFUjtDTj1BbmEgUnVpejptYWls
+dG86YW5hLnJ1aXpAZXhhbXBsZS5jb20NCkFUVEVOREVFO0NOPVJvYmluIFZhbGU7UlNWUD1UUlVF
+O1BBUlRTVEFUPU5FRURTLUFDVElPTjptYWlsdG86cm9iaW5AZXhhbXBsDQogZS5vcmcNCkFUVEVO
+REVFO0NOPVNhbSBMZWU7UlNWUD1UUlVFOm1haWx0bzpzYW0ubGVlQGV4YW1wbGUuY29tDQpERVND
+UklQVElPTjpBZ2VuZGEgYXQgaHR0cHM6Ly9leGFtcGxlLmNvbS9hZ2VuZGFcbkJyaW5nIGEgbGFw
+dG9wLg0KU0VRVUVOQ0U6MA0KU1RBVFVTOkNPTkZJUk1FRA0KRU5EOlZFVkVOVA0KRU5EOlZDQUxF
+TkRBUg0K
+--cal-outer--

@@ -1,0 +1,19 @@
+From: MyBank Security <security@mybank.example>
+Reply-To: accounts@evil.example
+To: Robin Vale <robin@example.org>
+Subject: Your account has been limited
+Date: Sat, 14 Nov 2026 10:36:00 +0000
+Message-ID: <phish.1@evil.example>
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body>
+<p>Dear customer,</p>
+<p>We noticed unusual activity. Please confirm your details at
+<a href="https://evil.example/mybank/login">https://www.mybank.example/login</a> within 24 hours.</p>
+<p>You can also visit <a href="https://www.mybank.example.evil.example/">www.mybank.example</a>,
+write to <a href="mailto:accounts@evil.example">support@mybank.example</a>,
+or see <a href="https://myb&#x430;nk.example/">myb&#x430;nk.example</a>.</p>
+<p>Honest links are left alone: <a href="https://www.example.com/help">example.com/help</a>,
+<a href="https://example.org/">click here</a>.</p>
+</body></html>

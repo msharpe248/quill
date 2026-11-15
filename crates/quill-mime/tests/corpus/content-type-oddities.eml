@@ -1,0 +1,46 @@
+From: Sam Lee <sam.lee@example.com>
+To: Robin Vale <robin@example.org>
+Subject: Content types that are not
+Date: Sat, 14 Nov 2026 10:28:00 +0000
+Message-ID: <ct.1@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="ct"
+
+--ct
+Content-Type: text
+
+Just "text".
+--ct
+Content-Type: /
+
+A slash and nothing else.
+--ct
+Content-Type: text/plain; charset="utf-8; name=unterminated
+
+A quote that never closes.
+--ct
+Content-Type: TEXT/PLAIN; CHARSET=UTF-8; =; ;;; x; y=; =z; a="b"c; name*=; name*0*=; name*99999999999999999999=x
+
+Parameters of every wrong shape.
+--ct
+Content-Type: application/octet-stream;
+	name="tab folded.bin"
+Content-Transfer-Encoding: x-no-such-encoding
+Content-Disposition: attachment
+
+Encoded some way nobody knows.
+--ct
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: binary
+
+Binary, with a NUL-free body.
+--ct
+Content-Type: text/plain/extra; charset = utf-8 ; format = flowed
+Content-Transfer-Encoding:   QUOTED-PRINTABLE   (comment)
+
+Spaces =3D everywhere.
+--ct
+Content-Type: application/x-very-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-long-type
+
+A media type two kilobytes long.
+--ct--

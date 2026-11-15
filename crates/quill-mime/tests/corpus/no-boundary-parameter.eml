@@ -1,0 +1,17 @@
+From: Sam Lee <sam.lee@example.com>
+To: Robin Vale <robin@example.org>
+Subject: Multipart without a boundary
+Date: Sat, 14 Nov 2026 10:12:00 +0000
+Message-ID: <nob.1@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed
+
+--guess-me
+Content-Type: text/plain; charset=utf-8
+
+The header never said what separates the parts.
+--guess-me
+Content-Type: text/html
+
+<p>Second part.</p>
+--guess-me--

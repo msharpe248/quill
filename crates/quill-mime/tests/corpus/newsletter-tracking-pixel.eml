@@ -1,0 +1,47 @@
+From: Example Works News <news@example.com>
+To: Robin Vale <robin@example.org>
+Subject: =?UTF-8?Q?Black_Friday_starts_early_=F0=9F=8E=89?=
+Date: Sat, 14 Nov 2026 10:35:00 +0000
+Message-ID: <news.1@example.com>
+List-Unsubscribe: <https://example.com/unsubscribe?u=robin>, <mailto:unsubscribe@example.com>
+List-Unsubscribe-Post: List-Unsubscribe=One-Click
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="news-1"
+
+--news-1
+Content-Type: text/plain; charset=utf-8
+
+View this email in your browser: https://example.com/news/2026-11?u=robin
+--news-1
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns=3D"http://www.w3.org/1999/xhtml"><head>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3Dutf-8">
+<meta name=3D"viewport" content=3D"width=3Ddevice-width, initial-scale=3D1">
+<title>Black Friday starts early</title>
+<style type=3D"text/css">
+@media only screen and (max-width: 600px) { .column { width: 100% !important } }
+.button { background: #1a1a1a; color: #ffffff; padding: 12px 24px }
+</style></head>
+<body style=3D"margin:0;padding:0;background-color:#f4f4f4">
+<div style=3D"display:none;max-height:0;overflow:hidden">Up to 40% off, this week only.&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;</div>
+<table role=3D"presentation" width=3D"100%" cellpadding=3D"0" cellspacing=3D"0" border=3D"0"><tr><td align=3D"center">
+<table role=3D"presentation" width=3D"600" cellpadding=3D"0" cellspacing=3D"0" border=3D"0" background=3D"https://cdn.example.com/bg.png">
+<tr><td><a href=3D"https://click.example.com/t/abc123?u=3Drobin"><img src=3D"https://cdn.example.com/logo.png" alt=3D"Example Works" width=3D"160" height=3D"40" border=3D"0"></a></td></tr>
+<tr><td style=3D"padding:24px;background-image:url(https://cdn.example.com/hero.jpg)">
+<h1 style=3D"margin:0">Black Friday starts early.</h1>
+<p>Everything in the shop is reduced until Sunday. <a class=3D"button" href=3D"https://click.example.com/t/def456?u=3Drobin">Shop the sale</a></p>
+</td></tr>
+<tr><td><table role=3D"presentation" width=3D"100%"><tr>
+<td class=3D"column" width=3D"50%"><img src=3D"https://cdn.example.com/p1.jpg" alt=3D"Desk lamp" width=3D"280"><br>Desk lamp, 29.00</td>
+<td class=3D"column" width=3D"50%"><img src=3D"https://cdn.example.com/p2.jpg" srcset=3D"https://cdn.example.com/p2@2x.jpg 2x" alt=3D"Notebook" width=3D"280"><br>Notebook, 9.00</td>
+</tr></table></td></tr>
+<tr><td style=3D"font-size:12px;color:#888888">You are receiving this because you signed up at example.com.
+<a href=3D"https://example.com/unsubscribe?u=3Drobin">Unsubscribe</a> =C2=B7 <a href=3D"https://example.com/news/2026-11?u=3Drobin">View in browser</a></td></tr>
+</table></td></tr></table>
+<img src=3D"https://track.example.com/open.gif?m=3Dnews-1&u=3Drobin" width=3D"1" height=3D"1" alt=3D"" style=3D"display:none">
+<img src=3D"https://track.example.net/pixel?id=3D987" width=3D"1" height=3D"1">
+</body></html>
+--news-1--

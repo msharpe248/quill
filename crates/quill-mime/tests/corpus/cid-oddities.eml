@@ -1,0 +1,51 @@
+From: Sam Lee <sam.lee@example.com>
+To: Robin Vale <robin@example.org>
+Subject: Content ids that clash
+Date: Sat, 14 Nov 2026 10:29:00 +0000
+Message-ID: <cid.1@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/related; boundary="cid"
+
+--cid
+Content-Type: text/html; charset=utf-8
+
+<p>Seven pictures, and not one content id that is as it should be.</p>
+<p><img src="cid:same@example.com"> <img src="cid:"> <img src="cid:%"> <img src="cid:%zz%41"> <img src="cid:<same@example.com>">
+<img src="cid:../../etc/passwd"> <img src="cid:a b"> <img src="cid:no-brackets"> <img src="cid:UPPER@EXAMPLE.COM"></p>
+--cid
+Content-Type: image/png
+Content-ID: <same@example.com>
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==
+--cid
+Content-Type: image/gif
+Content-ID: <same@example.com>
+Content-Transfer-Encoding: base64
+
+R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7
+--cid
+Content-Type: image/png
+Content-ID: no-brackets
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==
+--cid
+Content-Type: image/png
+Content-ID: <../../etc/passwd>
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==
+--cid
+Content-Type: image/png
+Content-ID: <a b> <second@example.com> trailing words
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==
+--cid
+Content-Type: image/png
+Content-ID: <upper@example.com>
+Content-Transfer-Encoding: base64
+
+iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==
+--cid--

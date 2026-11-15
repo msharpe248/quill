@@ -1,0 +1,18 @@
+From: Sam Lee <sam.lee@example.com>
+To: Robin Vale <robin@example.org>
+Subject: Cut off
+Date: Sat, 14 Nov 2026 10:10:00 +0000
+Message-ID: <cut.1@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="never-closed"
+
+--never-closed
+Content-Type: text/plain; charset=utf-8
+
+The part that arrived.
+--never-closed
+Content-Type: application/pdf; name="half.pdf"
+Content-Disposition: attachment; filename="half.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQKJSBub3QgcmVhbGx5IGEg

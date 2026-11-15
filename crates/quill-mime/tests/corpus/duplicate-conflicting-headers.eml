@@ -1,0 +1,22 @@
+From: Ana Ruiz <ana.ruiz@example.com>
+From: Someone Else <someone.else@example.net>
+Sender: Sam Lee <sam.lee@example.com>
+To: Robin Vale <robin@example.org>
+To: Priya Nair <priya.nair@example.com>
+Subject: The first subject
+Subject: The second subject
+Date: Sat, 14 Nov 2026 10:16:00 +0000
+Date: Mon, 01 Jan 2001 00:00:00 +0000
+Message-ID: <dup.1@example.com>
+Message-ID: <dup.2@example.com>
+Reply-To: first.reply@example.com
+Reply-To: second.reply@example.com
+MIME-Version: 1.0
+MIME-Version: 2.0
+Content-Type: text/plain; charset=utf-8
+Content-Type: text/html; charset=iso-8859-1
+Content-Transfer-Encoding: 7bit
+Content-Transfer-Encoding: base64
+Content-Type: text/plain; charset=utf-8; charset=koi8-r; format=flowed; format=fixed
+
+<p>Is this <b>HTML</b>, plain text or base64? The headers say all three.</p>
