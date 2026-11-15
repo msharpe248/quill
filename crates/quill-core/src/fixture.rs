@@ -5,6 +5,7 @@
 //! recent and tests stay deterministic.
 
 use async_trait::async_trait;
+use base64::Engine as _;
 use bytes::Bytes;
 use tokio::sync::mpsc::Sender;
 
@@ -71,6 +72,50 @@ struct Seed {
     attachments: bool,
     body: &'static str,
     html: Option<&'static str>,
+}
+
+/// A file attached to a demo message. Its bytes are in `fixtures/`: drawn
+/// shapes, invented documents and a tone, made by `fixtures/make.py`.
+struct File {
+    name: &'static str,
+    content_type: &'static str,
+    bytes: &'static [u8],
+}
+
+macro_rules! file {
+    ($name:literal, $content_type:literal) => {
+        File {
+            name: $name,
+            content_type: $content_type,
+            bytes: include_bytes!(concat!("../fixtures/", $name)),
+        }
+    };
+}
+
+/// The files a demo message carries, by its subject. A message whose seed
+/// says it has attachments has some here, and no other does.
+fn files(seed: &Seed) -> &'static [File] {
+    const ROADMAP: &[File] = &[file!("roadmap.pdf", "application/pdf")];
+    const PHOTOS: &[File] = &[
+        file!("harbour.png", "image/png"),
+        file!("ridge.jpg", "image/jpeg"),
+    ];
+    const INVOICE: &[File] = &[file!("invoice-2026-114.pdf", "application/pdf")];
+    const CONTRACT: &[File] = &[file!("contract-v3.pdf", "application/pdf")];
+    const OFFSITE: &[File] = &[
+        file!("offsite-agenda.txt", "text/plain"),
+        file!("chart.png", "image/png"),
+    ];
+    const RECIPE: &[File] = &[file!("kitchen-timer.wav", "audio/wav")];
+    match seed.subject {
+        "Q4 roadmap" => ROADMAP,
+        "Photos from Sat" => PHOTOS,
+        "Invoice 2026-114" => INVOICE,
+        "Contract redlines" | "Re: Contract redlines" => CONTRACT,
+        "Offsite agenda" => OFFSITE,
+        "Recipe you asked for" => RECIPE,
+        _ => &[],
+    }
 }
 
 const HOUR: i64 = 60;
@@ -463,6 +508,12 @@ impl FixtureBackend {
         let date =
             jiff::fmt::rfc2822::to_string(&date).map_err(|err| Error::Backend(err.to_string()))?;
         const BOUNDARY: &str = "quill-fixture-alternative";
+        const MIXED: &str = "quill-fixture-mixed";
+        let files = files(seed);
+        let body_type = match seed.html {
+            Some(_) => format!("multipart/alternative; boundary=\"{BOUNDARY}\""),
+            None => "text/plain; charset=utf-8".to_owned(),
+        };
         let mut raw = String::new();
         for (name, value) in [
             ("From", join(&headers.from)),
@@ -473,9 +524,10 @@ impl FixtureBackend {
             ("MIME-Version", "1.0".to_owned()),
             (
                 "Content-Type",
-                match seed.html {
-                    Some(_) => format!("multipart/alternative; boundary=\"{BOUNDARY}\""),
-                    None => "text/plain; charset=utf-8".to_owned(),
+                if files.is_empty() {
+                    body_type.clone()
+                } else {
+                    format!("multipart/mixed; boundary=\"{MIXED}\"")
                 },
             ),
             ("Content-Transfer-Encoding", "8bit".to_owned()),
@@ -486,6 +538,12 @@ impl FixtureBackend {
             raw.push_str("\r\n");
         }
         raw.push_str("\r\n");
+        if !files.is_empty() {
+            // The body is the first part; the files follow it.
+            raw.push_str(&format!(
+                "--{MIXED}\r\nContent-Type: {body_type}\r\nContent-Transfer-Encoding: 8bit\r\n\r\n"
+            ));
+        }
         match seed.html {
             None => raw.push_str(&seed.body.replace('\n', "\r\n")),
             Some(html) => {
@@ -498,6 +556,23 @@ impl FixtureBackend {
                 }
                 raw.push_str(&format!("--{BOUNDARY}--\r\n"));
             }
+        }
+        if !files.is_empty() {
+            for file in files {
+                raw.push_str(&format!(
+                    "\r\n--{MIXED}\r\nContent-Type: {}; name=\"{}\"\r\n\
+                     Content-Disposition: attachment; filename=\"{}\"\r\n\
+                     Content-Transfer-Encoding: base64\r\n\r\n",
+                    file.content_type, file.name, file.name
+                ));
+                let encoded = base64::engine::general_purpose::STANDARD.encode(file.bytes);
+                // Lines of 76 characters, as mail has them.
+                for line in encoded.as_bytes().chunks(76) {
+                    raw.push_str(&String::from_utf8_lossy(line));
+                    raw.push_str("\r\n");
+                }
+            }
+            raw.push_str(&format!("--{MIXED}--\r\n"));
         }
         Ok(raw)
     }
@@ -674,9 +749,47 @@ mod tests {
         assert!(head.contains("Subject: Q4 roadmap\r\n"));
         assert!(head.contains("From: Ana Ruiz <ana.ruiz@example.com>\r\n"));
         assert!(head.contains("Date: Sat, 14 Nov 2026 09:14:00 +0000"));
-        assert!(body.starts_with("Hi Robin,\r\n"));
+        // It carries a file, so the text is the first part of several.
+        assert!(head.contains("Content-Type: multipart/mixed;"));
+        assert!(body.contains("\r\n\r\nHi Robin,\r\n"));
+        assert!(body.contains("filename=\"roadmap.pdf\""));
+        assert!(body.ends_with("--quill-fixture-mixed--\r\n"));
         assert!(!body.replace("\r\n", "").contains('\n'));
         assert_eq!(first.size, raw.len() as u64);
+    }
+
+    #[test]
+    fn a_message_that_says_it_has_attachments_carries_them() {
+        for account in DemoAccount::ALL {
+            let backend = FixtureBackend::demo(account, NOW);
+            for (index, seed) in account.seeds().iter().enumerate() {
+                let files = files(seed);
+                assert_eq!(seed.attachments, !files.is_empty(), "{}", seed.subject);
+                let raw = backend.raw(seed, index).unwrap();
+                // Every line is short enough for mail, and each file is
+                // named once in a part of its own.
+                assert!(
+                    raw.lines().all(|line| line.len() <= 998),
+                    "{}",
+                    seed.subject
+                );
+                for file in files {
+                    assert_eq!(
+                        raw.matches(&format!("filename=\"{}\"", file.name)).count(),
+                        1,
+                        "{}",
+                        seed.subject
+                    );
+                    assert!(!file.bytes.is_empty());
+                }
+                assert_eq!(
+                    raw.contains("multipart/mixed"),
+                    !files.is_empty(),
+                    "{}",
+                    seed.subject
+                );
+            }
+        }
     }
 
     #[tokio::test]
