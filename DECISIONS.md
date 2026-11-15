@@ -460,7 +460,7 @@ Measured on this Mac on 2026-11-15, release build. The spec's budgets: cold star
 - **Misspelt words come back as UTF-8 byte offsets** into the text that was sent, in order and not overlapping, and both ends refuse anything else. The shell converts from the checker's UTF-16 ranges and drops any that do not land on character boundaries.
 - **What is not prose is not flagged**: lines that begin with `>`, and any run of characters that is a web or mail address.
 - **Suggestions are in the checker's current language**, not the language of the text around the word; doing better needs the request to carry context.
-- **Not verified:** that the checker can be reached from inside the App Sandbox. It worked outside it.
+- **Checked in the sandboxed app** with the demo mailbox: three misspelt words underlined, the next-misspelling key, and the checker's suggestions for one of them.
 
 ### Spell check in the editor
 
