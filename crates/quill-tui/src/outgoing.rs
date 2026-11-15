@@ -9,6 +9,7 @@
 use std::hash::{BuildHasher, Hasher};
 
 use quill_core::types::{Address, LocalAccountId, LocalMessageId};
+use quill_mime::invite::Answer;
 use quill_mime::{BodyFormat, OutgoingAttachment, ReplyPosition, Warning};
 use quill_store::{DraftAttachment, DraftContent, DraftId, DraftState, Store};
 
@@ -211,6 +212,156 @@ pub fn send(store: &mut Store, request: &SendRequest) -> quill_store::Result<Vec
             undoable: delay > 0,
         },
     ])
+}
+
+/// An answer to the invitation a message carries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InviteAnswer {
+    /// The message that carries the invitation.
+    pub message: LocalMessageId,
+    pub answer: Answer,
+    /// The user's name, to go with the account's address.
+    pub from_name: Option<String>,
+    /// How long the answer waits in the outbox, where it can be taken
+    /// back.
+    pub delay_seconds: i64,
+    /// The local time zone's offset, for the Date header.
+    pub utc_offset: i32,
+}
+
+/// What an answer to an invitation is called when it is attached, and what
+/// kind of file it says it is.
+pub const INVITE_REPLY_NAME: &str = "invite.ics";
+pub const INVITE_REPLY_TYPE: &str = "text/calendar; method=REPLY; charset=utf-8";
+
+/// Answers the invitation a message carries: a short message to its
+/// organizer with the calendar's own form of the answer attached, put in
+/// the outbox the way any message is.
+///
+/// Everything is read again from the message as it arrived. What the
+/// reader was showing is not taken on trust.
+pub fn answer_invite(
+    store: &mut Store,
+    request: &InviteAnswer,
+) -> quill_store::Result<Vec<DataEvent>> {
+    let id = request.message;
+    let Some(location) = store.message_location(id)? else {
+        return Ok(vec![flash("That message is gone.")]);
+    };
+    let Some(raw) = store.raw(id)? else {
+        return Ok(vec![flash(
+            "The invitation is not on this Mac right now. Open the message again, then answer.",
+        )]);
+    };
+    let Some(invite) = quill_mime::invite::find(&raw) else {
+        return Ok(vec![flash("This message carries no invitation.")]);
+    };
+    let Some(account) = store
+        .accounts()?
+        .into_iter()
+        .find(|row| row.id == location.account)
+    else {
+        return Ok(vec![flash("The account this came to is gone.")]);
+    };
+    let organizer = match &invite.organizer {
+        Some(organizer) if invite.asks(&account.address) => organizer,
+        _ => {
+            return Ok(vec![flash(
+                "This invitation does not ask you for an answer.",
+            )]);
+        }
+    };
+    let name = request
+        .from_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty());
+    let stamp = jiff::Timestamp::now()
+        .strftime("%Y%m%dT%H%M%SZ")
+        .to_string();
+    let calendar = invite.reply(request.answer, &account.address, name, &stamp);
+    let Some(blob_hash) = store.put_blob(calendar.as_bytes())? else {
+        return Ok(vec![flash("There is nowhere to keep the answer.")]);
+    };
+    let original = quill_mime::parse(&raw, location.date);
+    let message_id = original
+        .as_ref()
+        .and_then(|parsed| parsed.headers.message_id.clone());
+    let mut references = original.map(|parsed| parsed.thread()).unwrap_or_default();
+    references.extend(message_id.clone());
+    let what = if invite.summary.trim().is_empty() {
+        "an invitation"
+    } else {
+        invite.summary.trim()
+    };
+    let content = DraftContent {
+        to: written_address(
+            organizer.name.as_deref().unwrap_or_default(),
+            &organizer.address,
+        ),
+        cc: String::new(),
+        bcc: String::new(),
+        subject: format!("{}: {what}", request.answer.word()),
+        body: format!(
+            "{} has {}.\n",
+            name.unwrap_or(&account.address),
+            match request.answer {
+                Answer::Accepted => "accepted",
+                Answer::Declined => "declined",
+                Answer::Tentative => "tentatively accepted",
+            }
+        ),
+        in_reply_to: message_id,
+        references,
+        attachments: vec![DraftAttachment {
+            name: INVITE_REPLY_NAME.to_owned(),
+            content_type: INVITE_REPLY_TYPE.to_owned(),
+            blob_hash,
+            size: calendar.len() as u64,
+        }],
+        // Answering is replying: the invitation is marked answered once
+        // the answer has gone.
+        replied_to: Some(id.0),
+    };
+    let sent = send(
+        store,
+        &SendRequest {
+            draft: None,
+            account: account.id,
+            content,
+            from_name: name.map(str::to_owned),
+            // One line of words: there is nothing to mark up.
+            format: BodyFormat::Plain,
+            delay_seconds: request.delay_seconds,
+            utc_offset: request.utc_offset,
+            // Nobody is asked about a message they did not write.
+            confirmed: true,
+        },
+    )?;
+    let delay = request.delay_seconds.max(0);
+    let word = request.answer.word();
+    Ok(sent
+        .into_iter()
+        .filter_map(|event| match event {
+            // There is no message being written to put away.
+            DataEvent::SendQueued => None,
+            DataEvent::SendRefused(why) => {
+                Some(flash(format!("The answer could not be sent. {why}")))
+            }
+            // Never raised for a message sent as confirmed.
+            DataEvent::SendDoubts(_) => None,
+            DataEvent::Flash { undoable, .. } => Some(DataEvent::Flash {
+                // The status bar adds the key that takes it back.
+                text: match delay {
+                    0 => format!("{word}. The answer is on its way."),
+                    1 => format!("{word}. The answer goes in 1 second."),
+                    _ => format!("{word}. The answer goes in {delay} seconds."),
+                },
+                undoable,
+            }),
+            other => Some(other),
+        })
+        .collect())
 }
 
 /// A length of time in round words: "45 minutes", "3 hours", "2 days".

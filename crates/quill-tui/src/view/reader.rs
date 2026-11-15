@@ -8,6 +8,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Padding;
 
 use super::{ImagePlacement, LinkPlacement, pane_block, placeholder};
+use crate::invite::CardRow;
 use crate::layout;
 use crate::state::{Body, Env, Pane, Showing, State};
 use crate::text;
@@ -127,6 +128,32 @@ pub fn render(
         frame.render_widget(line, Rect::new(inner.x, y, inner.width, 1));
         y += 1;
     }
+    // Under the fields, each after a blank line: what is still to come of
+    // the message, and the invitation it carries.
+    if !state.reader.note.is_empty() {
+        y += 1;
+        for note in &state.reader.note {
+            if y >= bottom {
+                return None;
+            }
+            let line = Line::styled(text::truncate(note, width), styles.dim());
+            frame.render_widget(line, Rect::new(inner.x, y, inner.width, 1));
+            y += 1;
+        }
+    }
+    if !state.reader.card.is_empty() {
+        y += 1;
+        for row in &state.reader.card {
+            if y >= bottom {
+                return None;
+            }
+            frame.render_widget(
+                card_line(row, width, styles),
+                Rect::new(inner.x, y, inner.width, 1),
+            );
+            y += 1;
+        }
+    }
     // A blank line between the headers and what follows.
     y += 1;
     if y >= bottom {
@@ -222,6 +249,33 @@ pub fn render(
         }
     }
     image
+}
+
+/// One row of an invitation's card, cut to the pane. Its words were made
+/// safe to draw when the card was made.
+fn card_line(row: &CardRow, width: usize, styles: &Styles) -> Line<'static> {
+    match row {
+        CardRow::Title(kind) => {
+            let title = text::truncate(&format!("── {kind} "), width);
+            let rule = "─".repeat(width.saturating_sub(text::width(&title)));
+            Line::styled(format!("{title}{rule}"), styles.dim())
+        }
+        CardRow::Field { label, text } => {
+            let value = if *label == "What:" {
+                styles.text().add_modifier(Modifier::BOLD)
+            } else {
+                styles.text()
+            };
+            Line::from(vec![
+                Span::styled(text::fit(label, LABEL_WIDTH), styles.dim()),
+                Span::styled(
+                    text::truncate(text, width.saturating_sub(LABEL_WIDTH)),
+                    value,
+                ),
+            ])
+        }
+        CardRow::Note(words) => Line::styled(text::truncate(words, width), styles.accent()),
+    }
 }
 
 /// How a piece of a message body is drawn. Every distinction is carried by

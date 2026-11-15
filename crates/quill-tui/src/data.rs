@@ -113,6 +113,10 @@ pub enum DataRequest {
         date_line: String,
         position: ReplyPosition,
     },
+    /// Answer the invitation a message carries: build the reply to its
+    /// organizer, with the calendar's own form of the answer attached, and
+    /// put it in the outbox.
+    AnswerInvite(Box<outgoing::InviteAnswer>),
     /// Take a draft, or mail from the outbox, up again.
     OpenDraft(DraftId),
     /// Write a message's attachments where a viewer can read them: all of
@@ -254,6 +258,12 @@ pub struct LoadedBody {
     pub files: Vec<AttachedFile>,
     /// How to leave the list that sent the message, when it says.
     pub unsubscribe: Option<quill_mime::Unsubscribe>,
+    /// The calendar invitation the message carries, when it carries one.
+    pub invite: Option<Box<crate::invite::Invitation>>,
+    /// The text is here and the message's downloaded copy is not: it was
+    /// let go to save disk space, or never kept. Its HTML, files and
+    /// invitation come with the copy, once it is fetched again.
+    pub copy_missing: bool,
 }
 
 /// Runs one request against the store. This is the whole of the worker's
@@ -304,6 +314,7 @@ fn run(
             date_line,
             position,
         } => outgoing::respond(store, id, how, &date_line, position)?,
+        DataRequest::AnswerInvite(answer) => outgoing::answer_invite(store, &answer)?,
         DataRequest::OpenDraft(draft) => outgoing::open_draft(store, draft)?,
         DataRequest::LoadSidebar => vec![DataEvent::SidebarLoaded {
             accounts: store.accounts()?,
@@ -337,11 +348,8 @@ fn run(
                     text.push_str(&draft.content.body);
                     LoadedBody {
                         text,
-                        html: None,
-                        html_first: false,
                         has_plain: true,
-                        files: Vec::new(),
-                        unsubscribe: None,
+                        ..LoadedBody::default()
                     }
                 });
             vec![DataEvent::BodyLoaded { id, body }]
@@ -350,12 +358,13 @@ fn run(
             let body = store.body(id)?.map(|text| {
                 // The HTML is read from the message as it arrived. If that
                 // cannot be had, the text is still worth showing.
-                let parsed = store
-                    .raw(id)
-                    .ok()
-                    .flatten()
-                    .and_then(|raw| quill_mime::parse(&raw, 0));
-                match parsed {
+                let raw = store.raw(id).ok().flatten();
+                let copy_missing = raw.is_none();
+                let invite = raw
+                    .as_deref()
+                    .and_then(crate::invite::Invitation::find)
+                    .map(Box::new);
+                match raw.and_then(|raw| quill_mime::parse(&raw, 0)) {
                     Some(parsed) => LoadedBody {
                         text,
                         html: parsed.html,
@@ -363,14 +372,15 @@ fn run(
                         has_plain: parsed.has_plain,
                         files: files::attached(&parsed.attachments),
                         unsubscribe: parsed.unsubscribe,
+                        invite,
+                        copy_missing,
                     },
                     None => LoadedBody {
                         text,
-                        html: None,
-                        html_first: false,
                         has_plain: true,
-                        files: Vec::new(),
-                        unsubscribe: None,
+                        invite,
+                        copy_missing,
+                        ..LoadedBody::default()
                     },
                 }
             });
@@ -896,13 +906,12 @@ mod tests {
             handle(&mut store, DataRequest::LoadBody(id)),
             [DataEvent::BodyLoaded {
                 id,
+                // Only its text was ever put here: the copy is to fetch.
                 body: Some(LoadedBody {
                     text: "Body text".to_owned(),
-                    html: None,
-                    html_first: false,
                     has_plain: true,
-                    files: Vec::new(),
-                    unsubscribe: None,
+                    copy_missing: true,
+                    ..LoadedBody::default()
                 })
             }]
         );
@@ -990,11 +999,8 @@ mod tests {
                 id,
                 body: Some(LoadedBody {
                     text: "Just text.".to_owned(),
-                    html: None,
-                    html_first: false,
                     has_plain: true,
-                    files: Vec::new(),
-                    unsubscribe: None,
+                    ..LoadedBody::default()
                 })
             }]
         );

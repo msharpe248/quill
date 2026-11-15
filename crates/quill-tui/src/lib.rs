@@ -18,6 +18,7 @@ pub mod editor;
 pub mod files;
 pub mod hyperlink;
 pub mod input;
+pub mod invite;
 pub mod keymap;
 pub mod layout;
 pub mod outgoing;

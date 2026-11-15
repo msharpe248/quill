@@ -331,6 +331,24 @@ impl Io<'_> {
                     path,
                     content_type,
                 } => self.load_picture(id, path, &content_type),
+                // A host with no checker gives no answer to wait for: the
+                // answer is that nothing is misspelt, or suggested.
+                HostRequest::SpellCheck { id, text } => {
+                    if !self.host.spell_check(id, &text) {
+                        let _ = self.injected.send(Action::Spelling {
+                            id,
+                            words: Vec::new(),
+                        });
+                    }
+                }
+                HostRequest::SpellSuggest { id, word } => {
+                    if !self.host.spell_suggest(id, &word) {
+                        let _ = self.injected.send(Action::Suggestions {
+                            id,
+                            words: Vec::new(),
+                        });
+                    }
+                }
                 HostRequest::SaveFile { path, name } => {
                     // Only asked for where the host has a panel. Should it
                     // not, say so rather than nothing.
@@ -401,6 +419,8 @@ impl Io<'_> {
                 Context::Folders => bridge::Context::Folders,
                 // A list to narrow by typing, over the message.
                 Context::Templates => bridge::Context::Folders,
+                // A list to choose from, over the message.
+                Context::Suggestions => bridge::Context::Folders,
                 Context::Compose => bridge::Context::Compose,
                 Context::Search => bridge::Context::Search,
                 Context::Palette => bridge::Context::Palette,
@@ -534,6 +554,9 @@ async fn event_loop(
     let mut input = EventStream::new();
     // Often enough that a draft being written is saved every few seconds.
     let mut clock = tokio::time::interval(Duration::from_secs(5));
+    // When a key last arrived. Spelling is checked once the keys have
+    // been quiet for a moment, never as each one is typed.
+    let mut last_typed = tokio::time::Instant::now();
     loop {
         // Redraw only on change.
         if state.dirty {
@@ -552,6 +575,9 @@ async fn event_loop(
         }
         io.mirror(&state, env);
 
+        let spelling_due = state
+            .spell_check_due(env)
+            .then(|| last_typed + TYPING_PAUSE);
         let action = tokio::select! {
             event = input.next() => match event {
                 Some(Ok(event)) => translate(event),
@@ -571,9 +597,11 @@ async fn event_loop(
                 }
                 HostEvent::Saved { name, saved } => Some(Action::FileSaved { name, saved }),
                 HostEvent::OpenMailto(url) => Some(Action::Mailto(url)),
-                // Spelling is not asked for yet, so nothing answers.
-                HostEvent::Spelling { .. } | HostEvent::Suggestions { .. } => None,
-                // Nor is the editor pane.
+                HostEvent::Spelling { id, words } => Some(Action::Spelling { id, words }),
+                HostEvent::Suggestions { id, words } => {
+                    Some(Action::Suggestions { id, words })
+                }
+                // The editor pane is not asked for yet either.
                 HostEvent::EditorExited { .. } => None,
                 HostEvent::NotificationUsed { id, action } => {
                     Some(Action::Notification { id, action })
@@ -590,7 +618,11 @@ async fn event_loop(
             Some(event) = inbound.accounts.recv() => Some(Action::Account(event)),
             Some(action) = inbound.injected.recv() => Some(action),
             _ = clock.tick() => Some(Action::ClockTick(now())),
+            () = quiet_until(spelling_due) => Some(Action::TypingPaused),
         };
+        if matches!(action, Some(Action::Key(_) | Action::Paste(_))) {
+            last_typed = tokio::time::Instant::now();
+        }
         if let Some(action) = action {
             let effects = state.update(env, action);
             io.perform(effects);
@@ -606,6 +638,18 @@ async fn event_loop(
     }
     io.data.finish();
     Ok(())
+}
+
+/// How long the keys are quiet before the spelling of what was typed is
+/// checked.
+const TYPING_PAUSE: Duration = Duration::from_millis(400);
+
+/// Waits until `at`, or for ever when there is nothing to wait for.
+async fn quiet_until(at: Option<tokio::time::Instant>) {
+    match at {
+        Some(at) => tokio::time::sleep_until(at).await,
+        None => std::future::pending().await,
+    }
 }
 
 /// Says which step failed. A bare "Operation not permitted" is no help when
@@ -675,6 +719,7 @@ mod tests {
             threads: true,
             searches: Vec::new(),
             templates: Vec::new(),
+            spell_check: false,
         }
     }
 

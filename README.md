@@ -171,6 +171,7 @@ Press `?` at any time for the keys that apply where you are. The bottom bar show
 | `i` | Load remote pictures for this message | `I` | Always load them from this sender |
 | `x` | Select or unselect, and move on | `V` | Start or end a range |
 | `X` | Unsubscribe from a mailing list | | |
+| `y` / `n` | Accept, decline an invitation | `M` | Answer an invitation with maybe |
 
 Arrow keys, `home`, `end`, `pageup` and `pagedown` work too. `ctrl-d` also pages down and `ctrl-c` also quits.
 
@@ -185,6 +186,8 @@ In the message list, `>` marks the cursor, `+` a selected message, `*` an unread
 The messages of a conversation are listed together, where the newest of them would be, in the order they were written; a reply hangs from the message above it with `└`. `T` switches that off and on, and `threads = false` under `[ui]` makes off the default. What a search finds is always listed message by message.
 
 `b` snoozes a message: it leaves its folder until the time you type, then comes back to the top as if it had just arrived, with a notification in the app. Times are typed as you would say them: `30m`, `2h`, `3d`, `tonight`, `tomorrow`, `tomorrow 9`, `fri 14:30`, `2026-12-01 9:00`. Snoozed mail waits in "Snoozed" in the sidebar; `b` there with `now` brings it straight back. Snoozing is kept on this Mac only: on the server, and in other mail programs, the message stays where it was.
+
+While a question is on screen (a certificate to accept, a sign-in, a time to type, whether to unsubscribe), the keys and the wheel are the question's. Nothing behind it moves until it is answered or put away with `esc`.
 
 To act on several messages at once, select them first: `x` on each, or `V`, move, and `V` again for a run of them; `ctrl-a` selects everything listed. Archive, delete, move, read and star then apply to all of them, and one `U` takes the whole lot back. `esc` lets the selection go. From the reader, a command is always about the message being read.
 
@@ -220,6 +223,24 @@ Mail from a list usually says how to leave it, in a `List-Unsubscribe` header th
 The header is a stranger's, so it is held to rules. Only `https` and `mailto:` addresses are taken; plain `http` is ignored. A web address must name its server plainly: one with a user name in front of the host, a bare number or `localhost` for a host, a backslash, or characters outside printable ASCII is dropped whole, and so is one longer than 2048 characters. The one-click request carries no cookies and no sign-in, follows no redirect, and gives up after 15 seconds. Its answer is not read beyond whether the server said yes. A message to the list goes to the one address the question named: other recipients and copies the header asks for are left off, and a missing subject becomes `unsubscribe`.
 
 Quill does not check the message's DKIM signature, which RFC 8058 asks for before a one-click request. The question on screen, naming the server, stands in for it: read the name before pressing `enter`. In the demo mailbox, which has nothing to make requests with, one click is not offered.
+
+## Invitations
+
+A message that carries a calendar invitation shows it as a card between its headers and its text: what the event is, when (in your own time zone), where, who is asking, and how many of those invited have said what. An all-day event is shown as its date, and one that repeats says so; how often is not worked out. A time given in a zone Quill does not know, such as one of Windows' names, is shown as the clock reads there, with the zone's name beside it as the invitation wrote it.
+
+The card's last line says what kind of thing it is: an invitation that asks for your answer, a cancellation, someone's answer to an invitation of yours, or an event sent for information.
+
+| Key | Action |
+|---|---|
+| `y` | Accept |
+| `n` | Decline |
+| `M` | Maybe (a tentative yes) |
+
+The keys work only on an invitation that asks you for an answer, from the reader or with the cursor on the message in the list. Each sends the organizer a short message ("Accepted: Offsite") with the calendar's own form of the answer attached as `invite.ics`. Like any mail it waits in the Outbox for `undo_send_seconds`, and `U` in that time takes it back; it is then a draft, to throw away with `d`.
+
+Quill is not a calendar. It adds nothing to one, does not remember what you answered, and does not tell you about clashes. The calendar file itself is among the message's attachments (`a`), to open in Calendar.
+
+Not yet checked against Exchange or Google Calendar: whether they take an answer that arrives as an attached calendar file and mark you as coming, or want it as a part of the message's body.
 
 ## New mail, and mail links
 
@@ -286,6 +307,8 @@ Files are written to a private folder that is removed when Quill quits, under na
 | `cmd-shift-a` or `ctrl-t` | Attach a file. The app shows its file panel; a terminal asks for the path, typed or pasted |
 | `cmd-shift-b` or `ctrl-o` | Add blind copies (Bcc) |
 | `cmd-shift-t` or `ctrl-r` | Insert a template, when there are any |
+| `cmd-shift-g` or `ctrl-g` | Other spellings of the misspelt word at the cursor (in the app) |
+| `cmd-;` or `ctrl-y` | Go to the next misspelt word (in the app) |
 | `esc` | Close. What you wrote is kept in Drafts |
 
 The `cmd` keys work in the app; a terminal keeps `cmd` for itself, so there the `ctrl` keys are the ones shown.
@@ -314,6 +337,19 @@ smtp = { host = "smtp.example.com", port = 465, tls = "implicit" }
 ```
 
 The SMTP server is signed in to with the same name and password as the IMAP server unless `smtp = { ... }` has a `username` of its own.
+
+### Spelling
+
+In the app, the body of a message being written is checked by the Mac's own spelling checker. A misspelt word is underlined, and coloured as an error where there is colour. With the cursor on such a word or just after it, `ctrl-g` (or `cmd-shift-g`) lists other spellings: `j`/`k` or the arrows move, `enter` puts the chosen one in the word's place, `esc` leaves the word alone. `cmd-z` takes a replacement back in one step. `ctrl-y` (or `cmd-;`) goes to the next misspelt word, round to the first after the last.
+
+The check runs when you stop typing for a moment, not at each key. Only the body is ever handed to the checker, never the recipients or the subject, and never mail you are reading. Quoted lines are not marked. A body of more than 100,000 bytes is not checked.
+
+```toml
+[compose]
+spell_check = false    # true by default
+```
+
+In a terminal there is no checker to ask, and nothing is underlined.
 
 ### Sending later
 
@@ -423,7 +459,7 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 
 | Command | Does |
 |---|---|
-| `nav.next`, `nav.prev` | Move down or up; scroll in the reader |
+| `nav.next`, `nav.prev` | Move down or up; scroll in the reader. Between the fields of the account form |
 | `nav.top`, `nav.bottom` | Jump to the first or last |
 | `nav.page_down`, `nav.page_up` | Move by a screenful |
 | `nav.open` | Open the message or mailbox |
@@ -444,6 +480,7 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `compose.send_later` | Send the message being written at a time you type |
 | `compose.attach`, `compose.bcc` | Attach a file; add blind copies |
 | `compose.template` | Put a template into the message being written |
+| `compose.spell_suggest`, `compose.spell_next` | List other spellings of the misspelt word at the cursor; go to the next misspelt word |
 | `edit.undo` | Undo the last move, deletion or send |
 | `search.start` | Search |
 | `palette.open` | The command palette |
@@ -451,6 +488,7 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `message.view_html`, `message.open_in_browser` | Show the message as a web page, beside the reader or in the browser |
 | `message.load_remote`, `sender.always_remote` | Let this message, or this sender's mail, load remote pictures |
 | `message.unsubscribe` | Unsubscribe from the list that sent the message, after asking |
+| `invite.accept`, `invite.decline`, `invite.tentative` | Answer the invitation the message carries: yes, no or maybe |
 | `attachment.save`, `attachment.open` | Save the chosen attachment, or open it in its application |
 | `edit.copy`, `edit.cut`, `edit.select_all` | The app's Edit menu, while a message is being written |
 | `account.add` | Add an account |
@@ -461,6 +499,8 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 ### Disk space
 
 Messages you have opened, and recent ones, are kept on this Mac so they read offline. They may take up to 5 GB; past that the oldest copies are let go and fetched again when you next open them. The list of your mail and its text for searching are always kept.
+
+Opening a message whose copy was let go shows its text at once, with a line above it saying the rest is being fetched; its layout, pictures, attachments and any invitation appear when the copy arrives. If it cannot be fetched (no connection, say), the text stays and the line says why. Opening the message again tries again.
 
 ```toml
 [storage]

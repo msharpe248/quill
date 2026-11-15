@@ -374,6 +374,8 @@ async fn tui(args: TuiArgs) -> anyhow::Result<()> {
     env.file_panel = attached.host.is_shell();
     // And the system's own readers for pictures Quill cannot decode.
     env.thumbnails = attached.host.is_shell();
+    // And the system's spelling checker.
+    env.spell_check = attached.host.is_shell();
     env.images = attached.host.is_shell()
         || quill_media::kitty::supported_by_environment(|name| std::env::var(name).ok());
     app::run(store, env, notices, attached, sync, accounts)

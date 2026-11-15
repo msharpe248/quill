@@ -1,0 +1,28 @@
+---
+source: crates/quill-tui/tests/spelling.rs
+expression: harness.screen()
+---
+┌ [1] Accounts ──┐┏ [3] New message ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+│> Unified    12 │┃ From:    robin@example.com  (Work)                         ┃
+│  Work          │┃ To:      sam.lee@example.com,                              ┃
+│    Inbox     8 │┃ Cc:                                                        ┃
+│    Drafts      │┃ Subject: Lunhc                                             ┃
+│    Sent        │┃ ────────────────────────────────────────────────────────── ┃
+│    Archive     │┃ I saw teh fox                                              ┃
+│    Trash       │┃                                                            ┃
+│  Personal      │┏ Spelling of "teh" ━━━━━━━━━━━━━━━━━━━━━━━┓                 ┃
+│    Inbox     4 │┃   the                                    ┃                 ┃
+│    Drafts      │┃ > ten                                    ┃                 ┃
+│    Sent        │┃   tea                                    ┃                 ┃
+│    Archive     │┃   tech                                   ┃                 ┃
+│    Trash       │┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛                 ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+└────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+ j/k move  enter use this spelling  esc cancel

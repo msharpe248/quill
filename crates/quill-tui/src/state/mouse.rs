@@ -88,7 +88,8 @@ impl State {
         }
     }
 
-    /// A box with a list in it: links, attachments, folders, the palette.
+    /// A box with a list in it: links, attachments, folders, templates,
+    /// spellings, the palette.
     fn mouse_in_list_box(
         &mut self,
         env: &Env,
@@ -136,6 +137,8 @@ impl State {
                 picker.selected,
                 picker.offset,
             )
+        } else if let Some(picker) = &self.suggestions {
+            (picker.words.len(), picker.selected, picker.offset)
         } else if let Some(picker) = &self.attachments {
             (self.reader.files().len(), picker.selected, picker.offset)
         } else if let Some(picker) = &self.links {
@@ -157,6 +160,8 @@ impl State {
         } else if let Some(picker) = &mut self.folders {
             picker.selected = index;
         } else if let Some(picker) = &mut self.templates {
+            picker.selected = index;
+        } else if let Some(picker) = &mut self.suggestions {
             picker.selected = index;
         } else if let Some(picker) = &mut self.attachments {
             picker.selected = index;
@@ -344,9 +349,10 @@ impl State {
         }
         self.set_focus(Pane::Reader);
         let header = self.reader_header_rows() as u16;
+        let fields = self.reader_field_rows() as u16;
         let top = rect.y + 1;
         // The line naming the files opens their list.
-        if !self.reader.files().is_empty() && mouse.row == top + header - 1 {
+        if !self.reader.files().is_empty() && mouse.row == top + fields - 1 {
             self.run(env, CommandId::MessageAttachments, out);
             return;
         }

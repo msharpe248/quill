@@ -29,6 +29,8 @@ pub enum Context {
     /// Choosing a template to put into the message being written. Typing
     /// narrows the list.
     Templates,
+    /// Choosing another spelling for a word of the message being written.
+    Suggestions,
     /// Writing a message. Typing goes into the field with the cursor.
     Compose,
     /// Typing what to search for. The list shows what is found so far.
@@ -53,6 +55,7 @@ impl Context {
             Self::Unsubscribe => "Unsubscribe",
             Self::Folders => "Move to a folder",
             Self::Templates => "Insert a template",
+            Self::Suggestions => "Spelling suggestions",
             Self::Compose => "Writing a message",
             Self::Search => "Search",
             Self::Palette => "Command palette",
@@ -75,7 +78,41 @@ const EVERYWHERE: &[Context] = &[
     Context::Unsubscribe,
     Context::Folders,
     Context::Templates,
+    Context::Suggestions,
     Context::Compose,
+    Context::Search,
+    Context::Palette,
+];
+/// Where there is something to move through: a pane, or a list drawn over
+/// the panes. A question (a certificate, a sign-in, a time, unsubscribing)
+/// has nothing to move in, and a key that moves must not reach what lies
+/// behind it. Nor does a message being written: its own keys move its
+/// cursor.
+const LISTS: &[Context] = &[
+    Context::Sidebar,
+    Context::List,
+    Context::Reader,
+    Context::Help,
+    Context::Links,
+    Context::Attachments,
+    Context::Folders,
+    Context::Templates,
+    Context::Suggestions,
+    Context::Search,
+    Context::Palette,
+];
+/// The same, and the form, whose fields the arrows step between.
+const LISTS_AND_FORM: &[Context] = &[
+    Context::Sidebar,
+    Context::List,
+    Context::Reader,
+    Context::Help,
+    Context::Links,
+    Context::Attachments,
+    Context::Setup,
+    Context::Folders,
+    Context::Templates,
+    Context::Suggestions,
     Context::Search,
     Context::Palette,
 ];
@@ -136,6 +173,9 @@ pub enum CommandId {
     MessageLoadRemote,
     SenderAlwaysRemote,
     MessageUnsubscribe,
+    InviteAccept,
+    InviteDecline,
+    InviteTentative,
     AttachmentSave,
     AttachmentOpen,
     MessageCompose,
@@ -148,6 +188,8 @@ pub enum CommandId {
     ComposeAttach,
     ComposeBcc,
     ComposeTemplate,
+    ComposeSpellSuggest,
+    ComposeSpellNext,
     EditCopy,
     EditCut,
     EditSelectAll,
@@ -248,7 +290,7 @@ impl Registry {
                     "Next item or line",
                     Navigation,
                     None,
-                    EVERYWHERE,
+                    LISTS_AND_FORM,
                 ),
                 spec(
                     NavPrev,
@@ -256,23 +298,16 @@ impl Registry {
                     "Previous item or line",
                     Navigation,
                     None,
-                    EVERYWHERE,
+                    LISTS_AND_FORM,
                 ),
-                spec(
-                    NavTop,
-                    "nav.top",
-                    "Go to the top",
-                    Navigation,
-                    None,
-                    EVERYWHERE,
-                ),
+                spec(NavTop, "nav.top", "Go to the top", Navigation, None, LISTS),
                 spec(
                     NavBottom,
                     "nav.bottom",
                     "Go to the bottom",
                     Navigation,
                     None,
-                    EVERYWHERE,
+                    LISTS,
                 ),
                 spec(
                     NavPageDown,
@@ -280,16 +315,9 @@ impl Registry {
                     "Page down",
                     Navigation,
                     None,
-                    EVERYWHERE,
+                    LISTS,
                 ),
-                spec(
-                    NavPageUp,
-                    "nav.page_up",
-                    "Page up",
-                    Navigation,
-                    None,
-                    EVERYWHERE,
-                ),
+                spec(NavPageUp, "nav.page_up", "Page up", Navigation, None, LISTS),
                 spec(
                     NavOpen,
                     "nav.open",
@@ -306,6 +334,7 @@ impl Registry {
                         Context::Unsubscribe,
                         Context::Folders,
                         Context::Templates,
+                        Context::Suggestions,
                         Context::Search,
                         Context::Palette,
                     ],
@@ -565,6 +594,30 @@ impl Registry {
                     MESSAGE,
                 ),
                 spec(
+                    InviteAccept,
+                    "invite.accept",
+                    "Accept the invitation",
+                    Message,
+                    Some(Menu::Message),
+                    MESSAGE,
+                ),
+                spec(
+                    InviteDecline,
+                    "invite.decline",
+                    "Decline the invitation",
+                    Message,
+                    Some(Menu::Message),
+                    MESSAGE,
+                ),
+                spec(
+                    InviteTentative,
+                    "invite.tentative",
+                    "Answer the invitation with maybe",
+                    Message,
+                    Some(Menu::Message),
+                    MESSAGE,
+                ),
+                spec(
                     AttachmentSave,
                     "attachment.save",
                     "Save the attachment",
@@ -670,6 +723,22 @@ impl Registry {
                     "Insert a template",
                     Message,
                     Some(Menu::Message),
+                    COMPOSE,
+                ),
+                spec(
+                    ComposeSpellSuggest,
+                    "compose.spell_suggest",
+                    "Spelling suggestions",
+                    Message,
+                    Some(Menu::Edit),
+                    COMPOSE,
+                ),
+                spec(
+                    ComposeSpellNext,
+                    "compose.spell_next",
+                    "Go to the next misspelling",
+                    Message,
+                    Some(Menu::Edit),
                     COMPOSE,
                 ),
                 // The three below have no menu items of their own. The app's
@@ -798,6 +867,8 @@ pub fn hints(context: Context) -> &'static [Hint] {
         hint(&[NavOpen], "open"),
         hint(&[SearchStart], "search"),
         hint(&[MessageCompose], "write"),
+        hint_while_enabled(&[InviteAccept], "accept"),
+        hint_while_enabled(&[InviteDecline], "decline"),
         hint(&[MessageReply], "reply"),
         hint(&[MessageArchive], "archive"),
         hint(&[MessageDelete], "delete"),
@@ -813,6 +884,9 @@ pub fn hints(context: Context) -> &'static [Hint] {
         hint(&[NavNext, NavPrev], "scroll"),
         hint(&[NavPageDown], "page"),
         hint(&[NavBack], "back"),
+        hint_while_enabled(&[InviteAccept], "accept"),
+        hint_while_enabled(&[InviteDecline], "decline"),
+        hint_while_enabled(&[InviteTentative], "maybe"),
         hint(&[MessageReply], "reply"),
         hint(&[MessageArchive], "archive"),
         hint(&[MessageDelete], "delete"),
@@ -862,11 +936,17 @@ pub fn hints(context: Context) -> &'static [Hint] {
     const FOLDERS: &[Hint] = &[hint(&[NavOpen], "move here"), hint(&[NavBack], "cancel")];
     const UNSUBSCRIBING: &[Hint] = &[hint(&[NavOpen], "go ahead"), hint(&[NavBack], "cancel")];
     const TEMPLATES: &[Hint] = &[hint(&[NavOpen], "insert"), hint(&[NavBack], "cancel")];
+    const SUGGESTIONS: &[Hint] = &[
+        hint(&[NavNext, NavPrev], "move"),
+        hint(&[NavOpen], "use this spelling"),
+        hint(&[NavBack], "cancel"),
+    ];
     const COMPOSING: &[Hint] = &[
         hint(&[ComposeSend], "send"),
         hint(&[ComposeSave], "save draft"),
         hint(&[ComposeAttach], "attach"),
         hint_while_enabled(&[ComposeTemplate], "template"),
+        hint_while_enabled(&[ComposeSpellSuggest], "spelling"),
         hint(&[FocusNext], "next field"),
         hint(&[NavBack], "close"),
     ];
@@ -875,6 +955,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         Context::Folders => FOLDERS,
         Context::Unsubscribe => UNSUBSCRIBING,
         Context::Templates => TEMPLATES,
+        Context::Suggestions => SUGGESTIONS,
         Context::Setup => SETUP,
         Context::Certificate => CERTIFICATE,
         Context::SignIn => SIGNING_IN,

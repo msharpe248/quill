@@ -248,7 +248,7 @@ The UI stayed usable throughout, which is the acceptance. This was a server on t
 - **What is let go is the raw message, not the message**: its row, its marks and its text stay, so it is still listed and still found by a search. Opening it fetches it again.
 - **Never the only copy.** Mail of an account whose mail is kept here (POP3), a sent copy the server never had, and a copy still waiting to be saved to a server are not candidates, whatever the budget. Nor is mail from the last 45 days, which the next pass would only download again.
 - **The store forgets a copy before the file is removed**, so a crash between the two leaves a file nothing points to, not a message that says it has a copy it does not.
-- **Not done yet:** the reader does not fetch a let-go message's copy by itself when it is opened; it shows the text and has no HTML or attachments until the message is fetched. Attachments of drafts are not counted or cleared.
+- **Opening a message whose copy was let go fetches it again**, once: the text is shown meanwhile with a line saying the rest is on its way, and if the fetch fails the text stays and the line says why. Attachments of drafts are not counted or cleared.
 
 ## M3, compose and send
 
@@ -325,7 +325,7 @@ Not verified, because it needs the owner: sending through a real provider. Not b
 
 - **The editor is in-house** (`quill_tui::editor`, behind the `Editor` trait), not tui-textarea or edtui. The spec's tests for the choice were graphemes and emoji, large pastes, undo, and macOS key conventions; an editor written to them was less work than bending either crate to them. A megabyte paste redraws in well under a frame because wrapping is cached per line. Details of its behaviour (the last column kept for the cursor, undo coalescing as in TextEdit, `ctrl-a`/`ctrl-e`/`ctrl-k` as in Cocoa text fields) are in the module's own comments.
 - **Markdown highlighting is a simple scanner**, not CommonMark: quote, heading and fenced lines are marked whole, inline marks do not nest. What is sent is converted by `quill_mime::markdown`, which is stricter.
-- **Not built from the spec's editor list**: find (`cmd-f`), paste as quotation, reflow and insert template have code in the editor and no command yet; mouse placement and selection wait for mouse support in M6; spell check waits for the bridge message in M6; several drafts open as tabs is not built (one message is written at a time, and closing it keeps it as a draft).
+- **Not built from the spec's editor list**: find (`cmd-f`), paste as quotation, reflow and insert template have code in the editor and no command yet; mouse placement and selection wait for mouse support in M6; several drafts open as tabs is not built (one message is written at a time, and closing it keeps it as a draft).
 - **`z` cannot zoom while writing**, since it is a letter. `ctrl-z` zooms in every pane.
 - **Keys for a terminal as well as the app.** Each compose command has a `cmd` key and a `ctrl` key that needs no keyboard protocol: `ctrl-x` send, `ctrl-s` save, `ctrl-t` attach, `ctrl-o` Bcc. Hints name the `ctrl` key outside Quill's own window, where `cmd` never arrives.
 - **Bcc is hidden until asked for** (`compose.bcc`) or filled in, and `tab` passes it while it is empty, so To, Cc, Subject, body is the path through a new message.
@@ -461,6 +461,26 @@ Measured on this Mac on 2026-11-15, release build. The spec's budgets: cold star
 - **What is not prose is not flagged**: lines that begin with `>`, and any run of characters that is a web or mail address.
 - **Suggestions are in the checker's current language**, not the language of the text around the word; doing better needs the request to carry context.
 - **Not verified:** that the checker can be reached from inside the App Sandbox. It worked outside it.
+
+### Spell check in the editor
+
+- **The body of a message being written is checked** when typing has paused for 400 ms, never per keystroke, and never more than one check at a time: a newer text waits for the answer to the older. An answer is used only if the text has not changed since it was asked for. Recipients and the subject are never sent.
+- **Misspelt words are underlined in the error colour**; the underline carries it without colour. An edit that touches a mark drops it until the next answer, so no mark is ever in the wrong place.
+- **`ctrl-g` (`cmd-G`) lists suggestions for the word at the cursor**, and choosing one replaces the word as one undo step. `ctrl-y` (`cmd-;`) goes to the next misspelling.
+- **If no answer comes in fifteen seconds a newer text may go anyway**, so one lost answer cannot end checking for the session.
+- **`spell_check = false` under `[compose]` turns it off.** A terminal has no checker, and nothing is asked there.
+
+### Invitations
+
+- **A message that carries a calendar invitation shows a card above its text**: what, when (in the user's time zone; a zone Quill does not know is shown as written beside the time on the clock there), where, who is asking, and how many are invited and have answered. A cancellation and someone's answer to the user's own invitation are said in words.
+- **`y`, `n` and `M` accept, decline and answer "maybe"**, only where the invitation asks this account for an answer. The answer is an ordinary message to the organizer through the Outbox, with the undo delay, carrying the calendar text as `invite.ics` with `method=REPLY`. It repeats the event's id, revision and start exactly and says nothing else about the event.
+- **Whether Exchange and Google Calendar act on an answer that arrives as an attachment**, and not as a calendar body part of the message, is not known. To try with the owner's accounts. If they do not, the message builder needs a calendar alternative part.
+- **Quill is not a calendar.** Nothing is added to one, a repeating event is only noted as repeating, and nothing remembers that an invitation was answered: answering twice sends two answers.
+- **Zone names from an invitation are checked before being looked up** (plain names only), and the lookup, which reads the system's zone files, runs on the store worker.
+
+### Keys and dialogs
+
+- **Movement keys act only where there is something to move in.** With a question open (sign-in, a certificate, a time, unsubscribing), or the account form, arrow and page keys used to move the list or the reader behind it; they no longer do. The movement commands apply to the panes and to the lists drawn over them, and nowhere else.
 
 ### Conversations
 

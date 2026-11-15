@@ -988,6 +988,7 @@ fn html_cannot_smuggle_escape_sequences_onto_the_screen() {
             has_plain: true,
             files: Vec::new(),
             unsubscribe: None,
+            ..LoadedBody::default()
         }),
     }));
     for line in &harness.state.reader.lines {
@@ -1019,6 +1020,7 @@ fn html_that_renders_to_nothing_falls_back_to_the_plain_text() {
             has_plain: true,
             files: Vec::new(),
             unsubscribe: None,
+            ..LoadedBody::default()
         }),
     }));
     assert!(harness.screen().contains("The plain words."));
@@ -1107,6 +1109,7 @@ fn a_message_with_one_version_has_nothing_to_switch_to() {
             has_plain: false,
             files: Vec::new(),
             unsubscribe: None,
+            ..LoadedBody::default()
         }),
     }));
     assert!(
@@ -1135,6 +1138,7 @@ fn a_fuller_plain_part_is_shown_first_with_the_html_one_key_away() {
             has_plain: true,
             files: Vec::new(),
             unsubscribe: None,
+            ..LoadedBody::default()
         }),
     }));
     assert_eq!(harness.state.reader.showing(), Some(Showing::Plain));
@@ -1212,6 +1216,7 @@ fn a_link_is_reached_by_typing_its_number() {
             has_plain: false,
             files: Vec::new(),
             unsubscribe: None,
+            ..LoadedBody::default()
         }),
     }));
     assert_eq!(harness.state.reader.links.len(), 14);
@@ -1290,6 +1295,7 @@ fn only_web_and_mail_links_are_ever_opened() {
             has_plain: false,
             files: Vec::new(),
             unsubscribe: None,
+            ..LoadedBody::default()
         }),
     }));
     // All three are listed, so where they lead can be seen.
@@ -1408,6 +1414,7 @@ fn link_text_cut_off_by_the_pane_is_placed_only_as_far_as_it_shows() {
             has_plain: false,
             files: Vec::new(),
             unsubscribe: None,
+            ..LoadedBody::default()
         }),
     }));
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
@@ -1508,4 +1515,272 @@ fn a_message_that_was_answered_says_so_once_read() {
         "{}",
         harness.row_with("Q4 roadmap")
     );
+}
+
+/// A message in the Work inbox whose text is in the store and whose
+/// downloaded copy is not, as one let go to keep within the disk budget
+/// is. Returns its id, with the cursor on it.
+fn let_go(harness: &mut Harness) -> quill_core::types::LocalMessageId {
+    let inbox = harness
+        .store
+        .folders()
+        .unwrap()
+        .into_iter()
+        .find(|folder| folder.role == FolderRole::Inbox)
+        .unwrap()
+        .id;
+    add_message(harness, inbox, "Old news", "The text that was kept.");
+    harness.keys("g g");
+    assert_eq!(harness.selected_subject(), "Old news");
+    let id = harness.state.list.rows[harness.state.list.selected].id;
+    assert!(harness.store.raw(id).unwrap().is_none());
+    id
+}
+
+/// The messages the engine has been asked to download, in order.
+fn fetches(harness: &Harness) -> Vec<quill_core::types::LocalMessageId> {
+    harness
+        .sync_requests
+        .iter()
+        .filter_map(|request| match request {
+            quill_sync::SyncRequest::FetchBody(id) => Some(*id),
+            _ => None,
+        })
+        .collect()
+}
+
+const OLD_NEWS: &str = "From: Mallory Vane <mallory@example.com>\r\n\
+    To: Robin Vale <robin@example.com>\r\n\
+    Subject: Old news\r\n\
+    MIME-Version: 1.0\r\n\
+    Content-Type: multipart/mixed; boundary=\"m\"\r\n\
+    \r\n\
+    --m\r\n\
+    Content-Type: text/html; charset=utf-8\r\n\
+    \r\n\
+    <p>The text that was kept, <b>and its shape</b>.</p>\r\n\
+    --m\r\n\
+    Content-Type: text/plain; name=\"notes.txt\"\r\n\
+    Content-Disposition: attachment; filename=\"notes.txt\"\r\n\
+    \r\n\
+    Notes.\r\n\
+    --m--\r\n";
+
+#[test]
+fn a_message_whose_copy_was_let_go_shows_its_text_and_is_fetched_again() {
+    use quill_sync::{SyncEvent, SyncRequest};
+    use quill_tui::state::Rest;
+    let mut harness = Harness::demo(200, 60);
+    let id = let_go(&mut harness);
+
+    // The text is shown at once, with a line saying more is coming, and
+    // the engine is asked for the rest: once.
+    assert!(matches!(&harness.state.reader.body, Body::Loaded(body) if body.copy_missing));
+    assert_eq!(harness.state.reader.rest, Rest::Fetching);
+    assert_eq!(harness.sync_requests, [SyncRequest::FetchBody(id)]);
+    let screen = harness.screen();
+    assert!(screen.contains("The text that was kept."), "{screen}");
+    assert!(
+        screen.contains("Fetching the rest of this message…"),
+        "{screen}"
+    );
+    // The line is between the headers and the text, and the text is laid
+    // out under it.
+    let line_of = |needle: &str| {
+        screen
+            .lines()
+            .position(|line| line.contains(needle))
+            .unwrap()
+    };
+    assert_eq!(line_of("Fetching the rest"), line_of("Subject:") + 2);
+    assert_eq!(
+        line_of("The text that was kept."),
+        line_of("Fetching the rest") + 2
+    );
+    assert!(harness.state.reader.files().is_empty());
+
+    // Opening it, reading on and coming back to the list ask for nothing
+    // more.
+    harness.keys("enter j k esc");
+    harness.act(Action::Data(DataEvent::StoreChanged));
+    assert_eq!(fetches(&harness), [id]);
+
+    // The engine downloads it and says so: the reader reads it again, and
+    // now has everything.
+    harness
+        .store
+        .put_message(
+            id,
+            "The text that was kept, and its shape.",
+            OLD_NEWS.as_bytes(),
+        )
+        .unwrap();
+    harness.act(Action::Sync(SyncEvent::BodyReady(id)));
+    assert_eq!(harness.state.reader.rest, Rest::Here);
+    assert!(matches!(
+        &harness.state.reader.body,
+        Body::Loaded(body) if !body.copy_missing && body.html.is_some()
+    ));
+    assert_eq!(harness.state.reader.files().len(), 1);
+    let screen = harness.screen();
+    assert!(!screen.contains("Fetching the rest"), "{screen}");
+    assert!(screen.contains("and its shape"), "{screen}");
+    assert!(screen.contains("notes.txt"), "{screen}");
+    assert_eq!(fetches(&harness), [id]);
+}
+
+#[test]
+fn a_copy_that_cannot_be_fetched_leaves_the_text_and_says_why() {
+    use quill_sync::SyncEvent;
+    use quill_tui::state::Rest;
+    let mut harness = Harness::demo(200, 60);
+    let id = let_go(&mut harness);
+    harness.act(Action::Sync(SyncEvent::BodyFailed {
+        id,
+        reason: "cannot reach the server: no route to host\u{1b}[2J".to_owned(),
+    }));
+    // The text stays where it was, and the line says what happened.
+    assert!(matches!(&harness.state.reader.body, Body::Loaded(_)));
+    assert!(matches!(&harness.state.reader.rest, Rest::Failed(_)));
+    let screen = harness.screen();
+    assert!(screen.contains("The text that was kept."), "{screen}");
+    // Too long for one row of this pane, it runs on to a second, and the
+    // text starts under it.
+    assert!(
+        screen.contains(
+            "The rest of this message could not be fetched: cannot reach the server: no route"
+        ),
+        "{screen}"
+    );
+    assert_eq!(harness.state.reader.note.len(), 2, "{screen}");
+    assert!(
+        harness.state.reader.note[1].starts_with("to host"),
+        "{screen}"
+    );
+    assert!(!screen.contains("[2J"), "{screen}");
+    let line_of = |needle: &str| {
+        screen
+            .lines()
+            .position(|line| line.contains(needle))
+            .unwrap()
+    };
+    assert_eq!(
+        line_of("The text that was kept."),
+        line_of("The rest of this message") + 3
+    );
+    // In a narrower pane it is laid out again, and never takes more than
+    // three rows however long the reason.
+    harness.resize(80, 24);
+    harness.keys("enter");
+    assert_eq!(harness.state.reader.note.len(), 2);
+    assert!(
+        harness.screen().contains("no route to host"),
+        "{}",
+        harness.screen()
+    );
+    harness.keys("esc");
+    harness.resize(200, 60);
+    // Nothing is asked again by itself, whatever else happens.
+    harness.act(Action::Data(DataEvent::StoreChanged));
+    harness.act(Action::Sync(SyncEvent::Changed));
+    harness.keys("enter esc");
+    assert_eq!(fetches(&harness), [id]);
+    // A failure reported twice, or for another message, changes nothing.
+    let other = harness.state.list.rows[1].id;
+    for id in [id, other] {
+        harness.act(Action::Sync(SyncEvent::BodyFailed {
+            id,
+            reason: "again".to_owned(),
+        }));
+    }
+    assert!(
+        harness
+            .state
+            .reader
+            .note
+            .join(" ")
+            .ends_with("no route to host")
+    );
+
+    // Leaving the message and opening it again is asking again: once.
+    harness.keys("j k");
+    assert_eq!(fetches(&harness), [id, id]);
+    assert_eq!(harness.state.reader.rest, Rest::Fetching);
+    // A reason of any length takes three rows at most, and says it was
+    // cut short.
+    harness.act(Action::Sync(SyncEvent::BodyFailed {
+        id,
+        reason: "the server said no, and went on about it. ".repeat(40),
+    }));
+    assert_eq!(harness.state.reader.note.len(), 3);
+    assert!(harness.state.reader.note[2].ends_with('…'));
+    assert!(harness.screen().contains("The text that was kept."));
+}
+
+#[test]
+fn a_copy_that_is_fetched_and_still_not_here_is_not_fetched_in_a_loop() {
+    use quill_sync::{SyncEvent, SyncRequest};
+    use quill_tui::data::LoadedBody;
+    use quill_tui::state::Rest;
+    let mut harness = Harness::demo(200, 60);
+    let id = let_go(&mut harness);
+    // The engine says it is done, and the store still has only the text.
+    for _ in 0..3 {
+        harness.act(Action::Sync(SyncEvent::BodyReady(id)));
+    }
+    assert_eq!(harness.sync_requests, [SyncRequest::FetchBody(id)]);
+    assert!(matches!(&harness.state.reader.rest, Rest::Failed(_)));
+    let screen = harness.screen();
+    assert!(screen.contains("The text that was kept."), "{screen}");
+    assert!(
+        screen.contains("The rest of this message could not be fetched: it was downloaded and"),
+        "{screen}"
+    );
+
+    // The same for a message that had nothing here at all when opened:
+    // one fetch, whatever comes of it.
+    let mut harness = Harness::demo(200, 60);
+    let id = harness.state.list.rows[0].id;
+    harness.act(Action::Data(DataEvent::BodyLoaded { id, body: None }));
+    assert_eq!(harness.sync_requests, [SyncRequest::FetchBody(id)]);
+    harness.act(Action::Data(DataEvent::BodyLoaded {
+        id,
+        body: Some(LoadedBody {
+            text: "Only the text.".to_owned(),
+            has_plain: true,
+            copy_missing: true,
+            ..LoadedBody::default()
+        }),
+    }));
+    assert_eq!(harness.sync_requests, [SyncRequest::FetchBody(id)]);
+    assert!(harness.screen().contains("Only the text."));
+}
+
+#[test]
+fn mail_that_is_all_here_and_drafts_are_never_fetched() {
+    let mut harness = Harness::demo(200, 60);
+    // Every message of the demo mailbox, opened in turn.
+    for _ in 0..harness.state.list.rows.len() {
+        harness.keys("enter esc j");
+    }
+    assert!(fetches(&harness).is_empty());
+    assert!(!harness.screen().contains("Fetching the rest"));
+    // A draft has no copy on any server to fetch.
+    harness.keys("c");
+    harness.type_text("ana.ruiz@example.com");
+    harness.keys("esc esc");
+    let drafts = harness
+        .state
+        .sidebar
+        .entries
+        .iter()
+        .position(|entry| entry.mailbox() == Some(Mailbox::Drafts))
+        .unwrap();
+    harness.keys("1 g g");
+    for _ in 0..drafts {
+        harness.keys("j");
+    }
+    assert_eq!(harness.state.mailbox, Mailbox::Drafts);
+    assert!(matches!(&harness.state.reader.body, Body::Loaded(body) if !body.copy_missing));
+    assert!(fetches(&harness).is_empty());
 }

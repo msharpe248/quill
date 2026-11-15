@@ -80,6 +80,7 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
             markdown: config.compose.format == ComposeFormat::Markdown,
             reply_above: config.compose.reply_position == ReplyPosition::Above,
             undo_send_seconds: config.compose.undo_send_seconds,
+            spell_check: config.compose.spell_check,
         },
         identities: config
             .accounts
@@ -103,6 +104,8 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
             .map(|search| (search.name.clone(), search.query.clone()))
             .collect(),
         templates,
+        // Decided by the caller too: only Quill's own window has a checker.
+        spell_check: false,
     };
     Loaded {
         config,

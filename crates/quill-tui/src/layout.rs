@@ -132,6 +132,7 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
     } else if state.links.is_some()
         || state.folders.is_some()
         || state.templates.is_some()
+        || state.suggestions.is_some()
         || state.attachments.is_some()
     {
         // As tall as what it lists, as far as the screen allows. The folder
@@ -142,6 +143,8 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
                 .saturating_sub(4)
                 .min(if state.folders.is_some() || state.templates.is_some() {
                     60
+                } else if state.suggestions.is_some() {
+                    44
                 } else if state.attachments.is_some() {
                     76
                 } else {
@@ -156,6 +159,10 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
             None if state.templates.is_some() => {
                 state.templates.as_ref().map_or(0, |picker| picker.total) + 1
             }
+            None if state.suggestions.is_some() => state
+                .suggestions
+                .as_ref()
+                .map_or(0, |picker| picker.words.len()),
             None if state.attachments.is_some() => state.reader.files().len(),
             None => state.reader.links.len(),
         };

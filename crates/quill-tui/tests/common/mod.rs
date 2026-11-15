@@ -145,6 +145,9 @@ impl Harness {
             threads: true,
             searches: Vec::new(),
             templates: Vec::new(),
+            // Tests that check spelling say so: most have no checker, as
+            // a terminal has none.
+            spell_check: false,
         };
         adjust(&mut env);
         let scratch = tempfile::tempdir().unwrap();

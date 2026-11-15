@@ -41,6 +41,9 @@ expression: harness.screen()
 │                          │┃                                       ┃   i                        Load remote pictures for this me… ┃                                                                   │
 │                          │┃                                       ┃   I                        Always load remote pictures from… ┃                                                                   │
 │                          │┃                                       ┃   X                        Unsubscribe from this list        ┃                                                                   │
+│                          │┃                                       ┃   y                        Accept the invitation             ┃                                                                   │
+│                          │┃                                       ┃   n                        Decline the invitation            ┃                                                                   │
+│                          │┃                                       ┃   M                        Answer the invitation with maybe  ┃                                                                   │
 │                          │┃                                       ┃   c                        Write a new message               ┃                                                                   │
 │                          │┃                                       ┃   r                        Reply                             ┃                                                                   │
 │                          │┃                                       ┃   R                        Reply to all                      ┃                                                                   │
@@ -54,9 +57,6 @@ expression: harness.screen()
 │                          │┃                                       ┃   A                        Add an account                    ┃                                                                   │
 │                          │┃                                       ┃   S                        Sign in to an account             ┃                                                                   │
 │                          │┃                                       ┃   ?                        Help for this context             ┃                                                                   │
-│                          │┃                                       ┃                                                              ┃                                                                   │
-│                          │┃                                       ┃                                                              ┃                                                                   │
-│                          │┃                                       ┃                                                              ┃                                                                   │
 │                          │┃                                       ┃                                                              ┃                                                                   │
 │                          │┃                                       ┃                                                              ┃                                                                   │
 │                          │┃                                       ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛                                                                   │

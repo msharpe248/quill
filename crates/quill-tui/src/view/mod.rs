@@ -11,6 +11,7 @@ mod reader;
 mod setup;
 mod sidebar;
 mod status;
+mod suggestions;
 mod templates;
 
 use ratatui::Frame;
@@ -105,6 +106,8 @@ pub fn render(frame: &mut Frame, state: &State, env: &Env) -> Overlays {
             folders::render(frame, rect, state, env);
         } else if state.templates.is_some() {
             templates::render(frame, rect, state, env);
+        } else if state.suggestions.is_some() {
+            suggestions::render(frame, rect, state, env);
         } else if state.attachments.is_some() {
             attachments::render(frame, rect, state, env);
         } else {

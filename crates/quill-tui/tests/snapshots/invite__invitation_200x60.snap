@@ -1,0 +1,64 @@
+---
+source: crates/quill-tui/tests/invite.rs
+expression: harness.screen()
+---
+┌ [1] Accounts ────────────┐┌ [2] Inbox (unified) - 12 unread ───────────────────────────────────────────────────┐┏ [3] Reader ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+│> Unified              12 ││>     W Ana Ruiz              Offsite                                          09:31│┃ From:    Ana Ruiz <ana.ruiz@example.com>                                           ┃
+│  Work                    ││  * @ W Ana Ruiz              Q4 roadmap                                       09:14│┃ To:      Robin Vale <robin@example.com>                                            ┃
+│    Inbox               8 ││      W Build Bot             [quill] PR #42 passed                            08:51│┃ Date:    Sat 14 Nov 2026 09:31                                                     ┃
+│    Drafts                ││  *   P Peter Vale            Sunday dinner                                    08:35│┃ Subject: Offsite                                                                   ┃
+│    Sent                  ││  *   P Maya Okafor           Trail run Saturday                               04:30│┃ Attach:  attachment-2.ics (589 bytes)  (a lists them)                              ┃
+│    Archive               ││  * @ W Sam Lee               Photos from Sat                                    Fri│┃                                                                                    ┃
+│    Trash                 ││  *   P Riverside Library     Your hold is ready                                 Fri│┃ ── Invitation ──────────────────────────────────────────────────────────────────── ┃
+│  Personal                ││  *   W Priya Nair            Re: Offsite agenda                                 Fri│┃ What:    Offsite, day one                                                          ┃
+│    Inbox               4 ││  *!@ W Tomás Ortega          Invoice 2026-114                                   Thu│┃ When:    Fri 20 Nov 2026 09:00 to 16:00                                            ┃
+│    Drafts                ││      P Jo Park               Re: Book club pick                                 Thu│┃ Where:   Room 4; second floor                                                      ┃
+│    Sent                  ││  *   W 陈静 Chen Jing        Design review notes 设计评审                       Wed│┃ Host:    Ana Ruiz <ana.ruiz@example.com>                                           ┃
+│    Archive               ││      W IT Helpdesk           Scheduled maintenance Sunday                       Tue│┃ Invited: 3 people: 1 accepted, 1 declined, 1 not answered                          ┃
+│    Trash                 ││  *   W Lena Fischer          Lunch on Thursday?                                 Mon│┃ Asks for an answer: y accepts, n declines, M maybe.                                ┃
+│                          ││  *   P Hillcrest Dental      Appointment reminder                               Sun│┃                                                                                    ┃
+│                          ││  *!@ W Omar Haddad           Re: Contract redlines                           Nov 06│┃ You are invited to the offsite.                                                    ┃
+│                          ││  *   W The Weekly Parser     Issue 88: Parsing email is still hard           Nov 02│┃                                                                                    ┃
+│                          ││   !@ P Maya Okafor           Recipe you asked for                            Oct 25│┃                                                                                    ┃
+│                          ││      W Ana Ruiz              Welcome to the team                           Oct 2025│┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+│                          ││                                                                                    │┃                                                                                    ┃
+└──────────────────────────┘└────────────────────────────────────────────────────────────────────────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+ j/k scroll  space page  esc back  y accept  n decline  M maybe  r reply  e archive  d delete  a files  o links  t html/text  v web page  u unread  s star  z zoom  ? help  q quit

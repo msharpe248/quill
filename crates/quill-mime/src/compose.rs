@@ -537,6 +537,11 @@ fn attachment_part(attachment: &OutgoingAttachment) -> MimePart<'_> {
     if content_type.is_text() && std::str::from_utf8(&attachment.data).is_ok() {
         content_type = content_type.attribute("charset", "utf-8");
     }
+    // A calendar part says what it is for: without `method=REPLY` an
+    // answer to an invitation is just a calendar file.
+    if let Some(method) = calendar_method(&attachment.content_type) {
+        content_type = content_type.attribute("method", method);
+    }
     // Always base64, text files too: a file must arrive byte for byte,
     // whatever line endings or control characters it holds.
     MimePart::new(
@@ -545,6 +550,30 @@ fn attachment_part(attachment: &OutgoingAttachment) -> MimePart<'_> {
     )
     .attachment(name)
     .transfer_encoding("base64")
+}
+
+/// The `method` of a `text/calendar` type, when it is one of the methods
+/// there are. It is the one parameter of an attachment's type that is
+/// carried over; every other is dropped.
+fn calendar_method(content_type: &str) -> Option<&'static str> {
+    let mut pieces = content_type.split(';');
+    if !pieces
+        .next()
+        .is_some_and(|kind| kind.trim().eq_ignore_ascii_case("text/calendar"))
+    {
+        return None;
+    }
+    pieces.find_map(|piece| {
+        let (name, value) = piece.split_once('=')?;
+        if !name.trim().eq_ignore_ascii_case("method") {
+            return None;
+        }
+        [
+            "REQUEST", "REPLY", "CANCEL", "PUBLISH", "COUNTER", "REFRESH",
+        ]
+        .into_iter()
+        .find(|method| value.trim().trim_matches('"').eq_ignore_ascii_case(method))
+    })
 }
 
 /// Base64 in lines of 76 characters, with CRLF between them.
@@ -1606,6 +1635,26 @@ mod tests {
             ("applicätion/pdf", "application/octet-stream"),
         ] {
             assert_eq!(media_type(given), sent_as, "{given:?}");
+        }
+    }
+
+    #[test]
+    fn a_calendar_parts_method_is_the_one_parameter_carried_over() {
+        assert_eq!(
+            calendar_method("text/calendar; method=REPLY; charset=utf-8"),
+            Some("REPLY")
+        );
+        assert_eq!(
+            calendar_method("Text/Calendar;METHOD=\"request\""),
+            Some("REQUEST")
+        );
+        for other in [
+            "text/calendar",
+            "text/calendar; method=EVIL\r\nBcc: x",
+            "text/plain; method=REPLY",
+            "application/pdf",
+        ] {
+            assert_eq!(calendar_method(other), None, "{other}");
         }
     }
 

@@ -1,0 +1,28 @@
+---
+source: crates/quill-tui/tests/invite.rs
+expression: harness.screen()
+---
+┌ [1] Accounts ──┐┏ [3] Reader ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+│> Unified    12 │┃ From:    Ana Ruiz <ana.ruiz@example.com>                   ┃
+│  Work          │┃ To:      Robin Vale <robin@example.com>                    ┃
+│    Inbox     8 │┃ Date:    Sat 14 Nov 2026 09:31                             ┃
+│    Drafts      │┃ Subject: Offsite                                           ┃
+│    Sent        │┃ Attach:  attachment-2.ics (589 bytes)  (a lists them)      ┃
+│    Archive     │┃                                                            ┃
+│    Trash       │┃ ── Invitation ──────────────────────────────────────────── ┃
+│  Personal      │┃ What:    Offsite, day one                                  ┃
+│    Inbox     4 │┃ When:    Fri 20 Nov 2026 09:00 to 16:00                    ┃
+│    Drafts      │┃ Where:   Room 4; second floor                              ┃
+│    Sent        │┃ Host:    Ana Ruiz <ana.ruiz@example.com>                   ┃
+│    Archive     │┃ Invited: 3 people: 1 accepted, 1 declined, 1 not answered  ┃
+│    Trash       │┃ Asks for an answer: y accepts, n declines, M maybe.        ┃
+│                │┃                                                            ┃
+│                │┃ You are invited to the offsite.                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+└────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+ j/k scroll  space page  esc back  y accept  n decline  M maybe  ? help

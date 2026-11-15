@@ -878,6 +878,9 @@ pub struct BuiltinEditor {
     /// Whether the next view scrolls to show the cursor. `scroll` turns it
     /// off; using the cursor turns it back on.
     follow: bool,
+    /// Counts every change to the text, undo and redo included. See
+    /// [`BuiltinEditor::revision`].
+    revision: u64,
 }
 
 impl Default for BuiltinEditor {
@@ -914,6 +917,7 @@ impl Editor for BuiltinEditor {
         self.last = None;
         self.top = 0;
         self.follow = true;
+        self.revision += 1;
     }
 
     fn set_cursor_offset(&mut self, byte_offset: usize) {
@@ -1023,6 +1027,7 @@ impl BuiltinEditor {
             height: 24,
             top: 0,
             follow: true,
+            revision: 0,
         };
         editor.set_text(text);
         editor
@@ -1441,6 +1446,77 @@ impl BuiltinEditor {
         out
     }
 
+    /// A number that is different after every change to the text, whoever
+    /// made it: typing, a paste, a command, undo. Two readings that agree
+    /// mean the text between them is the same text, so an answer about the
+    /// text as it was at the first (a spelling check, say) still fits it.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// Whether any word is marked as misspelled.
+    pub fn has_misspellings(&self) -> bool {
+        self.lines.iter().any(|line| !line.misspelled.is_empty())
+    }
+
+    /// The misspelled word the cursor is on or just after, as a byte range
+    /// into the text.
+    pub fn misspelling_at_cursor(&self) -> Option<Range<usize>> {
+        let line = self.lines.get(self.cursor.line)?;
+        let col = self.cursor.col;
+        let word = line
+            .misspelled
+            .iter()
+            .find(|word| word.start <= col && col <= word.end)?;
+        let base = self.offset_of(Pos {
+            line: self.cursor.line,
+            col: 0,
+        });
+        Some(base + word.start..base + word.end)
+    }
+
+    /// Puts the cursor at the start of the next misspelled word after it,
+    /// going round to the first when there is none further on. Returns
+    /// `false` when nothing is marked.
+    pub fn next_misspelling(&mut self) -> bool {
+        let from = self.cursor;
+        let words = || {
+            self.lines.iter().enumerate().flat_map(|(line, text)| {
+                text.misspelled.iter().map(move |word| Pos {
+                    line,
+                    col: word.start,
+                })
+            })
+        };
+        let Some(next) = words().find(|at| *at > from).or_else(|| words().next()) else {
+            return false;
+        };
+        let next = self.clamp(next);
+        self.place(next);
+        true
+    }
+
+    /// Puts `text` in place of a byte range of the whole text, as one step
+    /// to undo, and leaves the cursor after it. Returns `false`, changing
+    /// nothing, for a range that is not in the text or does not start and
+    /// end between characters.
+    pub fn replace_range(&mut self, range: Range<usize>, text: &str) -> bool {
+        self.last = None;
+        let total = self.offset_of(self.end());
+        if range.start > range.end || range.end > total {
+            return false;
+        }
+        let (start, end) = (self.pos_of(range.start), self.pos_of(range.end));
+        let on_boundary = |at: Pos| self.text_of(at.line).is_char_boundary(at.col);
+        if !on_boundary(start) || !on_boundary(end) {
+            return false;
+        }
+        let text = clean(text);
+        self.edit(start, end, &text, Kind::Other, None);
+        self.follow = true;
+        true
+    }
+
     /// What to draw in an area `width` x `height`, scrolled to keep the
     /// cursor visible unless [`BuiltinEditor::scroll`] has moved the view
     /// away. Movement by row and by page goes by the size given here.
@@ -1671,6 +1747,7 @@ impl BuiltinEditor {
                 true
             });
             line.changed();
+            self.revision += 1;
             return;
         }
         let (Some(first), Some(last)) = (self.lines.get(start.line), self.lines.get(end.line))
@@ -1711,6 +1788,7 @@ impl BuiltinEditor {
             line.misspelled.extend(carried);
         }
         self.lines.splice(start.line..=end.line, fresh);
+        self.revision += 1;
     }
 
     /// Replaces `start..end` with `text` as an undoable step, and leaves the
@@ -3277,6 +3355,122 @@ mod tests {
         assert_eq!(misspelled(&mut editor), ["日本", "wrod"]);
         editor.set_misspellings(Vec::new());
         assert_eq!(misspelled(&mut editor), Vec::<String>::new());
+    }
+
+    #[test]
+    fn the_revision_changes_with_the_text_and_only_with_the_text() {
+        let mut editor = BuiltinEditor::new("one two");
+        let loaded = editor.revision();
+        // Moving, selecting and drawing are not changes.
+        press(&mut editor, "right shift-right cmd-a left");
+        editor.view(20, 5);
+        editor.scroll(1);
+        editor.set_misspellings(vec![0..3, 4..7]);
+        assert_eq!(editor.revision(), loaded);
+        // Every key of a run of typing is one, though the run is one step
+        // to undo.
+        type_text(&mut editor, "ab");
+        let typed = editor.revision();
+        assert_eq!(typed, loaded + 2);
+        // Undo is a change too, even back to a text seen before: what was
+        // known about that text was known at another revision.
+        press(&mut editor, "cmd-z");
+        assert_eq!(editor.text(), "one two");
+        assert!(editor.revision() > typed);
+        let undone = editor.revision();
+        press(&mut editor, "cmd-Z");
+        assert!(editor.revision() > undone);
+        // A key that changes nothing is not one.
+        let before = editor.revision();
+        press(&mut editor, "cmd-up backspace cmd-Z");
+        assert_eq!(editor.revision(), before);
+        editor.set_text("new");
+        assert!(editor.revision() > before);
+    }
+
+    #[test]
+    fn a_misspelt_word_is_found_at_the_cursor_and_stepped_to() {
+        let mut editor = BuiltinEditor::new("teh 日本 wrod\n\nfox jumsp");
+        assert!(!editor.has_misspellings());
+        assert!(!editor.next_misspelling());
+        assert_eq!(editor.misspelling_at_cursor(), None);
+        // Bytes: "teh" 0..3, "wrod" 11..15, and on the third line "jumsp"
+        // 21..26.
+        editor.set_misspellings(vec![0..3, 11..15, 21..26]);
+        assert!(editor.has_misspellings());
+        // At its start, inside it and just after it, the word is the one.
+        for (offset, word) in [
+            (0, Some(0..3)),
+            (2, Some(0..3)),
+            (3, Some(0..3)),
+            (4, None),
+            (10, None),
+            (11, Some(11..15)),
+            (15, Some(11..15)),
+            // The empty line between, and a word that is spelt.
+            (16, None),
+            (18, None),
+            (26, Some(21..26)),
+        ] {
+            editor.set_cursor_offset(offset);
+            assert_eq!(editor.misspelling_at_cursor(), word, "at {offset}");
+        }
+        // Stepping goes to the start of each in turn, and round.
+        editor.set_cursor_offset(1);
+        let mut visited = Vec::new();
+        for _ in 0..4 {
+            assert!(editor.next_misspelling());
+            visited.push(editor.cursor_offset());
+            assert!(editor.selection().is_none());
+        }
+        assert_eq!(visited, [11, 21, 0, 11]);
+    }
+
+    #[test]
+    fn a_range_is_replaced_as_one_step_to_undo() {
+        let mut editor = BuiltinEditor::new("I saw teh 日本 fox\nand ran");
+        editor.set_misspellings(vec![6..9, 17..20]);
+        type_text(&mut editor, "So ");
+        assert_eq!(editor.misspellings(), [9..12, 20..23]);
+        assert!(editor.replace_range(9..12, "the"));
+        assert_eq!(editor.text(), "So I saw the 日本 fox\nand ran");
+        // The cursor is after what was put in, nothing is selected, and
+        // the word's mark went with the word.
+        assert_eq!(editor.cursor_offset(), 12);
+        assert_eq!(editor.selection(), None);
+        assert_eq!(editor.misspellings().len(), 1);
+        assert!(editor.is_modified());
+        // One undo takes back the replacement alone, not the typing
+        // before it; one redo puts it back.
+        assert!(editor.undo());
+        assert_eq!(editor.text(), "So I saw teh 日本 fox\nand ran");
+        assert!(editor.redo());
+        assert_eq!(editor.text(), "So I saw the 日本 fox\nand ran");
+        // Typing after it starts a step of its own.
+        type_text(&mut editor, "m");
+        assert!(editor.undo());
+        assert_eq!(editor.text(), "So I saw the 日本 fox\nand ran");
+
+        // What is put in is made fit to enter, like anything typed.
+        assert!(editor.replace_range(0..2, "A\u{1b}[2Jnd\u{7}"));
+        assert_eq!(editor.text(), "A[2Jnd I saw the 日本 fox\nand ran");
+        // A range that is not in the text, is backwards, or cuts a
+        // character in two changes nothing and says so.
+        let before = (editor.text(), editor.revision());
+        let (later, earlier) = (21, 20);
+        for range in [5..400, 400..401, later..earlier] {
+            assert!(!editor.replace_range(range.clone(), "x"), "{range:?}");
+        }
+        let cut = editor.text().find('日').unwrap() + 1;
+        assert!(!editor.replace_range(cut..cut + 2, "x"));
+        assert!(!editor.replace_range(0..cut, "x"));
+        assert_eq!((editor.text(), editor.revision()), before);
+        // A range may run across lines, and may be empty.
+        let end = editor.text().len();
+        assert!(editor.replace_range(end - 8..end - 3, " "));
+        assert!(editor.text().ends_with("fox ran"), "{}", editor.text());
+        assert!(editor.replace_range(0..0, ""));
+        check_invariants(&editor);
     }
 
     #[test]

@@ -21,9 +21,10 @@ use crate::editor::Editor;
 use crate::files::RemoteContent;
 use crate::files::{AttachedFile, ExtractedFile};
 use crate::input::LineInput;
+use crate::invite::CardRow;
 use crate::keymap::{Key, KeyChord, Keymap, Mods, Resolution};
 use crate::layout::{self, LayoutMode};
-use crate::outgoing::{Handed, Response, SendRequest};
+use crate::outgoing::{Handed, InviteAnswer, Response, SendRequest};
 use crate::palette::{self, Item, Palette, What};
 
 mod mouse;
@@ -88,6 +89,9 @@ pub struct Env {
     /// Text kept ready to put into a message, from the user's `templates`
     /// folder.
     pub templates: Vec<Template>,
+    /// Whether the host has a spelling checker to ask. A terminal has
+    /// none.
+    pub spell_check: bool,
 }
 
 impl Env {
@@ -111,6 +115,8 @@ pub struct ComposeSettings {
     /// How long a sent message waits in the outbox, where it can be taken
     /// back.
     pub undo_send_seconds: u32,
+    /// Check the spelling of what is written, where the host can.
+    pub spell_check: bool,
 }
 
 impl Default for ComposeSettings {
@@ -119,6 +125,7 @@ impl Default for ComposeSettings {
             markdown: true,
             reply_above: true,
             undo_send_seconds: 10,
+            spell_check: true,
         }
     }
 }
@@ -172,6 +179,20 @@ pub enum Action {
     PictureLoaded {
         id: u32,
         size: Option<(u32, u32)>,
+    },
+    /// No key has arrived for a moment: the time to have the spelling of
+    /// what was typed checked, if it wants checking.
+    TypingPaused,
+    /// The answer to [`HostRequest::SpellCheck`]: the misspelt words, each
+    /// as the byte offsets of its start and end in the text that was sent.
+    Spelling {
+        id: u64,
+        words: Vec<(usize, usize)>,
+    },
+    /// The answer to [`HostRequest::SpellSuggest`].
+    Suggestions {
+        id: u64,
+        words: Vec<String>,
     },
 }
 
@@ -245,6 +266,13 @@ pub enum HostRequest {
         path: PathBuf,
         content_type: String,
     },
+    /// Have the spelling of the body of the message being written
+    /// checked. Only ever that body: never a recipient, a subject or
+    /// mail that was received. Answered by [`Action::Spelling`].
+    SpellCheck { id: u64, text: String },
+    /// Ask what a misspelt word might have been meant to be. Answered by
+    /// [`Action::Suggestions`].
+    SpellSuggest { id: u64, word: String },
 }
 
 /// What the app shell mirrors: enough to enable menu items, badge the Dock
@@ -503,6 +531,63 @@ pub struct TemplatePicker {
     pub total: usize,
 }
 
+/// Other spellings of a word in the message being written, open to choose
+/// one from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SuggestionPicker {
+    /// The word as written.
+    pub word: String,
+    /// Where it is in the body, in bytes.
+    range: std::ops::Range<usize>,
+    /// The body as it was when the word was asked about. A choice is only
+    /// put into that same text.
+    revision: u64,
+    pub words: Vec<String>,
+    pub selected: usize,
+    pub offset: usize,
+}
+
+/// The most rows the reader spends saying why the rest of a message is
+/// not here.
+const READER_NOTE_ROWS: usize = 3;
+/// The most spellings offered for one word.
+const MOST_SUGGESTIONS: usize = 12;
+/// The longest text sent for checking, in bytes. A longer body is not
+/// checked.
+pub const MOST_SPELL_CHECKED: usize = 100_000;
+/// How long an answer about spelling is waited for before a newer text
+/// may be sent regardless, in seconds.
+const SPELL_PATIENCE: i64 = 15;
+
+/// Where spell checking stands. Ids only ever go up, across every message
+/// written in a run, so an answer can never be taken for another's.
+#[derive(Debug, Default)]
+struct Spell {
+    last_id: u64,
+    /// The check sent and not yet answered: its id, the revision of the
+    /// body that was sent (`None` once that message has been put away),
+    /// and when it went.
+    flight: Option<(u64, Option<u64>, i64)>,
+    /// The revision of the body last sent for checking.
+    sent: Option<u64>,
+    /// A word whose other spellings have been asked for: the request's
+    /// id, where the word is, and the revision of the body it is in.
+    asking: Option<(u64, std::ops::Range<usize>, u64)>,
+}
+
+/// Where the downloaded copy of the message on show stands, when only its
+/// text was at hand as it opened.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Rest {
+    /// Nothing is missing, or nothing has been found missing yet.
+    #[default]
+    Here,
+    /// Being fetched from the server again.
+    Fetching,
+    /// Not to be had, and why. The text stays on show.
+    Failed(String),
+}
+
 /// The question asked before anything is done to unsubscribe from a list:
 /// whose list it is, and exactly what saying yes does.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -643,6 +728,15 @@ pub struct Reader {
     /// Where this message's page was last shown, so that loading its
     /// remote content shows it there again.
     pub page: Option<PageUse>,
+    /// The card for the invitation the message carries, when it carries
+    /// one: drawn between the headers and the text.
+    pub card: Vec<CardRow>,
+    /// Whether the rest of the message, beyond its text, is here.
+    pub rest: Rest,
+    /// What is said about that above the text, laid out for the pane: a
+    /// line while it is being fetched, and up to three when it could not
+    /// be, so that the reason can be read.
+    pub note: Vec<String>,
 }
 
 impl Reader {
@@ -672,6 +766,18 @@ impl Reader {
     /// The message came as both HTML and plain text.
     pub fn has_two_versions(&self) -> bool {
         matches!(&self.body, Body::Loaded(body) if body.html.is_some() && body.has_plain)
+    }
+
+    /// What to say about the rest of the message while only its text is
+    /// here.
+    pub fn rest_note(&self) -> Option<String> {
+        match &self.rest {
+            Rest::Here => None,
+            Rest::Fetching => Some("Fetching the rest of this message…".to_owned()),
+            Rest::Failed(why) => Some(format!(
+                "The rest of this message could not be fetched: {why}"
+            )),
+        }
     }
 }
 
@@ -710,6 +816,10 @@ pub struct State {
     pub folders: Option<FolderPicker>,
     /// The templates to choose from, over the message being written.
     pub templates: Option<TemplatePicker>,
+    /// Other spellings of a word to choose from, over the message being
+    /// written.
+    pub suggestions: Option<SuggestionPicker>,
+    spell: Spell,
     /// The question to answer before unsubscribing from a list.
     pub unsubscribe: Option<UnsubscribePrompt>,
     /// The message being written, in the reader's place.
@@ -775,6 +885,8 @@ impl State {
             palette: None,
             folders: None,
             templates: None,
+            suggestions: None,
+            spell: Spell::default(),
             unsubscribe: None,
             compose: None,
             compose_pending: None,
@@ -843,6 +955,9 @@ impl State {
         if self.templates.is_some() {
             return Context::Templates;
         }
+        if self.suggestions.is_some() {
+            return Context::Suggestions;
+        }
         if self.compose.is_some() {
             return Context::Compose;
         }
@@ -882,6 +997,13 @@ impl State {
                     }
                 }
             }
+            Action::TypingPaused => {
+                // Nothing on screen changes by asking.
+                changed = false;
+                self.check_spelling(env, &mut out);
+            }
+            Action::Spelling { id, words } => self.on_spelling(id, &words),
+            Action::Suggestions { id, words } => self.on_suggestions(id, words),
             Action::ClockTick(now) => {
                 // Dates are drawn relative to today, so only a new day shows.
                 changed = text::local_day(now, &env.tz) != text::local_day(self.now, &env.tz);
@@ -1212,6 +1334,7 @@ impl State {
                 self.answer_unsubscribe(env, out);
             }
             CommandId::NavOpen if context == Context::Templates => self.insert_template(env),
+            CommandId::NavOpen if context == Context::Suggestions => self.use_suggestion(),
             CommandId::NavOpen if context == Context::Folders => {
                 if let Some(picker) = self.folders.take()
                     && let Some(choice) = self.folder_choices(&picker).get(picker.selected)
@@ -1354,6 +1477,23 @@ impl State {
             }
             CommandId::MessageUnsubscribe => {
                 self.unsubscribe = self.unsubscribe_offer(env, context);
+            }
+            CommandId::InviteAccept | CommandId::InviteDecline | CommandId::InviteTentative => {
+                let answer = match id {
+                    CommandId::InviteAccept => quill_mime::invite::Answer::Accepted,
+                    CommandId::InviteDecline => quill_mime::invite::Answer::Declined,
+                    _ => quill_mime::invite::Answer::Tentative,
+                };
+                self.answer_invite(env, answer, context, out);
+            }
+            CommandId::ComposeSpellSuggest => self.ask_for_suggestions(out),
+            CommandId::ComposeSpellNext => {
+                if let Some(compose) = &mut self.compose
+                    && compose.body.next_misspelling()
+                {
+                    compose.field = Field::Body;
+                    compose.completion = None;
+                }
             }
             // From the app's Edit menu, which takes these keys before the
             // editor can. Typed in a terminal they reach the editor itself.
@@ -1562,6 +1702,27 @@ impl State {
                 .templates
                 .as_ref()
                 .is_some_and(|picker| !self.template_choices(env, picker).is_empty()),
+            CommandId::NavOpen if context == Context::Suggestions => true,
+            CommandId::InviteAccept | CommandId::InviteDecline | CommandId::InviteTentative => {
+                self.invite_asked(context).is_some()
+            }
+            CommandId::ComposeSpellSuggest => {
+                self.spelling_on(env)
+                    && self.compose.as_ref().is_some_and(|compose| {
+                        compose.field == Field::Body
+                            && compose.attaching.is_none()
+                            && !compose.sending
+                            && compose.body.misspelling_at_cursor().is_some()
+                    })
+            }
+            CommandId::ComposeSpellNext => {
+                self.spelling_on(env)
+                    && self.compose.as_ref().is_some_and(|compose| {
+                        compose.attaching.is_none()
+                            && !compose.sending
+                            && compose.body.has_misspellings()
+                    })
+            }
             // The question is all there is until it is answered: nothing
             // behind it moves.
             _ if context == Context::Unsubscribe => {
@@ -1625,6 +1786,7 @@ impl State {
                     || self.attachments.is_some()
                     || self.folders.is_some()
                     || self.templates.is_some()
+                    || self.suggestions.is_some()
                     || self.unsubscribe.is_some()
                     || self.compose.is_some()
                     || self.setup.is_some()
@@ -1690,6 +1852,18 @@ impl State {
             help.scroll = scroll(help.scroll, motion, page);
             return;
         }
+        // A question or a form is all there is until it is dealt with:
+        // whatever lies behind it stays where it is.
+        if matches!(
+            self.context(),
+            Context::Certificate
+                | Context::SignIn
+                | Context::When
+                | Context::Unsubscribe
+                | Context::Setup
+        ) {
+            return;
+        }
         if let Some(picker) = &mut self.links {
             let page = areas.links.map_or(1, layout::inner_height).max(1);
             picker.selected = step(picker.selected, self.reader.links.len(), motion, page);
@@ -1732,6 +1906,11 @@ impl State {
             }
             return;
         }
+        if let Some(picker) = &mut self.suggestions {
+            let page = areas.links.map_or(1, layout::inner_height).max(1);
+            picker.selected = step(picker.selected, picker.words.len(), motion, page);
+            return;
+        }
         match self.focus {
             Pane::Sidebar => {
                 let selectable: Vec<usize> = self
@@ -1767,6 +1946,9 @@ impl State {
                     self.sync_reader(out);
                 }
             }
+            // The message being written is in the reader's place, and
+            // moves by its own keys: there is nothing here to scroll.
+            Pane::Reader if self.compose.is_some() => {}
             Pane::Reader => {
                 let header = self.reader_header_rows();
                 let page = areas
@@ -1858,6 +2040,8 @@ impl State {
             self.folders = None;
         } else if self.templates.is_some() {
             self.templates = None;
+        } else if self.suggestions.is_some() {
+            self.suggestions = None;
         } else if let Some(compose) = self.compose.take() {
             // Closing keeps what was written. A reply opened and closed
             // untouched leaves nothing behind, and a draft emptied out is
@@ -2066,7 +2250,230 @@ impl State {
         self.help = None;
         self.links = None;
         self.folders = None;
+        // What was known of the last message's spelling says nothing of
+        // this one's. A check still out is waited for, and then dropped.
+        self.suggestions = None;
+        self.spell.sent = None;
+        self.spell.asking = None;
+        if let Some((_, revision, _)) = &mut self.spell.flight {
+            *revision = None;
+        }
         self.set_focus(Pane::Reader);
+    }
+
+    /// Whether spelling is checked at all: the user wants it and the host
+    /// has a checker.
+    fn spelling_on(&self, env: &Env) -> bool {
+        env.spell_check && env.compose.spell_check
+    }
+
+    /// Whether the body of the message being written wants its spelling
+    /// checked: it has changed since it was last sent for checking, and no
+    /// check is out. The run loop asks, and sends [`Action::TypingPaused`]
+    /// once the keys have been quiet for a moment.
+    pub fn spell_check_due(&self, env: &Env) -> bool {
+        self.spelling_on(env)
+            && self
+                .compose
+                .as_ref()
+                .is_some_and(|compose| Some(compose.body.revision()) != self.spell.sent)
+            // One check at a time: a newer text waits for the answer to
+            // the older. An answer that never comes is not waited for for
+            // ever.
+            && self
+                .spell
+                .flight
+                .as_ref()
+                .is_none_or(|(_, _, sent_at)| self.now - sent_at >= SPELL_PATIENCE)
+    }
+
+    /// Sends the body of the message being written to have its spelling
+    /// checked, if it is due. The body and nothing else.
+    fn check_spelling(&mut self, env: &Env, out: &mut Effects) {
+        if !self.spell_check_due(env) {
+            return;
+        }
+        let Some(compose) = &mut self.compose else {
+            return;
+        };
+        let revision = compose.body.revision();
+        let text = compose.body.text();
+        self.spell.sent = Some(revision);
+        if text.len() > MOST_SPELL_CHECKED || text.trim().is_empty() {
+            // Not sent: too long to check, or nothing to. Marks from when
+            // it was otherwise would say it had been.
+            compose.body.set_misspellings(Vec::new());
+            return;
+        }
+        self.spell.last_id += 1;
+        self.spell.flight = Some((self.spell.last_id, Some(revision), self.now));
+        out.host.push(HostRequest::SpellCheck {
+            id: self.spell.last_id,
+            text,
+        });
+    }
+
+    /// Takes the checker's answer: the misspelt words of the text that was
+    /// sent. An answer for a text that has changed since is dropped, since
+    /// its offsets no longer say where anything is; the text as it is now
+    /// is checked next.
+    fn on_spelling(&mut self, id: u64, words: &[(usize, usize)]) {
+        let Some((_, revision, _)) = self.spell.flight.take_if(|(sent, _, _)| *sent == id) else {
+            return;
+        };
+        let (Some(compose), Some(revision)) = (&mut self.compose, revision) else {
+            return;
+        };
+        if compose.body.revision() != revision {
+            return;
+        }
+        // The offsets are the host's word for it. One that does not fall
+        // between characters of the text that was sent is not used.
+        let text = compose.body.text();
+        let ranges = words
+            .iter()
+            .filter(|(start, end)| {
+                start < end
+                    && *end <= text.len()
+                    && text.is_char_boundary(*start)
+                    && text.is_char_boundary(*end)
+            })
+            .map(|(start, end)| *start..*end)
+            .collect();
+        compose.body.set_misspellings(ranges);
+    }
+
+    /// Asks the host what the misspelt word at the cursor might have been
+    /// meant to be.
+    fn ask_for_suggestions(&mut self, out: &mut Effects) {
+        let Some(compose) = &self.compose else {
+            return;
+        };
+        let Some(range) = compose.body.misspelling_at_cursor() else {
+            return;
+        };
+        let Some(word) = compose.body.text().get(range.clone()).map(str::to_owned) else {
+            return;
+        };
+        self.spell.last_id += 1;
+        self.spell.asking = Some((self.spell.last_id, range, compose.body.revision()));
+        out.host.push(HostRequest::SpellSuggest {
+            id: self.spell.last_id,
+            word,
+        });
+    }
+
+    /// Takes the host's suggestions and offers them, if the word they are
+    /// for is still as it was and the message is still what is in front
+    /// of the user.
+    fn on_suggestions(&mut self, id: u64, words: Vec<String>) {
+        let Some((_, range, revision)) = self.spell.asking.take_if(|(asked, ..)| *asked == id)
+        else {
+            return;
+        };
+        if self.context() != Context::Compose {
+            return;
+        }
+        let Some(compose) = &self.compose else {
+            return;
+        };
+        if compose.body.revision() != revision {
+            return;
+        }
+        let Some(word) = compose.body.text().get(range.clone()).map(str::to_owned) else {
+            return;
+        };
+        let mut offered: Vec<String> = Vec::new();
+        for suggestion in words {
+            // One word or a few, on one line, and not what is there now.
+            let suggestion = text::sanitize_line(&suggestion).trim().to_owned();
+            if !suggestion.is_empty()
+                && suggestion.len() <= 200
+                && suggestion != word
+                && !offered.contains(&suggestion)
+                && offered.len() < MOST_SUGGESTIONS
+            {
+                offered.push(suggestion);
+            }
+        }
+        if offered.is_empty() {
+            self.flash = Some((
+                format!("No suggestions for \"{}\".", text::sanitize_line(&word)),
+                false,
+            ));
+            return;
+        }
+        self.suggestions = Some(SuggestionPicker {
+            word,
+            range,
+            revision,
+            words: offered,
+            selected: 0,
+            offset: 0,
+        });
+    }
+
+    /// Puts the chosen spelling in place of the word, as one step to undo.
+    fn use_suggestion(&mut self) {
+        let Some(picker) = self.suggestions.take() else {
+            return;
+        };
+        let (Some(word), Some(compose)) = (picker.words.get(picker.selected), &mut self.compose)
+        else {
+            return;
+        };
+        if compose.body.revision() == picker.revision
+            && compose.body.replace_range(picker.range, word)
+        {
+            compose.field = Field::Body;
+            compose.doubts.clear();
+        }
+    }
+
+    /// The message in the reader, when it is the one the user is on and
+    /// carries an invitation that asks them for an answer.
+    fn invite_asked(&self, context: Context) -> Option<LocalMessageId> {
+        let id = self.page_message(context)?;
+        let row = self.reader.row.as_ref()?;
+        let Body::Loaded(body) = &self.reader.body else {
+            return None;
+        };
+        let account = self.accounts.iter().find(|a| a.id == row.account)?;
+        body.invite
+            .as_ref()?
+            .invite
+            .asks(&account.address)
+            .then_some(id)
+    }
+
+    /// Asks for an answer to the invitation in the reader to be built and
+    /// put in the outbox.
+    fn answer_invite(
+        &mut self,
+        env: &Env,
+        answer: quill_mime::invite::Answer,
+        context: Context,
+        out: &mut Effects,
+    ) {
+        let Some(message) = self.invite_asked(context) else {
+            return;
+        };
+        let from_name = self
+            .reader
+            .row
+            .as_ref()
+            .and_then(|row| self.accounts.iter().find(|a| a.id == row.account))
+            .and_then(|account| env.identities.get(&account.name))
+            .and_then(|identity| identity.full_name.clone());
+        out.data
+            .push(DataRequest::AnswerInvite(Box::new(InviteAnswer {
+                message,
+                answer,
+                from_name,
+                delay_seconds: i64::from(env.compose.undo_send_seconds),
+                utc_offset: jiff::Timestamp::from_second(self.now)
+                    .map_or(0, |now| env.tz.to_offset(now).seconds()),
+            })));
     }
 
     /// Hands the message over to be checked, built and put in the outbox.
@@ -3004,8 +3411,16 @@ impl State {
                     ));
                 }
                 if reading(self, id) {
-                    self.reader.body = Body::Unavailable(text::sanitize_line(&reason));
-                    self.reader.wrap_width = None;
+                    if matches!(self.reader.body, Body::Loaded(_)) {
+                        // Its text is here and stays on show. Only the
+                        // rest could not be had.
+                        if self.reader.rest == Rest::Fetching {
+                            self.reader.rest = Rest::Failed(text::sanitize_line(&reason));
+                        }
+                    } else {
+                        self.reader.body = Body::Unavailable(text::sanitize_line(&reason));
+                        self.reader.wrap_width = None;
+                    }
                 }
             }
             SyncEvent::Problem { account, message } => {
@@ -3184,18 +3599,39 @@ impl State {
             DataEvent::BodyLoaded { id, body } => {
                 if self.reader.row.as_ref().is_some_and(|row| row.id == id) {
                     self.reader.body = match body {
-                        Some(body) => Body::Loaded(LoadedBody {
-                            text: text::sanitize_body(body.text.trim_end()),
-                            ..body
-                        }),
+                        Some(body) => {
+                            self.reader.rest = match (body.copy_missing, &self.reader.rest) {
+                                (false, _) => Rest::Here,
+                                // The text is here and the downloaded copy
+                                // was let go. The text is shown while the
+                                // copy is fetched again: once for each
+                                // time the message is opened, never more.
+                                (true, Rest::Here) => {
+                                    out.sync.push(SyncRequest::FetchBody(id));
+                                    Rest::Fetching
+                                }
+                                // Fetched, and still no copy to read.
+                                (true, Rest::Fetching) => Rest::Failed(
+                                    "it was downloaded and could not be kept on this Mac."
+                                        .to_owned(),
+                                ),
+                                (true, Rest::Failed(why)) => Rest::Failed(why.clone()),
+                            };
+                            Body::Loaded(LoadedBody {
+                                text: text::sanitize_body(body.text.trim_end()),
+                                ..body
+                            })
+                        }
                         None => {
                             // Not downloaded yet. Ask for it; the reader
                             // hears when it lands or why it cannot.
                             out.sync.push(SyncRequest::FetchBody(id));
+                            self.reader.rest = Rest::Fetching;
                             Body::Downloading
                         }
                     };
                     self.reader.wrap_width = None;
+                    self.reader.card = self.invite_card(env);
                     // The first picture among the files is drawn above
                     // the text, where the terminal can draw one.
                     self.reader.picture = None;
@@ -3393,6 +3829,19 @@ impl State {
         }
         if let Some(rect) = areas.reader {
             let width = layout::reader_text_width(rect);
+            self.reader.note = match self.reader_note() {
+                Some(note) => {
+                    let mut lines = text::wrap(&note, width);
+                    if lines.len() > READER_NOTE_ROWS {
+                        lines.truncate(READER_NOTE_ROWS);
+                        if let Some(last) = lines.last_mut() {
+                            *last = text::truncate(&format!("{last}…"), width);
+                        }
+                    }
+                    lines
+                }
+                None => Vec::new(),
+            };
             if self.reader.wrap_width != Some(width) {
                 let (lines, links) = match (&self.reader.body, self.reader.showing()) {
                     (Body::Loaded(body), Some(showing)) => body_lines(body, showing, width),
@@ -3491,6 +3940,27 @@ impl State {
                 }
             }
         }
+        // Spellings are for a word of the message being written, as it
+        // was when they were asked for.
+        if self.suggestions.as_ref().is_some_and(|picker| {
+            self.compose
+                .as_ref()
+                .is_none_or(|compose| compose.body.revision() != picker.revision)
+        }) {
+            self.suggestions = None;
+        }
+        if self.suggestions.is_some() {
+            let rect = layout::compute(self, self.size, env.reader_width).links;
+            if let (Some(picker), Some(rect)) = (&mut self.suggestions, rect) {
+                picker.selected = picker.selected.min(picker.words.len().saturating_sub(1));
+                keep_visible(
+                    &mut picker.offset,
+                    picker.selected,
+                    layout::inner_height(rect),
+                    picker.words.len(),
+                );
+            }
+        }
         if let Some(picker) = &mut self.links {
             picker.selected = picker.selected.min(self.reader.links.len() - 1);
             // Laid out again: the picker's own size follows the links.
@@ -3535,9 +4005,53 @@ impl State {
         usize::from(self.reader_picture_cells(env, reader).1)
     }
 
-    /// How many rows the reader's headers take for the message on show.
-    pub fn reader_header_rows(&self) -> usize {
+    /// How many rows the reader's header fields take for the message on
+    /// show: From, To, Date, Subject, and Cc and the files when it has
+    /// them.
+    pub fn reader_field_rows(&self) -> usize {
         layout::reader_header_height(self.reader_has_cc(), !self.reader.files().is_empty())
+    }
+
+    /// How many rows there are above the reader's picture and text: the
+    /// header fields, and under them, each after a blank row, the line
+    /// about the rest of the message and the invitation's card when there
+    /// is one.
+    pub fn reader_header_rows(&self) -> usize {
+        let under = |rows: usize| if rows == 0 { 0 } else { rows + 1 };
+        self.reader_field_rows() + under(self.reader.note.len()) + under(self.reader.card.len())
+    }
+
+    /// What the reader says, above a message's text, about the rest of it
+    /// not being here.
+    fn reader_note(&self) -> Option<String> {
+        self.reader
+            .rest_note()
+            .filter(|_| matches!(self.reader.body, Body::Loaded(_)))
+    }
+
+    /// The card for the invitation the message on show carries.
+    fn invite_card(&self, env: &Env) -> Vec<CardRow> {
+        let (Some(row), Body::Loaded(body)) = (&self.reader.row, &self.reader.body) else {
+            return Vec::new();
+        };
+        let Some(invitation) = &body.invite else {
+            return Vec::new();
+        };
+        let mine = self
+            .accounts
+            .iter()
+            .find(|account| account.id == row.account)
+            .map(|account| account.address.as_str());
+        let key = |id| env.hint_key(id).map(ToString::to_string);
+        let keys = match (
+            key(CommandId::InviteAccept),
+            key(CommandId::InviteDecline),
+            key(CommandId::InviteTentative),
+        ) {
+            (Some(accept), Some(decline), Some(maybe)) => Some([accept, decline, maybe]),
+            _ => None,
+        };
+        crate::invite::card(invitation, &env.tz, mine, keys.as_ref())
     }
 
     pub fn reader_has_cc(&self) -> bool {
