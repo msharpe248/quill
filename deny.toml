@@ -5,11 +5,16 @@ all-features = true
 
 [advisories]
 yanked = "deny"
+ignore = [
+    # A two-macro crate, archived because the standard library now has
+    # `pin!`. Not a vulnerability. async-imap still depends on it.
+    { id = "RUSTSEC-2026-0441", reason = "unmaintained, not vulnerable; pulled in by async-imap" },
+]
 
 [licenses]
 # Every dependency must offer at least one of these. Adding a licence here is
 # a decision: record it in DECISIONS.md.
-allow = ["MIT", "Apache-2.0", "Unicode-3.0", "Zlib"]
+allow = ["MIT", "Apache-2.0", "Unicode-3.0", "Zlib", "ISC", "BSD-3-Clause", "CDLA-Permissive-2.0"]
 confidence-threshold = 0.9
 
 [licenses.private]

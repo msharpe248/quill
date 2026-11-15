@@ -118,6 +118,8 @@ swift test
 swift format lint --configuration .swift-format -r Sources Tests Package.swift
 ```
 
+The IMAP backend's tests run against a real server: install Dovecot (`brew install dovecot`) and they start their own copy, unprivileged, in a temporary directory. Without Dovecot those tests skip, saying so.
+
 The shell and the core talk over a bridge defined in `schema/bridge.json`. The example messages in `schema/examples` are tested from both sides; change the schema, both sets of types and the examples together.
 
 The app can be driven without a person, for checks that need the real window: `Quill --script "wait:2;menu:message.toggle_star;press:cmd-j" --dump-screen out.txt` performs the steps, then writes the terminal's text, the shell's state and a picture of the window (`out.txt.png`). Inside the sandbox the file must be in the app's container. `app/Sources/QuillApp/DebugScript.swift` lists the steps.
@@ -134,6 +136,7 @@ Layout of the workspace:
 | `quill-host` | What hosts the core: the app shell over the bridge, or nothing |
 | `quill-media` | Images: the Kitty graphics protocol |
 | `quill-mime` | Reading mail: RFC 5322 and MIME parsing |
+| `quill-imap` | The IMAP backend |
 | `quill-cli` | The `quill` binary |
 | `app/Sources/TerminalKit` | The terminal surface. The only Swift module that imports libghostty |
 | `app/Sources/Bridge` | The shell's end of the bridge: message types and the socket server |

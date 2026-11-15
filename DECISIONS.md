@@ -128,3 +128,36 @@ The Keychain needs no entitlement for the app's own items; an access group share
 - **A message's date falls back to when it was received** if the Date header is missing, unreadable, before 1970 or after 2200. A forged or broken date must not send a message to the far end of the list.
 - **A forwarded message (`message/rfc822`) is an attachment**, not part of the body.
 - **The demo mailbox's bodies now go through the parser**, replacing the split at the first blank line.
+
+### IMAP backend
+
+- **`async-imap` 0.12 is the IMAP library**, over `io-imap`. Both are maintained; `async-imap` is what Delta Chat runs against a wide range of real servers, and that field experience is worth more here than a newer design.
+- **TLS is `rustls` with the `ring` provider, verified by the system trust store** through `rustls-platform-verifier`. On macOS that means Apple's own rules apply, including ones stricter than the standard: a server certificate must carry the server-auth usage and be valid for at most 398 days.
+- **STARTTLS is all or nothing, and the server's advertisement is not consulted.** The client asks for the upgrade and fails if it is not granted. Whether STARTTLS appeared in the capability list is beside the point, since that list arrives in the clear. Nothing learned before the upgrade is kept.
+- **A pinned fingerprint names one exact certificate and is checked alone.** Its name, dates and issuer are not, because the user chose that certificate; the handshake signature still is. A pin beats the trust store: a different certificate is refused even if a trusted authority signed it.
+- **A refused certificate is carried in the error** (the certificate, its SHA-256 and the verifier's reason), so the UI can show it and offer reject, trust once or pin. That prompt itself is still to build.
+- **A folder syncs in batches of 500, newest first**, and `SyncDelta` gained `has_more`. A large mailbox is readable after the first batch instead of after the last.
+- **`SyncDelta` gained `reset`** for a changed UIDVALIDITY: the store drops what it held for the folder and takes the delta as the whole truth.
+- **The cursor is the UIDVALIDITY plus the set of UIDs already delivered**, written as ranges. UIDs are mostly contiguous, so fifty thousand of them are a few dozen bytes. Each sync compares that set with the server's (`UID SEARCH ALL`) to find arrivals and removals, then refreshes the flags of everything already held.
+- **CONDSTORE and QRESYNC are not used yet.** The comparison above is correct on every server; the extensions only make it cheaper. They are an optimisation to add once sync is measured on a large mailbox.
+- **A message's `RemoteId` is `uid;uidvalidity;folder`.** The id alone finds the message, as `fetch_raw` requires, and an id from before a renumbering is refused rather than misread.
+- **List headers are fetched as `BODY.PEEK[HEADER.FIELDS (...)]` and read by `quill-mime`**, not taken from IMAP's `ENVELOPE`. One parser then handles every encoding, for every backend.
+- **Flags are added and removed by name** (`+FLAGS`/`-FLAGS`), never replaced wholesale, so keywords Quill does not track survive.
+- **Reading a message uses `BODY.PEEK[]`**, so downloading it does not mark it read on the server. Marking read is an explicit flag change.
+- **A folder's role comes from SPECIAL-USE, then from common names** (`Sent Items`, `Deleted Items`, `Spam` and so on) for top-level folders on servers without it. Overrides in config are still to add.
+- **Mailbox names are decoded from modified UTF-7 for display** with a small decoder here, and kept encoded as the folder id.
+- **One connection per account, reopened after any error.** IDLE, and with it a second connection, arrives in M6.
+- **Moving, copying and deleting return "not supported"** until the operation queue in M3.
+- **Client certificates (mutual TLS) and TLS 1.0/1.1 are not supported.** The spec lists the first as a per-account extra; it has no milestone yet.
+
+### Testing IMAP
+
+- **Dovecot from Homebrew stands in for the spec's Docker mail server.** Docker is not installed on the development machine. Each test starts its own Dovecot, unprivileged, in a temporary directory, and stops it afterwards; nothing is left running and nothing is installed as a service.
+- **The tests terminate TLS themselves, in front of Dovecot's plaintext port.** Run unprivileged on macOS, Dovecot's own TLS relay drops every session straight after sign-in. Owning the TLS end also lets a test choose the certificate a client is shown: expired, for another host, unknown authority, or a server that refuses STARTTLS.
+- **Dovecot's memory limit is set to the largest value macOS accepts** in the test configuration. macOS rejects every ordinary limit, and Dovecot's "unlimited" is a larger number than macOS allows.
+- **Without Dovecot the IMAP tests skip with a message**; CI sets `QUILL_REQUIRE_DOVECOT` so that there they fail instead.
+
+### Dependencies
+
+- **Licences added to the allow-list**: ISC and BSD-3-Clause (the TLS stack: `ring`, `rustls-webpki`, `subtle`) and CDLA-Permissive-2.0 (the bundled certificate-authority list that the platform verifier carries for other platforms). All are permissive.
+- **`RUSTSEC-2026-0441` is ignored**: `pin-utils`, a two-macro crate that `async-imap` uses, was archived because the standard library replaced it. It is unmaintained, not vulnerable.

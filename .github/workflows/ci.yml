@@ -29,8 +29,13 @@ jobs:
         run: cargo fmt --all --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # The IMAP backend is tested against a real server.
+      - name: Install Dovecot
+        run: brew install dovecot
       - name: Test
         run: cargo test --workspace --locked
+        env:
+          QUILL_REQUIRE_DOVECOT: "1"
       # The cargo-deny action is a Linux container, so on macOS it is
       # installed with Homebrew instead.
       - name: Licences and advisories
