@@ -8,6 +8,7 @@ pub mod error;
 pub mod fixture;
 pub mod links;
 pub mod providers;
+pub mod search;
 pub mod token;
 pub mod types;
 

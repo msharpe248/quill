@@ -7,6 +7,7 @@ mod contacts;
 mod drafts;
 mod migrations;
 mod queue;
+mod search;
 
 pub use blobs::BlobStore;
 pub use contacts::Contact;
