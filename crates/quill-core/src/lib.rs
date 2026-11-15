@@ -9,4 +9,4 @@ pub mod fixture;
 pub mod types;
 
 pub use backend::Backend;
-pub use error::{Error, Result};
+pub use error::{CertificateProblem, Error, Result};

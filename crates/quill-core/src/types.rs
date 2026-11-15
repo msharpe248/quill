@@ -167,9 +167,16 @@ pub struct FlagChange {
 /// What changed in a folder since a cursor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SyncDelta {
+    /// Everything known about the folder is void and this delta replaces it.
+    /// An IMAP server says so by changing the folder's UIDVALIDITY.
+    pub reset: bool,
     pub added: Vec<RemoteMessage>,
     pub changed: Vec<FlagChange>,
     pub removed: Vec<RemoteId>,
+    /// The folder has more to deliver: sync again from `next_cursor`. A large
+    /// folder arrives in batches, newest first, so there is something to read
+    /// long before the last of it has come.
+    pub has_more: bool,
     pub next_cursor: SyncCursor,
 }
 

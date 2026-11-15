@@ -139,6 +139,11 @@ impl Store {
     pub fn apply_delta(&mut self, folder: LocalFolderId, delta: &SyncDelta) -> Result<()> {
         let tx = self.conn.transaction()?;
         {
+            if delta.reset {
+                // The server has renumbered the folder: nothing held for it
+                // can be matched to a message any more.
+                tx.execute("DELETE FROM messages WHERE folder_id = ?1", [folder.0])?;
+            }
             let mut insert = tx.prepare(
                 "INSERT INTO messages (folder_id, remote_id, message_id, subject, from_addrs,
                      to_addrs, cc_addrs, date, size, seen, flagged, answered, draft,
@@ -424,6 +429,8 @@ mod tests {
             added,
             changed: Vec::new(),
             removed: Vec::new(),
+            reset: false,
+            has_more: false,
             next_cursor: SyncCursor(cursor.to_owned()),
         }
     }
@@ -653,6 +660,8 @@ mod tests {
                 },
             }],
             removed: vec![RemoteId("1".to_owned())],
+            reset: false,
+            has_more: false,
             next_cursor: SyncCursor("c2".to_owned()),
         };
         store.apply_delta(inbox, &next).unwrap();
@@ -709,6 +718,8 @@ mod tests {
             added: Vec::new(),
             changed: Vec::new(),
             removed: vec![RemoteId("2".to_owned())],
+            reset: false,
+            has_more: false,
             next_cursor: SyncCursor("c2".to_owned()),
         };
         store.apply_delta(inbox, &removal).unwrap();
@@ -718,5 +729,73 @@ mod tests {
             .query_row("SELECT count(*) FROM bodies", [], |row| row.get(0))
             .unwrap();
         assert_eq!(orphans, 0);
+    }
+}
+
+#[cfg(test)]
+mod reset_tests {
+    use quill_core::types::{FolderId, FolderRole, Headers, RemoteFolder};
+
+    use super::*;
+
+    #[test]
+    fn a_reset_delta_replaces_the_folders_contents_and_only_that_folders() {
+        let mut store = Store::open_in_memory().unwrap();
+        let account = store
+            .upsert_account("Work", "robin@example.com", "imap")
+            .unwrap();
+        let folder = |id: &str| RemoteFolder {
+            id: FolderId(id.to_owned()),
+            name: id.to_owned(),
+            role: FolderRole::Other,
+        };
+        let message = |id: &str| RemoteMessage {
+            id: RemoteId(id.to_owned()),
+            headers: Headers {
+                message_id: None,
+                subject: id.to_owned(),
+                from: Vec::new(),
+                to: Vec::new(),
+                cc: Vec::new(),
+                date: 1,
+            },
+            flags: Flags::default(),
+            size: 1,
+            has_attachments: false,
+        };
+        let delta = |reset, ids: &[&str], cursor: &str| SyncDelta {
+            reset,
+            added: ids.iter().map(|id| message(id)).collect(),
+            changed: Vec::new(),
+            removed: Vec::new(),
+            has_more: false,
+            next_cursor: SyncCursor(cursor.to_owned()),
+        };
+        let a = store.upsert_folder(account, &folder("a")).unwrap();
+        let b = store.upsert_folder(account, &folder("b")).unwrap();
+        store
+            .apply_delta(a, &delta(false, &["1", "2"], "v1"))
+            .unwrap();
+        store.apply_delta(b, &delta(false, &["1"], "v1")).unwrap();
+        let old = store
+            .local_message_id(a, &RemoteId("1".to_owned()))
+            .unwrap()
+            .unwrap();
+        store.put_body(old, "old body").unwrap();
+
+        store.apply_delta(a, &delta(true, &["9"], "v2")).unwrap();
+        let subjects: Vec<String> = store
+            .messages(Mailbox::Folder(a))
+            .unwrap()
+            .into_iter()
+            .map(|row| row.headers.subject)
+            .collect();
+        assert_eq!(subjects, ["9"]);
+        assert_eq!(store.body(old).unwrap(), None);
+        assert_eq!(store.messages(Mailbox::Folder(b)).unwrap().len(), 1);
+        assert_eq!(
+            store.sync_cursor(a).unwrap(),
+            Some(SyncCursor("v2".to_owned()))
+        );
     }
 }

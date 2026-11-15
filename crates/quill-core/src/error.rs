@@ -6,9 +6,59 @@ pub enum Error {
     /// The folder or message named in the request does not exist remotely.
     #[error("not found: {0}")]
     NotFound(String),
-    /// The backend failed for a reason of its own (network, protocol, server).
+    /// The backend failed for a reason of its own (protocol, server).
     #[error("backend error: {0}")]
     Backend(String),
+    /// The server could not be reached, or the connection dropped. Worth
+    /// trying again later; nothing is wrong with the account.
+    #[error("cannot reach the server: {0}")]
+    Connection(String),
+    /// The server refused the credentials.
+    #[error("sign-in failed: {0}")]
+    Auth(String),
+    /// The server's certificate was not accepted. Never bypassed silently:
+    /// the user is shown the certificate and decides.
+    #[error("the server's certificate was not accepted: {}", .0.reason)]
+    Certificate(Box<CertificateProblem>),
+    /// The connection would not be secure in the way the account requires,
+    /// such as a server that does not offer STARTTLS.
+    #[error("the connection is not secure: {0}")]
+    Insecure(String),
+    /// The backend cannot do this.
+    #[error("not supported: {0}")]
+    Unsupported(String),
+}
+
+/// A certificate the client would not trust, for the user to judge.
+#[derive(Clone, PartialEq, Eq)]
+pub struct CertificateProblem {
+    pub host: String,
+    /// Why it was refused, in the verifier's words.
+    pub reason: String,
+    /// SHA-256 of the certificate the server presented, in lower-case hex.
+    /// This is what an account pins to trust a self-signed server.
+    pub fingerprint: Option<String>,
+    /// The certificate itself, DER encoded, for showing its subject, issuer
+    /// and dates.
+    pub certificate: Option<Vec<u8>>,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+impl std::fmt::Debug for CertificateProblem {
+    /// The certificate itself is a kilobyte of bytes nobody reads in a log.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CertificateProblem")
+            .field("host", &self.host)
+            .field("reason", &self.reason)
+            .field("fingerprint", &self.fingerprint)
+            .field(
+                "certificate",
+                &self
+                    .certificate
+                    .as_ref()
+                    .map(|der| format!("{} bytes", der.len())),
+            )
+            .finish()
+    }
+}

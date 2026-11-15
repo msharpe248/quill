@@ -247,6 +247,8 @@ fn add_message(
         }],
         changed: Vec::new(),
         removed: Vec::new(),
+        reset: false,
+        has_more: false,
         next_cursor: SyncCursor("after-add".to_owned()),
     };
     harness.store.apply_delta(folder, &delta).unwrap();

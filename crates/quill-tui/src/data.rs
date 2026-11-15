@@ -147,6 +147,8 @@ mod tests {
             }],
             changed: Vec::new(),
             removed: Vec::new(),
+            reset: false,
+            has_more: false,
             next_cursor: SyncCursor("c1".to_owned()),
         };
         store.apply_delta(folder, &delta).unwrap();

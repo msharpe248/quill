@@ -480,6 +480,8 @@ impl Backend for FixtureBackend {
             added: Vec::new(),
             changed: Vec::new(),
             removed: Vec::new(),
+            reset: false,
+            has_more: false,
             next_cursor: SyncCursor(SYNCED.to_owned()),
         };
         if cursor.is_some_and(|cursor| cursor.0 == SYNCED) {
