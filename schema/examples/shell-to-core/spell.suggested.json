@@ -1,0 +1,12 @@
+{
+  "jsonrpc": "2.0",
+  "method": "spell.suggested",
+  "params": {
+    "id": 8,
+    "words": [
+      "attached",
+      "attaches",
+      "attacked"
+    ]
+  }
+}

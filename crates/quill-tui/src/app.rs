@@ -571,6 +571,8 @@ async fn event_loop(
                 }
                 HostEvent::Thumbnail { id, ok } => {
                     io.thumbnail_made(id, ok);
+                // Spelling is not asked for yet, so nothing answers.
+                HostEvent::Spelling { .. } | HostEvent::Suggestions { .. } => None,
                     None
                 }
                 // Either way there is nothing left to draw for.

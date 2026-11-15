@@ -35,9 +35,16 @@ let package = Package(
             name: "Notifications",
             dependencies: ["Bridge"]
         ),
+        // Spelling: the Mac's checker, asked for the core, and the sums that
+        // turn its answers into the core's. Knows a text and where its
+        // misspelt words are, never mail.
+        .target(
+            name: "Spelling",
+            dependencies: ["Bridge"]
+        ),
         .executableTarget(
             name: "QuillApp",
-            dependencies: ["TerminalKit", "Bridge", "Panes", "Notifications"]
+            dependencies: ["TerminalKit", "Bridge", "Panes", "Notifications", "Spelling"]
         ),
         .testTarget(
             name: "BridgeTests",
@@ -50,6 +57,10 @@ let package = Package(
         .testTarget(
             name: "NotificationsTests",
             dependencies: ["Notifications"]
+        ),
+        .testTarget(
+            name: "SpellingTests",
+            dependencies: ["Spelling"]
         ),
     ],
     swiftLanguageModes: [.v6]

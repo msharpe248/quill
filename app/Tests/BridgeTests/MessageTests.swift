@@ -35,7 +35,8 @@ private enum Examples {
             examples.map(\.name) == [
                 "clipboard.write.json", "commands.list.json", "file.open.json", "files.pick.json",
                 "files.save.json", "link.open.json", "notify.clear.json", "notify.post.json", "pane.close.json",
-                "pane.play.json", "pane.preview.json", "pane.web.json", "state.update.json", "thumbnail.make.json",
+                "pane.play.json", "pane.preview.json", "pane.web.json", "spell.check.json", "spell.suggest.json",
+                "state.update.json", "thumbnail.make.json",
             ])
         for (name, text) in examples {
             let message = try CoreToShell(line: text)
@@ -51,7 +52,8 @@ private enum Examples {
         #expect(
             examples.map(\.name) == [
                 "app.will_quit.json", "command.run.json", "files.dropped.json", "files.saved.json",
-                "notify.used.json", "thumbnail.made.json", "url.open.json",
+                "notify.used.json", "spell.checked.json", "spell.suggested.json", "thumbnail.made.json",
+                "url.open.json",
             ])
         for (name, text) in examples {
             let message = try ShellToCore(line: text)
@@ -76,6 +78,7 @@ private enum Examples {
         #expect(examples.count >= 6)
         for name in [
             "notification-with-no-id.json", "too-many-notification-actions.json", "url-that-is-not-mail.json",
+            "misspelt-word-with-no-length.json", "too-many-suggestions.json",
         ] {
             #expect(examples.contains { $0.name == name }, "\(name) is missing")
         }
@@ -278,6 +281,165 @@ private enum Examples {
         #expect(UrlOpen(handedOver: "MAILTO:" + longest.dropFirst(7))?.url == longest)
         #expect(UrlOpen(handedOver: longest + "a") == nil)
         #expect(UrlOpen(handedOver: "mailto:" + String(repeating: "\u{FC}", count: 4093)) == nil)
+    }
+
+    @Test func spellingDecodesToWhatItSays() throws {
+        let examples = try Dictionary(uniqueKeysWithValues: Examples.load("core-to-shell").map { ($0.name, $0.text) })
+        let text = "The agenda is atached. Thanks for the feedbak."
+        #expect(try CoreToShell(line: examples["spell.check.json"]!) == .spellCheck(SpellCheck(id: 7, text: text)!))
+        #expect(
+            try CoreToShell(line: examples["spell.suggest.json"]!)
+                == .spellSuggest(SpellSuggest(id: 8, word: "atached")!))
+
+        let answers = try Dictionary(uniqueKeysWithValues: Examples.load("shell-to-core").map { ($0.name, $0.text) })
+        guard case let .spellChecked(checked) = try ShellToCore(line: answers["spell.checked.json"]!) else {
+            Issue.record("not a spell.checked")
+            return
+        }
+        #expect(checked.id == 7)
+        #expect(checked.words == [Misspelt(start: 14, end: 21)!, Misspelt(start: 38, end: 45)!])
+        // The offsets are bytes of the text as UTF-8, which is what they cut.
+        let bytes = Array(text.utf8)
+        #expect(
+            checked.words.map { String(decoding: bytes[$0.start..<$0.end], as: UTF8.self) } == ["atached", "feedbak"])
+        #expect(
+            try ShellToCore(line: answers["spell.suggested.json"]!)
+                == .spellSuggested(SpellSuggested(id: 8, words: ["attached", "attaches", "attacked"])!))
+
+        // Nothing to check, nothing misspelt and nothing to suggest are all
+        // things to say.
+        #expect(
+            CoreToShell.spellCheck(SpellCheck(id: 0, text: "")!).line
+                == #"{"jsonrpc":"2.0","method":"spell.check","params":{"id":0,"text":""}}"#)
+        let none = ShellToCore.spellChecked(SpellChecked(id: 7, words: [])!).line
+        #expect(none == #"{"jsonrpc":"2.0","method":"spell.checked","params":{"id":7,"words":[]}}"#)
+        #expect(try ShellToCore(line: none) == .spellChecked(SpellChecked(id: 7, words: [])!))
+        let noIdea = ShellToCore.spellSuggested(SpellSuggested(id: 8, words: [])!).line
+        #expect(noIdea == #"{"jsonrpc":"2.0","method":"spell.suggested","params":{"id":8,"words":[]}}"#)
+        #expect(try ShellToCore(line: noIdea) == .spellSuggested(SpellSuggested(id: 8, words: [])!))
+        #expect(
+            ShellToCore.spellChecked(SpellChecked(id: 7, words: [Misspelt(start: 14, end: 21)!])!).line
+                == #"{"jsonrpc":"2.0","method":"spell.checked","params":{"id":7,"words":[{"end":21,"start":14}]}}"#)
+
+        // Text keeps its line breaks and its letters through the line.
+        let letters = SpellCheck(id: 3, text: "Gr\u{FC}\u{DF}e,\nJ\u{FC}rgen \u{1F44D}\u{1F3FD}")!
+        #expect(!CoreToShell.spellCheck(letters).line.contains("\n"))
+        #expect(try CoreToShell(line: CoreToShell.spellCheck(letters).line) == .spellCheck(letters))
+    }
+
+    @Test func spellingHoldsOnlyWhatTheSchemaAllows() {
+        // At most 100000 bytes of text, however few characters that is.
+        #expect(SpellCheck(id: 0, text: "") != nil)
+        #expect(SpellCheck(id: -1, text: "word") == nil)
+        #expect(SpellCheck(id: 1, text: String(repeating: "a", count: 100_000)) != nil)
+        #expect(SpellCheck(id: 1, text: String(repeating: "a", count: 100_001)) == nil)
+        #expect(SpellCheck(id: 1, text: String(repeating: "\u{20AC}", count: 33_333)) != nil)
+        #expect(SpellCheck(id: 1, text: String(repeating: "\u{20AC}", count: 33_334)) == nil)
+
+        // A word of 1 to 200 bytes.
+        #expect(SpellSuggest(id: 1, word: "") == nil)
+        #expect(SpellSuggest(id: -1, word: "atached") == nil)
+        #expect(SpellSuggest(id: 1, word: String(repeating: "a", count: 200)) != nil)
+        #expect(SpellSuggest(id: 1, word: String(repeating: "a", count: 201)) == nil)
+        #expect(SpellSuggest(id: 1, word: String(repeating: "\u{FC}", count: 100)) != nil)
+        #expect(SpellSuggest(id: 1, word: String(repeating: "\u{FC}", count: 101)) == nil)
+
+        // A misspelt word ends after it starts, and starts in the text.
+        #expect(Misspelt(start: 0, end: 1) != nil)
+        #expect(Misspelt(start: 0, end: 0) == nil)
+        #expect(Misspelt(start: 5, end: 5) == nil)
+        #expect(Misspelt(start: 5, end: 4) == nil)
+        #expect(Misspelt(start: -1, end: 4) == nil)
+
+        // Misspelt words come in order and do not overlap. One may start
+        // where the last ended.
+        let first = Misspelt(start: 2, end: 6)!
+        let second = Misspelt(start: 6, end: 9)!
+        let inside = Misspelt(start: 5, end: 9)!
+        #expect(SpellChecked(id: 1, words: [])?.words.isEmpty == true)
+        #expect(SpellChecked(id: 1, words: [first, second])?.words == [first, second])
+        #expect(SpellChecked(id: -1, words: [first]) == nil)
+        #expect(SpellChecked(id: 1, words: [second, first]) == nil)
+        #expect(SpellChecked(id: 1, words: [first, inside]) == nil)
+        #expect(SpellChecked(id: 1, words: [first, first]) == nil)
+        // At most 2000 of them.
+        let many = (0..<2001).map { Misspelt(start: $0 * 3, end: $0 * 3 + 2)! }
+        #expect(SpellChecked(id: 1, words: Array(many.prefix(2000)))?.words.count == 2000)
+        #expect(SpellChecked(id: 1, words: many) == nil)
+
+        // At most 20 suggestions, each 1 to 200 bytes.
+        #expect(SpellSuggested(id: 1, words: [])?.words.isEmpty == true)
+        #expect(SpellSuggested(id: -1, words: ["attached"]) == nil)
+        #expect(SpellSuggested(id: 1, words: Array(repeating: "w", count: 20))?.words.count == 20)
+        #expect(SpellSuggested(id: 1, words: Array(repeating: "w", count: 21)) == nil)
+        #expect(SpellSuggested(id: 1, words: ["attached", ""]) == nil)
+        #expect(SpellSuggested(id: 1, words: [String(repeating: "a", count: 200)]) != nil)
+        #expect(SpellSuggested(id: 1, words: [String(repeating: "a", count: 201)]) == nil)
+        #expect(SpellSuggested(id: 1, words: [String(repeating: "\u{FC}", count: 101)]) == nil)
+    }
+
+    @Test func spellingErrorsSayWhatIsWrong() {
+        let longText = String(repeating: "a", count: 100_001)
+        #expect(
+            throws: BridgeError.malformed("spell.check: the id must not be negative and the text at most 100000 bytes")
+        ) {
+            try CoreToShell(line: #"{"jsonrpc":"2.0","method":"spell.check","params":{"id":1,"text":"\#(longText)"}}"#)
+        }
+        #expect(
+            throws: BridgeError.malformed("spell.check: the id must not be negative and the text at most 100000 bytes")
+        ) {
+            try CoreToShell(line: #"{"jsonrpc":"2.0","method":"spell.check","params":{"id":-1,"text":"word"}}"#)
+        }
+        #expect(throws: BridgeError.malformed("spell.check: missing text")) {
+            try CoreToShell(line: #"{"jsonrpc":"2.0","method":"spell.check","params":{"id":1}}"#)
+        }
+        #expect(throws: BridgeError.malformed("spell.check: unexpected language")) {
+            try CoreToShell(
+                line: #"{"jsonrpc":"2.0","method":"spell.check","params":{"id":1,"text":"word","language":"en"}}"#)
+        }
+        #expect(throws: BridgeError.self) {
+            try CoreToShell(line: #"{"jsonrpc":"2.0","method":"spell.check","params":{"id":1.5,"text":"word"}}"#)
+        }
+        #expect(throws: BridgeError.self) {
+            try CoreToShell(line: #"{"jsonrpc":"2.0","method":"spell.check","params":{"id":"1","text":"word"}}"#)
+        }
+        #expect(
+            throws: BridgeError.malformed("spell.suggest: the id must not be negative and the word 1 to 200 bytes")
+        ) {
+            try CoreToShell(line: #"{"jsonrpc":"2.0","method":"spell.suggest","params":{"id":8,"word":""}}"#)
+        }
+        #expect(throws: BridgeError.malformed("spell.checked: a misspelt word must end after it starts")) {
+            try ShellToCore(
+                line: #"{"jsonrpc":"2.0","method":"spell.checked","params":{"id":7,"words":[{"start":0,"end":0}]}}"#)
+        }
+        #expect(throws: BridgeError.malformed("spell.checked: a misspelt word must end after it starts")) {
+            try ShellToCore(
+                line: #"{"jsonrpc":"2.0","method":"spell.checked","params":{"id":7,"words":[{"start":-2,"end":3}]}}"#)
+        }
+        #expect(
+            throws: BridgeError.malformed(
+                "spell.checked: the id must not be negative and the words at most 2000, in order")
+        ) {
+            try ShellToCore(
+                line:
+                    #"{"jsonrpc":"2.0","method":"spell.checked","params":{"id":7,"words":[{"start":4,"end":9},{"start":8,"end":12}]}}"#
+            )
+        }
+        #expect(throws: BridgeError.malformed("spell.checked: unexpected word")) {
+            try ShellToCore(
+                line:
+                    #"{"jsonrpc":"2.0","method":"spell.checked","params":{"id":7,"words":[{"start":0,"end":4,"word":"teh"}]}}"#
+            )
+        }
+        #expect(throws: BridgeError.malformed("spell.checked: missing words")) {
+            try ShellToCore(line: #"{"jsonrpc":"2.0","method":"spell.checked","params":{"id":7}}"#)
+        }
+        #expect(
+            throws: BridgeError.malformed(
+                "spell.suggested: the id must not be negative and the words at most 20, each 1 to 200 bytes")
+        ) {
+            try ShellToCore(line: #"{"jsonrpc":"2.0","method":"spell.suggested","params":{"id":8,"words":[""]}}"#)
+        }
     }
 
     @Test func errorsSayWhatIsWrong() {

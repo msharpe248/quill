@@ -1,0 +1,8 @@
+{
+  "jsonrpc": "2.0",
+  "method": "spell.check",
+  "params": {
+    "id": 7,
+    "text": "The agenda is atached. Thanks for the feedbak."
+  }
+}

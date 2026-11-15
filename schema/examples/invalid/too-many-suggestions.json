@@ -1,0 +1,30 @@
+{
+  "jsonrpc": "2.0",
+  "method": "spell.suggested",
+  "params": {
+    "id": 8,
+    "words": [
+      "w",
+      "w",
+      "w",
+      "w",
+      "w",
+      "w",
+      "w",
+      "w",
+      "w",
+      "w",
+      "w",
+      "w",
+      "w",
+      "w",
+      "w",
+      "w",
+      "w",
+      "w",
+      "w",
+      "w",
+      "w"
+    ]
+  }
+}

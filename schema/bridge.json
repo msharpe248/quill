@@ -22,7 +22,9 @@
         { "$ref": "#/$defs/file.open" },
         { "$ref": "#/$defs/files.save" },
         { "$ref": "#/$defs/notify.post" },
-        { "$ref": "#/$defs/notify.clear" }
+        { "$ref": "#/$defs/notify.clear" },
+        { "$ref": "#/$defs/spell.check" },
+        { "$ref": "#/$defs/spell.suggest" }
       ]
     },
     "shellToCore": {
@@ -33,6 +35,8 @@
         { "$ref": "#/$defs/files.saved" },
         { "$ref": "#/$defs/notify.used" },
         { "$ref": "#/$defs/url.open" },
+        { "$ref": "#/$defs/spell.checked" },
+        { "$ref": "#/$defs/spell.suggested" },
         { "$ref": "#/$defs/app.will_quit" }
       ]
     },
@@ -675,6 +679,102 @@
               "type": "string",
               "pattern": "^mailto:",
               "maxLength": 8192
+            }
+          }
+        }
+      }
+    },
+
+    "spell.check": {
+      "description": "Core to shell. Check the spelling of some text with the system's checker, in the user's languages. Answered by spell.checked with the same id. Nothing is learned or remembered from the text.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "spell.check" },
+        "params": {
+          "type": "object",
+          "required": ["id", "text"],
+          "additionalProperties": false,
+          "properties": {
+            "id": { "type": "integer", "minimum": 0 },
+            "text": { "type": "string", "maxLength": 100000 }
+          }
+        }
+      }
+    },
+
+    "spell.checked": {
+      "description": "Shell to core. The answer to spell.check: where the misspelt words are, each as the byte offsets of its start and end in the text as UTF-8, in order and not overlapping.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "spell.checked" },
+        "params": {
+          "type": "object",
+          "required": ["id", "words"],
+          "additionalProperties": false,
+          "properties": {
+            "id": { "type": "integer", "minimum": 0 },
+            "words": {
+              "type": "array",
+              "maxItems": 2000,
+              "items": {
+                "type": "object",
+                "required": ["start", "end"],
+                "additionalProperties": false,
+                "properties": {
+                  "start": { "type": "integer", "minimum": 0 },
+                  "end": { "type": "integer", "minimum": 1 }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "spell.suggest": {
+      "description": "Core to shell. Ask the system's checker what a misspelt word might have been meant to be. Answered by spell.suggested with the same id.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "spell.suggest" },
+        "params": {
+          "type": "object",
+          "required": ["id", "word"],
+          "additionalProperties": false,
+          "properties": {
+            "id": { "type": "integer", "minimum": 0 },
+            "word": { "type": "string", "minLength": 1, "maxLength": 200 }
+          }
+        }
+      }
+    },
+
+    "spell.suggested": {
+      "description": "Shell to core. The answer to spell.suggest: words to offer, the likeliest first. None is an answer too.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "spell.suggested" },
+        "params": {
+          "type": "object",
+          "required": ["id", "words"],
+          "additionalProperties": false,
+          "properties": {
+            "id": { "type": "integer", "minimum": 0 },
+            "words": {
+              "type": "array",
+              "maxItems": 20,
+              "items": { "type": "string", "minLength": 1, "maxLength": 200 }
             }
           }
         }

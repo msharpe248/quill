@@ -2,6 +2,7 @@ import AppKit
 import Bridge
 import Notifications
 import Panes
+import Spelling
 import TerminalKit
 
 /// The main window: the terminal surface running the core, a toolbar built
@@ -82,6 +83,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     /// whether Quill may. Otherwise the Mac's own are put here once the
     /// window is up.
     var notifier: (any Notifier)?
+
+    /// Checks spelling for the core: the Mac's own checker, which shows
+    /// nothing and changes nothing, so a scripted run may use it too. A
+    /// check that must not depend on the Mac's dictionaries puts another
+    /// here.
+    var spellChecker: any SpellChecker {
+        get { spelling.checker }
+        set { spelling.checker = newValue }
+    }
+
+    /// Puts the core's questions to the checker in turn and sends every
+    /// answer back.
+    private(set) lazy var spelling = SpellingService(checker: SystemSpellChecker()) { [weak self] answer in
+        self?.bridge?.send(answer)
+    }
 
     private(set) var coreIsRunning = false
     /// The app asked the core to stop, so its exit is not a failure.
@@ -262,6 +278,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             notifier?.post(notification)
         case let .notifyClear(clear):
             notifier?.clear(ids: clear.ids)
+        case let .spellCheck(check):
+            spelling.check(check)
+        case let .spellSuggest(suggest):
+            spelling.suggest(suggest)
         }
     }
 

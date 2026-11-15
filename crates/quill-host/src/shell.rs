@@ -53,6 +53,26 @@ impl Host for ShellHost {
         let _ = self.events.send(event);
     }
 
+    fn spell_check(&self, id: u64, text: &str) -> bool {
+        match bridge::SpellCheck::new(id, text) {
+            Some(check) => {
+                self.send(CoreToShell::SpellCheck(check));
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn spell_suggest(&self, id: u64, word: &str) -> bool {
+        match bridge::SpellSuggest::new(id, word) {
+            Some(suggest) => {
+                self.send(CoreToShell::SpellSuggest(suggest));
+                true
+            }
+            None => false,
+        }
+    }
+
     fn save_file(&self, path: &Path, name: &str) -> bool {
         let save =
             bridge::AbsolutePath::new(path).and_then(|path| bridge::FilesSave::new(path, name));
@@ -112,6 +132,18 @@ fn read_loop(stream: UnixStream, events: UnboundedSender<HostEvent>) {
                 action: used.action().map(str::to_owned),
             },
             Ok(ShellToCore::UrlOpen(open)) => HostEvent::OpenMailto(open.url().to_owned()),
+            Ok(ShellToCore::SpellChecked(checked)) => HostEvent::Spelling {
+                id: checked.id(),
+                words: checked
+                    .words()
+                    .iter()
+                    .map(|word| (word.start, word.end))
+                    .collect(),
+            },
+            Ok(ShellToCore::SpellSuggested(suggested)) => HostEvent::Suggestions {
+                id: suggested.id(),
+                words: suggested.words().to_vec(),
+            },
             Ok(ShellToCore::AppWillQuit(_)) => HostEvent::WillQuit,
             Err(err) => HostEvent::Problem(format!("bridge: {err}")),
         };

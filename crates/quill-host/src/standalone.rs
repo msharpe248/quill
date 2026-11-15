@@ -91,7 +91,11 @@ impl Host for StandaloneHost {
             // file panel: the UI asks for a path instead. The clipboard is
             // the terminal's, and is asked for there. Nor notifications:
             // a terminal has no place for them that every terminal shares.
-            CoreToShell::NotifyPost(_)
+            // Nor a spelling checker: these are never sent here, since
+            // this host says it has none.
+            CoreToShell::SpellCheck(_)
+            | CoreToShell::SpellSuggest(_)
+            | CoreToShell::NotifyPost(_)
             | CoreToShell::NotifyClear(_)
             | CoreToShell::CommandsList(_)
             | CoreToShell::StateUpdate(_)

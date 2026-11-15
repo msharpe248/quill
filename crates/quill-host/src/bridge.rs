@@ -56,6 +56,13 @@ pub enum CoreToShell {
     /// Take notifications down.
     #[serde(rename = "notify.clear")]
     NotifyClear(NotifyClear),
+    /// Check the spelling of some text. Answered by `spell.checked`.
+    #[serde(rename = "spell.check")]
+    SpellCheck(SpellCheck),
+    /// Ask what a misspelt word might have been. Answered by
+    /// `spell.suggested`.
+    #[serde(rename = "spell.suggest")]
+    SpellSuggest(SpellSuggest),
 }
 
 /// A message the shell sends to the core.
@@ -80,6 +87,12 @@ pub enum ShellToCore {
     /// The Mac asked Quill to open a `mailto:` address.
     #[serde(rename = "url.open")]
     UrlOpen(UrlOpen),
+    /// The answer to `spell.check`.
+    #[serde(rename = "spell.checked")]
+    SpellChecked(SpellChecked),
+    /// The answer to `spell.suggest`.
+    #[serde(rename = "spell.suggested")]
+    SpellSuggested(SpellSuggested),
     /// The app is quitting: flush and exit cleanly.
     #[serde(rename = "app.will_quit")]
     AppWillQuit(NoParams),
@@ -645,6 +658,222 @@ impl From<NotifyUsed> for NotifyUsedParams {
         Self {
             id: used.id,
             action: used.action,
+        }
+    }
+}
+
+/// The most text one spelling check takes, in bytes.
+pub const MAX_SPELL_TEXT: usize = 100_000;
+/// The longest word suggestions are asked for, in bytes.
+pub const MAX_SPELL_WORD: usize = 200;
+/// The most misspelt words one answer names.
+pub const MAX_MISSPELT: usize = 2_000;
+/// The most suggestions one answer makes.
+pub const MAX_SUGGESTIONS: usize = 20;
+
+/// Text to check the spelling of. It cannot be built or decoded longer
+/// than a check takes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "SpellCheckParams", into = "SpellCheckParams")]
+pub struct SpellCheck {
+    id: u64,
+    text: String,
+}
+
+impl SpellCheck {
+    pub fn new(id: u64, text: &str) -> Option<Self> {
+        (text.len() <= MAX_SPELL_TEXT).then(|| Self {
+            id,
+            text: text.to_owned(),
+        })
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpellCheckParams {
+    id: u64,
+    text: String,
+}
+
+impl TryFrom<SpellCheckParams> for SpellCheck {
+    type Error = String;
+
+    fn try_from(params: SpellCheckParams) -> Result<Self, Self::Error> {
+        Self::new(params.id, &params.text)
+            .ok_or_else(|| format!("at most {MAX_SPELL_TEXT} bytes of text are checked at once"))
+    }
+}
+
+impl From<SpellCheck> for SpellCheckParams {
+    fn from(check: SpellCheck) -> Self {
+        Self {
+            id: check.id,
+            text: check.text,
+        }
+    }
+}
+
+/// Where a misspelt word is: the byte offsets of its start and end in the
+/// text that was checked, as UTF-8.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Misspelt {
+    pub start: usize,
+    pub end: usize,
+}
+
+/// The misspelt words of a text: each ends after it starts, and they are
+/// in order and do not overlap. It cannot be decoded holding anything
+/// else, so the core can use the offsets as given.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "SpellCheckedParams", into = "SpellCheckedParams")]
+pub struct SpellChecked {
+    id: u64,
+    words: Vec<Misspelt>,
+}
+
+impl SpellChecked {
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    pub fn words(&self) -> &[Misspelt] {
+        &self.words
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpellCheckedParams {
+    id: u64,
+    words: Vec<Misspelt>,
+}
+
+impl TryFrom<SpellCheckedParams> for SpellChecked {
+    type Error = String;
+
+    fn try_from(params: SpellCheckedParams) -> Result<Self, Self::Error> {
+        if params.words.len() > MAX_MISSPELT {
+            return Err(format!("at most {MAX_MISSPELT} misspelt words"));
+        }
+        let mut last = 0;
+        for word in &params.words {
+            if word.start >= word.end || word.start < last {
+                return Err("misspelt words must each end after they start, in order".to_owned());
+            }
+            last = word.end;
+        }
+        Ok(Self {
+            id: params.id,
+            words: params.words,
+        })
+    }
+}
+
+impl From<SpellChecked> for SpellCheckedParams {
+    fn from(checked: SpellChecked) -> Self {
+        Self {
+            id: checked.id,
+            words: checked.words,
+        }
+    }
+}
+
+/// A misspelt word to have suggestions for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "SpellSuggestParams", into = "SpellSuggestParams")]
+pub struct SpellSuggest {
+    id: u64,
+    word: String,
+}
+
+impl SpellSuggest {
+    pub fn new(id: u64, word: &str) -> Option<Self> {
+        (!word.is_empty() && word.len() <= MAX_SPELL_WORD).then(|| Self {
+            id,
+            word: word.to_owned(),
+        })
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpellSuggestParams {
+    id: u64,
+    word: String,
+}
+
+impl TryFrom<SpellSuggestParams> for SpellSuggest {
+    type Error = String;
+
+    fn try_from(params: SpellSuggestParams) -> Result<Self, Self::Error> {
+        Self::new(params.id, &params.word)
+            .ok_or_else(|| format!("a word of 1 to {MAX_SPELL_WORD} bytes"))
+    }
+}
+
+impl From<SpellSuggest> for SpellSuggestParams {
+    fn from(suggest: SpellSuggest) -> Self {
+        Self {
+            id: suggest.id,
+            word: suggest.word,
+        }
+    }
+}
+
+/// Words to offer in place of a misspelt one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "SpellSuggestedParams", into = "SpellSuggestedParams")]
+pub struct SpellSuggested {
+    id: u64,
+    words: Vec<String>,
+}
+
+impl SpellSuggested {
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    pub fn words(&self) -> &[String] {
+        &self.words
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpellSuggestedParams {
+    id: u64,
+    words: Vec<String>,
+}
+
+impl TryFrom<SpellSuggestedParams> for SpellSuggested {
+    type Error = String;
+
+    fn try_from(params: SpellSuggestedParams) -> Result<Self, Self::Error> {
+        let fine = params.words.len() <= MAX_SUGGESTIONS
+            && params
+                .words
+                .iter()
+                .all(|word| !word.is_empty() && word.len() <= MAX_SPELL_WORD);
+        if fine {
+            Ok(Self {
+                id: params.id,
+                words: params.words,
+            })
+        } else {
+            Err(format!(
+                "at most {MAX_SUGGESTIONS} suggestions, each 1 to {MAX_SPELL_WORD} bytes"
+            ))
+        }
+    }
+}
+
+impl From<SpellSuggested> for SpellSuggestedParams {
+    fn from(suggested: SpellSuggested) -> Self {
+        Self {
+            id: suggested.id,
+            words: suggested.words,
         }
     }
 }

@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "method": "spell.checked",
+  "params": {
+    "id": 7,
+    "words": [
+      {
+        "start": 0,
+        "end": 0
+      }
+    ]
+  }
+}

@@ -39,6 +39,11 @@ public enum CoreToShell: Equatable, Sendable {
     case notifyPost(NotifyPost)
     /// Take notifications down, shown or waiting.
     case notifyClear(NotifyClear)
+    /// Check the spelling of some text. Answered by `spellChecked`.
+    case spellCheck(SpellCheck)
+    /// Ask what a misspelt word might have been meant to be. Answered by
+    /// `spellSuggested`.
+    case spellSuggest(SpellSuggest)
 }
 
 /// A message the shell sends to the core.
@@ -55,6 +60,10 @@ public enum ShellToCore: Equatable, Sendable {
     case notifyUsed(NotifyUsed)
     /// The Mac asked Quill to open a mail address.
     case urlOpen(UrlOpen)
+    /// The answer to `spellCheck`.
+    case spellChecked(SpellChecked)
+    /// The answer to `spellSuggest`.
+    case spellSuggested(SpellSuggested)
     /// The app is quitting: flush and exit cleanly.
     case appWillQuit
 }
@@ -390,6 +399,114 @@ public struct UrlOpen: Equatable, Sendable, Codable {
     }
 
     static let allowedKeys: Set<String> = ["url"]
+}
+
+/// Text to have its spelling checked by the system's checker, in the user's
+/// languages. Nothing is learned or remembered from it.
+public struct SpellCheck: Equatable, Sendable, Codable {
+    /// Comes back in `SpellChecked`.
+    public let id: Int
+    public let text: String
+
+    /// The most text one check takes, in bytes.
+    public static let longestText = 100_000
+
+    /// `nil` unless the id is not negative and the text is at most 100000
+    /// bytes.
+    public init?(id: Int, text: String) {
+        guard id >= 0, text.utf8.count <= Self.longestText else { return nil }
+        self.id = id
+        self.text = text
+    }
+
+    static let allowedKeys: Set<String> = ["id", "text"]
+}
+
+/// Where a misspelt word is: the byte offsets of its start and end in the
+/// text that was checked, as UTF-8. Not UTF-16 units, and not characters.
+public struct Misspelt: Equatable, Sendable, Codable {
+    public let start: Int
+    public let end: Int
+
+    /// `nil` unless the word starts at or after the start of the text and
+    /// ends after it starts.
+    public init?(start: Int, end: Int) {
+        guard start >= 0, start < end else { return nil }
+        self.start = start
+        self.end = end
+    }
+
+    static let allowedKeys: Set<String> = ["start", "end"]
+}
+
+/// The misspelt words of a text, in order and not overlapping. It cannot be
+/// built holding anything else, so the core can use the offsets as given.
+public struct SpellChecked: Equatable, Sendable, Codable {
+    /// The id of the `SpellCheck` this answers.
+    public let id: Int
+    public let words: [Misspelt]
+
+    /// The most misspelt words one answer names.
+    public static let mostWords = 2000
+
+    /// `nil` unless the id is not negative, there are at most 2000 words,
+    /// and each starts at or after the end of the one before.
+    public init?(id: Int, words: [Misspelt]) {
+        guard id >= 0, words.count <= Self.mostWords else { return nil }
+        var last = 0
+        for word in words {
+            guard word.start >= last else { return nil }
+            last = word.end
+        }
+        self.id = id
+        self.words = words
+    }
+
+    static let allowedKeys: Set<String> = ["id", "words"]
+}
+
+/// A misspelt word to have suggestions for.
+public struct SpellSuggest: Equatable, Sendable, Codable {
+    /// Comes back in `SpellSuggested`.
+    public let id: Int
+    public let word: String
+
+    /// The longest word, asked about or suggested, in bytes.
+    public static let longestWord = 200
+
+    static func isWord(_ word: String) -> Bool {
+        (1...longestWord).contains(word.utf8.count)
+    }
+
+    /// `nil` unless the id is not negative and the word is 1 to 200 bytes.
+    public init?(id: Int, word: String) {
+        guard id >= 0, Self.isWord(word) else { return nil }
+        self.id = id
+        self.word = word
+    }
+
+    static let allowedKeys: Set<String> = ["id", "word"]
+}
+
+/// Words to offer in place of a misspelt one, the likeliest first. None is
+/// an answer too.
+public struct SpellSuggested: Equatable, Sendable, Codable {
+    /// The id of the `SpellSuggest` this answers.
+    public let id: Int
+    public let words: [String]
+
+    /// The most suggestions one answer makes.
+    public static let mostWords = 20
+
+    /// `nil` unless the id is not negative and there are at most 20 words,
+    /// each 1 to 200 bytes.
+    public init?(id: Int, words: [String]) {
+        guard id >= 0, words.count <= Self.mostWords, words.allSatisfy(SpellSuggest.isWord) else { return nil }
+        self.id = id
+        self.words = words
+    }
+
+    static let allowedKeys: Set<String> = ["id", "words"]
 }
 
 public enum BridgeError: Error, Equatable, CustomStringConvertible {

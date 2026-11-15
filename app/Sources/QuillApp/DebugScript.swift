@@ -35,6 +35,10 @@ import Notifications
 /// whether Quill may show them: what the core asked for is written to the
 /// dump instead.
 ///
+/// Spelling is checked by the Mac's own checker in a scripted run as in any
+/// other: it shows nothing and changes nothing. The dump says how many of
+/// the core's questions were answered.
+///
 /// `press:` reaches whatever has the keyboard, a pane as well as the
 /// terminal: `press:right` steps a Quick Look pane, `press:space` plays or
 /// pauses a player, `press:esc` closes any pane.
@@ -294,6 +298,10 @@ enum DebugScript {
         lines.append(contentsOf: notifier.lines)
         lines.append("notifications used: \(controller.notificationsUsed.joined(separator: "; "))")
         lines.append("urls passed on: \(controller.urlsPassedOn.joined(separator: " "))")
+        // How many of the core's questions about spelling have been
+        // answered. The answers themselves are the core's to show.
+        lines.append("spell checks: \(controller.spelling.checksAnswered)")
+        lines.append("spell suggestions: \(controller.spelling.suggestionsAnswered)")
         let toolbar = (controller.window?.toolbar?.items ?? [])
             .filter { $0.itemIdentifier != .flexibleSpace }
             .map { "\($0.isEnabled ? "+" : "-")\($0.itemIdentifier.rawValue)" }

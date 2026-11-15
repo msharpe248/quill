@@ -213,6 +213,31 @@ private struct UrlOpenParams: Codable {
     var url: String
 }
 
+private struct SpellCheckParams: Codable {
+    var id: Int
+    var text: String
+}
+
+private struct MisspeltParams: Codable {
+    var start: Int
+    var end: Int
+}
+
+private struct SpellCheckedParams: Codable {
+    var id: Int
+    var words: [MisspeltParams]
+}
+
+private struct SpellSuggestParams: Codable {
+    var id: Int
+    var word: String
+}
+
+private struct SpellSuggestedParams: Codable {
+    var id: Int
+    var words: [String]
+}
+
 private struct NoParams: Codable {}
 
 private struct Outgoing<Params: Encodable>: Encodable {
@@ -360,6 +385,19 @@ public extension CoreToShell {
                 throw BridgeError.malformed("notify.clear: there must be an id, and each 1 to 128 bytes")
             }
             self = .notifyClear(clear)
+        case "spell.check":
+            let params = try envelope.decode(SpellCheckParams.self, allowing: SpellCheck.allowedKeys)
+            guard let check = SpellCheck(id: params.id, text: params.text) else {
+                throw BridgeError.malformed(
+                    "spell.check: the id must not be negative and the text at most 100000 bytes")
+            }
+            self = .spellCheck(check)
+        case "spell.suggest":
+            let params = try envelope.decode(SpellSuggestParams.self, allowing: SpellSuggest.allowedKeys)
+            guard let suggest = SpellSuggest(id: params.id, word: params.word) else {
+                throw BridgeError.malformed("spell.suggest: the id must not be negative and the word 1 to 200 bytes")
+            }
+            self = .spellSuggest(suggest)
         default:
             throw BridgeError.unknownMethod(envelope.method)
         }
@@ -395,6 +433,10 @@ public extension CoreToShell {
             encodeLine(method: "notify.post", params: post)
         case let .notifyClear(clear):
             encodeLine(method: "notify.clear", params: clear)
+        case let .spellCheck(check):
+            encodeLine(method: "spell.check", params: check)
+        case let .spellSuggest(suggest):
+            encodeLine(method: "spell.suggest", params: suggest)
         }
     }
 }
@@ -438,6 +480,36 @@ public extension ShellToCore {
                 throw BridgeError.malformed("url.open: not a mailto address of at most 8192 bytes")
             }
             self = .urlOpen(open)
+        case "spell.checked":
+            let params = try envelope.decode(SpellCheckedParams.self, allowing: SpellChecked.allowedKeys)
+            // Each word is checked as strictly as the message itself.
+            if case let .array(words)? = envelope.params.object?["words"] {
+                for word in words {
+                    let extra = Set((word.object ?? [:]).keys).subtracting(Misspelt.allowedKeys)
+                    guard extra.isEmpty else {
+                        throw BridgeError.malformed(
+                            "spell.checked: unexpected \(extra.sorted().joined(separator: ", "))")
+                    }
+                }
+            }
+            let words = try params.words.map { word in
+                guard let word = Misspelt(start: word.start, end: word.end) else {
+                    throw BridgeError.malformed("spell.checked: a misspelt word must end after it starts")
+                }
+                return word
+            }
+            guard let checked = SpellChecked(id: params.id, words: words) else {
+                throw BridgeError.malformed(
+                    "spell.checked: the id must not be negative and the words at most 2000, in order")
+            }
+            self = .spellChecked(checked)
+        case "spell.suggested":
+            let params = try envelope.decode(SpellSuggestedParams.self, allowing: SpellSuggested.allowedKeys)
+            guard let suggested = SpellSuggested(id: params.id, words: params.words) else {
+                throw BridgeError.malformed(
+                    "spell.suggested: the id must not be negative and the words at most 20, each 1 to 200 bytes")
+            }
+            self = .spellSuggested(suggested)
         case "app.will_quit":
             try envelope.requireOnly([])
             self = .appWillQuit
@@ -462,6 +534,10 @@ public extension ShellToCore {
             encodeLine(method: "notify.used", params: used)
         case let .urlOpen(open):
             encodeLine(method: "url.open", params: open)
+        case let .spellChecked(checked):
+            encodeLine(method: "spell.checked", params: checked)
+        case let .spellSuggested(suggested):
+            encodeLine(method: "spell.suggested", params: suggested)
         case .appWillQuit:
             encodeLine(method: "app.will_quit", params: NoParams())
         }

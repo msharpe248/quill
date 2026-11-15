@@ -44,6 +44,12 @@ pub enum HostEvent {
     NotificationUsed { id: String, action: Option<String> },
     /// The Mac asked Quill to open a `mailto:` address.
     OpenMailto(String),
+    /// The answer to [`Host::spell_check`]: the misspelt words, each as
+    /// the byte offsets of its start and end in the text that was sent,
+    /// in order.
+    Spelling { id: u64, words: Vec<(usize, usize)> },
+    /// The answer to [`Host::spell_suggest`].
+    Suggestions { id: u64, words: Vec<String> },
     /// The app is quitting: flush and exit cleanly.
     WillQuit,
     /// The shell has gone. There is nothing left to draw for.
@@ -139,6 +145,22 @@ pub trait Host: Send + Sync {
         if let Some(clear) = bridge::NotifyClear::new(ids) {
             self.send(CoreToShell::NotifyClear(clear));
         }
+    }
+
+    /// Asks for the spelling of `text` to be checked, if this host has a
+    /// checker. Returns whether it has (and the text was short enough to
+    /// send): when not, there is no answer to wait for. The answer is
+    /// [`HostEvent::Spelling`] with the same `id`.
+    fn spell_check(&self, id: u64, text: &str) -> bool {
+        let _ = (id, text);
+        false
+    }
+
+    /// Asks what `word` might have been meant to be, on the same terms.
+    /// The answer is [`HostEvent::Suggestions`].
+    fn spell_suggest(&self, id: u64, word: &str) -> bool {
+        let _ = (id, word);
+        false
     }
 
     /// Hands an event straight back to the core, for a host that can
