@@ -228,9 +228,26 @@ impl Store {
                     [folder.0],
                 )?;
             }
+            // Microsoft Graph does not say whether a message was answered,
+            // so for those accounts the mark made here is the only one
+            // there is, and what the server reports must not wipe it.
+            let server_knows_answered: bool = tx
+                .query_row(
+                    "SELECT a.kind <> 'graph' FROM folders f
+                     JOIN accounts a ON a.id = f.account_id WHERE f.id = ?1",
+                    [folder.0],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .unwrap_or(true);
+            let answered = if server_knows_answered {
+                "excluded.answered"
+            } else {
+                "answered"
+            };
             // `WHERE` on the update keeps a re-sent, unchanged message from
             // counting as a change.
-            let mut insert = tx.prepare(
+            let mut insert = tx.prepare(&format!(
                 "INSERT INTO messages (folder_id, remote_id, message_id, subject, from_addrs,
                      to_addrs, cc_addrs, date, size, seen, flagged, answered, draft,
                      has_attachments)
@@ -240,15 +257,17 @@ impl Store {
                      from_addrs = excluded.from_addrs, to_addrs = excluded.to_addrs,
                      cc_addrs = excluded.cc_addrs, date = excluded.date, size = excluded.size,
                      seen = excluded.seen, flagged = excluded.flagged,
-                     answered = excluded.answered, draft = excluded.draft,
+                     answered = {answered}, draft = excluded.draft,
                      has_attachments = excluded.has_attachments
                  WHERE message_id IS NOT excluded.message_id OR subject <> excluded.subject
                     OR from_addrs <> excluded.from_addrs OR to_addrs <> excluded.to_addrs
                     OR cc_addrs <> excluded.cc_addrs OR date <> excluded.date
                     OR size <> excluded.size OR seen <> excluded.seen
-                    OR flagged <> excluded.flagged OR answered <> excluded.answered
-                    OR draft <> excluded.draft OR has_attachments <> excluded.has_attachments",
-            )?;
+                    OR flagged <> excluded.flagged OR answered <> {answered}
+                    OR draft <> excluded.draft OR has_attachments <> excluded.has_attachments"
+            ))?;
+            let mut known =
+                tx.prepare("SELECT 1 FROM messages WHERE folder_id = ?1 AND remote_id = ?2")?;
             // A message moved out of this folder here, which the server
             // has not been told about yet, is still listed by the server.
             // It is not brought back.
@@ -265,13 +284,19 @@ impl Store {
                 if pending.departed.contains(&message.id.0) {
                     continue;
                 }
+                // A backend may report a message again when it changes.
+                // Its people are counted the first time only.
+                let is_new = !known.exists(params![folder.0, message.id.0])?;
                 touched += insert_message(&mut insert, folder, message)?;
-                contacts::harvest(&tx, &message.headers, sent_folder)?;
+                if is_new {
+                    contacts::harvest(&tx, &message.headers, sent_folder)?;
+                }
             }
             let mut update = tx.prepare(
-                "UPDATE messages SET seen = ?3, flagged = ?4, answered = ?5, draft = ?6
+                "UPDATE messages SET seen = ?3, flagged = ?4, draft = ?6,
+                     answered = CASE WHEN ?7 THEN ?5 ELSE answered END
                  WHERE folder_id = ?1 AND remote_id = ?2
-                   AND (seen <> ?3 OR flagged <> ?4 OR answered <> ?5 OR draft <> ?6)",
+                   AND (seen <> ?3 OR flagged <> ?4 OR (?7 AND answered <> ?5) OR draft <> ?6)",
             )?;
             for change in &delta.changed {
                 let flags = change.flags;
@@ -281,7 +306,8 @@ impl Store {
                     flags.seen,
                     flags.flagged,
                     flags.answered,
-                    flags.draft
+                    flags.draft,
+                    server_knows_answered
                 ])?;
             }
             let mut delete =
@@ -1301,9 +1327,171 @@ mod sync_support_tests {
 
 #[cfg(test)]
 mod change_detection_tests {
-    use quill_core::types::{FlagChange, FolderRole, Headers, RemoteFolder};
+    use quill_core::types::{Address, FlagChange, FolderRole, Headers, RemoteFolder};
 
     use super::*;
+
+    fn inbox(store: &mut Store, kind: &str) -> LocalFolderId {
+        let account = store
+            .upsert_account("Work", "robin@example.com", kind)
+            .unwrap();
+        store
+            .upsert_folder(
+                account,
+                &RemoteFolder {
+                    id: FolderId("INBOX".to_owned()),
+                    name: "INBOX".to_owned(),
+                    role: FolderRole::Inbox,
+                },
+            )
+            .unwrap()
+    }
+
+    fn from_ana(flags: Flags) -> RemoteMessage {
+        RemoteMessage {
+            id: RemoteId("1".to_owned()),
+            headers: Headers {
+                message_id: None,
+                subject: "hello".to_owned(),
+                from: vec![Address {
+                    name: Some("Ana Ruiz".to_owned()),
+                    email: "ana@example.com".to_owned(),
+                }],
+                to: Vec::new(),
+                cc: Vec::new(),
+                date: 5,
+            },
+            flags,
+            size: 1,
+            has_attachments: false,
+        }
+    }
+
+    fn report(added: Vec<RemoteMessage>, changed: Vec<FlagChange>) -> SyncDelta {
+        SyncDelta {
+            reset: false,
+            added,
+            changed,
+            removed: Vec::new(),
+            has_more: false,
+            next_cursor: SyncCursor("c".to_owned()),
+        }
+    }
+
+    fn answered(store: &Store, folder: LocalFolderId) -> bool {
+        store.messages(Mailbox::Folder(folder)).unwrap()[0]
+            .flags
+            .answered
+    }
+
+    #[test]
+    fn a_graph_account_keeps_the_answered_mark_made_here() {
+        let mut store = Store::open_in_memory().unwrap();
+        let folder = inbox(&mut store, "graph");
+        store
+            .apply_delta(
+                folder,
+                &report(vec![from_ana(Flags::default())], Vec::new()),
+            )
+            .unwrap();
+        let id = store
+            .local_message_id(folder, &RemoteId("1".to_owned()))
+            .unwrap()
+            .unwrap();
+        let marked = Flags {
+            answered: true,
+            seen: true,
+            ..Flags::default()
+        };
+        store.queue_flags(id, marked, 10).unwrap();
+        let account = store.accounts().unwrap()[0].id;
+        let operation = store.claim_operation(account, 10).unwrap().unwrap();
+        store.complete_operation(operation.id, None).unwrap();
+        assert!(answered(&store, folder));
+
+        // The service reports the message again, read, and as ever says
+        // nothing of answered. Then a change of marks alone.
+        let read = Flags {
+            seen: true,
+            ..Flags::default()
+        };
+        assert!(
+            !store
+                .apply_delta(folder, &report(vec![from_ana(read)], Vec::new()))
+                .unwrap()
+        );
+        assert!(answered(&store, folder));
+        store
+            .apply_delta(
+                folder,
+                &report(
+                    Vec::new(),
+                    vec![FlagChange {
+                        id: RemoteId("1".to_owned()),
+                        flags: Flags::default(),
+                    }],
+                ),
+            )
+            .unwrap();
+        assert!(answered(&store, folder));
+        assert!(
+            !store.messages(Mailbox::Folder(folder)).unwrap()[0]
+                .flags
+                .seen
+        );
+    }
+
+    #[test]
+    fn an_imap_server_has_the_last_word_on_answered() {
+        let mut store = Store::open_in_memory().unwrap();
+        let folder = inbox(&mut store, "imap");
+        let marked = Flags {
+            answered: true,
+            ..Flags::default()
+        };
+        store
+            .apply_delta(folder, &report(vec![from_ana(marked)], Vec::new()))
+            .unwrap();
+        assert!(answered(&store, folder));
+        store
+            .apply_delta(
+                folder,
+                &report(vec![from_ana(Flags::default())], Vec::new()),
+            )
+            .unwrap();
+        assert!(!answered(&store, folder));
+    }
+
+    #[test]
+    fn a_message_reported_again_does_not_count_its_people_again() {
+        let mut store = Store::open_in_memory().unwrap();
+        let folder = inbox(&mut store, "graph");
+        let count = |store: &Store| -> i64 {
+            store
+                .conn
+                .query_row(
+                    "SELECT weight FROM contacts WHERE email = 'ana@example.com'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap()
+        };
+        store
+            .apply_delta(
+                folder,
+                &report(vec![from_ana(Flags::default())], Vec::new()),
+            )
+            .unwrap();
+        let once = count(&store);
+        let read = Flags {
+            seen: true,
+            ..Flags::default()
+        };
+        store
+            .apply_delta(folder, &report(vec![from_ana(read)], Vec::new()))
+            .unwrap();
+        assert_eq!(count(&store), once);
+    }
 
     #[test]
     fn apply_delta_reports_whether_anything_really_changed() {
