@@ -11,7 +11,7 @@ use quill_core::types::{
     Capabilities, Flags, FolderId, FolderRole, Headers, Operation, RemoteEvent, RemoteFolder,
     RemoteId, RemoteMessage, SyncCursor, SyncDelta,
 };
-use quill_core::{Backend, Error, Result};
+use quill_core::{Backend, Credential, Credentials, Error, Result};
 use tokio::sync::Mutex;
 use tokio::sync::mpsc::Sender;
 
@@ -22,7 +22,7 @@ use crate::wire::Refusal;
 
 /// Where the password comes from: the Keychain in the app, a constant in
 /// tests. Asked for at each sign-in and never kept.
-pub type PasswordProvider = Arc<dyn Fn() -> Result<String> + Send + Sync>;
+pub type PasswordProvider = Arc<dyn Credentials>;
 
 /// How many messages one `sync_folder` call brings in.
 const DEFAULT_BATCH: usize = 500;
@@ -143,7 +143,14 @@ impl Pop3Backend {
     /// account requires.
     async fn sign_in(&self) -> Result<Session> {
         let mut session = Session::open(&self.config, self.patience).await?;
-        let password = (self.password)()?;
+        let password = match self.password.get().await? {
+            Credential::Password(password) => password,
+            Credential::OAuthToken(_) => {
+                return Err(Error::Unsupported(
+                    "a POP3 account signs in with a password, not an OAuth token".to_owned(),
+                ));
+            }
+        };
         session.sign_in(&self.config.username, &password).await?;
         Ok(session)
     }
@@ -222,6 +229,14 @@ impl Backend for Pop3Backend {
                 "a POP3 server has no folders; Quill keeps them locally".to_owned(),
             )),
         }
+    }
+
+    async fn fetch_many(&self, ids: &[RemoteId]) -> Result<Vec<Option<Bytes>>> {
+        Pop3Backend::fetch_many(self, ids).await
+    }
+
+    async fn delete_many(&self, ids: &[RemoteId]) -> Result<()> {
+        Pop3Backend::delete_many(self, ids).await.map(|_| ())
     }
 
     /// POP3 has no push. The sync engine polls.

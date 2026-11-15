@@ -75,6 +75,31 @@ pub trait Backend: Send + Sync {
         .map(|()| None)
     }
 
+    /// Several whole messages, in the order asked for: `None` for one that
+    /// is no longer on the server. A backend for which every call is a new
+    /// sign-in (POP3) does them all in one.
+    async fn fetch_many(&self, ids: &[RemoteId]) -> Result<Vec<Option<Bytes>>> {
+        let mut messages = Vec::with_capacity(ids.len());
+        for id in ids {
+            messages.push(match self.fetch_raw(id).await {
+                Ok(raw) => Some(raw),
+                Err(crate::Error::NotFound(_)) => None,
+                Err(other) => return Err(other),
+            });
+        }
+        Ok(messages)
+    }
+
+    /// Removes several messages from the server for good. One that is
+    /// already gone is not an error, so this is safe to repeat. On an
+    /// error, assume nothing about which were removed.
+    async fn delete_many(&self, ids: &[RemoteId]) -> Result<()> {
+        for id in ids {
+            self.apply(&Operation::Delete { id: id.clone() }).await?;
+        }
+        Ok(())
+    }
+
     /// Saves a complete message into a folder, as a sent copy or a draft,
     /// and says what it is called there when the server tells.
     async fn append(

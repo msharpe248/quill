@@ -563,7 +563,7 @@ async fn upgrade(
 }
 
 pub fn backend(config: Pop3Config, password: &'static str) -> Pop3Backend {
-    Pop3Backend::new(config, Arc::new(move || Ok(password.to_owned())))
+    Pop3Backend::new(config, quill_core::credentials::password(password))
 }
 
 /// A plain-text message from an invented sender.

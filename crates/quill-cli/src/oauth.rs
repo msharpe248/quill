@@ -241,6 +241,7 @@ pub fn graph_account(
         backend: Arc::clone(&backend) as Arc<dyn quill_core::Backend>,
         sender: Some(backend),
         server_saves_sent: GraphBackend::SAVES_SENT_COPY,
+        server_copies: quill_sync::ServerCopies::Keep,
     })
 }
 

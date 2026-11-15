@@ -5,6 +5,7 @@
 mod blobs;
 mod contacts;
 mod drafts;
+mod local;
 mod migrations;
 mod queue;
 mod search;
@@ -661,6 +662,22 @@ fn insert_message(
         flags.draft,
         message.has_attachments,
     ])?)
+}
+
+/// Inserts a message that is known not to be in the folder yet.
+pub(crate) fn insert_message_row(
+    tx: &rusqlite::Transaction<'_>,
+    folder: LocalFolderId,
+    message: &RemoteMessage,
+) -> Result<()> {
+    let mut insert = tx.prepare(
+        "INSERT INTO messages (folder_id, remote_id, message_id, subject, from_addrs,
+             to_addrs, cc_addrs, date, size, seen, flagged, answered, draft,
+             has_attachments)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+    )?;
+    insert_message(&mut insert, folder, message)?;
+    Ok(())
 }
 
 fn message_row(row: &Row<'_>) -> rusqlite::Result<MessageRow> {

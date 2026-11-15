@@ -10,6 +10,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+bytes.workspace = true
 quill-core.workspace = true
 quill-mime.workspace = true
 quill-store.workspace = true
@@ -17,6 +18,5 @@ tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 
 [dev-dependencies]
 async-trait.workspace = true
-bytes.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time", "macros"] }

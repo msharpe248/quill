@@ -20,7 +20,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use quill_core::types::{
     Flags, FolderId, FolderRole, LocalAccountId, LocalFolderId, LocalMessageId, Operation,
-    RemoteEvent,
+    RemoteEvent, RemoteFolder, RemoteId, RemoteMessage,
 };
 use quill_core::{Backend, CertificateProblem, Envelope, Error, Sender};
 use quill_store::{BlobStore, Outgoing, QueuedKind, QueuedOperation, Store};
@@ -39,6 +39,43 @@ pub struct SyncAccount {
     /// The server files its own copy of what is sent through it (Gmail,
     /// Microsoft Graph), so Quill must not save a second one.
     pub server_saves_sent: bool,
+    /// For an account whose mail is kept here (POP3): what becomes of the
+    /// server's copy.
+    pub server_copies: ServerCopies,
+}
+
+/// What becomes of the server's copy of a message, for an account whose
+/// mail is kept on this Mac and whose server only hands it over. Nothing is
+/// ever deleted from the server before the whole message is safely here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ServerCopies {
+    /// Left where it is. Other mail programs see the same mail.
+    #[default]
+    Keep,
+    /// Deleted once the message has been downloaded.
+    DeleteWhenDownloaded,
+    /// Deleted this many days after Quill first saw it.
+    DeleteAfterDays(u32),
+}
+
+/// The start of the ids of folders, and of messages, that exist only in
+/// the store. No server issues such an id.
+pub const KEPT: &str = "kept:";
+
+/// The folders Quill keeps for an account whose server has only an inbox.
+fn kept_folders() -> Vec<RemoteFolder> {
+    [
+        ("sent", "Sent", FolderRole::Sent),
+        ("archive", "Archive", FolderRole::Archive),
+        ("trash", "Trash", FolderRole::Trash),
+    ]
+    .into_iter()
+    .map(|(id, name, role)| RemoteFolder {
+        id: FolderId(format!("{KEPT}{id}")),
+        name: name.to_owned(),
+        role,
+    })
+    .collect()
 }
 
 impl SyncAccount {
@@ -50,6 +87,7 @@ impl SyncAccount {
             backend,
             sender: None,
             server_saves_sent: false,
+            server_copies: ServerCopies::Keep,
         }
     }
 }
@@ -459,11 +497,17 @@ impl Engine {
 
     /// One pass over an account: its folders, their messages, recent bodies.
     async fn pass(&self, account: &SyncAccount) -> Result<(), Failure> {
-        let remote = account
+        // A server with no folders of its own (POP3) only hands mail over:
+        // it is kept here, in folders that exist only here.
+        let keeps_here = !account.backend.capabilities().folders;
+        let mut remote = account
             .backend
             .list_folders()
             .await
             .map_err(|err| Failure::from_backend(err, None))?;
+        if keeps_here {
+            remote.extend(kept_folders());
+        }
         let account_id = account.id;
         let listed = remote.clone();
         let (mut folders, folders_changed): (Vec<(LocalFolderId, FolderId, FolderRole)>, bool) =
@@ -500,15 +544,44 @@ impl Engine {
             FolderRole::Junk | FolderRole::Trash => 3,
         });
         for (local, remote, _) in folders {
+            if remote.0.starts_with(KEPT) {
+                // Nothing on any server to compare it with.
+                continue;
+            }
             loop {
                 let cursor = self.db(move |store| store.sync_cursor(local)).await?;
-                let delta = account
+                let mut delta = account
                     .backend
                     .sync_folder(&remote, cursor)
                     .await
                     .map_err(|err| Failure::from_backend(err, Some(&remote.0)))?;
                 let has_more = delta.has_more;
-                let changed = self
+                let mut changed = false;
+                if keeps_here {
+                    // The copy here is the one that matters. A message the
+                    // server lists again is not a second message, wherever
+                    // the first was filed since; and one the server no
+                    // longer has stays here, unless it never arrived.
+                    let listed: Vec<RemoteId> = delta
+                        .added
+                        .iter()
+                        .map(|message| message.id.clone())
+                        .collect();
+                    let gone = std::mem::take(&mut delta.removed);
+                    let at = now();
+                    let (known, dropped) = self
+                        .db(move |store| {
+                            let known = store.known_remote_ids(account_id, &listed)?;
+                            store.note_server_copies(account_id, &listed, at)?;
+                            store.forget_server_copies(account_id, &gone)?;
+                            let dropped = store.drop_unfetched(account_id, &gone)?;
+                            Ok((known, dropped))
+                        })
+                        .await?;
+                    delta.added.retain(|message| !known.contains(&message.id));
+                    changed = dropped;
+                }
+                changed |= self
                     .db(move |store| store.apply_delta(local, &delta))
                     .await?;
                 if changed {
@@ -518,6 +591,10 @@ impl Engine {
                     break;
                 }
             }
+        }
+
+        if keeps_here {
+            return self.keep_here(account).await;
         }
 
         // Recent mail should read offline, so fetch its bodies ahead.
@@ -533,6 +610,80 @@ impl Engine {
                 Err(FetchFailure::Gone) => {}
                 Err(FetchFailure::Other(message)) => return Err(message.into()),
             }
+        }
+        Ok(())
+    }
+
+    /// The rest of a pass for an account whose mail is kept here: every
+    /// message is downloaded whole, and then the server's copies are dealt
+    /// with as the account asks.
+    async fn keep_here(&self, account: &SyncAccount) -> Result<(), Failure> {
+        let account_id = account.id;
+        loop {
+            // A session at a time: a POP3 server locks the mailbox for as
+            // long as one lasts, and limits how often an account signs in.
+            let wanted = self
+                .db(move |store| {
+                    let mut wanted = Vec::new();
+                    for id in store.messages_without_body(account_id, i64::MIN, 50)? {
+                        if let Some(location) = store.message_location(id)? {
+                            wanted.push((id, location.remote, location.date));
+                        }
+                    }
+                    Ok(wanted)
+                })
+                .await?;
+            if wanted.is_empty() {
+                break;
+            }
+            let ids: Vec<RemoteId> = wanted.iter().map(|(_, remote, _)| remote.clone()).collect();
+            let fetched = account
+                .backend
+                .fetch_many(&ids)
+                .await
+                .map_err(|err| Failure::from_backend(err, None))?;
+            let mut gone = Vec::new();
+            for ((id, remote, date), raw) in wanted.into_iter().zip(fetched) {
+                match raw {
+                    Some(raw) => self
+                        .store_downloaded(id, date, raw)
+                        .await
+                        .map_err(|failure| match failure {
+                            FetchFailure::Gone => "a message could not be saved".to_owned(),
+                            FetchFailure::Other(message) => message,
+                        })?,
+                    // It left the server before it was fetched. There is
+                    // nothing of it to keep.
+                    None => gone.push(remote),
+                }
+            }
+            if !gone.is_empty() {
+                self.db(move |store| {
+                    store.forget_server_copies(account_id, &gone)?;
+                    store.drop_unfetched(account_id, &gone)
+                })
+                .await?;
+            }
+            self.emit(SyncEvent::Changed);
+        }
+
+        let seen_by = match account.server_copies {
+            ServerCopies::Keep => return Ok(()),
+            ServerCopies::DeleteWhenDownloaded => now(),
+            ServerCopies::DeleteAfterDays(days) => now() - i64::from(days) * 24 * 60 * 60,
+        };
+        let done = self
+            .db(move |store| store.server_copies_to_delete(account_id, seen_by))
+            .await?;
+        for batch in done.chunks(200) {
+            account
+                .backend
+                .delete_many(batch)
+                .await
+                .map_err(|err| Failure::from_backend(err, None))?;
+            let batch = batch.to_vec();
+            self.db(move |store| store.forget_server_copies(account_id, &batch))
+                .await?;
         }
         Ok(())
     }
@@ -567,8 +718,17 @@ impl Engine {
                 Error::NotFound(_) => FetchFailure::Gone,
                 other => FetchFailure::Other(other.to_string()),
             })?;
+        self.store_downloaded(id, location.date, raw).await
+    }
 
-        let text = quill_mime::parse(&raw, location.date)
+    /// Files a downloaded message's raw bytes and stores its text.
+    async fn store_downloaded(
+        &self,
+        id: LocalMessageId,
+        date: i64,
+        raw: bytes::Bytes,
+    ) -> Result<(), FetchFailure> {
+        let text = quill_mime::parse(&raw, date)
             .map(|parsed| parsed.body)
             .unwrap_or_default();
         let blobs = self.blobs.clone();
@@ -675,22 +835,46 @@ impl Engine {
     async fn carry_out(&self, running: &Running, operation: QueuedOperation) -> Option<i64> {
         let account = &running.account;
         let id = operation.id;
+        let can = account.backend.capabilities();
+        // A server with no folders keeps nothing but what it was sent:
+        // filing and marking happen here and nowhere else.
+        let keeps_here = !can.folders;
+        let mut left_server = None;
         let (outcome, what, resync) = match operation.kind {
             QueuedKind::Nothing => (Ok(None), "", false),
+            // The move is already made here; the message keeps its name.
+            QueuedKind::Move { remote, .. } if keeps_here => (Ok(Some(remote)), "moved", false),
+            // A copy the server never had needs nothing done there.
+            QueuedKind::Delete { remote, .. } if remote.0.starts_with(KEPT) => {
+                (Ok(None), "deleted", false)
+            }
+            QueuedKind::Flags { .. } if !can.flags => (Ok(None), "changed", false),
+            QueuedKind::Append {
+                target_local,
+                blob_hash,
+                flags,
+                ..
+            } if keeps_here => (
+                self.keep_copy(target_local, blob_hash, flags).await,
+                "saved",
+                false,
+            ),
             QueuedKind::Move { remote, target, .. } => (
                 account.backend.move_message(&remote, &target).await,
                 "moved",
                 true,
             ),
-            QueuedKind::Delete { remote, .. } => (
-                account
+            QueuedKind::Delete { remote, .. } => {
+                let outcome = account
                     .backend
-                    .apply(&Operation::Delete { id: remote })
+                    .apply(&Operation::Delete { id: remote.clone() })
                     .await
-                    .map(|()| None),
-                "deleted",
-                false,
-            ),
+                    .map(|()| None);
+                if keeps_here && outcome.is_ok() {
+                    left_server = Some(remote);
+                }
+                (outcome, "deleted", false)
+            }
             QueuedKind::Flags { remote, flags } => (
                 account
                     .backend
@@ -735,8 +919,14 @@ impl Engine {
         match outcome {
             Ok(new_id) => {
                 let knows_new_id = new_id.is_some();
+                let account_id = account.id;
                 let done = self
-                    .db(move |store| store.complete_operation(id, new_id.as_ref()))
+                    .db(move |store| {
+                        if let Some(remote) = left_server {
+                            store.forget_server_copies(account_id, &[remote])?;
+                        }
+                        store.complete_operation(id, new_id.as_ref())
+                    })
                     .await;
                 if let Err(message) = done {
                     self.problem(account, message);
@@ -772,6 +962,47 @@ impl Engine {
                 None
             }
         }
+    }
+
+    /// Files a copy of a message in a folder that exists only here: the
+    /// sent copy, for an account whose server keeps none.
+    async fn keep_copy(
+        &self,
+        folder: LocalFolderId,
+        blob_hash: String,
+        flags: Flags,
+    ) -> quill_core::Result<Option<RemoteId>> {
+        let blobs = self.blobs.clone();
+        let hash = blob_hash.clone();
+        let raw = tokio::task::spawn_blocking(move || match blobs {
+            Some(blobs) => blobs.get(&hash),
+            None => Ok(None),
+        })
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .flatten();
+        // The message to save has gone: there is nothing to do.
+        let Some(raw) = raw else {
+            return Ok(None);
+        };
+        let Some(parsed) = quill_mime::parse(&raw, now()) else {
+            return Ok(None);
+        };
+        let message = RemoteMessage {
+            // Named by its content: saving the same message again, after a
+            // crash, files it once.
+            id: RemoteId(format!("{KEPT}{blob_hash}")),
+            headers: parsed.headers,
+            flags,
+            size: u64::try_from(raw.len()).unwrap_or(u64::MAX),
+            has_attachments: !parsed.attachments.is_empty(),
+        };
+        let text = parsed.body;
+        self.db(move |store| store.keep_message(folder, &message, &text, Some(&blob_hash)))
+            .await
+            .map(|_| None)
+            .map_err(Error::Backend)
     }
 
     /// Sends one message from the outbox. Returns whether sending it

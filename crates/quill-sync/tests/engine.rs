@@ -390,6 +390,7 @@ impl Rig {
                 backend: Arc::new(backend.clone()),
                 sender: Some(Arc::new(post.clone())),
                 server_saves_sent: false,
+                server_copies: quill_sync::ServerCopies::Keep,
             }],
             options,
             events_tx,
@@ -1283,6 +1284,7 @@ async fn a_server_that_keeps_its_own_sent_copy_is_not_given_a_second() {
         backend: Arc::new(backend),
         sender: Some(Arc::new(post)),
         server_saves_sent: true,
+        server_copies: quill_sync::ServerCopies::Keep,
     });
     outbox(&mut rig, "Hi", None);
     rig.handle.send(SyncRequest::Queue);

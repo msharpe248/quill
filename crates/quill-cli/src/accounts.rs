@@ -164,6 +164,7 @@ pub fn sync_account(
         backend,
         sender,
         server_saves_sent,
+        server_copies: quill_sync::ServerCopies::Keep,
     }
 }
 
