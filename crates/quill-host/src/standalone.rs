@@ -43,7 +43,7 @@ impl Host for StandaloneHost {
             CoreToShell::CommandsList(_)
             | CoreToShell::StateUpdate(_)
             | CoreToShell::PaneClose(_) => {}
-            CoreToShell::UrlOpen(open) => {
+            CoreToShell::LinkOpen(open) => {
                 let events = self.events.clone();
                 let opener = self.opener.clone();
                 // `open` hands the address to the default browser or mail

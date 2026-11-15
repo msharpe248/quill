@@ -143,7 +143,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             showPreview(URL(fileURLWithPath: preview.path), title: preview.title)
         case .paneClose:
             closePreview()
-        case let .urlOpen(open):
+        case let .linkOpen(open):
             openLink(open.url)
         }
     }

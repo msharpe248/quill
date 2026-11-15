@@ -1,6 +1,6 @@
 {
   "jsonrpc": "2.0",
-  "method": "url.open",
+  "method": "link.open",
   "params": {
     "url": "file:///Applications/Calculator.app"
   }

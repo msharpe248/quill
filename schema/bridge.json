@@ -13,7 +13,7 @@
         { "$ref": "#/$defs/state.update" },
         { "$ref": "#/$defs/pane.preview" },
         { "$ref": "#/$defs/pane.close" },
-        { "$ref": "#/$defs/url.open" }
+        { "$ref": "#/$defs/link.open" }
       ]
     },
     "shellToCore": {
@@ -132,14 +132,14 @@
       }
     },
 
-    "url.open": {
+    "link.open": {
       "description": "Core to shell. Open a web or mail address in the user's default browser or mail program. The shell opens nothing else: no other scheme, and nothing outside printable ASCII.",
       "type": "object",
       "required": ["jsonrpc", "method", "params"],
       "additionalProperties": false,
       "properties": {
         "jsonrpc": { "const": "2.0" },
-        "method": { "const": "url.open" },
+        "method": { "const": "link.open" },
         "params": {
           "type": "object",
           "required": ["url"],

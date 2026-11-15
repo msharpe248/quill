@@ -1,6 +1,6 @@
 {
   "jsonrpc": "2.0",
-  "method": "url.open",
+  "method": "link.open",
   "params": {
     "url": "https://example.com/issue-88?utm_source=newsletter#top"
   }

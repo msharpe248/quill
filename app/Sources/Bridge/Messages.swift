@@ -17,7 +17,7 @@ public enum CoreToShell: Equatable, Sendable {
     /// Close the second pane and return focus to the terminal.
     case paneClose
     /// Open a web or mail address in the user's browser or mail program.
-    case urlOpen(UrlOpen)
+    case linkOpen(LinkOpen)
 }
 
 /// A message the shell sends to the core.
@@ -78,7 +78,7 @@ public enum Context: String, Equatable, Sendable, Codable {
     case sidebar, list, reader, help, links
 }
 
-public struct UrlOpen: Equatable, Sendable, Codable {
+public struct LinkOpen: Equatable, Sendable, Codable {
     /// An http, https or mailto address. See `Links.isOpenable`.
     public var url: String
 

@@ -24,8 +24,8 @@ pub enum CoreToShell {
     #[serde(rename = "pane.close")]
     PaneClose(NoParams),
     /// Open a web or mail address in the user's browser or mail program.
-    #[serde(rename = "url.open")]
-    UrlOpen(UrlOpen),
+    #[serde(rename = "link.open")]
+    LinkOpen(LinkOpen),
 }
 
 /// A message the shell sends to the core.
@@ -105,7 +105,7 @@ pub enum Context {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct UrlOpen {
+pub struct LinkOpen {
     pub url: OpenableUrl,
 }
 

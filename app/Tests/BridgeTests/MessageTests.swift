@@ -33,8 +33,8 @@ private enum Examples {
         let examples = try Examples.load("core-to-shell")
         #expect(
             examples.map(\.name) == [
-                "commands.list.json", "pane.close.json", "pane.preview.json", "state.update.json",
-                "url.open.json",
+                "commands.list.json", "link.open.json", "pane.close.json", "pane.preview.json",
+                "state.update.json",
             ])
         for (name, text) in examples {
             let message = try CoreToShell(line: text)
@@ -110,8 +110,8 @@ private enum Examples {
         #expect(throws: BridgeError.malformed("pane.preview: path is not absolute")) {
             try CoreToShell(line: #"{"jsonrpc":"2.0","method":"pane.preview","params":{"path":"a.pdf","title":"a"}}"#)
         }
-        #expect(throws: BridgeError.malformed("url.open: not an http, https or mailto address")) {
-            try CoreToShell(line: #"{"jsonrpc":"2.0","method":"url.open","params":{"url":"file:///etc/passwd"}}"#)
+        #expect(throws: BridgeError.malformed("link.open: not an http, https or mailto address")) {
+            try CoreToShell(line: #"{"jsonrpc":"2.0","method":"link.open","params":{"url":"file:///etc/passwd"}}"#)
         }
         #expect(throws: BridgeError.malformed("unexpected id")) {
             try ShellToCore(line: #"{"jsonrpc":"2.0","id":1,"method":"app.will_quit","params":{}}"#)
