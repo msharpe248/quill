@@ -4,6 +4,7 @@
 
 mod blobs;
 mod contacts;
+pub mod draft_file;
 mod drafts;
 mod local;
 mod migrations;
