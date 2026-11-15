@@ -13,6 +13,7 @@ workspace = true
 quill-core.workspace = true
 quill-host.workspace = true
 quill-media.workspace = true
+quill-mime.workspace = true
 quill-store.workspace = true
 # Named only to switch on `event-stream`; the code reaches crossterm through
 # `ratatui::crossterm` so the two can never disagree on a version.

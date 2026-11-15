@@ -29,7 +29,7 @@ pub async fn seed(store: &mut Store, now: i64) -> Result<(), DemoError> {
             for message in &delta.added {
                 let raw = backend.fetch_raw(&message.id).await?;
                 if let Some(local) = store.local_message_id(folder_id, &message.id)? {
-                    store.put_body(local, &plain_body(&raw))?;
+                    store.put_body(local, &plain_body(&raw, message.headers.date))?;
                 }
             }
         }
@@ -37,14 +37,9 @@ pub async fn seed(store: &mut Store, now: i64) -> Result<(), DemoError> {
     Ok(())
 }
 
-/// The text after the header block of a plain-text message. A stand-in until
-/// `quill-mime` arrives; the fixture only ever serves unencoded UTF-8.
-fn plain_body(raw: &[u8]) -> String {
-    let text = String::from_utf8_lossy(raw).replace("\r\n", "\n");
-    match text.split_once("\n\n") {
-        Some((_, body)) => body.to_owned(),
-        None => String::new(),
-    }
+/// The message's text, read the way real mail is.
+fn plain_body(raw: &[u8], received: i64) -> String {
+    quill_mime::parse(raw, received).map_or_else(String::new, |parsed| parsed.body)
 }
 
 #[cfg(test)]
@@ -91,11 +86,19 @@ mod tests {
     }
 
     #[test]
-    fn plain_body_splits_at_the_first_blank_line() {
+    fn bodies_go_through_the_mime_parser() {
         assert_eq!(
-            plain_body(b"A: 1\r\nB: 2\r\n\r\none\r\n\r\ntwo\r\n"),
+            plain_body(b"A: 1\r\nB: 2\r\n\r\none\r\n\r\ntwo\r\n", NOW),
             "one\n\ntwo\n"
         );
-        assert_eq!(plain_body(b"A: 1\r\n"), "");
+        // Decoded, which the split at a blank line this replaces never did.
+        assert_eq!(
+            plain_body(
+                b"Content-Transfer-Encoding: quoted-printable\r\n\r\nTom=C3=A1s\r\n",
+                NOW
+            ),
+            "Tom\u{e1}s\n"
+        );
+        assert_eq!(plain_body(b"", NOW), "");
     }
 }

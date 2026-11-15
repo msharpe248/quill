@@ -119,3 +119,12 @@ What this leaves open, knowingly:
 | Helper: `app-sandbox` + `inherit` | The core runs inside the app's own sandbox. A helper may hold only these two. |
 
 The Keychain needs no entitlement for the app's own items; an access group shared with the core is decided in M2, when there is a team identifier to name it with.
+
+## M2, IMAP read (in progress)
+
+- **Mail is parsed with `mail-parser` 1.0.1**, the spec's candidate. It needs Rust 1.98, so the workspace's minimum Rust version rises from 1.89 to 1.98.
+- **One function reads every message**: `quill_mime::parse` takes raw RFC 5322 bytes from any backend and returns headers, a plain-text body and the attachment list.
+- **An HTML-only message is shown through `mail-parser`'s own HTML-to-text conversion** for now. The styled conversion and sanitizer (`html2text`, `ammonia`) are M4.
+- **A message's date falls back to when it was received** if the Date header is missing, unreadable, before 1970 or after 2200. A forged or broken date must not send a message to the far end of the list.
+- **A forwarded message (`message/rfc822`) is an attachment**, not part of the body.
+- **The demo mailbox's bodies now go through the parser**, replacing the split at the first blank line.

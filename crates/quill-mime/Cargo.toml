@@ -1,0 +1,14 @@
+[package]
+name = "quill-mime"
+description = "Reading mail: RFC 5322 and MIME parsing into Quill's types"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+quill-core.workspace = true
+mail-parser.workspace = true

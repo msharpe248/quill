@@ -14,7 +14,7 @@ There is no real mail yet. Accounts, sync and sending arrive in later milestones
 
 ## Try it
 
-You need a stable Rust toolchain (1.89 or later; `rust-toolchain.toml` selects it). Standalone use is meant for Ghostty or Kitty, whose keyboard protocol Quill uses when it is offered; other terminals work with fewer key combinations.
+You need a stable Rust toolchain (1.98 or later; `rust-toolchain.toml` selects it). Standalone use is meant for Ghostty or Kitty, whose keyboard protocol Quill uses when it is offered; other terminals work with fewer key combinations.
 
 ```sh
 cargo run --release -- tui --demo
@@ -133,6 +133,7 @@ Layout of the workspace:
 | `quill-tui` | The terminal UI: state, views, keymap, themes, command registry |
 | `quill-host` | What hosts the core: the app shell over the bridge, or nothing |
 | `quill-media` | Images: the Kitty graphics protocol |
+| `quill-mime` | Reading mail: RFC 5322 and MIME parsing |
 | `quill-cli` | The `quill` binary |
 | `app/Sources/TerminalKit` | The terminal surface. The only Swift module that imports libghostty |
 | `app/Sources/Bridge` | The shell's end of the bridge: message types and the socket server |

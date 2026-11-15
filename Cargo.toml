@@ -5,13 +5,14 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.98"
 publish = false
 
 [workspace.dependencies]
 quill-core = { path = "crates/quill-core" }
 quill-host = { path = "crates/quill-host" }
 quill-media = { path = "crates/quill-media" }
+quill-mime = { path = "crates/quill-mime" }
 quill-store = { path = "crates/quill-store" }
 quill-tui = { path = "crates/quill-tui" }
 
@@ -24,6 +25,7 @@ crossterm = { version = "0.29", features = ["event-stream"] }
 futures-util = { version = "0.3.34", default-features = false }
 insta = "1.49"
 jiff = "0.2.44"
+mail-parser = "1.0.1"
 jsonschema = { version = "0.61.2", default-features = false }
 ratatui = "0.30.2"
 rustix = { version = "1.1.6", features = ["termios"] }
