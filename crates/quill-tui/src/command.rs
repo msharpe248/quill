@@ -11,6 +11,10 @@ pub enum Context {
     Help,
     /// Choosing one of a message's links to open.
     Links,
+    /// Adding an account. Typing goes into the field with the cursor.
+    Setup,
+    /// Deciding about a server certificate that was not trusted.
+    Certificate,
 }
 
 impl Context {
@@ -21,6 +25,8 @@ impl Context {
             Self::Reader => "Reader",
             Self::Help => "Help",
             Self::Links => "Links",
+            Self::Setup => "Add an account",
+            Self::Certificate => "Certificate",
         }
     }
 }
@@ -32,6 +38,15 @@ const EVERYWHERE: &[Context] = &[
     Context::Reader,
     Context::Help,
     Context::Links,
+    Context::Setup,
+    Context::Certificate,
+];
+/// The panes, and the form whose fields `tab` moves between.
+const PANES_AND_FORMS: &[Context] = &[
+    Context::Sidebar,
+    Context::List,
+    Context::Reader,
+    Context::Setup,
 ];
 /// Where a message is in view: commands on its body apply.
 const MESSAGE: &[Context] = &[Context::List, Context::Reader];
@@ -57,6 +72,7 @@ pub enum CommandId {
     MessageToggleStar,
     MessageToggleHtml,
     MessageOpenLink,
+    AccountAdd,
     DebugPreviewSample,
     DebugImageSample,
     HelpToggle,
@@ -93,7 +109,9 @@ impl Category {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Menu {
     App,
+    File,
     View,
+    Mailbox,
     Message,
     Help,
 }
@@ -198,7 +216,12 @@ impl Registry {
                     "Open",
                     Navigation,
                     Some(Menu::Message),
-                    &[Context::Sidebar, Context::List, Context::Links],
+                    &[
+                        Context::Sidebar,
+                        Context::List,
+                        Context::Links,
+                        Context::Setup,
+                    ],
                 ),
                 // Before nav.back, so that a key bound to both quits from a
                 // pane and only closes the help overlay.
@@ -240,18 +263,18 @@ impl Registry {
                 spec(
                     FocusNext,
                     "focus.next",
-                    "Focus the next pane",
+                    "Focus the next pane or field",
                     Panes,
                     Some(Menu::View),
-                    PANES,
+                    PANES_AND_FORMS,
                 ),
                 spec(
                     FocusPrev,
                     "focus.prev",
-                    "Focus the previous pane",
+                    "Focus the previous pane or field",
                     Panes,
                     Some(Menu::View),
-                    PANES,
+                    PANES_AND_FORMS,
                 ),
                 with_symbol(
                     spec(
@@ -307,6 +330,17 @@ impl Registry {
                         MESSAGE,
                     ),
                     "link",
+                ),
+                with_symbol(
+                    spec(
+                        AccountAdd,
+                        "account.add",
+                        "Add an account",
+                        General,
+                        Some(Menu::File),
+                        PANES,
+                    ),
+                    "person.crop.circle.badge.plus",
                 ),
                 // A stand-in until messages have attachments to preview (M4):
                 // it exercises the Quick Look pane end to end.
@@ -414,7 +448,15 @@ pub fn hints(context: Context) -> &'static [Hint] {
         hint(&[NavOpen], "open in browser"),
         hint(&[NavBack], "close"),
     ];
+    const SETUP: &[Hint] = &[
+        hint(&[NavOpen], "continue"),
+        hint(&[FocusNext], "next field"),
+        hint(&[NavBack], "back"),
+    ];
+    const CERTIFICATE: &[Hint] = &[hint(&[NavBack], "reject")];
     match context {
+        Context::Setup => SETUP,
+        Context::Certificate => CERTIFICATE,
         Context::Links => LINKS,
         Context::Sidebar => SIDEBAR,
         Context::List => LIST,

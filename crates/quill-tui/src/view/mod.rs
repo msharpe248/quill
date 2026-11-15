@@ -4,6 +4,7 @@ pub mod help;
 mod links;
 mod list;
 mod reader;
+mod setup;
 mod sidebar;
 mod status;
 
@@ -93,6 +94,10 @@ pub fn render(frame: &mut Frame, state: &State, env: &Env) -> Overlays {
         clear(frame, rect, &env.styles);
         links::render(frame, rect, state, env);
     }
+    if let Some(rect) = areas.dialog {
+        clear(frame, rect, &env.styles);
+        setup::render(frame, rect, state, env);
+    }
     if let Some(rect) = areas.help {
         clear(frame, rect, &env.styles);
         help::render(frame, rect, state, env);
@@ -103,6 +108,7 @@ pub fn render(frame: &mut Frame, state: &State, env: &Env) -> Overlays {
     // an overlay.
     let overlays = [
         areas.help,
+        areas.dialog,
         areas.links,
         areas.sidebar.filter(|_| areas.sidebar_overlay),
     ];

@@ -16,6 +16,7 @@ use crate::command::{CommandId, Context, Registry};
 use crate::data::{DataEvent, DataRequest, LoadedBody};
 use crate::keymap::{Key, KeyChord, Keymap, Mods, Resolution};
 use crate::layout::{self, LayoutMode};
+use crate::setup::{AccountEvent, AccountRequest, CertificatePrompt, Outcome, Setup};
 use crate::theme::Styles;
 use crate::{text, view};
 
@@ -30,6 +31,9 @@ pub struct Env {
     pub reader_width: f32,
     /// The terminal draws images (the Kitty graphics protocol).
     pub images: bool,
+    /// Accounts can be added and their certificates accepted from here.
+    /// False for the demo mailbox, which has no config to write to.
+    pub accounts: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,6 +48,10 @@ pub enum Action {
     Notify(Notice),
     /// News from the sync engine.
     Sync(SyncEvent),
+    /// An answer from the accounts service.
+    Account(AccountEvent),
+    /// Text pasted into the terminal.
+    Paste(String),
 }
 
 /// What an action asks of the world outside the state: queries and writes
@@ -54,11 +62,16 @@ pub struct Effects {
     pub data: Vec<DataRequest>,
     pub host: Vec<HostRequest>,
     pub sync: Vec<SyncRequest>,
+    /// Work for the accounts service: discovery, sign-in, saving.
+    pub accounts: Vec<AccountRequest>,
 }
 
 impl Effects {
     pub fn is_empty(&self) -> bool {
-        self.data.is_empty() && self.host.is_empty() && self.sync.is_empty()
+        self.data.is_empty()
+            && self.host.is_empty()
+            && self.sync.is_empty()
+            && self.accounts.is_empty()
     }
 }
 
@@ -283,6 +296,15 @@ pub struct State {
     pub reader: Reader,
     pub help: Option<Help>,
     pub links: Option<LinkPicker>,
+    /// The add-an-account flow, while it is open.
+    pub setup: Option<Setup>,
+    /// Certificates of existing accounts waiting for a decision. The first
+    /// is the one on screen.
+    pub certificates: VecDeque<CertificatePrompt>,
+    /// The flow was offered once because there were no accounts.
+    setup_offered: bool,
+    /// The store has said which accounts exist.
+    accounts_known: bool,
     /// Keys pressed so far of a sequence such as `g g`.
     pub pending: Vec<KeyChord>,
     pub notices: VecDeque<Notice>,
@@ -311,6 +333,10 @@ impl State {
             reader: Reader::default(),
             help: None,
             links: None,
+            setup: None,
+            certificates: VecDeque::new(),
+            setup_offered: false,
+            accounts_known: false,
             pending: Vec::new(),
             notices: VecDeque::new(),
             now,
@@ -332,6 +358,14 @@ impl State {
     pub fn context(&self) -> Context {
         if self.help.is_some() {
             return Context::Help;
+        }
+        // A certificate is asked about before anything else goes on: mail
+        // from that server waits on the answer.
+        if !self.certificates.is_empty() {
+            return Context::Certificate;
+        }
+        if self.setup.is_some() {
+            return Context::Setup;
         }
         if self.links.is_some() {
             return Context::Links;
@@ -359,6 +393,20 @@ impl State {
             }
             Action::Notify(notice) => self.notices.push_back(notice),
             Action::Sync(event) => self.on_sync(event, &mut out),
+            Action::Account(event) => self.on_account(event, &mut out),
+            Action::Paste(text) => {
+                if self.context() == Context::Setup
+                    && let Some(setup) = &mut self.setup
+                {
+                    setup.paste(&text);
+                }
+            }
+        }
+        // With no accounts there is nothing to read: offer to add one,
+        // once, instead of an empty window.
+        if env.accounts && self.accounts_known && self.accounts.is_empty() && !self.setup_offered {
+            self.setup_offered = true;
+            self.setup = Some(Setup::default());
         }
         self.relayout(env);
         self.dirty |= changed;
@@ -366,6 +414,18 @@ impl State {
     }
 
     fn on_key(&mut self, env: &Env, chord: KeyChord, out: &mut Effects) {
+        // Where there is typing to do, a key is typing first and a command
+        // only if the field has no use for it.
+        match self.context() {
+            Context::Setup => {
+                if let Some(requests) = self.setup.as_mut().and_then(|setup| setup.key(chord)) {
+                    out.accounts.extend(requests);
+                    return;
+                }
+            }
+            Context::Certificate if self.answer_certificate(chord, out) => return,
+            _ => {}
+        }
         self.pending.push(chord);
         match env
             .keymap
@@ -395,6 +455,27 @@ impl State {
         if !self.is_enabled(env, id) {
             return;
         }
+        // In the form, moving is between its fields and opening is going on
+        // to the next step.
+        if context == Context::Setup
+            && let Some(setup) = &mut self.setup
+        {
+            match id {
+                CommandId::NavOpen => {
+                    out.accounts.extend(setup.advance());
+                    return;
+                }
+                CommandId::FocusNext | CommandId::NavNext => {
+                    setup.move_field(true);
+                    return;
+                }
+                CommandId::FocusPrev | CommandId::NavPrev => {
+                    setup.move_field(false);
+                    return;
+                }
+                _ => {}
+            }
+        }
         match id {
             CommandId::NavNext => self.navigate(env, Motion::Next, out),
             CommandId::NavPrev => self.navigate(env, Motion::Prev, out),
@@ -403,6 +484,7 @@ impl State {
             CommandId::NavPageDown => self.navigate(env, Motion::PageDown, out),
             CommandId::NavPageUp => self.navigate(env, Motion::PageUp, out),
             CommandId::NavOpen if context == Context::Links => self.open_selected_link(out),
+            CommandId::AccountAdd => self.setup = Some(Setup::default()),
             CommandId::NavOpen => self.open(out),
             CommandId::NavBack => self.back(),
             CommandId::AppQuit => self.should_quit = true,
@@ -450,6 +532,8 @@ impl State {
         }
         match id {
             CommandId::NavOpen if context == Context::Links => !self.reader.links.is_empty(),
+            CommandId::NavOpen if context == Context::Setup => true,
+            CommandId::AccountAdd => env.accounts,
             CommandId::NavOpen => {
                 self.focus == Pane::Sidebar || self.list.rows.get(self.list.selected).is_some()
             }
@@ -458,6 +542,8 @@ impl State {
             CommandId::NavBack => {
                 self.help.is_some()
                     || self.links.is_some()
+                    || self.setup.is_some()
+                    || !self.certificates.is_empty()
                     || !self.notices.is_empty()
                     || self.focus == Pane::Reader
                     || (self.focus == Pane::Sidebar
@@ -614,6 +700,13 @@ impl State {
     fn back(&mut self) {
         if self.help.is_some() {
             self.help = None;
+        } else if !self.certificates.is_empty() {
+            // Not answering is rejecting: nothing is sent to that server.
+            self.certificates.pop_front();
+        } else if let Some(setup) = &mut self.setup {
+            if setup.back() {
+                self.setup = None;
+            }
         } else if self.links.is_some() {
             self.links = None;
         } else if self.notices.pop_front().is_some() {
@@ -630,6 +723,68 @@ impl State {
                 }
                 Pane::Sidebar | Pane::List => {}
             }
+        }
+    }
+
+    /// Takes a key as the answer to the certificate on screen: `o` trusts
+    /// it once, `p` pins it, `r` rejects it. Returns whether the key was an
+    /// answer (or typing that must not fall through to a command).
+    fn answer_certificate(&mut self, chord: KeyChord, out: &mut Effects) -> bool {
+        let Some(prompt) = self.certificates.front_mut() else {
+            return false;
+        };
+        let Key::Char(letter) = chord.key else {
+            return false;
+        };
+        if prompt.busy || chord.mods != Mods::default() {
+            return true;
+        }
+        let pin = match letter {
+            'r' => {
+                self.certificates.pop_front();
+                return true;
+            }
+            'o' => false,
+            'p' => true,
+            _ => return true,
+        };
+        // A certificate with no fingerprint cannot be held to anything.
+        if let Some(fingerprint) = prompt.problem.fingerprint.clone() {
+            prompt.busy = true;
+            out.accounts.push(AccountRequest::Trust {
+                account: prompt.account.clone(),
+                fingerprint,
+                pin,
+            });
+        }
+        true
+    }
+
+    fn on_account(&mut self, event: AccountEvent, out: &mut Effects) {
+        if let AccountEvent::Trusted { account, result } = event {
+            self.certificates.retain(|prompt| prompt.account != account);
+            if let Err(reason) = result {
+                self.notices.push_back(Notice::error(format!(
+                    "{account}: the certificate could not be accepted: {}",
+                    text::sanitize_line(&reason)
+                )));
+            }
+            return;
+        }
+        let Some(setup) = &mut self.setup else {
+            return;
+        };
+        let (requests, outcome) = setup.on_event(event);
+        out.accounts.extend(requests);
+        if let Outcome::Added(name) = outcome {
+            self.setup = None;
+            self.notices.push_back(Notice::info(format!(
+                "Added {}. Its mail is on the way.",
+                text::sanitize_line(&name)
+            )));
+            // The new account is in the store: show it.
+            out.data.push(DataRequest::LoadSidebar);
+            out.data.push(DataRequest::LoadMessages(self.mailbox));
         }
     }
 
@@ -779,6 +934,16 @@ impl State {
                     self.syncing.remove(&account);
                 }
             }
+            SyncEvent::Certificate { account, problem } => {
+                // One question per account: a newer report replaces an
+                // unanswered older one.
+                self.certificates.retain(|prompt| prompt.account != account);
+                self.certificates.push_back(CertificatePrompt {
+                    account,
+                    problem,
+                    busy: false,
+                });
+            }
             SyncEvent::BodyReady(id) => {
                 if reading(self, id) {
                     out.data.push(DataRequest::LoadBody(id));
@@ -810,6 +975,7 @@ impl State {
             DataEvent::SidebarLoaded { accounts, folders } => {
                 self.sidebar.entries = sidebar_entries(&accounts, &folders);
                 self.accounts = accounts;
+                self.accounts_known = true;
                 match self
                     .sidebar
                     .entries

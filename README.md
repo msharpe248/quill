@@ -10,7 +10,9 @@ Milestone 0, the core skeleton, is in place: the Rust workspace, the local store
 
 Milestone 1, the app shell, is in place too. `Quill.app` runs the core in its own libghostty terminal inside the App Sandbox, builds its menus and toolbar from the core's command list, shows files in a Quick Look pane beside the terminal, and draws images inline with the Kitty graphics protocol. App Store validation is deferred until there is a developer account to sign with.
 
-Milestone 2, reading mail over IMAP, is under way. An IMAP account in `config.toml` syncs into the local store and reads offline; see "Adding an IMAP account" below. HTML mail is drawn as styled text: headings, lists, emphasis, quotes and simple tables, with links numbered and listed at the end of the message. `t` switches a message between its HTML and its plain text when it came as both. `o` lists a message's links to open one in your browser, and in the app or a terminal that supports hyperlinks, cmd-click on a link's text opens it too. Quill opens only `http`, `https` and `mailto` links. Still to come in M2: setting an account up from inside the app, and trusting a self-signed server from a prompt. Sending arrives in M3, and Microsoft accounts with OAuth in M5.
+Milestone 2, reading mail over IMAP, is built. Add an account from inside Quill (`A`): type its address, confirm the server Quill finds, give the password, and its mail syncs into the local store and reads offline. HTML mail is drawn as styled text: headings, lists, emphasis, quotes and simple tables, with links numbered and listed at the end of the message. `t` switches a message between its HTML and its plain text when it came as both. `o` lists a message's links to open one in your browser, and in the app or a terminal that supports hyperlinks, cmd-click on a link's text opens it too. Quill opens only `http`, `https` and `mailto` links.
+
+Sending arrives in M3, and Microsoft accounts with OAuth in M5.
 
 ## Try it
 
@@ -22,7 +24,7 @@ cargo run --release -- tui --demo
 
 `--demo` opens an invented mailbox held in memory. It reads your config, theme and keys if you have them, and writes nothing.
 
-Without `--demo`, `quill tui` opens (and creates) the real database, which is empty until account setup lands.
+Without `--demo`, `quill tui` opens your own mail. The first time, with no accounts yet, it opens the form for adding one.
 
 ## The app
 
@@ -31,15 +33,25 @@ app/build-app.sh
 open target/app/Quill.app
 ```
 
-The script builds the Rust core and the Swift shell, assembles `target/app/Quill.app`, and signs it ad hoc with the App Sandbox on. Until accounts exist the app opens the demo mailbox.
+The script builds the Rust core and the Swift shell, assembles `target/app/Quill.app`, and signs it ad hoc with the App Sandbox on. The app opens your own mail, and the form for adding an account when there is none; `Quill.app/Contents/MacOS/Quill --demo` opens the demo mailbox instead. The app keeps its config and mail in its own container, apart from those of `quill` run in a terminal.
 
 Around the terminal the app adds a menu bar and toolbar built from the core's commands, the mailbox name and unread count in the title bar, the unread count on the Dock icon, and a second pane for previews. Press `P` (or the eye in the toolbar) to preview a sample file; `esc` closes the pane, and `cmd-]` moves focus between the panes. Press `I` to show a sample image in the reader.
 
 `SANDBOX=0 app/build-app.sh` signs without the sandbox, to tell a sandbox denial from an ordinary bug.
 
-## Adding an IMAP account
+## Adding an account
 
-Until account setup is built into the app, an account is a few lines in `config.toml` and a password in the Keychain:
+Press `A` (or File, Add an Account in the app). Quill asks for:
+
+1. **The address.** Quill looks for the mail server: providers it knows by name, then the domain's DNS records, then the names servers usually have. Nothing is asked of anyone but the domain's own DNS and servers.
+2. **The server**, as found, to confirm or correct: its name, port, security (`←`/`→` changes it) and the name to sign in with. `tab` moves between the fields.
+3. **The password.** Quill signs in to check it. Only when that works is anything saved: the account in `config.toml`, the password in your Keychain and nowhere else.
+
+`enter` goes on, `esc` goes back a step. Many providers (Gmail, iCloud, Fastmail, Yahoo) want an app password here, not your normal one; the form says so when it recognises the provider. Microsoft accounts (Microsoft 365, Outlook.com) do not accept a password over IMAP. They need the OAuth sign-in that arrives in M5.
+
+If the server's certificate is not one your Mac trusts, as with a self-signed certificate on a home server, Quill sends it nothing and shows you the certificate: who it was issued to and by, its dates and its SHA-256 fingerprint. `r` rejects it, `o` trusts it until Quill quits, `p` trusts that one certificate from now on by writing its fingerprint into the config. The same question is asked if an existing account's certificate stops being trusted.
+
+An account is a few lines in `config.toml`, and can be written by hand:
 
 ```toml
 [[account]]
@@ -51,7 +63,6 @@ imap = { host = "imap.example.com", port = 993, tls = "implicit" }
 
 ```sh
 quill account password Personal   # asks for the password, saves it in the Keychain
-quill tui
 ```
 
 `tls` is `"implicit"` (the default, port 993), `"starttls"` (port 143) or `"none"`. With `"starttls"`, a server that will not upgrade is refused, never used in the clear. `"none"` sends your password and mail unencrypted and says so every time Quill starts.
@@ -59,8 +70,6 @@ quill tui
 Optional keys inside `imap = { ... }`: `username`, when you do not sign in with your address, and `fingerprint`, the SHA-256 of a self-signed server's certificate, to accept that one certificate.
 
 `quill account list` shows each account and whether it has a saved password. `quill account forget NAME` removes one. Passwords are only ever in the Keychain: not in the config, the database or the logs.
-
-Microsoft accounts (Microsoft 365, Outlook.com) do not accept a password over IMAP. They need the OAuth sign-in that arrives in M5.
 
 ## Keys
 
@@ -75,6 +84,7 @@ Press `?` at any time for the keys that apply where you are. The bottom bar show
 | `esc` | Back, close, dismiss | `s` | Star or unstar |
 | `?` | Help for this context | `q` | Quit |
 | `t` | Show as HTML or plain text | `o` | Open a link |
+| `A` | Add an account | | |
 | `P` | Preview a sample file | `I` | Show a sample image |
 
 Arrow keys, `home`, `end`, `pageup` and `pagedown` work too. `ctrl-d` also pages down and `ctrl-c` also quits.
@@ -122,6 +132,7 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `message.toggle_unread`, `message.toggle_star` | Change a message's flags |
 | `message.toggle_html` | Switch a message between its HTML and its plain text |
 | `message.open_link` | List the message's links, to open one in the browser |
+| `account.add` | Add an account |
 | `debug.preview_sample` | Preview a sample file (temporary) |
 | `debug.image_sample` | Show a sample image in the reader (temporary) |
 | `help.toggle` | Show or hide help |

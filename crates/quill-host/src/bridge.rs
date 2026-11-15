@@ -101,6 +101,8 @@ pub enum Context {
     Reader,
     Help,
     Links,
+    Setup,
+    Certificate,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

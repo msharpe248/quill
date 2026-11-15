@@ -62,9 +62,25 @@ pub struct CertificateProblem {
     /// SHA-256 of the certificate the server presented, in lower-case hex.
     /// This is what an account pins to trust a self-signed server.
     pub fingerprint: Option<String>,
-    /// The certificate itself, DER encoded, for showing its subject, issuer
-    /// and dates.
+    /// The certificate itself, DER encoded.
     pub certificate: Option<Vec<u8>>,
+    /// Who the certificate says it is for and from, and when it is valid,
+    /// when it could be read.
+    pub details: Option<CertificateDetails>,
+}
+
+/// What a certificate says about itself. None of it is verified: it is
+/// shown so the user can judge a certificate the system would not accept.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CertificateDetails {
+    /// Who it was issued to, such as `CN=mail.example.com`.
+    pub subject: String,
+    /// Who issued it.
+    pub issuer: String,
+    /// Valid from, in seconds since the Unix epoch.
+    pub not_before: i64,
+    /// Valid until, in seconds since the Unix epoch.
+    pub not_after: i64,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

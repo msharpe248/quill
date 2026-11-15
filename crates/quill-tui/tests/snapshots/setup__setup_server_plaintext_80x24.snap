@@ -1,0 +1,28 @@
+---
+source: crates/quill-tui/tests/setup.rs
+expression: harness.screen()
+---
+┌ [1] Accounts ──┐┏ [2] Inbox (unified) - 12 unread ━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+│> Unified    12 │┃> * @ W Ana Ruiz        Q4 roadmap                     09:14┃
+│ ┏ Add an account: the server ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓1┃
+│ ┃ Found in the DNS records of example.com.                                 ┃5┃
+│ ┃                                                                          ┃0┃
+│ ┃ Name:      Example                                                       ┃i┃
+│ ┃ Server:    imap.example.com                                              ┃i┃
+│ ┃ Port:      143                                                           ┃i┃
+│ ┃ Security:  ‹ None ›  ←/→ to change                                       ┃u┃
+│ ┃ Sign in:   robin@example.com                                             ┃u┃
+│ ┃                                                                          ┃d┃
+│ ┃ With no encryption, your password and mail cross the network readable by ┃e┃
+│ ┃ anyone on the way.                                                       ┃n┃
+│ ┃                                                                          ┃n┃
+│ ┃                                                                          ┃6┃
+│ ┃                                                                          ┃2┃
+│ ┃                                                                          ┃5┃
+│ ┃                                                                          ┃5┃
+│ ┃                                                                          ┃ ┃
+│ ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+└────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+ enter continue  tab next field  esc back

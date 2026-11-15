@@ -24,9 +24,19 @@ quill-sync.workspace = true
 quill-tui.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+hickory-resolver.workspace = true
 jiff.workspace = true
 rustix.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "sync"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time"] }
+toml_edit.workspace = true
 
 [dev-dependencies]
+# The IMAP crate's test server is compiled into this crate's tests too.
+async-imap.workspace = true
+quill-net.workspace = true
+rcgen.workspace = true
+rustls.workspace = true
 tempfile.workspace = true
+time.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time", "macros", "net", "io-util", "process"] }
+tokio-rustls.workspace = true

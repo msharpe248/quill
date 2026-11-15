@@ -61,6 +61,7 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
         reader_width: config.ui.reader_width,
         // Decided by the caller, once it knows what hosts the core.
         images: false,
+        accounts: false,
     };
     Loaded {
         config,

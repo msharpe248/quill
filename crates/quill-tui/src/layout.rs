@@ -52,6 +52,9 @@ pub struct Areas {
     pub help: Option<Rect>,
     /// The list of links to choose from, drawn over the panes.
     pub links: Option<Rect>,
+    /// The add-an-account form or a certificate question, drawn over the
+    /// panes.
+    pub dialog: Option<Rect>,
 }
 
 pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
@@ -68,6 +71,7 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
         status: Rect::new(0, body_height, width, height.min(1)),
         help: None,
         links: None,
+        dialog: None,
     };
 
     let show_main = |areas: &mut Areas, rect: Rect| match state.main_pane {
@@ -124,6 +128,16 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
             (body_height - links_height) / 2,
             links_width,
             links_height,
+        ));
+    }
+    if state.setup.is_some() || !state.certificates.is_empty() {
+        let dialog_width = width.saturating_sub(4).min(76);
+        let dialog_height = body_height.saturating_sub(2).min(18);
+        areas.dialog = Some(Rect::new(
+            (width - dialog_width) / 2,
+            (body_height - dialog_height) / 2,
+            dialog_width,
+            dialog_height,
         ));
     }
     if state.help.is_some() {

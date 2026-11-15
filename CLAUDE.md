@@ -2,7 +2,9 @@
 
 Read `Quill Terminal Email Client Spec.md` at the start of every session. It is the source of truth, and its "Working rules for Claude Code" section applies to all work here. Then read `DECISIONS.md` for the choices made since.
 
-Work on one milestone at a time. M0 (core skeleton) and M1 (shell spike) are built. M1's App Store validation and TestFlight step is deferred to the end by the owner's decision, because it needs an Apple Developer account; do not ask for one before then. M2 (IMAP read) is in progress: the parser, IMAP backend, sync engine, Keychain storage and `quill account` commands are built, and a configured IMAP account syncs end to end. HTML-to-styled-text from M4 was pulled forward at the owner's request (`quill_mime::html`); the rest of M4 is not started. The 50,000-message acceptance run passed (results in `DECISIONS.md`). Still to do in M2: the in-app account setup flow and the untrusted-certificate prompt.
+The owner asked on 2026-11-15 for unattended work through M10 without waiting between milestones; acceptance steps that need them (real accounts, a developer account, App Review) are recorded in `DECISIONS.md` as not verified and passed over. While they are away, never run Quill against `~/Library/Application Support/Quill` (their real account and mail): use `--demo`, or scratch `--config-dir` and `--data-dir`.
+
+M0 (core skeleton), M1 (shell spike, App Store validation deferred to the end because it needs an Apple Developer account; do not ask for one before then) and M2 (IMAP read) are built. HTML-to-styled-text from M4 was pulled forward at the owner's request (`quill_mime::html`). M3 (compose and send) is next; `quill-smtp` and `quill-pop3` exist as crates ahead of the UI that uses them.
 
 Commit finished, checked work as you go. There is no remote.
 
@@ -23,6 +25,7 @@ For anything visible in the app, also build it and look: `app/build-app.sh`, the
 ## This machine
 
 - Rust comes from Homebrew's keg-only `rustup`; if `cargo` is not found, put `/opt/homebrew/opt/rustup/bin` on `PATH`.
+- A scratch local mail server for trying things by hand: see how `crates/quill-imap/tests/common/mod.rs` starts Dovecot unprivileged. Always stop it and remove its Keychain entry afterwards.
 - The IMAP tests need Dovecot (`brew install dovecot`, already installed here). They start their own server per test; nothing runs in the background.
 - `xcodebuild` fails with "failed to load a required plug-in" until the user runs `xcodebuild -runFirstLaunch`. `swift build` and `swift test` do not need it.
 - If a build ever stops with "You have not agreed to the Xcode license agreements", that needs the user (`sudo xcodebuild -license`); `export DEVELOPER_DIR=/Library/Developer/CommandLineTools` builds meanwhile.
@@ -40,6 +43,9 @@ For anything visible in the app, also build it and look: `app/build-app.sh`, the
 - The reader draws a message's HTML from the raw message (`Store::raw`), laid out for the pane's width by `quill_mime::html::render`. Mail is untrusted: every span is sanitized before drawing, and nothing is fetched.
 - Only `quill_core::links::is_openable` decides what may be opened or written into a terminal hyperlink. The shell has the same rule in `Links.isOpenable`; change them together.
 - Link text is marked as a hyperlink by the run loop, not by views: the reader returns `LinkPlacement`s. Only underlined link text is marked; keep it that way, or a cell can keep a stale link.
+- Where there is typing to do (`Context::Setup`), a key goes to the field first and to a command only if the field has no use for it. A new typing context follows the same rule in `State::on_key`.
+- The UI adds accounts through a service it is handed (`AccountsLink`, implemented in `quill-cli/src/service.rs`); it reaches no server, Keychain or config file itself.
+- `config.toml` is changed for the user only through `quill-cli/src/config_edit.rs`, which keeps their comments and refuses to write a file Quill could not read back.
 - Images are placed by the run loop, not drawn by views. A view leaves cells empty and returns an `ImagePlacement`.
 - UI changes show up in the insta snapshots under `crates/quill-tui/tests/snapshots/`. Regenerate with `INSTA_UPDATE=always cargo test -p quill-tui`, then read the diff.
 - Fixtures use invented people at example.com. Never real mail, never real addresses.

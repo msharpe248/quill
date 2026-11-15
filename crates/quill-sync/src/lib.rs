@@ -8,14 +8,15 @@
 //!
 //! Nothing here knows which protocol an account speaks.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use quill_core::types::{
     Flags, FolderId, FolderRole, LocalAccountId, LocalFolderId, LocalMessageId, Operation,
 };
-use quill_core::{Backend, Error};
+use quill_core::{Backend, CertificateProblem, Error};
 use quill_store::{BlobStore, Store};
 use tokio::sync::Notify;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -65,6 +66,13 @@ pub enum SyncEvent {
     BodyFailed { id: LocalMessageId, reason: String },
     /// Something went wrong that the user should see.
     Problem { account: String, message: String },
+    /// An account's server presented a certificate that was not accepted.
+    /// Nothing was sent to it. The user is shown the certificate and
+    /// decides: this is never settled quietly.
+    Certificate {
+        account: String,
+        problem: Box<CertificateProblem>,
+    },
 }
 
 /// What the UI asks of the engine.
@@ -86,7 +94,8 @@ pub enum SyncRequest {
 /// The UI's end of the engine. Dropping it stops the engine.
 pub struct SyncHandle {
     requests: UnboundedSender<SyncRequest>,
-    tasks: Vec<JoinHandle<()>>,
+    engine: Arc<Engine>,
+    server: JoinHandle<()>,
 }
 
 impl SyncHandle {
@@ -94,13 +103,24 @@ impl SyncHandle {
     pub fn send(&self, request: SyncRequest) -> bool {
         self.requests.send(request).is_ok()
     }
+
+    /// Starts syncing `account`, in place of any account with the same id:
+    /// a new account, or an old one whose settings changed. Must be called
+    /// on the engine's Tokio runtime.
+    pub fn set_account(&self, account: SyncAccount) {
+        Engine::set_account(&self.engine, account);
+    }
+
+    /// Stops syncing an account. Its mail stays in the store.
+    pub fn remove_account(&self, id: LocalAccountId) {
+        self.engine.remove_account(id);
+    }
 }
 
 impl Drop for SyncHandle {
     fn drop(&mut self) {
-        for task in &self.tasks {
-            task.abort();
-        }
+        self.server.abort();
+        self.engine.stop();
     }
 }
 
@@ -121,18 +141,17 @@ pub fn spawn(
         blobs: blobs.map(|root| Arc::new(BlobStore::new(root))),
         options,
         events,
-        wake: (0..accounts.len()).map(|_| Notify::new()).collect(),
-        accounts,
+        accounts: RwLock::new(HashMap::new()),
     });
-    let mut tasks = Vec::new();
-    for index in 0..engine.accounts.len() {
-        let engine = Arc::clone(&engine);
-        tasks.push(tokio::spawn(
-            async move { engine.keep_in_sync(index).await },
-        ));
+    for account in accounts {
+        Engine::set_account(&engine, account);
     }
-    tasks.push(tokio::spawn(serve(engine, queue)));
-    SyncHandle { requests, tasks }
+    let server = tokio::spawn(serve(Arc::clone(&engine), queue));
+    SyncHandle {
+        requests,
+        engine,
+        server,
+    }
 }
 
 async fn serve(engine: Arc<Engine>, mut queue: UnboundedReceiver<SyncRequest>) {
@@ -140,7 +159,10 @@ async fn serve(engine: Arc<Engine>, mut queue: UnboundedReceiver<SyncRequest>) {
         match request {
             // `notify_one` keeps the request for an account that is mid-pass:
             // it goes round again as soon as it finishes.
-            SyncRequest::SyncNow => engine.wake.iter().for_each(Notify::notify_one),
+            SyncRequest::SyncNow => engine
+                .running()
+                .iter()
+                .for_each(|account| account.wake.notify_one()),
             // Each on its own task: a slow download must not hold up the
             // next request. The backend serialises what shares a connection.
             SyncRequest::FetchBody(id) => {
@@ -162,26 +184,133 @@ async fn serve(engine: Arc<Engine>, mut queue: UnboundedReceiver<SyncRequest>) {
 struct Engine {
     store: Arc<Mutex<Store>>,
     blobs: Option<Arc<BlobStore>>,
-    accounts: Vec<SyncAccount>,
+    /// The accounts being kept in sync. Accounts come and go while the
+    /// engine runs: one is added from the setup flow, or replaced when its
+    /// settings change.
+    accounts: RwLock<HashMap<LocalAccountId, Arc<Running>>>,
     options: SyncOptions,
     events: UnboundedSender<SyncEvent>,
-    /// One per account: wakes its loop before the interval is up.
-    wake: Vec<Notify>,
 }
 
-/// Why a step of syncing failed, as text for the user.
-type Failure = String;
+/// An account and the loop that syncs it.
+struct Running {
+    account: SyncAccount,
+    /// Wakes the loop before the interval is up.
+    wake: Notify,
+    /// The loop, to stop it when the account is replaced or removed.
+    task: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl Running {
+    fn stop(&self) {
+        if let Ok(mut task) = self.task.lock()
+            && let Some(task) = task.take()
+        {
+            task.abort();
+        }
+    }
+}
+
+/// Why a step of syncing failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Failure {
+    /// Text for the user.
+    Message(String),
+    /// The server's certificate was not accepted.
+    Certificate(Box<CertificateProblem>),
+}
+
+impl From<String> for Failure {
+    fn from(message: String) -> Self {
+        Self::Message(message)
+    }
+}
+
+impl Failure {
+    /// A backend's error, with what was being done when it struck.
+    fn from_backend(err: Error, doing: Option<&str>) -> Self {
+        match err {
+            Error::Certificate(problem) => Self::Certificate(problem),
+            other => Self::Message(match doing {
+                Some(doing) => format!("{doing}: {other}"),
+                None => other.to_string(),
+            }),
+        }
+    }
+}
 
 impl Engine {
     fn emit(&self, event: SyncEvent) {
         let _ = self.events.send(event);
     }
 
+    fn running(&self) -> Vec<Arc<Running>> {
+        self.accounts
+            .read()
+            .map(|accounts| accounts.values().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    fn account(&self, id: LocalAccountId) -> Option<Arc<Running>> {
+        self.accounts.read().ok()?.get(&id).cloned()
+    }
+
+    fn set_account(engine: &Arc<Self>, account: SyncAccount) {
+        let id = account.id;
+        let running = Arc::new(Running {
+            account,
+            wake: Notify::new(),
+            task: Mutex::new(None),
+        });
+        let task = tokio::spawn({
+            let engine = Arc::clone(engine);
+            let running = Arc::clone(&running);
+            async move { engine.keep_in_sync(&running).await }
+        });
+        if let Ok(mut slot) = running.task.lock() {
+            *slot = Some(task);
+        }
+        let replaced = engine
+            .accounts
+            .write()
+            .ok()
+            .and_then(|mut accounts| accounts.insert(id, running));
+        if let Some(replaced) = replaced {
+            replaced.stop();
+            // Its pass may have been cut short mid-way.
+            engine.emit(SyncEvent::Syncing {
+                account: id,
+                active: false,
+            });
+        }
+    }
+
+    fn remove_account(&self, id: LocalAccountId) {
+        let removed = self
+            .accounts
+            .write()
+            .ok()
+            .and_then(|mut accounts| accounts.remove(&id));
+        if let Some(removed) = removed {
+            removed.stop();
+            self.emit(SyncEvent::Syncing {
+                account: id,
+                active: false,
+            });
+        }
+    }
+
+    fn stop(&self) {
+        for running in self.running() {
+            running.stop();
+        }
+    }
+
     /// Runs `work` on the store, off the async threads: SQLite blocks.
     async fn db<T: Send + 'static>(
         &self,
         work: impl FnOnce(&mut Store) -> quill_store::Result<T> + Send + 'static,
-    ) -> Result<T, Failure> {
+    ) -> Result<T, String> {
         let store = Arc::clone(&self.store);
         tokio::task::spawn_blocking(move || {
             let mut store = store
@@ -193,10 +322,10 @@ impl Engine {
         .map_err(|err| err.to_string())?
     }
 
-    async fn keep_in_sync(&self, index: usize) {
-        let account = &self.accounts[index];
+    async fn keep_in_sync(&self, running: &Running) {
+        let account = &running.account;
         // The same failure every few minutes is one problem, not many.
-        let mut last_problem: Option<String> = None;
+        let mut last_problem: Option<Failure> = None;
         loop {
             self.emit(SyncEvent::Syncing {
                 account: account.id,
@@ -209,19 +338,25 @@ impl Engine {
             });
             match outcome {
                 Ok(()) => last_problem = None,
-                Err(message) => {
-                    if last_problem.as_ref() != Some(&message) {
-                        self.emit(SyncEvent::Problem {
-                            account: account.name.clone(),
-                            message: message.clone(),
+                Err(failure) => {
+                    if last_problem.as_ref() != Some(&failure) {
+                        self.emit(match failure.clone() {
+                            Failure::Message(message) => SyncEvent::Problem {
+                                account: account.name.clone(),
+                                message,
+                            },
+                            Failure::Certificate(problem) => SyncEvent::Certificate {
+                                account: account.name.clone(),
+                                problem,
+                            },
                         });
                     }
-                    last_problem = Some(message);
+                    last_problem = Some(failure);
                 }
             }
             tokio::select! {
                 () = tokio::time::sleep(self.options.interval) => {}
-                () = self.wake[index].notified() => {}
+                () = running.wake.notified() => {}
             }
         }
     }
@@ -232,7 +367,7 @@ impl Engine {
             .backend
             .list_folders()
             .await
-            .map_err(|err| err.to_string())?;
+            .map_err(|err| Failure::from_backend(err, None))?;
         let account_id = account.id;
         let listed = remote.clone();
         let (mut folders, folders_changed): (Vec<(LocalFolderId, FolderId, FolderRole)>, bool) =
@@ -275,7 +410,7 @@ impl Engine {
                     .backend
                     .sync_folder(&remote, cursor)
                     .await
-                    .map_err(|err| format!("{}: {err}", remote.0))?;
+                    .map_err(|err| Failure::from_backend(err, Some(&remote.0)))?;
                 let has_more = delta.has_more;
                 let changed = self
                     .db(move |store| store.apply_delta(local, &delta))
@@ -300,7 +435,7 @@ impl Engine {
                 Ok(()) => {}
                 // A message that vanished meanwhile is no reason to stop.
                 Err(FetchFailure::Gone) => {}
-                Err(FetchFailure::Other(message)) => return Err(message),
+                Err(FetchFailure::Other(message)) => return Err(message.into()),
             }
         }
         Ok(())
@@ -324,12 +459,11 @@ impl Engine {
             .await
             .map_err(FetchFailure::Other)?
             .ok_or(FetchFailure::Gone)?;
-        let account = self
-            .accounts
-            .iter()
-            .find(|account| account.id == location.account)
+        let running = self
+            .account(location.account)
             .ok_or_else(|| FetchFailure::Other("This account does not sync.".to_owned()))?;
-        let raw = account
+        let raw = running
+            .account
             .backend
             .fetch_raw(&location.remote)
             .await
@@ -363,14 +497,11 @@ impl Engine {
         let Ok(Some(location)) = self.db(move |store| store.message_location(id)).await else {
             return;
         };
-        let Some(account) = self
-            .accounts
-            .iter()
-            .find(|account| account.id == location.account)
-        else {
+        let Some(running) = self.account(location.account) else {
             // An account with no server, such as the demo: local is all.
             return;
         };
+        let account = &running.account;
         let operation = Operation::SetFlags {
             id: location.remote,
             flags,
@@ -391,7 +522,7 @@ impl Engine {
 enum FetchFailure {
     /// The message is not there any more, locally or on the server.
     Gone,
-    Other(Failure),
+    Other(String),
 }
 
 fn now() -> i64 {

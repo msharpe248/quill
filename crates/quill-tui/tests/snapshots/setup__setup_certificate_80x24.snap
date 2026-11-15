@@ -1,0 +1,28 @@
+---
+source: crates/quill-tui/tests/setup.rs
+expression: harness.screen()
+---
+┌ [1] Accounts ──┐┏ [2] Inbox (unified) - 12 unread ━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+│> Unified    12 │┃> * @ W Ana Ruiz        Q4 roadmap                     09:14┃
+│ ┏ Add an account: certificate ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓1┃
+│ ┃ imap.example.com presented a certificate that was not accepted. Nothing  ┃5┃
+│ ┃ has been sent to it.                                                     ┃0┃
+│ ┃ It was issued by an authority this Mac does not trust. A self-signed     ┃i┃
+│ ┃ certificate reads this way.                                              ┃i┃
+│ ┃                                                                          ┃i┃
+│ ┃ Issued to: CN=imap.example.com                                           ┃u┃
+│ ┃ Issued by: CN=Example Home Server                                        ┃u┃
+│ ┃ Valid:     Fri 13 Nov 2026 09:30 to Mon 14 Dec 2026 09:30                ┃d┃
+│ ┃ SHA-256:   01:23:45:67:89:ab:cd:ef:01:23:45:67:89:ab:cd:ef               ┃e┃
+│ ┃            01:23:45:67:89:ab:cd:ef:01:23:45:67:89:ab:cd:ef               ┃n┃
+│ ┃                                                                          ┃n┃
+│ ┃ r reject   o trust once   p always trust this certificate                ┃6┃
+│ ┃                                                                          ┃2┃
+│ ┃                                                                          ┃5┃
+│ ┃                                                                          ┃5┃
+│ ┃                                                                          ┃ ┃
+│ ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+└────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+ enter continue  tab next field  esc back

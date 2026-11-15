@@ -120,7 +120,11 @@ What this leaves open, knowingly:
 
 The Keychain needs no entitlement for the app's own items; an access group shared with the core is decided in M2, when there is a team identifier to name it with.
 
-## M2, IMAP read (in progress)
+## M2, IMAP read
+
+Built and accepted on 2026-11-15 by its two tests: the 50,000-message run below, and the same mail showing with the server stopped. Not verified, because they need the owner: a real provider's account from inside `Quill.app` (tried only against a local Dovecot, in the sandbox and out), and the provider table's entries, which are from memory and are checked by connecting at setup, not in advance.
+
+Left for later milestones: CONDSTORE and QRESYNC (a folder is re-listed by UID each pass), IDLE (M6), a custom CA bundle and a client certificate in config, folder-role overrides in config, and the Autodiscover part of server discovery, which needs the HTTP client that arrives with M5.
 
 - **Mail is parsed with `mail-parser` 1.0.1**, the spec's candidate. It needs Rust 1.98, so the workspace's minimum Rust version rises from 1.89 to 1.98.
 - **One function reads every message**: `quill_mime::parse` takes raw RFC 5322 bytes from any backend and returns headers, a plain-text body, the HTML when it is worth showing, and the attachment list.
@@ -212,6 +216,20 @@ The UI stayed usable throughout, which is the acceptance. This was a server on t
 - **The first sync uses far more memory than the result needs.** Every batch of 500 reloads the whole list, so 100 lists of up to 50,000 rows pass through while it runs. It falls back once the process restarts (56 MB). Loading only the rows near the cursor is the fix and is not done yet.
 - **An unread count is never cut short.** The run showed 15,055 as `150…` in an 80-column window. The count column now widens to fit and the folder name gives way.
 
+### Account setup
+
+- **`A` opens the form** (`account.add`, File menu in the app), and a first run with no accounts opens it by itself, once. The spec names no key for it.
+- **Where there is typing to do, keys are typing first.** In the form a printable key goes into the field with the cursor; only a key the field has no use for (`enter`, `esc`, `tab`, arrows up and down) reaches a command. `?` is therefore typed, not help.
+- **The UI does none of the work itself.** It asks an accounts service for discovery, sign-in, saving and trusting, over channels like the store and the sync engine. `quill-cli` supplies the service; `quill-tui` still reaches no server, Keychain or file.
+- **Discovery order: known providers, the domain's SRV records (RFC 6186), its mail exchanger, then `imap.` and `mail.` at the domain and at its mail host**, each of the last tried by connecting, implicit TLS before STARTTLS. Plaintext is never chosen; the user can pick it. DNS goes through the system's resolver settings (`hickory-resolver` 0.26.3, MIT/Apache-2.0) and no other resolver is asked. Mozilla's ISPDB is not consulted: that would tell a third party which domains the user has mail at.
+- **A provider that needs another kind of password says so in the form** (Gmail, iCloud, Fastmail, Yahoo, AOL: app passwords; Microsoft: no password sign-in at all).
+- **Nothing is saved until sign-in has worked.** Then the account is appended to `config.toml` with `toml_edit` 0.25.19 (MIT/Apache-2.0), which leaves the user's comments and layout alone; a result Quill could not read back is not written. If the file cannot be written, the password just saved is removed from the Keychain again.
+- **An account added while Quill runs starts syncing at once.** The engine now always runs, even with no accounts, and takes accounts as they come (`SyncHandle::set_account`); setting one again replaces it, which is how a changed trust decision takes effect.
+- **An untrusted certificate is put to the user with its subject, issuer, dates and fingerprint** (read with `x509-parser` 0.18.1, MIT/Apache-2.0), at setup and whenever an existing account's server presents one. Reject, trust once (held in memory for this run) or pin (the fingerprint goes into the account's `imap` table). A certificate that could not be read has no fingerprint to hold the server to and can only be rejected. Not answering is rejecting.
+- **The app opens the user's own mail by default now**, and `--demo` asks for the demo mailbox; before there was a way to add an account it was the other way round.
+- **`quill-net` holds TCP, TLS and trust for every protocol**, taken out of `quill-imap` when SMTP and POP3 needed the same.
+- **The bridge message for opening a link is `link.open`**, since the spec keeps `url.open` for the shell telling the core that a `mailto:` link arrived.
+
 ### Accounts and secrets
 
 - **The Keychain is reached through `security-framework`**, the smaller of the spec's two candidates. `quill-auth` puts it behind a `SecretStore` trait, so tests use an in-memory store and another platform can supply its own.
@@ -222,3 +240,21 @@ The UI stayed usable throughout, which is the acceptance. This was a server on t
 - **A plaintext account raises a warning at every start.** The spec asks for a permanent warning; a notice at each launch is what exists so far, and a standing marker on the account is still to add.
 - **An account Quill cannot use yet (POP3, Graph, EWS, or IMAP with no server set) is a notice**, never a failure to start.
 - **The UI's store worker retries when the database is momentarily busy**, since the sync engine writes through its own connection.
+
+## M3, compose and send (in progress)
+
+### SMTP
+
+- **The SMTP client is written directly on `quill-net`, not on `lettre`**, the spec's candidate. `lettre` 0.11.23 has no SCRAM-SHA-256 or OAUTHBEARER, builds its own TLS so Quill's trust rules, pinning and certificate report cannot be used, stops at the first refused recipient, and does not expose the server's SIZE limit. Each of those is a requirement of the spec.
+- **Each message goes over a connection of its own**: connect, secure, sign in, send, quit.
+- **Sign-in uses the strongest mechanism the server offers for the credential**: for a password SCRAM-SHA-256, then PLAIN, then LOGIN; for an OAuth token OAUTHBEARER, then XOAUTH2. An account can name one instead, or none for a relay that takes mail unsigned; mail is never sent unsigned by accident. SCRAM uses `ring` (already in the tree through rustls) and `stringprep` 0.1.5 (MIT/Apache-2.0).
+- **STARTTLS is always asked for, whatever the server advertised**, as in IMAP: the advertisement arrives unprotected. Anything but a go-ahead is a failed connection, and nothing learned before the upgrade is kept.
+- **A message goes to everyone or to no one.** If any recipient is refused nothing is sent and each refusal is reported. Sending to the rest after asking the user is not built yet.
+- **A message that needs 8BITMIME or SMTPUTF8 from a server without it is refused before anything is sent**, with the reason. The spec says to re-encode to 7-bit; rewriting someone's MIME is not done. Quill's own composer will write 7-bit-clean mail.
+- **The only changes made to a message are removing `Bcc` and `Resent-Bcc` and making every line end in CRLF.** A bare CR or LF is how one message is smuggled inside another.
+- **Checks that need no server run before sign-in**: envelope addresses with spaces, control characters or angle brackets are refused, and the size is checked against the limit as soon as the server states it.
+- **The client says hello as `[127.0.0.1]`**, so the Mac's name is not told to the server.
+- **Waits**: 20 seconds for each reply, and ten minutes for the answer after the message's final dot, as RFC 5321 asks.
+- **If the connection drops after the whole message was handed over, the server may have taken it.** That is reported as a connection failure, and a retry can deliver twice. `Message-ID` is what lets a server or reader discard the copy.
+- **Not built**: a client certificate, pipelining, and SCRAM channel binding.
+- **Tested against a scripted server inside the tests**, since no SMTP server is installed and none may be: all three TLS modes, each mechanism (SCRAM against the RFC 7677 vectors), certificates that are expired, misnamed, self-signed and pinned, size limits, refused recipients, 4xx and 5xx.

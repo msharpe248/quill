@@ -18,8 +18,8 @@ expression: harness.screen()
 │    Trash                 │┃  *   P Hillcrest Dental      Appointme┃   1                        Focus the accounts pane           ┃                                                                   │
 │                          │┃  *!@ W Omar Haddad           Re: Contr┃   2                        Focus the message list            ┃lestone assumes the index format is settled. Is it?                │
 │                          │┃  *   W The Weekly Parser     Issue 88:┃   3                        Focus the reader                  ┃led in two weeks for the offline queue. Tell me if that is         │
-│                          │┃   !@ P Maya Okafor           Recipe yo┃   tab                      Focus the next pane               ┃                                                                   │
-│                          │┃      W Ana Ruiz              Welcome t┃   shift-tab                Focus the previous pane           ┃ota over the holidays is still empty.                              │
+│                          │┃   !@ P Maya Okafor           Recipe yo┃   tab                      Focus the next pane or field      ┃                                                                   │
+│                          │┃      W Ana Ruiz              Welcome t┃   shift-tab                Focus the previous pane or field  ┃ota over the holidays is still empty.                              │
 │                          │┃                                       ┃   z                        Zoom the focused pane             ┃                                                                   │
 │                          │┃                                       ┃                                                              ┃detail, including the dependency chart you asked for. Comments in  │
 │                          │┃                                       ┃ Message                                                      ┃ply, whichever is easier.                                          │
@@ -30,10 +30,10 @@ expression: harness.screen()
 │                          │┃                                       ┃                                                              ┃                                                                   │
 │                          │┃                                       ┃ General                                                      ┃                                                                   │
 │                          │┃                                       ┃   q, ctrl-c                Quit                              ┃ Corp                                                              │
+│                          │┃                                       ┃   A                        Add an account                    ┃                                                                   │
 │                          │┃                                       ┃   P                        Preview a sample file             ┃                                                                   │
 │                          │┃                                       ┃   I                        Show a sample image               ┃                                                                   │
 │                          │┃                                       ┃   ?                        Help for this context             ┃                                                                   │
-│                          │┃                                       ┃                                                              ┃                                                                   │
 │                          │┃                                       ┃                                                              ┃                                                                   │
 │                          │┃                                       ┃                                                              ┃                                                                   │
 │                          │┃                                       ┃                                                              ┃                                                                   │

@@ -10,7 +10,7 @@
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use quill_core::{CertificateProblem, Error, Result};
+use quill_core::{CertificateDetails, CertificateProblem, Error, Result};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{ClientConfig, DigitallySignedStruct, SignatureScheme};
@@ -63,8 +63,21 @@ pub fn problem(host: &str, reason: String, presented: &Presented) -> Error {
         host: host.to_owned(),
         reason,
         fingerprint: certificate.as_deref().map(fingerprint),
+        details: certificate.as_deref().and_then(describe),
         certificate,
     }))
+}
+
+/// Reads what a certificate says about itself: who it is for, who issued
+/// it, and when it is valid. `None` for bytes that are not a certificate.
+pub fn describe(certificate: &[u8]) -> Option<CertificateDetails> {
+    let (_, parsed) = x509_parser::parse_x509_certificate(certificate).ok()?;
+    Some(CertificateDetails {
+        subject: parsed.subject().to_string(),
+        issuer: parsed.issuer().to_string(),
+        not_before: parsed.validity().not_before.timestamp(),
+        not_after: parsed.validity().not_after.timestamp(),
+    })
 }
 
 struct Verifier {
@@ -171,5 +184,43 @@ mod tests {
             Error::Certificate(problem) => assert_eq!(problem.fingerprint, None),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn a_certificate_is_described_by_its_own_words() {
+        let mut params = rcgen::CertificateParams::new(vec!["mail.example.com".to_owned()])
+            .expect("certificate parameters");
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, "mail.example.com");
+        params
+            .distinguished_name
+            .push(rcgen::DnType::OrganizationName, "Example Mail");
+        params.not_before =
+            time::OffsetDateTime::from_unix_timestamp(1_790_000_000).expect("a date");
+        params.not_after =
+            time::OffsetDateTime::from_unix_timestamp(1_800_000_000).expect("a date");
+        let key = rcgen::KeyPair::generate().expect("a key");
+        let certificate = params.self_signed(&key).expect("a certificate");
+
+        let details = describe(certificate.der()).expect("details");
+        assert!(
+            details.subject.contains("CN=mail.example.com"),
+            "{details:?}"
+        );
+        assert!(details.subject.contains("O=Example Mail"));
+        // Self-signed: it vouches for itself.
+        assert_eq!(details.issuer, details.subject);
+        assert_eq!(
+            (details.not_before, details.not_after),
+            (1_790_000_000, 1_800_000_000)
+        );
+        assert_eq!(fingerprint(certificate.der()).len(), 64);
+    }
+
+    #[test]
+    fn bytes_that_are_not_a_certificate_have_nothing_to_say() {
+        assert_eq!(describe(b""), None);
+        assert_eq!(describe(b"not a certificate"), None);
     }
 }

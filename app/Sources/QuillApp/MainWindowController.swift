@@ -115,7 +115,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         }
 
         var arguments = ["tui"]
-        if !options.useRealMailbox {
+        if options.useDemoMailbox {
             arguments.append("--demo")
         }
         coreIsRunning = true

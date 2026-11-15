@@ -15,7 +15,8 @@ use ratatui::DefaultTerminal;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{
-    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    DisableBracketedPaste, EnableBracketedPaste, KeyboardEnhancementFlags,
+    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
@@ -27,6 +28,7 @@ use rustix::termios::LocalModes;
 /// We switched raw mode on, so we switch it off.
 static OWNS_RAW_MODE: AtomicBool = AtomicBool::new(false);
 static ENHANCED_KEYBOARD: AtomicBool = AtomicBool::new(false);
+static BRACKETED_PASTE: AtomicBool = AtomicBool::new(false);
 static ON_ALTERNATE_SCREEN: AtomicBool = AtomicBool::new(false);
 static PANIC_HOOK: Once = Once::new();
 
@@ -63,6 +65,9 @@ pub fn enter() -> io::Result<DefaultTerminal> {
             )?;
             ENHANCED_KEYBOARD.store(true, Ordering::SeqCst);
         }
+        // Pasted text arrives as one event, not as keys to act on.
+        execute!(stdout(), EnableBracketedPaste)?;
+        BRACKETED_PASTE.store(true, Ordering::SeqCst);
         Terminal::new(CrosstermBackend::new(stdout()))
     })();
     if result.is_err() {
@@ -73,6 +78,9 @@ pub fn enter() -> io::Result<DefaultTerminal> {
 
 /// Puts the terminal back as [`enter`] found it. Safe to call twice.
 pub fn leave() {
+    if BRACKETED_PASTE.swap(false, Ordering::SeqCst) {
+        let _ = execute!(stdout(), DisableBracketedPaste);
+    }
     if ENHANCED_KEYBOARD.swap(false, Ordering::SeqCst) {
         let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
     }

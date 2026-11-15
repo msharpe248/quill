@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use quill_auth::{SecretStore, password_name};
-use quill_core::Error;
 use quill_core::config::{AccountConfig, AccountType, Config, TlsMode};
+use quill_core::{Backend, Error};
 use quill_imap::{ImapBackend, ImapConfig, Trust};
 use quill_store::Store;
 use quill_sync::SyncAccount;
@@ -48,7 +48,7 @@ pub fn imap_password_name(config: &ImapConfig) -> String {
 
 /// Reads a SHA-256 fingerprint: 64 hex digits, with or without colons,
 /// spaces or a `sha256:` prefix.
-fn parse_fingerprint(text: &str) -> Result<[u8; 32], String> {
+pub fn parse_fingerprint(text: &str) -> Result<[u8; 32], String> {
     let trimmed = text.trim();
     let digits: String = trimmed
         .strip_prefix("sha256:")
@@ -66,6 +66,24 @@ fn parse_fingerprint(text: &str) -> Result<[u8; 32], String> {
             .map_err(|_| "its fingerprint is not 64 hex digits".to_owned())?;
     }
     Ok(out)
+}
+
+/// The backend for an IMAP account, which asks the Keychain for the
+/// account's password each time it signs in.
+pub fn imap_backend(
+    imap: ImapConfig,
+    name: &str,
+    secrets: &Arc<dyn SecretStore>,
+) -> Arc<dyn Backend> {
+    let key = imap_password_name(&imap);
+    let secrets = Arc::clone(secrets);
+    let hint = format!("no password is saved; run: quill account password \"{name}\"");
+    let password = Arc::new(move || match secrets.get(&key) {
+        Ok(Some(password)) => Ok(password),
+        Ok(None) => Err(Error::Auth(hint.clone())),
+        Err(err) => Err(Error::Auth(err.to_string())),
+    });
+    Arc::new(ImapBackend::new(imap, password))
 }
 
 /// Registers the configured accounts in the store and builds a backend for
@@ -105,19 +123,10 @@ pub fn prepare(
             )));
         }
         let id = store.upsert_account(name, &account.address, account.kind.as_str())?;
-
-        let key = imap_password_name(&imap);
-        let secrets = Arc::clone(secrets);
-        let hint = format!("no password is saved; run: quill account password \"{name}\"");
-        let password = Arc::new(move || match secrets.get(&key) {
-            Ok(Some(password)) => Ok(password),
-            Ok(None) => Err(Error::Auth(hint.clone())),
-            Err(err) => Err(Error::Auth(err.to_string())),
-        });
         accounts.push(SyncAccount {
             id,
             name: name.clone(),
-            backend: Arc::new(ImapBackend::new(imap, password)),
+            backend: imap_backend(imap, name, secrets),
         });
     }
     if prune {

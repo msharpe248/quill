@@ -18,11 +18,11 @@ expression: harness.screen()
 ┃    Tra┃   1                        Focus the accounts pane           ┃    Sun│
 ┃       ┃   2                        Focus the message list            ┃ Nov 06│
 ┃       ┃   3                        Focus the reader                  ┃ Nov 02│
-┃       ┃   tab                      Focus the next pane               ┃ Oct 25│
-┃       ┃   shift-tab                Focus the previous pane           ┃ct 2025│
+┃       ┃   tab                      Focus the next pane or field      ┃ Oct 25│
+┃       ┃   shift-tab                Focus the previous pane or field  ┃ct 2025│
 ┃       ┃   z                        Zoom the focused pane             ┃       │
 ┃       ┃                                                              ┃       │
 ┃       ┃ General                                                      ┃       │
-┃       ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1-19 of 23 ┛       │
+┃       ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1-19 of 24 ┛       │
 ┗━━━━━━━━━━━━━━━━┛└────────────────────────────────────────────────────────────┘
  j/k scroll  esc close

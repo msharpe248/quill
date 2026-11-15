@@ -1,0 +1,193 @@
+//! The mail providers Quill knows by name: where their servers are, and
+//! what a user needs to know before signing in.
+//!
+//! This table answers "which server does `@gmail.com` use" without asking
+//! the network. It is deliberately short. A domain it does not list is
+//! looked up in DNS, and whatever is found here or there is checked by
+//! connecting before the user is shown it.
+
+use crate::config::TlsMode;
+
+/// Where one of a provider's servers listens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Endpoint {
+    pub host: &'static str,
+    pub port: u16,
+    pub tls: TlsMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Provider {
+    pub name: &'static str,
+    /// The address domains this provider owns.
+    pub domains: &'static [&'static str],
+    /// What the mail exchangers of a custom domain hosted here end with:
+    /// how `you@yourcompany.com` is recognised as, say, Google Workspace.
+    pub mx_suffixes: &'static [&'static str],
+    pub imap: Option<Endpoint>,
+    pub smtp: Option<Endpoint>,
+    /// Something to tell the user at setup, such as the need for an app
+    /// password.
+    pub note: Option<&'static str>,
+}
+
+const fn tls(host: &'static str, port: u16) -> Option<Endpoint> {
+    Some(Endpoint {
+        host,
+        port,
+        tls: TlsMode::Implicit,
+    })
+}
+
+const fn starttls(host: &'static str, port: u16) -> Option<Endpoint> {
+    Some(Endpoint {
+        host,
+        port,
+        tls: TlsMode::Starttls,
+    })
+}
+
+pub const PROVIDERS: &[Provider] = &[
+    Provider {
+        name: "Gmail",
+        domains: &["gmail.com", "googlemail.com"],
+        mx_suffixes: &["google.com", "googlemail.com"],
+        imap: tls("imap.gmail.com", 993),
+        smtp: tls("smtp.gmail.com", 465),
+        note: Some(
+            "Google does not accept your normal password here. Create an app password in your Google account (Security, 2-Step Verification, App passwords) and use that.",
+        ),
+    },
+    Provider {
+        name: "iCloud",
+        domains: &["icloud.com", "me.com", "mac.com"],
+        mx_suffixes: &["mail.icloud.com"],
+        imap: tls("imap.mail.me.com", 993),
+        smtp: starttls("smtp.mail.me.com", 587),
+        note: Some(
+            "Apple does not accept your Apple Account password here. Create an app-specific password at account.apple.com and use that.",
+        ),
+    },
+    Provider {
+        name: "Fastmail",
+        domains: &["fastmail.com", "fastmail.fm"],
+        mx_suffixes: &["messagingengine.com"],
+        imap: tls("imap.fastmail.com", 993),
+        smtp: tls("smtp.fastmail.com", 465),
+        note: Some(
+            "Fastmail needs an app password: create one under Settings, Privacy & Security, Integrations.",
+        ),
+    },
+    Provider {
+        name: "Microsoft",
+        domains: &["outlook.com", "hotmail.com", "live.com", "msn.com"],
+        mx_suffixes: &["outlook.com"],
+        imap: tls("outlook.office365.com", 993),
+        smtp: starttls("smtp.office365.com", 587),
+        note: Some(
+            "Microsoft accounts do not accept a password over IMAP. They need Microsoft sign-in, which a Microsoft 365 account in Quill uses instead.",
+        ),
+    },
+    Provider {
+        name: "Yahoo",
+        domains: &["yahoo.com", "ymail.com", "rocketmail.com"],
+        mx_suffixes: &["yahoodns.net"],
+        imap: tls("imap.mail.yahoo.com", 993),
+        smtp: tls("smtp.mail.yahoo.com", 465),
+        note: Some("Yahoo needs an app password: create one under Account security."),
+    },
+    Provider {
+        name: "AOL",
+        domains: &["aol.com"],
+        mx_suffixes: &[],
+        imap: tls("imap.aol.com", 993),
+        smtp: tls("smtp.aol.com", 465),
+        note: Some("AOL needs an app password: create one under Account security."),
+    },
+    Provider {
+        name: "Zoho",
+        domains: &["zoho.com", "zohomail.com"],
+        mx_suffixes: &["zoho.com"],
+        imap: tls("imap.zoho.com", 993),
+        smtp: tls("smtp.zoho.com", 465),
+        note: None,
+    },
+    Provider {
+        name: "GMX",
+        domains: &["gmx.com", "gmx.us"],
+        mx_suffixes: &[],
+        imap: tls("imap.gmx.com", 993),
+        smtp: starttls("mail.gmx.com", 587),
+        note: None,
+    },
+];
+
+/// The provider that owns an address domain, such as `gmail.com`.
+pub fn by_domain(domain: &str) -> Option<&'static Provider> {
+    PROVIDERS.iter().find(|provider| {
+        provider
+            .domains
+            .iter()
+            .any(|known| known.eq_ignore_ascii_case(domain))
+    })
+}
+
+/// The provider hosting a domain whose mail exchanger is `exchanger`, such
+/// as `aspmx.l.google.com`.
+pub fn by_mail_exchanger(exchanger: &str) -> Option<&'static Provider> {
+    let exchanger = exchanger.trim_end_matches('.').to_ascii_lowercase();
+    PROVIDERS.iter().find(|provider| {
+        provider.mx_suffixes.iter().any(|suffix| {
+            exchanger == *suffix
+                || exchanger
+                    .strip_suffix(suffix)
+                    .is_some_and(|rest| rest.ends_with('.'))
+        })
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_provider_is_found_by_its_address_domain() {
+        assert_eq!(by_domain("gmail.com").map(|p| p.name), Some("Gmail"));
+        assert_eq!(by_domain("ME.com").map(|p| p.name), Some("iCloud"));
+        assert_eq!(by_domain("example.com"), None);
+        // Only whole domains: a lookalike is not Gmail.
+        assert_eq!(by_domain("notgmail.com"), None);
+        assert_eq!(by_domain("gmail.com.example.org"), None);
+    }
+
+    #[test]
+    fn a_hosted_domain_is_recognised_by_its_mail_exchanger() {
+        let name = |host| by_mail_exchanger(host).map(|provider| provider.name);
+        assert_eq!(name("aspmx.l.google.com."), Some("Gmail"));
+        assert_eq!(
+            name("example-com.mail.protection.outlook.com"),
+            Some("Microsoft")
+        );
+        assert_eq!(name("in1-smtp.messagingengine.com"), Some("Fastmail"));
+        assert_eq!(name("mx01.mail.icloud.com"), Some("iCloud"));
+        assert_eq!(name("mx.example.com"), None);
+        // A suffix must sit on a label boundary.
+        assert_eq!(name("evilgoogle.com"), None);
+        assert_eq!(name("mx.notoutlook.com"), None);
+    }
+
+    #[test]
+    fn every_provider_is_reachable_over_tls_and_owns_its_domains_alone() {
+        let mut seen = std::collections::HashSet::new();
+        for provider in PROVIDERS {
+            assert!(provider.imap.is_some(), "{}", provider.name);
+            for endpoint in [provider.imap, provider.smtp].into_iter().flatten() {
+                assert_ne!(endpoint.tls, TlsMode::None, "{}", provider.name);
+                assert!(endpoint.host.contains('.'));
+            }
+            for domain in provider.domains {
+                assert!(seen.insert(*domain), "{domain} is listed twice");
+            }
+        }
+    }
+}

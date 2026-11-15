@@ -18,4 +18,16 @@ mod uidset;
 
 pub use backend::{ImapBackend, PasswordProvider};
 pub use config::{ImapConfig, Trust};
+use quill_core::Result;
 pub use uidset::UidSet;
+
+/// Finds out whether an IMAP server answers at `config`'s address in the
+/// way its TLS mode asks: connects, reads the greeting, upgrades with
+/// STARTTLS if that is the mode, and hangs up. Nothing is sent that needs a
+/// password.
+///
+/// A certificate the system does not trust comes back as
+/// `Error::Certificate`: there is a server, and the user decides about it.
+pub async fn probe(config: &ImapConfig) -> Result<()> {
+    connect::connect(config).await.map(drop)
+}

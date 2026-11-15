@@ -1,0 +1,28 @@
+---
+source: crates/quill-tui/tests/setup.rs
+expression: harness.screen()
+---
+┌ [1] Accounts ──┐┏ [2] Inbox (unified) - 12 unread ━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+│> Unified    12 │┃> * @ W Ana Ruiz        Q4 roadmap                     09:14┃
+│ ┏ Add an account ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓1┃
+│ ┃ Type the email address of the account. Quill will look for its mail      ┃5┃
+│ ┃ server.                                                                  ┃0┃
+│ ┃                                                                          ┃i┃
+│ ┃ Address:   robin@example.com                                             ┃i┃
+│ ┃                                                                          ┃i┃
+│ ┃                                                                          ┃u┃
+│ ┃                                                                          ┃u┃
+│ ┃                                                                          ┃d┃
+│ ┃                                                                          ┃e┃
+│ ┃                                                                          ┃n┃
+│ ┃                                                                          ┃n┃
+│ ┃                                                                          ┃6┃
+│ ┃                                                                          ┃2┃
+│ ┃                                                                          ┃5┃
+│ ┃                                                                          ┃5┃
+│ ┃                                                                          ┃ ┃
+│ ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+└────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+ enter continue  tab next field  esc back

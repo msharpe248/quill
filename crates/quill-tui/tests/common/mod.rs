@@ -30,6 +30,8 @@ pub struct Harness {
     pub host_requests: Vec<HostRequest>,
     /// What the UI has asked of the sync engine so far.
     pub sync_requests: Vec<quill_sync::SyncRequest>,
+    /// What the UI has asked of the accounts service so far.
+    pub account_requests: Vec<quill_tui::setup::AccountRequest>,
 }
 
 impl Harness {
@@ -43,6 +45,25 @@ impl Harness {
         )
     }
 
+    /// The demo mailbox, with a service to add accounts through.
+    pub fn with_accounts(width: u16, height: u16) -> Self {
+        let mut harness = Self::demo(width, height);
+        harness.env.accounts = true;
+        harness
+    }
+
+    /// No accounts at all, and a service to add one through: a first run.
+    pub fn first_run(width: u16, height: u16) -> Self {
+        Self::over(
+            Store::open_in_memory().unwrap(),
+            width,
+            height,
+            Keymap::preset(KeymapPreset::Vim),
+            ColorMode::TrueColor,
+            true,
+        )
+    }
+
     pub fn build(width: u16, height: u16, keymap: Keymap, mode: ColorMode) -> Self {
         let mut store = Store::open_in_memory().unwrap();
         tokio::runtime::Builder::new_current_thread()
@@ -50,6 +71,17 @@ impl Harness {
             .unwrap()
             .block_on(demo::seed(&mut store, NOW))
             .unwrap();
+        Self::over(store, width, height, keymap, mode, false)
+    }
+
+    fn over(
+        store: Store,
+        width: u16,
+        height: u16,
+        keymap: Keymap,
+        mode: ColorMode,
+        accounts: bool,
+    ) -> Self {
         let env = Env {
             registry: Registry::builtin(),
             keymap,
@@ -57,6 +89,7 @@ impl Harness {
             tz: TimeZone::UTC,
             reader_width: 0.5,
             images: false,
+            accounts,
         };
         let mut harness = Self {
             state: State::new((width, height), NOW),
@@ -64,6 +97,7 @@ impl Harness {
             store,
             host_requests: Vec::new(),
             sync_requests: Vec::new(),
+            account_requests: Vec::new(),
         };
         let requests = harness.state.startup_requests();
         harness.pump(requests);
@@ -75,6 +109,7 @@ impl Harness {
         let effects = self.state.update(&self.env, action);
         self.host_requests.extend(effects.host);
         self.sync_requests.extend(effects.sync);
+        self.account_requests.extend(effects.accounts);
         self.pump(effects.data);
     }
 
@@ -85,6 +120,7 @@ impl Harness {
                 let effects = self.state.update(&self.env, Action::Data(event));
                 self.host_requests.extend(effects.host);
                 self.sync_requests.extend(effects.sync);
+                self.account_requests.extend(effects.accounts);
                 queue.extend(effects.data);
             }
         }
@@ -96,6 +132,32 @@ impl Harness {
         for key in keys.split_whitespace() {
             self.act(Action::Key(key.parse().unwrap()));
         }
+    }
+
+    /// Types text a character at a time, as key presses.
+    pub fn type_text(&mut self, text: &str) {
+        for c in text.chars() {
+            self.act(Action::Key(quill_tui::keymap::KeyChord::plain(
+                quill_tui::keymap::Key::Char(c),
+            )));
+        }
+    }
+
+    /// Where the terminal's cursor is shown, if it is.
+    pub fn cursor(&self) -> Option<(u16, u16)> {
+        let (width, height) = self.state.size;
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        let mut position = None;
+        terminal
+            .draw(|frame| {
+                view::render(frame, &self.state, &self.env);
+            })
+            .unwrap();
+        if terminal.backend().cursor_visible() {
+            let at = terminal.get_cursor_position().unwrap();
+            position = Some((at.x, at.y));
+        }
+        position
     }
 
     pub fn resize(&mut self, width: u16, height: u16) {

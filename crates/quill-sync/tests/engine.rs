@@ -36,6 +36,8 @@ struct Server {
     folders: BTreeMap<String, BTreeMap<String, Mail>>,
     /// Fail every call with this, while set.
     down: Option<String>,
+    /// Present a certificate nobody trusts, while set.
+    bad_certificate: bool,
     /// Refuse flag changes.
     read_only: bool,
     applied: Vec<Operation>,
@@ -75,6 +77,17 @@ impl MemoryBackend {
     }
 
     fn check(&self) -> Result<()> {
+        if self.0.lock().unwrap().bad_certificate {
+            return Err(Error::Certificate(Box::new(
+                quill_core::CertificateProblem {
+                    host: "mail.example.com".to_owned(),
+                    reason: "UnknownIssuer".to_owned(),
+                    fingerprint: Some("ab".repeat(32)),
+                    certificate: Some(vec![1, 2, 3]),
+                    details: None,
+                },
+            )));
+        }
         match &self.0.lock().unwrap().down {
             Some(reason) => Err(Error::Connection(reason.clone())),
             None => Ok(()),
@@ -625,4 +638,124 @@ async fn dropping_the_handle_stops_the_engine() {
     })
     .await;
     assert!(closed.is_ok(), "the engine kept running");
+}
+
+#[tokio::test]
+async fn an_account_added_while_running_starts_syncing() {
+    let work = MemoryBackend::new(10);
+    work.add("INBOX", "1", "Work mail", NOW_ISH);
+    let mut rig = Rig::start(work);
+    rig.pass().await;
+
+    let personal = MemoryBackend::new(10);
+    personal.add("INBOX", "1", "Personal mail", NOW_ISH);
+    let id = rig
+        .store
+        .upsert_account("Personal", "robin@home.example.com", "imap")
+        .unwrap();
+    rig.handle.set_account(SyncAccount {
+        id,
+        name: "Personal".to_owned(),
+        backend: Arc::new(personal.clone()),
+    });
+    let events = rig.pass().await;
+    assert!(events.contains(&SyncEvent::Syncing {
+        account: id,
+        active: true
+    }));
+    let subjects: Vec<String> = rig
+        .store
+        .messages(Mailbox::Unified)
+        .unwrap()
+        .into_iter()
+        .map(|row| row.headers.subject)
+        .collect();
+    assert!(
+        subjects.contains(&"Personal mail".to_owned()),
+        "{subjects:?}"
+    );
+    assert!(subjects.contains(&"Work mail".to_owned()));
+
+    // Both accounts answer a request to sync now.
+    assert!(rig.handle.send(SyncRequest::SyncNow));
+    let mut finished = Vec::new();
+    while finished.len() < 2 {
+        if let SyncEvent::Syncing {
+            account,
+            active: false,
+        } = rig.next().await
+        {
+            finished.push(account);
+        }
+    }
+    assert!(finished.contains(&id) && finished.contains(&rig.account));
+}
+
+#[tokio::test]
+async fn an_account_set_again_is_replaced_not_doubled() {
+    let old = MemoryBackend::new(10);
+    old.add("INBOX", "1", "From the old settings", NOW_ISH);
+    let mut rig = Rig::start(old.clone());
+    rig.pass().await;
+
+    // The same account, reached another way: say, after its certificate was
+    // pinned. The old connection must not go on syncing beside the new one.
+    let new = MemoryBackend::new(10);
+    new.add("INBOX", "1", "From the old settings", NOW_ISH);
+    new.add("INBOX", "2", "Arrived since", NOW_ISH + 1);
+    rig.handle.set_account(SyncAccount {
+        id: rig.account,
+        name: "Work".to_owned(),
+        backend: Arc::new(new),
+    });
+    // The replaced loop reports that it stopped; then the new one runs.
+    loop {
+        if rig.subjects("INBOX").contains(&"Arrived since".to_owned()) {
+            break;
+        }
+        rig.next().await;
+    }
+    old.add("INBOX", "3", "Only the old server has this", NOW_ISH + 2);
+    rig.sync_now().await;
+    assert!(
+        !rig.subjects("INBOX")
+            .contains(&"Only the old server has this".to_owned())
+    );
+
+    // Removed, it stops; its mail stays.
+    rig.handle.remove_account(rig.account);
+    assert!(rig.handle.send(SyncRequest::SyncNow));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(rig.subjects("INBOX").contains(&"Arrived since".to_owned()));
+}
+
+#[tokio::test]
+async fn a_refused_certificate_is_reported_with_the_certificate_once() {
+    let backend = MemoryBackend::new(10);
+    backend.add("INBOX", "1", "Hello", NOW_ISH);
+    backend.with(|server| server.bad_certificate = true);
+    let mut rig = Rig::start(backend.clone());
+    rig.pass().await;
+    // The report follows the end of the pass that failed.
+    let SyncEvent::Certificate { account, problem } = rig.next().await else {
+        panic!("expected a certificate event");
+    };
+    assert_eq!(account, "Work");
+    assert_eq!(problem.host, "mail.example.com");
+    assert_eq!(
+        problem.fingerprint.as_deref(),
+        Some("ab".repeat(32).as_str())
+    );
+    // Nothing was fetched: not even the list of folders.
+    assert!(rig.store.folders().unwrap().is_empty());
+
+    // The same refusal on the next pass is not news.
+    rig.sync_now().await;
+    let quiet = tokio::time::timeout(Duration::from_millis(150), rig.events.recv()).await;
+    assert!(quiet.is_err(), "{quiet:?}");
+
+    // Once the certificate is accepted, mail flows.
+    backend.with(|server| server.bad_certificate = false);
+    rig.sync_now().await;
+    assert_eq!(rig.subjects("INBOX"), ["Hello"]);
 }

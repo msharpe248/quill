@@ -2,9 +2,20 @@
 //! terminal; run by hand in Ghostty or Kitty it works standalone.
 
 mod accounts;
+mod config_edit;
+mod discover;
 mod password;
 mod paths;
+mod service;
 mod setup;
+
+/// The IMAP crate's own test server, for tests here that need a real one: a
+/// Dovecot started per test, with TLS in front of it under a certificate no
+/// system trusts.
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[path = "../../quill-imap/tests/common/mod.rs"]
+mod imap_test_server;
 
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -18,8 +29,7 @@ use quill_auth::{Keychain, SecretStore};
 use quill_core::config::{AccountConfig, Config};
 use quill_store::{BlobStore, Store};
 use quill_sync::SyncOptions;
-use quill_tui::app::SyncLink;
-use quill_tui::state::Notice;
+use quill_tui::app::{AccountsLink, SyncLink};
 use quill_tui::theme::ColorMode;
 use quill_tui::{app, demo};
 
@@ -115,12 +125,12 @@ async fn tui(args: TuiArgs) -> anyhow::Result<()> {
     let loaded = setup::load(&paths, mode, TimeZone::system());
     let mut notices = loaded.notices;
 
-    let (store, sync) = if args.demo {
+    let (store, sync, accounts) = if args.demo {
         let mut store = Store::open_in_memory().context("cannot create the demo mailbox")?;
         demo::seed(&mut store, app::now())
             .await
             .context("cannot fill the demo mailbox")?;
-        (store, SyncLink::none())
+        (store, SyncLink::none(), AccountsLink::none())
     } else {
         create_private_dir(&paths.data_dir)
             .with_context(|| format!("cannot create {}", paths.data_dir.display()))?;
@@ -135,34 +145,44 @@ async fn tui(args: TuiArgs) -> anyhow::Result<()> {
         let prepared = accounts::prepare(&loaded.config, &mut store, &secrets, loaded.config_ok)
             .context("cannot register the accounts")?;
         notices.extend(prepared.notices);
-        if loaded.config.accounts.is_empty() {
-            notices.push(Notice::info(
-                "No accounts yet. Add one to config.toml, or try `quill tui --demo`.",
-            ));
-        }
         let (events_tx, events) = tokio::sync::mpsc::unbounded_channel();
-        let handle = if prepared.accounts.is_empty() {
-            None
-        } else {
-            // The engine has a connection of its own; the UI keeps this one.
-            Some(quill_sync::spawn(
-                open()?,
-                Some(paths.data_dir.join("blobs")),
-                prepared.accounts,
-                SyncOptions::default(),
-                events_tx,
-            ))
-        };
-        (store, SyncLink { handle, events })
+        // The engine runs even with no accounts, so that one added from the
+        // setup flow starts syncing at once. It has a connection of its
+        // own; the UI keeps this one.
+        let handle = Arc::new(quill_sync::spawn(
+            open()?,
+            Some(paths.data_dir.join("blobs")),
+            prepared.accounts,
+            SyncOptions::default(),
+            events_tx,
+        ));
+        let accounts = service::spawn(service::Service {
+            config_file: paths.config_file(),
+            secrets,
+            store: std::sync::Mutex::new(open()?),
+            sync: Arc::clone(&handle),
+            dns: Box::new(discover::SystemDns::new()),
+            prober: Box::new(discover::NetworkProber),
+        });
+        (
+            store,
+            SyncLink {
+                handle: Some(handle),
+                events,
+            },
+            accounts,
+        )
     };
 
     let attached = quill_host::attach(std::env::var_os(quill_host::SOCKET_VARIABLE).as_deref());
     let mut env = loaded.env;
     // Quill's own shell always draws images. Elsewhere, go by what the
     // terminal says it is.
+    // The demo mailbox has no config to add an account to.
+    env.accounts = !args.demo;
     env.images = attached.host.is_shell()
         || quill_media::kitty::supported_by_environment(|name| std::env::var(name).ok());
-    app::run(store, env, notices, attached, sync)
+    app::run(store, env, notices, attached, sync, accounts)
         .await
         .context("the terminal UI stopped")
 }

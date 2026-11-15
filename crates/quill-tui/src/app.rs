@@ -27,6 +27,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use crate::command::{Context, Menu};
 use crate::data::{self, DataEvent, DataHandle};
 use crate::keymap::KeyChord;
+use crate::setup::{AccountEvent, AccountRequest};
 use crate::state::{Action, Effects, Env, HostRequest, HostState, Notice, State};
 use crate::view::{ImagePlacement, LinkPlacement};
 use crate::{hyperlink, sample, terminal, view};
@@ -35,8 +36,28 @@ use crate::{hyperlink, sample, terminal, view};
 /// its news arrives. With no engine (the demo mailbox) there is only the
 /// store.
 pub struct SyncLink {
-    pub handle: Option<SyncHandle>,
+    /// Shared with the accounts service, which adds accounts to the engine.
+    pub handle: Option<Arc<SyncHandle>>,
     pub events: UnboundedReceiver<SyncEvent>,
+}
+
+/// The accounts service, as the UI holds it: where the setup flow's
+/// requests go and where the answers arrive. Whoever starts the UI supplies
+/// the service; the UI itself reaches no server, Keychain or config file.
+pub struct AccountsLink {
+    pub requests: Option<UnboundedSender<AccountRequest>>,
+    pub events: UnboundedReceiver<AccountEvent>,
+}
+
+impl AccountsLink {
+    /// No service: accounts cannot be added from the UI.
+    pub fn none() -> Self {
+        let (_, events) = unbounded_channel();
+        Self {
+            requests: None,
+            events,
+        }
+    }
 }
 
 impl SyncLink {
@@ -59,6 +80,7 @@ pub async fn run(
     mut notices: Vec<Notice>,
     attached: Attached,
     sync: SyncLink,
+    accounts: AccountsLink,
 ) -> io::Result<()> {
     let (events_tx, events) = unbounded_channel();
     let data = step(
@@ -78,10 +100,15 @@ pub async fn run(
         handle: sync_handle,
         events: sync_events,
     } = sync;
+    let AccountsLink {
+        requests: account_requests,
+        events: account_events,
+    } = accounts;
     let mut io = Io {
         data: &data,
         host: &host,
-        sync: sync_handle.as_ref(),
+        sync: sync_handle.as_deref(),
+        accounts: account_requests,
         injected: injected_tx,
         preview_dir: None,
         last_host_state: None,
@@ -91,6 +118,7 @@ pub async fn run(
         data: events,
         host: host_events,
         sync: sync_events,
+        accounts: account_events,
         injected,
     };
     let result = event_loop(&mut screen, &env, notices, &mut io, &mut inbound).await;
@@ -108,6 +136,7 @@ struct Io<'a> {
     data: &'a DataHandle,
     host: &'a Arc<dyn Host>,
     sync: Option<&'a SyncHandle>,
+    accounts: Option<UnboundedSender<AccountRequest>>,
     /// Actions that background work feeds back into the loop.
     injected: UnboundedSender<Action>,
     /// A private directory for files handed to the host for viewing.
@@ -211,6 +240,11 @@ impl Io<'_> {
                 HostRequest::OpenUrl(url) => self.host.open_url(&url),
             }
         }
+        for request in effects.accounts {
+            if let Some(service) = &self.accounts {
+                let _ = service.send(request);
+            }
+        }
         for request in effects.sync {
             match (self.sync, request) {
                 (Some(engine), request) => {
@@ -242,6 +276,8 @@ impl Io<'_> {
                 Context::Reader => bridge::Context::Reader,
                 Context::Help => bridge::Context::Help,
                 Context::Links => bridge::Context::Links,
+                Context::Setup => bridge::Context::Setup,
+                Context::Certificate => bridge::Context::Certificate,
             },
             enabled: current
                 .enabled
@@ -295,6 +331,8 @@ pub fn command_infos(env: &Env) -> Vec<CommandInfo> {
                 .collect(),
             menu: spec.menu.map(|menu| match menu {
                 Menu::App => bridge::Menu::App,
+                Menu::File => bridge::Menu::File,
+                Menu::Mailbox => bridge::Menu::Mailbox,
                 Menu::View => bridge::Menu::View,
                 Menu::Message => bridge::Menu::Message,
                 Menu::Help => bridge::Menu::Help,
@@ -310,6 +348,7 @@ struct Inbound {
     data: UnboundedReceiver<DataEvent>,
     host: UnboundedReceiver<HostEvent>,
     sync: UnboundedReceiver<SyncEvent>,
+    accounts: UnboundedReceiver<AccountEvent>,
     /// Actions that background work feeds back into the loop.
     injected: UnboundedReceiver<Action>,
 }
@@ -370,6 +409,7 @@ async fn event_loop(
                 HostEvent::Problem(text) => Some(Action::Notify(Notice::error(text))),
             },
             Some(event) = inbound.sync.recv() => Some(Action::Sync(event)),
+            Some(event) = inbound.accounts.recv() => Some(Action::Account(event)),
             Some(action) = inbound.injected.recv() => Some(action),
             _ = clock.tick() => Some(Action::ClockTick(now())),
         };
@@ -393,6 +433,7 @@ fn translate(event: Event) -> Option<Action> {
     match event {
         Event::Key(key) => KeyChord::from_event(&key).map(Action::Key),
         Event::Resize(width, height) => Some(Action::Resize(width, height)),
+        Event::Paste(text) => Some(Action::Paste(text)),
         _ => None,
     }
 }
@@ -420,6 +461,7 @@ mod tests {
             tz: TimeZone::UTC,
             reader_width: 0.5,
             images: false,
+            accounts: false,
         }
     }
 
