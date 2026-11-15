@@ -4,9 +4,21 @@
 //! Nothing here trusts its input. A message is whatever a stranger chose to
 //! send: parsing never panics, and the text it returns is still untrusted
 //! (the UI strips control characters before drawing it).
+//!
+//! Writing mail is here too: [`compose`] turns what the user wrote into a
+//! complete message, [`reply`] starts a reply or a forward from a message
+//! that was read, and [`markdown`] makes the HTML alternative.
 
+pub mod compose;
 pub mod html;
 pub mod links;
+pub mod markdown;
+pub mod reply;
+
+pub use compose::{
+    BodyFormat, Outgoing, OutgoingAttachment, Warning, build, envelope, new_message_id, warnings,
+};
+pub use reply::{Draft, ReplyPosition, forward, reply};
 
 use mail_parser::{MessageParser, PartKind};
 use quill_core::types::{Address, Headers};
@@ -15,6 +27,15 @@ use quill_core::types::{Address, Headers};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Parsed {
     pub headers: Headers,
+    /// Where the sender asked for replies to go (`Reply-To`). Empty when
+    /// they did not say, which means back to `headers.from`.
+    pub reply_to: Vec<Address>,
+    /// The message this one answers (`In-Reply-To`), with its angle
+    /// brackets. The first one, should a message name several.
+    pub in_reply_to: Option<String>,
+    /// The conversation so far (`References`), oldest first, each with its
+    /// angle brackets.
+    pub references: Vec<String>,
     /// The body as plain text: the plain part when the message has one,
     /// otherwise the text of its HTML. This is what search and quoting use.
     pub body: String,
@@ -86,6 +107,20 @@ pub fn parse(raw: &[u8], received: i64) -> Option<Parsed> {
             .unwrap_or(received),
     };
 
+    let reply_to = addresses(message.reply_to());
+    let identifiers = |list: Option<mail_parser::TextList<'_>>| -> Vec<String> {
+        list.map(|list| {
+            list.iter()
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .map(|id| format!("<{id}>"))
+                .collect()
+        })
+        .unwrap_or_default()
+    };
+    let in_reply_to = identifiers(message.in_reply_to()).into_iter().next();
+    let references = identifiers(message.references());
+
     // Only parts that really are plain text or HTML: the parser offers a
     // conversion of the other kind when one is missing, and Quill does its
     // own.
@@ -135,6 +170,9 @@ pub fn parse(raw: &[u8], received: i64) -> Option<Parsed> {
 
     Some(Parsed {
         headers,
+        reply_to,
+        in_reply_to,
+        references,
         body,
         html,
         html_first,

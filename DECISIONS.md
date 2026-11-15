@@ -274,6 +274,19 @@ The UI stayed usable throughout, which is the acceptance. This was a server on t
 - **Contacts for completing addresses come from message headers as they sync**: senders of received mail, and with five times the weight the recipients of mail in Sent. People the user writes to should come before a newsletter that writes every week.
 - **Not built yet**: syncing drafts to the server's Drafts folder (drafts are local), sending to the accepted recipients after some were refused, and send later.
 
+### Building mail
+
+- **`mail-builder` 2.0.1 (the spec's candidate, MIT/Apache-2.0) writes headers and MIME; `pulldown-cmark` 0.13.6 (MIT) parses the Markdown.** `mail-builder` runs with its defaults off, which keeps the machine's host name out. Quill writes the date (the library always says +0000), the boundaries (the library's come from the clock) and the Message-ID itself, and base64-encodes every attachment (the library would send a text attachment holding a NUL as 7bit).
+- **The same draft always builds to the same bytes**, which is what lets every send attempt carry one Message-ID.
+- **What is built is 7-bit clean**: encoded headers, quoted-printable or base64 bodies, CRLF everywhere, no line over 998 bytes. A non-ASCII address is the one exception and needs SMTPUTF8 from the server.
+- **A message written in Markdown goes as `multipart/alternative`**: the text as typed, and HTML made from it by Quill's own small renderer. Raw HTML the user typed is shown escaped, not passed through; images become links; a link is live only if Quill itself would open it. `format=flowed` is not used.
+- **No User-Agent or X-Mailer header**, and nothing in the boundaries or Message-ID names the program, system or host.
+- **Text from the user cannot add a header**: line breaks and control characters in subjects, names and file names become spaces, and an address is stripped of anything that could make it two.
+- **A forwarded message attached as `.eml`** goes in as `message/rfc822` when it is 7-bit, and as a base64 `application/octet-stream` named `.eml` when it is not, since `message/rfc822` may not be base64-encoded.
+- **Replies**: to Reply-To if the original has one, otherwise From. Reply-all keeps the original's To in To and Cc in Cc, without the user's own addresses or duplicates. A reply to mail the user sent goes to its recipients. `Re:` and `Fwd:` are added once; `RE:`, `Re[2]:`, `AW:`, `SV:`, `Antw:`, `Fw:` and `WG:` are recognised as already there.
+- **A forward has no In-Reply-To but keeps References**, so it stays in its conversation.
+- **Not built**: Reply-To on outgoing mail, punycode for international domains, stripping the original's signature when quoting.
+
 ### IMAP changes to mail
 
 - **Move uses `UID MOVE`** where the server has it; otherwise `UID COPY`, mark `\Deleted`, and `UID EXPUNGE` of that one message (UIDPLUS). The new id comes from the server's `COPYUID`, and an appended message's from `APPENDUID`. `async-imap` parses both and then drops them, so these commands are sent through its raw command interface.

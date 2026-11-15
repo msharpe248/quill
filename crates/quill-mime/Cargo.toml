@@ -1,6 +1,6 @@
 [package]
 name = "quill-mime"
-description = "Reading mail: RFC 5322 and MIME parsing into Quill's types"
+description = "Reading and writing mail: RFC 5322 and MIME to and from Quill's types"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,5 +11,8 @@ workspace = true
 
 [dependencies]
 quill-core.workspace = true
+base64.workspace = true
 html2text.workspace = true
+mail-builder.workspace = true
 mail-parser.workspace = true
+pulldown-cmark.workspace = true
