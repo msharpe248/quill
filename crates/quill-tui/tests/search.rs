@@ -231,3 +231,105 @@ fn the_search_box_at_the_two_standard_sizes() {
         insta::assert_snapshot!(format!("search_typing_{width}x{height}"), harness.screen());
     }
 }
+
+/// The demo mailbox with two searches saved in the config.
+fn with_saved_searches() -> Harness {
+    let mut harness = Harness::demo(200, 60);
+    harness.env.searches = vec![
+        ("From Ana".to_owned(), "from:ana".to_owned()),
+        (
+            "Unread with files".to_owned(),
+            "is:unread has:attachment".to_owned(),
+        ),
+    ];
+    harness.act(quill_tui::state::Action::Data(
+        quill_tui::data::DataEvent::StoreChanged,
+    ));
+    harness
+}
+
+#[test]
+fn saved_searches_are_mailboxes_in_the_sidebar() {
+    let mut harness = with_saved_searches();
+    let screen = harness.screen();
+    assert!(screen.contains("Searches"), "{screen}");
+    assert!(screen.contains("From Ana") && screen.contains("Unread with files"));
+
+    // Down the sidebar to the first of them: the heading is stepped over,
+    // and arriving there runs the search.
+    harness.keys("1 G k");
+    let screen = harness.screen();
+    assert!(screen.contains(">   From Ana"), "{screen}");
+    assert!(screen.contains("Search: from:ana"), "{screen}");
+    assert!(!harness.state.list.rows.is_empty());
+    assert!(
+        harness
+            .state
+            .list
+            .rows
+            .iter()
+            .all(|row| row.headers.from[0].email.contains("ana")
+                || row.headers.from[0].display_name().contains("Ana"))
+    );
+    // On to the next, and it is that search's mail.
+    harness.keys("j");
+    assert!(
+        harness
+            .screen()
+            .contains("Search: is:unread has:attachment")
+    );
+    assert!(
+        harness
+            .state
+            .list
+            .rows
+            .iter()
+            .all(|row| !row.flags.seen && row.has_attachments)
+    );
+    // The mail in it is mail like any other: open one and it is read.
+    harness.keys("enter enter");
+    assert_eq!(harness.state.context(), Context::Reader);
+}
+
+#[test]
+fn leaving_a_saved_search_goes_back_to_the_mailbox_and_its_row() {
+    let mut harness = with_saved_searches();
+    harness.keys("1 G k enter");
+    assert!(harness.screen().contains("Search: from:ana"));
+    harness.keys("esc");
+    assert!(!harness.screen().contains("Search: from:ana"));
+    assert!(
+        harness.screen().contains("> Unified"),
+        "{}",
+        harness.screen()
+    );
+    // A change in the store while a saved search is on show keeps it on
+    // show, and the cursor on its row.
+    harness.keys("1 G");
+    harness.act(quill_tui::state::Action::Data(
+        quill_tui::data::DataEvent::StoreChanged,
+    ));
+    let screen = harness.screen();
+    assert!(screen.contains(">   Unread with files"), "{screen}");
+    assert!(screen.contains("Search: is:unread has:attachment"));
+}
+
+#[test]
+fn the_palette_offers_saved_searches_by_name() {
+    let mut harness = with_saved_searches();
+    harness.keys("ctrl-k");
+    harness.type_text("search ana");
+    harness.keys("enter");
+    assert!(
+        harness.screen().contains("Search: from:ana"),
+        "{}",
+        harness.screen()
+    );
+    assert_eq!(harness.state.context(), Context::List);
+}
+
+#[test]
+fn with_none_saved_the_sidebar_has_no_heading_for_them() {
+    let harness = Harness::demo(200, 60);
+    assert!(!harness.screen().contains("Searches"));
+}

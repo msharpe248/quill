@@ -241,20 +241,19 @@ impl State {
         }
         let index = self.sidebar.offset + usize::from(row);
         // A heading is not somewhere to go.
-        let Some(mailbox) = self
+        if !self
             .sidebar
             .entries
             .get(index)
-            .and_then(super::SidebarEntry::mailbox)
-        else {
+            .is_some_and(super::SidebarEntry::is_place)
+        {
             return;
-        };
+        }
         if index == self.sidebar.selected {
             // A click on the mailbox on show goes to its mail.
             self.run(env, CommandId::NavOpen, out);
         } else {
-            self.sidebar.selected = index;
-            self.show_mailbox(mailbox, out);
+            self.go_to_entry(env, index, out);
         }
     }
 

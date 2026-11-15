@@ -662,6 +662,7 @@ mod tests {
             remote_never: false,
             notifications: true,
             threads: true,
+            searches: Vec::new(),
         }
     }
 

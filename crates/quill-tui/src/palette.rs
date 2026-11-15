@@ -30,10 +30,12 @@ pub struct Item {
     pub keys: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum What {
     Command(CommandId),
     Mailbox(Mailbox),
+    /// A saved search, by what it searches for.
+    Search(String),
 }
 
 /// How well `name` answers what was `typed`, or `None` when it does not:

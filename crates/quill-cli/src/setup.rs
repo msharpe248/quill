@@ -93,6 +93,11 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
         remote_never: config.privacy.remote_images == quill_core::config::RemoteImages::Never,
         notifications: config.ui.notifications,
         threads: config.ui.threads,
+        searches: config
+            .searches
+            .iter()
+            .map(|search| (search.name.clone(), search.query.clone()))
+            .collect(),
     };
     Loaded {
         config,

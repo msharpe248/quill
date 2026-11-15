@@ -201,6 +201,22 @@ Quill can be your default mail program: choose it in Mail, Settings, General, "D
 
 Words match whatever their case or accents, and the word you are still typing matches words that start with it. A message's text is searchable once it has been downloaded; its subject and people are from the moment it is listed. The search runs against the mail on this Mac; asking the server as well is not built yet.
 
+### Saved searches
+
+A search you make often can live in the sidebar, as a mailbox of whatever it finds:
+
+```toml
+[[search]]
+name = "Unread from Ana"
+query = "from:ana is:unread"
+
+[[search]]
+name = "Invoices"
+query = "invoice has:attachment"
+```
+
+They are listed under "Searches". Moving onto one runs it, `esc` goes back to the mailbox you came from, and the command palette finds them by name.
+
 ## Attachments and pictures
 
 A message's files are named in its header, and `a` lists them with what each is and how big.

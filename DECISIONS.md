@@ -533,3 +533,9 @@ Accepted 2026-11-15: repeated polls never duplicate or lose a message under each
 - **A message is named by its id in the store**, which `list` and `search` print. It is stable for as long as the message stays in its folder; a move on the server can give it a new one.
 - **Plain output is made safe to print**; JSON carries the text as data.
 
+### Saved searches
+
+- **A `[[search]]` in the config, with a name and a query, is a row in the sidebar** under "Searches", and a mailbox of whatever it finds. Opening one is the same as typing its query and pressing enter: it is the search machinery with a shortcut, not a second kind of mailbox, so what it shows is always current and nothing about it is stored.
+- **Saved in the config by hand.** Saving the search in front of you from inside Quill would need the UI to write the config, which goes through the accounts service; not built.
+- **A saved search shows no count.** Counting means running every one of them at each change in the store; left until someone misses it.
+

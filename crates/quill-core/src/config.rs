@@ -16,6 +16,18 @@ pub struct Config {
     pub privacy: PrivacyConfig,
     #[serde(rename = "account")]
     pub accounts: Vec<AccountConfig>,
+    /// Searches kept in the sidebar, each a mailbox of whatever it finds.
+    #[serde(rename = "search")]
+    pub searches: Vec<SavedSearch>,
+}
+
+/// A search with a name, shown in the sidebar.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SavedSearch {
+    pub name: String,
+    /// What to find, as typed in the search box.
+    pub query: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -330,6 +342,13 @@ impl Config {
                 "ui.reader_width must be between 0.2 and 0.8, got {}",
                 self.ui.reader_width
             )));
+        }
+        for search in &self.searches {
+            if search.name.trim().is_empty() || search.query.trim().is_empty() {
+                return Err(ConfigError::Invalid(
+                    "a [[search]] needs a name and a query".to_owned(),
+                ));
+            }
         }
         for (index, account) in self.accounts.iter().enumerate() {
             if account.name.trim().is_empty() {

@@ -82,6 +82,8 @@ pub struct Env {
     /// List the messages of a conversation together, unless the user
     /// switches that off for the run.
     pub threads: bool,
+    /// Searches kept in the sidebar: a name and what to search for.
+    pub searches: Vec<(String, String)>,
 }
 
 impl Env {
@@ -336,6 +338,13 @@ pub enum SidebarEntry {
         role: FolderRole,
         unread: u32,
     },
+    /// The heading over the saved searches. The cursor skips it.
+    Searches,
+    /// A saved search: a mailbox of whatever it finds.
+    Search {
+        name: String,
+        query: String,
+    },
 }
 
 impl SidebarEntry {
@@ -343,9 +352,15 @@ impl SidebarEntry {
         match self {
             Self::Unified { .. } => Some(Mailbox::Unified),
             Self::Local { mailbox, .. } => Some(*mailbox),
-            Self::Account { .. } => None,
+            Self::Account { .. } | Self::Searches | Self::Search { .. } => None,
             Self::Folder { id, .. } => Some(Mailbox::Folder(*id)),
         }
+    }
+
+    /// Somewhere the cursor can rest: a mailbox or a saved search, not a
+    /// heading.
+    pub fn is_place(&self) -> bool {
+        self.mailbox().is_some() || matches!(self, Self::Search { .. })
     }
 }
 
@@ -1050,6 +1065,10 @@ impl State {
                 match chosen.map(|item| item.what) {
                     // Run where the palette was opened, as its key would.
                     Some(What::Command(id)) => self.run(env, id, out),
+                    Some(What::Search(query)) => {
+                        self.open_search(env, &query, out);
+                        self.set_focus(Pane::List);
+                    }
                     Some(What::Mailbox(mailbox)) => {
                         self.show_mailbox(mailbox, out);
                         if let Some(index) = self
@@ -1537,7 +1556,7 @@ impl State {
                     .entries
                     .iter()
                     .enumerate()
-                    .filter(|(_, entry)| entry.mailbox().is_some())
+                    .filter(|(_, entry)| entry.is_place())
                     .map(|(index, _)| index)
                     .collect();
                 let position = selectable
@@ -1550,10 +1569,7 @@ impl State {
                     return;
                 };
                 if target != self.sidebar.selected {
-                    self.sidebar.selected = target;
-                    if let Some(mailbox) = self.sidebar.entries[target].mailbox() {
-                        self.show_mailbox(mailbox, out);
-                    }
+                    self.go_to_entry(env, target, out);
                 }
             }
             Pane::List => {
@@ -1599,8 +1615,13 @@ impl State {
         match self.focus {
             Pane::Sidebar => {
                 // Choosing a mailbox is leaving the search, even for the
-                // mailbox the search was started from.
-                if self.search.take().is_some() {
+                // mailbox the search was started from. A saved search is
+                // itself what was chosen: its mail is what to go to.
+                let on_saved_search = matches!(
+                    self.sidebar.entries.get(self.sidebar.selected),
+                    Some(SidebarEntry::Search { .. })
+                );
+                if !on_saved_search && self.search.take().is_some() {
                     self.list = MessageList::default();
                     out.data.push(DataRequest::LoadMessages(self.mailbox));
                 }
@@ -1676,6 +1697,14 @@ impl State {
             self.search = None;
             self.list = MessageList::default();
             out.data.push(DataRequest::LoadMessages(self.mailbox));
+            if let Some(index) = self
+                .sidebar
+                .entries
+                .iter()
+                .position(|entry| entry.mailbox() == Some(self.mailbox))
+            {
+                self.sidebar.selected = index;
+            }
         } else {
             match self.focus {
                 Pane::Reader => self.set_focus(Pane::List),
@@ -1738,7 +1767,14 @@ impl State {
                         .get(*account)
                         .map_or("", |account| account.name.as_str())
                 ),
-                SidebarEntry::Account { .. } => return None,
+                SidebarEntry::Search { name, query } => {
+                    return Some(Item {
+                        what: What::Search(query.clone()),
+                        title: format!("Search: {name}"),
+                        keys: String::new(),
+                    });
+                }
+                SidebarEntry::Account { .. } | SidebarEntry::Searches => return None,
             };
             Some(Item {
                 what: What::Mailbox(entry.mailbox()?),
@@ -2334,6 +2370,40 @@ impl State {
         }
     }
 
+    /// Goes to a row of the sidebar: shows its mailbox, or runs its search.
+    fn go_to_entry(&mut self, env: &Env, index: usize, out: &mut Effects) {
+        let Some(entry) = self.sidebar.entries.get(index).cloned() else {
+            return;
+        };
+        match entry {
+            SidebarEntry::Search { query, .. } => {
+                self.sidebar.selected = index;
+                self.open_search(env, &query, out);
+            }
+            entry => {
+                if let Some(mailbox) = entry.mailbox() {
+                    self.sidebar.selected = index;
+                    self.show_mailbox(mailbox, out);
+                }
+            }
+        }
+    }
+
+    /// Shows what a search finds in the list, as if it had been typed and
+    /// entered: a saved search, opened.
+    fn open_search(&mut self, env: &Env, query: &str, out: &mut Effects) {
+        self.search = Some(Search {
+            input: LineInput::new(query),
+            typing: false,
+            found: None,
+            more: false,
+        });
+        self.list = MessageList::default();
+        if let Some(request) = self.search_request(env) {
+            out.data.push(request);
+        }
+    }
+
     /// The message whose page can be shown: the one in the reader, once it
     /// is here in full, when it is the one the user is on.
     fn page_message(&self, context: Context) -> Option<LocalMessageId> {
@@ -2629,14 +2699,33 @@ impl State {
             } => {
                 self.sidebar.entries =
                     sidebar_entries(&accounts, &folders, drafts, outbox, self.mailbox);
+                if !self.sidebar.entries.is_empty() && !env.searches.is_empty() {
+                    self.sidebar.entries.push(SidebarEntry::Searches);
+                    self.sidebar
+                        .entries
+                        .extend(
+                            env.searches
+                                .iter()
+                                .map(|(name, query)| SidebarEntry::Search {
+                                    name: text::sanitize_line(name),
+                                    query: query.clone(),
+                                }),
+                        );
+                }
                 self.accounts = accounts;
                 self.accounts_known = true;
-                match self
-                    .sidebar
-                    .entries
-                    .iter()
-                    .position(|entry| entry.mailbox() == Some(self.mailbox))
-                {
+                // A saved search that is on show keeps the cursor.
+                let searching = self.search_text();
+                let on_search = self.sidebar.entries.iter().position(|entry| {
+                    matches!(entry, SidebarEntry::Search { query, .. }
+                        if Some(query) == searching.as_ref())
+                });
+                match on_search.or_else(|| {
+                    self.sidebar
+                        .entries
+                        .iter()
+                        .position(|entry| entry.mailbox() == Some(self.mailbox))
+                }) {
                     Some(index) => self.sidebar.selected = index,
                     None => {
                         // The folder being shown is gone.
