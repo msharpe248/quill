@@ -82,7 +82,34 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
                 &setup.username,
                 typing && at == ServerField::Username,
             );
-            if setup.tls == TlsMode::None {
+            rows.blank();
+            let security = |tls| match tls {
+                TlsMode::Implicit => "TLS",
+                TlsMode::Starttls => "STARTTLS",
+                TlsMode::None => "None",
+            };
+            rows.field(
+                "Send via:",
+                &setup.smtp_host,
+                typing && at == ServerField::SmtpHost,
+            );
+            if setup.smtp_host.is_empty() {
+                rows.dim("           Empty: the account will read mail and not send it.");
+            } else {
+                rows.field(
+                    "Port:",
+                    &setup.smtp_port,
+                    typing && at == ServerField::SmtpPort,
+                );
+                rows.choice(
+                    "Security:",
+                    security(setup.smtp_tls),
+                    typing && at == ServerField::SmtpSecurity,
+                );
+            }
+            if setup.tls == TlsMode::None
+                || (setup.smtp_tls == TlsMode::None && !setup.smtp_host.is_empty())
+            {
                 rows.blank();
                 rows.warning(
                     "With no encryption, your password and mail cross the network readable by anyone on the way.",

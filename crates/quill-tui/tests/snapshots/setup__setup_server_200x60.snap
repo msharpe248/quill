@@ -31,9 +31,9 @@ expression: harness.screen()
 │                          │┃                                 ┃ Security:  ‹ TLS ›  ←/→ to change                                        ┃                                                             │
 │                          │┃                                 ┃ Sign in:   robin@example.com                                             ┃                                                             │
 │                          │┃                                 ┃                                                                          ┃                                                             │
-│                          │┃                                 ┃                                                                          ┃                                                             │
-│                          │┃                                 ┃                                                                          ┃                                                             │
-│                          │┃                                 ┃                                                                          ┃                                                             │
+│                          │┃                                 ┃ Send via:  smtp.example.com                                              ┃                                                             │
+│                          │┃                                 ┃ Port:      465                                                           ┃                                                             │
+│                          │┃                                 ┃ Security:  TLS                                                           ┃                                                             │
 │                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┃                                                                          ┃                                                             │

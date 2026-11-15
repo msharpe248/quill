@@ -42,6 +42,23 @@ impl SmtpSender {
         self
     }
 
+    /// Connects and signs in, and sends nothing: a way to find out whether
+    /// the account's settings and credentials work before they are saved.
+    pub async fn check(&self) -> Result<()> {
+        if !is_hello_name(&self.config.hello_name) {
+            return Err(Error::Backend(format!(
+                "{:?} cannot be used as this client's name in EHLO",
+                self.config.hello_name
+            )));
+        }
+        let (mut connection, capabilities) = self.open().await?;
+        let outcome = self.sign_in(&mut connection, &capabilities.auth).await;
+        if !matches!(outcome, Err(Error::Connection(_))) {
+            connection.quit().await;
+        }
+        outcome
+    }
+
     /// Connects, leaving the connection as secure as the account's TLS mode
     /// requires and the server's extensions known.
     async fn open(&self) -> Result<(Connection, Capabilities)> {

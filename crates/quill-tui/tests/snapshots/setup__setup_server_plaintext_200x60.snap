@@ -31,12 +31,12 @@ expression: harness.screen()
 │                          │┃                                 ┃ Security:  ‹ None ›  ←/→ to change                                       ┃                                                             │
 │                          │┃                                 ┃ Sign in:   robin@example.com                                             ┃                                                             │
 │                          │┃                                 ┃                                                                          ┃                                                             │
+│                          │┃                                 ┃ Send via:  smtp.example.com                                              ┃                                                             │
+│                          │┃                                 ┃ Port:      465                                                           ┃                                                             │
+│                          │┃                                 ┃ Security:  TLS                                                           ┃                                                             │
+│                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┃ With no encryption, your password and mail cross the network readable by ┃                                                             │
 │                          │┃                                 ┃ anyone on the way.                                                       ┃                                                             │
-│                          │┃                                 ┃                                                                          ┃                                                             │
-│                          │┃                                 ┃                                                                          ┃                                                             │
-│                          │┃                                 ┃                                                                          ┃                                                             │
-│                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛                                                             │

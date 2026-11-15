@@ -13,6 +13,7 @@ use quill_auth::SecretStore;
 use quill_core::config::{AccountConfig, Config};
 use quill_core::{Backend, Error};
 use quill_imap::{ImapBackend, ImapConfig, Trust};
+use quill_smtp::{Credential, SmtpAuth, SmtpConfig, SmtpSender};
 use quill_store::Store;
 use quill_sync::{SyncAccount, SyncHandle};
 use quill_tui::app::AccountsLink;
@@ -274,12 +275,38 @@ async fn verify(
             pinned_sha256,
         },
     };
-    let backend = ImapBackend::new(config, Arc::new(move || Ok(password.clone())));
+    let reading = password.clone();
+    let backend = ImapBackend::new(config, Arc::new(move || Ok(reading.clone())));
     match backend.list_folders().await {
-        Ok(_) => Ok(()),
-        Err(Error::Auth(reason)) => Err(VerifyProblem::Auth(reason)),
-        Err(Error::Certificate(problem)) => Err(VerifyProblem::Certificate(problem)),
-        Err(other) => Err(VerifyProblem::Other(sentence(&other.to_string()))),
+        Ok(_) => {}
+        Err(Error::Auth(reason)) => return Err(VerifyProblem::Auth(reason)),
+        Err(Error::Certificate(problem)) => return Err(VerifyProblem::Certificate(problem)),
+        Err(other) => return Err(VerifyProblem::Other(sentence(&other.to_string()))),
+    }
+    // Reading works. If the account is to send, sign in there too, and
+    // send nothing.
+    let Some(smtp) = &draft.smtp else {
+        return Ok(());
+    };
+    let sender = SmtpSender::new(
+        SmtpConfig {
+            host: smtp.host.clone(),
+            port: smtp.port,
+            tls: smtp.tls,
+            username: smtp.username.clone(),
+            trust: Trust::default(),
+            auth: SmtpAuth::Automatic,
+            hello_name: quill_smtp::DEFAULT_HELLO_NAME.to_owned(),
+        },
+        Arc::new(move || Ok(Credential::Password(password.clone()))),
+    );
+    match sender.check().await {
+        Ok(()) => Ok(()),
+        // A certificate this Mac does not trust is asked about when the
+        // first message is sent, with the message safe in the Outbox; the
+        // account is not held up for it here.
+        Err(Error::Certificate(_)) => Ok(()),
+        Err(other) => Err(VerifyProblem::Sending(sentence(&other.to_string()))),
     }
 }
 
@@ -433,6 +460,114 @@ mod tests {
             password: Secret(password.to_owned()),
             trusting,
         }
+    }
+
+    /// A sending server on a local port that signs anyone in, or no one,
+    /// and counts what it is asked. It takes no mail at all.
+    async fn sending_server(accepts: bool) -> (u16, Arc<Mutex<Vec<String>>>) {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let heard = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::clone(&heard);
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let (read, mut write) = stream.into_split();
+                let mut lines = BufReader::new(read).lines();
+                let _ = write.write_all(b"220 localhost ESMTP\r\n").await;
+                while let Ok(Some(line)) = lines.next_line().await {
+                    let verb = line
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or_default()
+                        .to_ascii_uppercase();
+                    log.lock().unwrap().push(verb.clone());
+                    let reply: &[u8] = match verb.as_str() {
+                        "EHLO" => b"250-localhost\r\n250 AUTH PLAIN\r\n",
+                        "AUTH" if accepts => b"235 2.7.0 welcome\r\n",
+                        "AUTH" => b"535 5.7.8 not you\r\n",
+                        "QUIT" => b"221 bye\r\n",
+                        _ => b"502 not here\r\n",
+                    };
+                    if write.write_all(reply).await.is_err() || verb == "QUIT" {
+                        break;
+                    }
+                }
+            }
+        });
+        (port, heard)
+    }
+
+    #[tokio::test]
+    async fn the_sending_server_is_signed_in_to_as_well_and_sent_nothing() {
+        let Some(server) = Dovecot::start().await else {
+            return;
+        };
+        let rig = Rig::new();
+        let sending = |port| ServerDraft {
+            host: "127.0.0.1".to_owned(),
+            port,
+            tls: TlsMode::None,
+            username: USER.to_owned(),
+        };
+
+        // Both servers take the password: the account is good to save.
+        let (port, heard) = sending_server(true).await;
+        let mut draft = draft(&server, TlsMode::None);
+        draft.smtp = Some(sending(port));
+        assert_eq!(
+            rig.service
+                .handle(verify_request(&draft, PASSWORD, Trusting::System))
+                .await,
+            AccountEvent::Verified(Ok(()))
+        );
+        assert_eq!(*heard.lock().unwrap(), ["EHLO", "AUTH", "QUIT"]);
+
+        // Reading works and the sending server says no: said as that.
+        let (port, _) = sending_server(false).await;
+        draft.smtp = Some(sending(port));
+        match rig
+            .service
+            .handle(verify_request(&draft, PASSWORD, Trusting::System))
+            .await
+        {
+            AccountEvent::Verified(Err(VerifyProblem::Sending(reason))) => {
+                assert!(reason.contains("not you"), "{reason}");
+            }
+            other => panic!("{other:?}"),
+        }
+
+        // A password the reading server refuses never reaches the other.
+        let (port, heard) = sending_server(true).await;
+        draft.smtp = Some(sending(port));
+        match rig
+            .service
+            .handle(verify_request(&draft, "wrong", Trusting::System))
+            .await
+        {
+            AccountEvent::Verified(Err(VerifyProblem::Auth(_))) => {}
+            other => panic!("{other:?}"),
+        }
+        assert!(heard.lock().unwrap().is_empty());
+
+        // Nothing listening where the sending server should be.
+        let closed = {
+            let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        draft.smtp = Some(sending(closed));
+        match rig
+            .service
+            .handle(verify_request(&draft, PASSWORD, Trusting::System))
+            .await
+        {
+            AccountEvent::Verified(Err(VerifyProblem::Sending(_))) => {}
+            other => panic!("{other:?}"),
+        }
+        // Nothing was kept by any of it: there is still no config at all.
+        assert!(!rig.service.config_file.exists());
     }
 
     #[tokio::test]

@@ -13,9 +13,9 @@ expression: harness.screen()
 │ ┃ Security:  ‹ TLS ›  ←/→ to change                                        ┃u┃
 │ ┃ Sign in:   robin@example.com                                             ┃u┃
 │ ┃                                                                          ┃d┃
-│ ┃                                                                          ┃e┃
-│ ┃                                                                          ┃n┃
-│ ┃                                                                          ┃n┃
+│ ┃ Send via:  smtp.example.com                                              ┃e┃
+│ ┃ Port:      465                                                           ┃n┃
+│ ┃ Security:  TLS                                                           ┃n┃
 │ ┃                                                                          ┃6┃
 │ ┃                                                                          ┃2┃
 │ ┃                                                                          ┃5┃

@@ -29,7 +29,12 @@ fn found(address: &str) -> AccountEvent {
                     tls: TlsMode::Implicit,
                     username: address.to_owned(),
                 },
-                smtp: None,
+                smtp: Some(ServerDraft {
+                    host: "smtp.example.com".to_owned(),
+                    port: 465,
+                    tls: TlsMode::Implicit,
+                    username: address.to_owned(),
+                }),
             },
             found: true,
             note: Some("Found in the DNS records of example.com.".to_owned()),
@@ -435,6 +440,20 @@ fn snapshots_of_the_form_and_the_certificate_question() {
             VerifyProblem::Certificate(problem()),
         ))));
         snap("setup_certificate", &harness);
+
+        // Reading works and sending does not: back to the sending server.
+        let mut harness = Harness::with_accounts(width, height);
+        harness.keys("A");
+        harness.type_text("robin@example.com");
+        harness.keys("enter");
+        harness.act(Action::Account(found("robin@example.com")));
+        harness.keys("enter");
+        harness.type_text("hunter2");
+        harness.keys("enter");
+        harness.act(Action::Account(AccountEvent::Verified(Err(
+            VerifyProblem::Sending("Cannot reach the server: connection refused.".to_owned()),
+        ))));
+        snap("setup_sending_failed", &harness);
 
         let mut harness = Harness::with_accounts(width, height);
         harness.act(Action::Sync(SyncEvent::Certificate {

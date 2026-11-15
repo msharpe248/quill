@@ -121,6 +121,9 @@ pub enum VerifyProblem {
     Auth(String),
     /// The server's certificate was not accepted.
     Certificate(Box<CertificateProblem>),
+    /// Reading works; the server mail is sent through does not, for this
+    /// reason.
+    Sending(String),
     /// Anything else: unreachable, no STARTTLS, a protocol error.
     Other(String),
 }
@@ -141,16 +144,30 @@ pub enum ServerField {
     Port,
     Security,
     Username,
+    /// The server mail is sent through. Empty: the account only reads.
+    SmtpHost,
+    SmtpPort,
+    SmtpSecurity,
 }
 
 impl ServerField {
-    pub const ALL: [ServerField; 5] = [
+    pub const ALL: [ServerField; 8] = [
         ServerField::Name,
         ServerField::Host,
         ServerField::Port,
         ServerField::Security,
         ServerField::Username,
+        ServerField::SmtpHost,
+        ServerField::SmtpPort,
+        ServerField::SmtpSecurity,
     ];
+
+    fn index(self) -> usize {
+        Self::ALL
+            .iter()
+            .position(|field| *field == self)
+            .unwrap_or(0)
+    }
 }
 
 /// What became of the flow after an event.
@@ -171,6 +188,9 @@ pub struct Setup {
     pub port: LineInput,
     pub tls: TlsMode,
     pub username: LineInput,
+    pub smtp_host: LineInput,
+    pub smtp_port: LineInput,
+    pub smtp_tls: TlsMode,
     pub password: LineInput,
     /// Which field of the server step has the cursor.
     pub field: usize,
@@ -178,7 +198,6 @@ pub struct Setup {
     pub busy: Option<String>,
     pub error: Option<String>,
     pub note: Option<String>,
-    smtp: Option<ServerDraft>,
     /// The certificate being asked about.
     pub problem: Option<Box<CertificateProblem>>,
     trusting: Trusting,
@@ -194,12 +213,14 @@ impl Default for Setup {
             port: LineInput::default(),
             tls: TlsMode::Implicit,
             username: LineInput::default(),
+            smtp_host: LineInput::default(),
+            smtp_port: LineInput::new("465".to_owned()),
+            smtp_tls: TlsMode::Implicit,
             password: LineInput::masked(),
             field: 0,
             busy: None,
             error: None,
             note: None,
-            smtp: None,
             problem: None,
             trusting: Trusting::System,
         }
@@ -225,7 +246,9 @@ impl Setup {
                 ServerField::Host => Some(&self.host),
                 ServerField::Port => Some(&self.port),
                 ServerField::Username => Some(&self.username),
-                ServerField::Security => None,
+                ServerField::SmtpHost => Some(&self.smtp_host),
+                ServerField::SmtpPort => Some(&self.smtp_port),
+                ServerField::Security | ServerField::SmtpSecurity => None,
             },
         }
     }
@@ -243,7 +266,9 @@ impl Setup {
                 ServerField::Host => Some(&mut self.host),
                 ServerField::Port => Some(&mut self.port),
                 ServerField::Username => Some(&mut self.username),
-                ServerField::Security => None,
+                ServerField::SmtpHost => Some(&mut self.smtp_host),
+                ServerField::SmtpPort => Some(&mut self.smtp_port),
+                ServerField::Security | ServerField::SmtpSecurity => None,
             },
         }
     }
@@ -276,9 +301,21 @@ impl Setup {
                 _ => None,
             };
         }
-        if self.step == Step::Server && self.server_field() == ServerField::Security {
+        let choosing = match self.server_field() {
+            ServerField::Security => Some(false),
+            ServerField::SmtpSecurity => Some(true),
+            _ => None,
+        };
+        if self.step == Step::Server
+            && let Some(sending) = choosing
+        {
             let order = [TlsMode::Implicit, TlsMode::Starttls, TlsMode::None];
-            let at = order.iter().position(|mode| *mode == self.tls).unwrap_or(0);
+            let (tls, port) = if sending {
+                (&mut self.smtp_tls, &mut self.smtp_port)
+            } else {
+                (&mut self.tls, &mut self.port)
+            };
+            let at = order.iter().position(|mode| mode == tls).unwrap_or(0);
             let next = match chord.key {
                 Key::Right | Key::Char(' ') if plain => (at + 1) % order.len(),
                 Key::Left if plain => (at + order.len() - 1) % order.len(),
@@ -287,14 +324,17 @@ impl Setup {
             };
             // The port follows the kind of connection while it is still the
             // usual one for the old kind.
-            let usual = |mode| match mode {
-                TlsMode::Implicit => "993",
-                TlsMode::Starttls | TlsMode::None => "143",
+            let usual = |mode| match (sending, mode) {
+                (false, TlsMode::Implicit) => "993",
+                (false, TlsMode::Starttls | TlsMode::None) => "143",
+                (true, TlsMode::Implicit) => "465",
+                (true, TlsMode::Starttls | TlsMode::None) => "587",
             };
-            if self.port.text() == usual(self.tls) {
-                self.port.set(usual(order[next]));
+            if port.text() == usual(*tls) {
+                port.set(usual(order[next]));
             }
-            self.tls = order[next];
+            *tls = order[next];
+            self.error = None;
             return Some(Vec::new());
         }
         let input = self.focused_input_mut()?;
@@ -310,11 +350,23 @@ impl Setup {
     pub fn move_field(&mut self, forward: bool) {
         if self.step == Step::Server && self.busy.is_none() {
             let count = ServerField::ALL.len();
-            self.field = if forward {
-                (self.field + 1) % count
-            } else {
-                (self.field + count - 1) % count
-            };
+            loop {
+                self.field = if forward {
+                    (self.field + 1) % count
+                } else {
+                    (self.field + count - 1) % count
+                };
+                // With no sending server named, its port and security are
+                // not shown and not stopped at.
+                let hidden = self.smtp_host.is_empty()
+                    && matches!(
+                        self.server_field(),
+                        ServerField::SmtpPort | ServerField::SmtpSecurity
+                    );
+                if !hidden {
+                    break;
+                }
+            }
         }
     }
 
@@ -398,6 +450,29 @@ impl Setup {
             "" => address.clone(),
             username => username.to_owned(),
         };
+        // No sending server named: the account reads mail and no more.
+        let smtp = match self.smtp_host.text().trim() {
+            "" => None,
+            host if host.contains(char::is_whitespace) => {
+                return Err(
+                    "Enter the name of the server mail is sent through, such as smtp.example.com, or leave it empty."
+                        .to_owned(),
+                );
+            }
+            host => Some(ServerDraft {
+                host: host.to_owned(),
+                port: self
+                    .smtp_port
+                    .text()
+                    .trim()
+                    .parse()
+                    .ok()
+                    .filter(|port| *port != 0)
+                    .ok_or("The sending server's port is a number from 1 to 65535.")?,
+                tls: self.smtp_tls,
+                username: username.clone(),
+            }),
+        };
         Ok(AccountDraft {
             name,
             imap: ServerDraft {
@@ -406,10 +481,7 @@ impl Setup {
                 tls: self.tls,
                 username: username.clone(),
             },
-            smtp: self
-                .smtp
-                .clone()
-                .map(|smtp| ServerDraft { username, ..smtp }),
+            smtp,
             address,
         })
     }
@@ -477,7 +549,18 @@ impl Setup {
                 self.port.set(draft.imap.port.to_string());
                 self.tls = draft.imap.tls;
                 self.username.set(draft.imap.username);
-                self.smtp = draft.smtp;
+                match draft.smtp {
+                    Some(smtp) => {
+                        self.smtp_host.set(smtp.host);
+                        self.smtp_port.set(smtp.port.to_string());
+                        self.smtp_tls = smtp.tls;
+                    }
+                    None => {
+                        self.smtp_host.set(String::new());
+                        self.smtp_port.set("465");
+                        self.smtp_tls = TlsMode::Implicit;
+                    }
+                }
                 self.note = found.note;
                 self.trusting = Trusting::System;
                 self.step = Step::Server;
@@ -517,6 +600,17 @@ impl Setup {
                     Err(VerifyProblem::Certificate(problem)) => {
                         self.problem = Some(problem);
                         self.step = Step::Certificate;
+                        (Vec::new(), Outcome::Open)
+                    }
+                    Err(VerifyProblem::Sending(reason)) => {
+                        // Reading works. Put the sending server right, or
+                        // do without one.
+                        self.step = Step::Server;
+                        self.field = ServerField::SmtpHost.index();
+                        self.error = Some(format!(
+                            "Mail can be read, but not sent through {}: {reason} Correct it, or clear it to add the account without sending.",
+                            self.smtp_host.text().trim()
+                        ));
                         (Vec::new(), Outcome::Open)
                     }
                     Err(VerifyProblem::Other(reason)) => {
@@ -771,6 +865,95 @@ mod tests {
         assert_eq!(keys(&mut setup, "x"), []);
         keys(&mut setup, "tab tab shift-tab");
         assert_eq!(setup.server_field(), ServerField::Username);
+    }
+
+    #[test]
+    fn the_sending_server_is_shown_to_correct_or_do_without() {
+        let mut setup = Setup::default();
+        setup.address.set("robin@example.com");
+        setup.advance();
+        setup.on_event(found("robin@example.com"));
+        assert_eq!(
+            (
+                setup.smtp_host.text(),
+                setup.smtp_port.text(),
+                setup.smtp_tls
+            ),
+            ("smtp.example.com", "465", TlsMode::Implicit)
+        );
+
+        // Past the reading server's fields to the sending server's.
+        keys(&mut setup, "tab tab tab tab tab");
+        assert_eq!(setup.server_field(), ServerField::SmtpHost);
+        keys(&mut setup, "tab tab");
+        assert_eq!(setup.server_field(), ServerField::SmtpSecurity);
+        // Its usual ports are its own.
+        keys(&mut setup, "right");
+        assert_eq!(
+            (setup.smtp_tls, setup.smtp_port.text()),
+            (TlsMode::Starttls, "587")
+        );
+        assert_eq!((setup.tls, setup.port.text()), (TlsMode::Implicit, "993"));
+        keys(&mut setup, "shift-tab");
+        setup.smtp_port.set("2525");
+        let draft = setup.draft().unwrap();
+        let smtp = draft.smtp.unwrap();
+        assert_eq!(
+            (smtp.host.as_str(), smtp.port, smtp.tls),
+            ("smtp.example.com", 2525, TlsMode::Starttls)
+        );
+        // It is signed in to under the same name as the reading server.
+        assert_eq!(smtp.username, draft.imap.username);
+
+        // A port that is not one stops the step.
+        setup.smtp_port.set("0");
+        assert!(setup.advance().is_empty());
+        assert!(
+            setup
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("sending server's port")
+        );
+
+        // With no server named the account only reads, and the fields that
+        // describe the server are passed over.
+        setup.smtp_host.clear();
+        assert_eq!(setup.draft().unwrap().smtp, None);
+        setup.field = ServerField::SmtpHost.index();
+        keys(&mut setup, "tab");
+        assert_eq!(setup.server_field(), ServerField::Name);
+        keys(&mut setup, "shift-tab");
+        assert_eq!(setup.server_field(), ServerField::SmtpHost);
+        assert!(setup.advance().is_empty());
+        assert_eq!(setup.step, Step::Password);
+    }
+
+    #[test]
+    fn a_sending_server_that_does_not_work_is_put_right_before_saving() {
+        let mut setup = at_password();
+        setup.advance();
+        let (requests, outcome) = setup.on_event(AccountEvent::Verified(Err(
+            VerifyProblem::Sending("Cannot reach the server: connection refused.".to_owned()),
+        )));
+        assert!(requests.is_empty());
+        assert_eq!(outcome, Outcome::Open);
+        // Back at the server, on the field to correct, told what works.
+        assert_eq!(setup.step, Step::Server);
+        assert_eq!(setup.server_field(), ServerField::SmtpHost);
+        let error = setup.error.clone().unwrap();
+        assert!(error.contains("Mail can be read"), "{error}");
+        assert!(error.contains("smtp.example.com"), "{error}");
+        assert!(error.contains("connection refused"), "{error}");
+        // The password typed is kept for the next try.
+        setup.smtp_host.clear();
+        setup.advance();
+        assert_eq!(setup.password.text(), "hunter2");
+        let requests = setup.advance();
+        assert!(
+            matches!(requests.as_slice(), [AccountRequest::Verify { draft, .. }] if draft.smtp.is_none()),
+            "{requests:?}"
+        );
     }
 
     #[test]

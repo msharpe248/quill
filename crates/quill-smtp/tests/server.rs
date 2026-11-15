@@ -408,6 +408,45 @@ async fn each_password_mechanism_signs_in() {
 }
 
 #[tokio::test]
+async fn checking_signs_in_and_sends_nothing() {
+    let server = Server::start(TlsMode::Implicit, Script::default()).await;
+    with_password(server.config(), PASSWORD)
+        .check()
+        .await
+        .unwrap();
+    let log = server.log();
+    assert_eq!(log.signed_in.len(), 1);
+    assert!(log.saw("QUIT"));
+    assert!(!log.saw("MAIL") && !log.saw("DATA"), "{:?}", log.commands);
+    assert!(log.delivered.is_empty());
+
+    // A wrong password is an authentication failure, not a vague one.
+    let server = Server::start(TlsMode::Implicit, Script::default()).await;
+    let refused = with_password(server.config(), "not the password")
+        .check()
+        .await;
+    assert!(matches!(refused, Err(Error::Auth(_))), "{refused:?}");
+    assert!(server.log().delivered.is_empty());
+
+    // An untrusted certificate is reported as one, before any sign-in.
+    let server = Server::start_with(
+        TlsMode::Implicit,
+        Script::default(),
+        Certificates::self_signed(),
+    )
+    .await;
+    let mut config = server.config();
+    config.trust = Trust::default();
+    let (sender, asked) = counting(config);
+    let untrusted = sender.check().await;
+    assert!(
+        matches!(untrusted, Err(Error::Certificate(_))),
+        "{untrusted:?}"
+    );
+    assert_eq!(asked.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
 async fn each_token_mechanism_signs_in() {
     for (mechanism, name) in [
         (Mechanism::Xoauth2, "XOAUTH2"),

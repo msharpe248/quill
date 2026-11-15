@@ -1,0 +1,28 @@
+---
+source: crates/quill-tui/tests/setup.rs
+expression: harness.screen()
+---
+┌ [1] Accounts ──┐┏ [2] Inbox (unified) - 12 unread ━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+│> Unified    12 │┃> * @ W Ana Ruiz        Q4 roadmap                     09:14┃
+│ ┏ Add an account: the server ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓1┃
+│ ┃ Found in the DNS records of example.com.                                 ┃5┃
+│ ┃                                                                          ┃0┃
+│ ┃ Name:      Example                                                       ┃i┃
+│ ┃ Server:    imap.example.com                                              ┃i┃
+│ ┃ Port:      993                                                           ┃i┃
+│ ┃ Security:  TLS                                                           ┃u┃
+│ ┃ Sign in:   robin@example.com                                             ┃u┃
+│ ┃                                                                          ┃d┃
+│ ┃ Send via:  smtp.example.com                                              ┃e┃
+│ ┃ Port:      465                                                           ┃n┃
+│ ┃ Security:  TLS                                                           ┃n┃
+│ ┃                                                                          ┃6┃
+│ ┃ Mail can be read, but not sent through smtp.example.com: Cannot reach    ┃2┃
+│ ┃ the server: connection refused. Correct it, or clear it to add the       ┃5┃
+│ ┃ account without sending.                                                 ┃5┃
+│ ┃                                                                          ┃ ┃
+│ ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+└────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+ enter continue  tab next field  esc back

@@ -13,12 +13,12 @@ expression: harness.screen()
 │ ┃ Security:  ‹ None ›  ←/→ to change                                       ┃u┃
 │ ┃ Sign in:   robin@example.com                                             ┃u┃
 │ ┃                                                                          ┃d┃
-│ ┃ With no encryption, your password and mail cross the network readable by ┃e┃
-│ ┃ anyone on the way.                                                       ┃n┃
-│ ┃                                                                          ┃n┃
+│ ┃ Send via:  smtp.example.com                                              ┃e┃
+│ ┃ Port:      465                                                           ┃n┃
+│ ┃ Security:  TLS                                                           ┃n┃
 │ ┃                                                                          ┃6┃
-│ ┃                                                                          ┃2┃
-│ ┃                                                                          ┃5┃
+│ ┃ With no encryption, your password and mail cross the network readable by ┃2┃
+│ ┃ anyone on the way.                                                       ┃5┃
 │ ┃                                                                          ┃5┃
 │ ┃                                                                          ┃ ┃
 │ ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ ┃

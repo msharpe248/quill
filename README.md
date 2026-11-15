@@ -46,8 +46,8 @@ Around the terminal the app adds a menu bar and toolbar built from the core's co
 Press `A` (or File, Add an Account in the app). Quill asks for:
 
 1. **The address.** Quill looks for the mail server: providers it knows by name, then the domain's DNS records, then the names servers usually have. Nothing is asked of anyone but the domain's own DNS and servers.
-2. **The server**, as found, to confirm or correct: its name, port, security (`←`/`→` changes it) and the name to sign in with. `tab` moves between the fields.
-3. **The password.** Quill signs in to check it. Only when that works is anything saved: the account in `config.toml`, the password in your Keychain and nowhere else.
+2. **The servers**, as found, to confirm or correct: the one mail is read from (its name, port, security and the name to sign in with) and, under "Send via", the one it is sent through. `tab` moves between the fields and `←`/`→` changes the security. Clear "Send via" to add an account that only reads.
+3. **The password.** Quill signs in to both servers to check it, and sends nothing. Only when that works is anything saved: the account in `config.toml`, the password in your Keychain and nowhere else. If reading works and sending does not, the form says so and goes back to the sending server.
 
 `enter` goes on, `esc` goes back a step. Many providers (Gmail, iCloud, Fastmail, Yahoo) want an app password here, not your normal one; the form says so when it recognises the provider. Microsoft accounts (Microsoft 365, Outlook.com) do not accept a password over IMAP. They need the OAuth sign-in that arrives in M5.
 
