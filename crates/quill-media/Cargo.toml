@@ -11,3 +11,4 @@ workspace = true
 
 [dependencies]
 base64.workspace = true
+image.workspace = true

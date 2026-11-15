@@ -336,6 +336,13 @@ Not verified, because it needs the owner: sending through a real provider. Not b
 - **Checked end to end against a scratch Dovecot and a local SMTP sink** that writes what it is given to a file and delivers nothing: reply, new message with a completed address and an attachment, undo send, reopening from Drafts and from the Outbox, the copy in Sent and the answered flag on the server. In a terminal and again in the sandboxed `Quill.app`, where the account was added through the form (both servers signed in to), a file was attached through the panel's path with its temporary copy removed, a message was sent with `cmd-enter`, and cut, copy, select all and undo reached the editor. A scripted run never shows a panel or touches the clipboard: it records what would have been chosen and copied. Dropping a file with the mouse is not checked; it shares the panel's path from the point the files are known. Not checked against any real provider: the owner's accounts are not touched while they are away.
 - **Keychain reads block.** The engine reads a password with a synchronous call, and macOS can hold that call while it asks the user about a rebuilt binary. Mail stops until it is answered and nothing says why. To fix with the credential rework in M5.
 
+## M4, rendering and media (in progress)
+
+### Dependencies
+
+- **`ammonia` 4.2.5 (MIT/Apache-2.0) sanitizes HTML** before it reaches the web view or a browser, as the spec names it. It brings `cssparser` and `dtoa-short`, which are MPL-2.0. The licence list in `deny.toml` is unchanged; those two crates are allowed by name. MPL-2.0 is file-level: Quill uses both unmodified, their source is public, and nothing in it reaches Quill's own files. It is compatible with selling the app and with any licence the open-source question in the spec might settle on.
+- **`image` 0.25.10 (MIT/Apache-2.0) decodes PNG, JPEG, GIF and WebP** for inline pictures, with only those four formats switched on. HEIC, PDF pages and video frames are pictured by the shell (`thumbnail.make`), which has the system's decoders.
+
 ## M7, POP3 (the protocol crate; the rest of the milestone follows M6)
 
 - **`quill-pop3` is a small in-house client**, as the spec says: CAPA, STLS, USER/PASS (AUTH PLAIN where that is all a server offers), STAT, UIDL, LIST, TOP, RETR, DELE, with pipelining when advertised. Built ahead of its milestone because it stands alone.

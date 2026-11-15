@@ -17,6 +17,13 @@ ignore = [
 allow = ["MIT", "Apache-2.0", "Unicode-3.0", "Zlib", "ISC", "BSD-3-Clause", "CDLA-Permissive-2.0"]
 confidence-threshold = 0.9
 
+# MPL-2.0 for these two only, both pulled in by ammonia, the HTML sanitizer
+# the spec names. They are used unmodified; the reason is in DECISIONS.md.
+exceptions = [
+    { allow = ["MPL-2.0"], crate = "cssparser" },
+    { allow = ["MPL-2.0"], crate = "dtoa-short" },
+]
+
 [licenses.private]
 # Quill's own crates carry no licence until the open-source question in the
 # spec is settled. They are never published.
