@@ -34,6 +34,14 @@ pub struct Mouse {
 /// How many rows one notch of the wheel moves.
 const WHEEL_ROWS: usize = 3;
 
+/// Whether a click on text drawn this way, which belongs to a link, opens
+/// the link: its words, and what is set beside them for finding it by (its
+/// number, its line in the list of links). The warning under a link that
+/// is not what it says belongs to the link too, and is only to be read.
+fn opens_on_click(style: quill_mime::html::Style) -> bool {
+    style.link || style.dim
+}
+
 impl State {
     pub(super) fn on_mouse(&mut self, env: &Env, mouse: Mouse, out: &mut Effects) {
         let areas = layout::compute(self, self.size, env.reader_width);
@@ -377,7 +385,9 @@ impl State {
             self.run(env, CommandId::MessageAttachments, out);
             return;
         }
-        // A link in the text opens, as it would from the list of links.
+        // A link in the text opens, as it would from the list of links:
+        // clicked on its words, on the number after them, or on its line
+        // in the list at the foot of the message.
         let picture = self.reader_image_rows(env, rect) as u16;
         let body_top = top + header + 1 + if picture > 0 { picture + 1 } else { 0 };
         let Some(row) = mouse.row.checked_sub(body_top) else {
@@ -394,7 +404,7 @@ impl State {
         for span in &line.spans {
             let end = start + text::width(&span.text);
             if (start..end).contains(&usize::from(column)) {
-                link = span.link.filter(|_| span.style.link);
+                link = span.link.filter(|_| opens_on_click(span.style));
                 break;
             }
             start = end;
@@ -409,5 +419,34 @@ impl State {
                 "Quill only opens web (http, https) and mail (mailto) links. This is not one.",
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use quill_mime::html::Style;
+
+    use super::opens_on_click;
+
+    #[test]
+    fn a_links_words_number_and_listing_open_it_and_its_warning_does_not() {
+        let words = Style {
+            link: true,
+            ..Style::default()
+        };
+        // The number after the words, and the line in the list of links.
+        let aside = Style {
+            dim: true,
+            ..Style::default()
+        };
+        // The warning under a link that is not what it says.
+        let warning = Style {
+            bold: true,
+            ..Style::default()
+        };
+        assert!(opens_on_click(words));
+        assert!(opens_on_click(aside));
+        assert!(!opens_on_click(warning));
+        assert!(!opens_on_click(Style::default()));
     }
 }

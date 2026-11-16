@@ -18,6 +18,9 @@ import WebKit
 /// - `menu:COMMAND`   choose the menu item of a core command, by its name
 /// - `resize:WxH`     resize the window, in points
 /// - `toolbar:COMMAND` click the toolbar button of a core command
+/// - `clicktext:TEXT` click the terminal where this text first is on its
+///   screen, with mouse events sent to the window; `clicktext:2,TEXT` clicks
+///   the second place it is at. The pointer is not moved
 /// - `notice:COMMAND` click the button of a core command in the notice above
 ///   the page in the reading pane
 /// - `item:TITLE`     choose one of the shell's own menu items, by its title
@@ -269,6 +272,18 @@ enum DebugScript {
                 note("no enabled toolbar item for \(argument)")
             }
             try? await Task.sleep(for: .milliseconds(150))
+        case "clicktext":
+            var (text, nth) = (argument, 1)
+            if let comma = argument.firstIndex(of: ","), let count = Int(argument[..<comma]) {
+                (text, nth) = (String(argument[argument.index(after: comma)...]), count)
+            }
+            if let window = controller.window, let at = controller.terminalPoint(ofText: text, nth: nth) {
+                postMouse(.leftMouseDown, at: at, clicks: 1, in: window)
+                postMouse(.leftMouseUp, at: at, clicks: 1, in: window)
+            } else {
+                note("\(text.debugDescription) is not on the terminal's screen to click")
+            }
+            try? await Task.sleep(for: .milliseconds(400))
         case "notice":
             if !controller.pressReadingNotice(argument) {
                 note("no notice button for \(argument)")

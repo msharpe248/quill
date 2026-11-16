@@ -1581,6 +1581,39 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         return (from, NSPoint(x: from.x + cells.width(forColumns: columns) - terminal.width, y: from.y))
     }
 
+    /// Where the first cell of `text` is in the window, by the terminal's
+    /// screen as it is now: for a scripted run to click there. `nth` picks
+    /// a later place the text is at, counted from 1. Nil when the text is
+    /// not on the screen that many times.
+    func terminalPoint(ofText text: String, nth: Int = 1) -> NSPoint? {
+        guard let grid = surface.grid, grid.rows > 0, let screen = surface.visibleText(), nth > 0, !text.isEmpty
+        else { return nil }
+        var seen = 0
+        for (row, line) in screen.components(separatedBy: "\n").enumerated() {
+            var from = line.startIndex
+            while let found = line.range(of: text, range: from..<line.endIndex) {
+                seen += 1
+                if seen == nth {
+                    // A wide character takes two cells.
+                    let column = line[..<found.lowerBound].unicodeScalars.reduce(0) { cells, scalar in
+                        let wide = scalar.properties.isEmojiPresentation || (0x2E80...0xFFDC).contains(scalar.value)
+                        return cells + (wide ? 2 : 1)
+                    }
+                    let view = surface.view
+                    let cellWidth = CGFloat(grid.cellWidthPixels) / grid.scale
+                    let cellHeight = view.bounds.height / CGFloat(grid.rows)
+                    let down = (CGFloat(row) + 0.5) * cellHeight
+                    let point = NSPoint(
+                        x: (CGFloat(column) + 0.5) * cellWidth,
+                        y: view.isFlipped ? down : view.bounds.height - down)
+                    return view.convert(point, to: nil)
+                }
+                from = found.upperBound
+            }
+        }
+        return nil
+    }
+
     /// The editor pane's screen as text, while Vim is running.
     var editorText: String? { editor?.surface.visibleText() }
 

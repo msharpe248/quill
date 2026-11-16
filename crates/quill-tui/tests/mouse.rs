@@ -164,6 +164,31 @@ fn a_link_in_the_text_and_the_line_of_files_can_be_clicked() {
     click(&mut harness, (at.0, 58));
     assert!(harness.host_requests.is_empty());
 
+    // The number after a link opens it too, and so does its line in the
+    // list of links under the message: on the number or on the address.
+    let second = harness.state.reader.links[1].clone();
+    let number = find_from(&harness, "issue[2]", 6);
+    click(&mut harness, (number.0 + 6, number.1));
+    assert_eq!(
+        harness.host_requests,
+        [HostRequest::OpenUrl(second.clone())]
+    );
+    harness.host_requests.clear();
+    let listed = find_from(&harness, &format!("[2] {second}"), 6);
+    click(&mut harness, listed);
+    click(&mut harness, (listed.0 + 10, listed.1));
+    assert_eq!(
+        harness.host_requests,
+        [
+            HostRequest::OpenUrl(second.clone()),
+            HostRequest::OpenUrl(second)
+        ]
+    );
+    harness.host_requests.clear();
+    // The space past the end of the address is not the link.
+    click(&mut harness, (listed.0 + 60, listed.1));
+    assert!(harness.host_requests.is_empty());
+
     // The line naming a message's files opens their list.
     let mut harness = Harness::demo(200, 60);
     click_on(&mut harness, "Attach:");

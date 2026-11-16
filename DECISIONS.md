@@ -907,3 +907,12 @@ The owner saw mail with no pictures in the web pane and asked whether a button w
 - **A click leaves the keyboard with the list.** The buttons refuse the keyboard focus.
 - **Seen in the app** on the demo mailbox: the bar over the newsletter, and Load Pictures putting the page back with remote content allowed and no bar (`notice:COMMAND` in a script).
 - **Not done:** a setting to always load remote pictures from everyone. `remote_images` has `ask` and `never`, and the list of senders `I` adds to.
+
+## Clicking a link in the reader (2026-11-16)
+
+The owner clicked links in the terminal's reader and nothing opened. A click opened a link only on its underlined words; the number after them and the link's line in the list under the message did nothing, and those are what the eye goes to.
+
+- **All three open it now:** the words, the number, and the line in the list (number or address). The warning under a link that is not what it says belongs to the link as well and still opens nothing: it is there to be read.
+- **Only the words are marked as a terminal hyperlink,** as before (a cell can otherwise keep a stale link). The rule for a click is separate, in `state/mouse.rs`.
+- **Seen in the app** with the build before the fix: a click on a link's words reached the opener, and a click on its number or its line did not (`clicktext:TEXT`, new, clicks the terminal where some text is). The fix itself is tested in the core; it was not run in the app, because the owner had Quill open and the app was not to be rebuilt under them.
+
