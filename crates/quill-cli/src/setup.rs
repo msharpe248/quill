@@ -9,7 +9,7 @@ use std::path::Path;
 
 use jiff::tz::TimeZone;
 use quill_core::config::Config;
-use quill_core::config::{ComposeFormat, ReplyPosition};
+use quill_core::config::{ComposeEditor, ComposeFormat, ReplyPosition};
 use quill_tui::command::Registry;
 use quill_tui::keymap::Keymap;
 use quill_tui::state::{ComposeSettings, Env, Identity, Notice};
@@ -57,6 +57,7 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
     };
 
     let templates = templates::load(&paths.templates_dir(), &mut notices);
+    let hooks = load_hooks(&paths.config_dir.join(HOOKS_FILE), &mut notices);
 
     let env = Env {
         registry,
@@ -81,6 +82,7 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
             reply_above: config.compose.reply_position == ReplyPosition::Above,
             undo_send_seconds: config.compose.undo_send_seconds,
             spell_check: config.compose.spell_check,
+            vim: config.compose.editor == ComposeEditor::Vim,
         },
         identities: config
             .accounts
@@ -106,6 +108,12 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
         templates,
         // Decided by the caller too: only Quill's own window has a checker.
         spell_check: false,
+        // And only it has a Vim of its own; anywhere else the user's is run.
+        editor_pane: false,
+        vim_program: None,
+        hooks,
+        // And whether programs may be run at all: not in Quill's own app.
+        hooks_enabled: false,
     };
     Loaded {
         config,
@@ -146,6 +154,58 @@ fn load_theme(paths: &crate::paths::Paths, name: &str, notices: &mut Vec<Notice>
             notices.push(Notice::error(format!("{err}. Using a built-in theme.")));
             fallback()
         }
+    }
+}
+
+/// The file beside `config.toml` that lists the user's hooks.
+const HOOKS_FILE: &str = "hooks.toml";
+
+/// A hooks file larger than this is not read. A few dozen programs with
+/// their arguments are a fraction of it.
+const MAX_HOOKS_BYTES: u64 = 64 * 1024;
+
+/// The user's hooks: programs a message can be given to. No file is no
+/// hooks. A file that cannot be used whole is not used at all, and says
+/// so: it names programs to run, and half of it is not to be guessed at.
+fn load_hooks(path: &Path, notices: &mut Vec<Notice>) -> Vec<quill_tui::hook::Hook> {
+    use std::io::Read;
+
+    let mut refuse = |why: String| {
+        notices.push(Notice::error(format!(
+            "{HOOKS_FILE}: {why}. No hooks are loaded."
+        )));
+        Vec::new()
+    };
+    // Looked at before it is opened: opening a pipe would wait for
+    // whoever writes to it.
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Vec::new(),
+        Err(err) => return refuse(format!("cannot be read: {err}")),
+    };
+    if !metadata.is_file() {
+        return refuse("is not a file".to_owned());
+    }
+    let too_large = || format!("is larger than {} KiB", MAX_HOOKS_BYTES / 1024);
+    if metadata.len() > MAX_HOOKS_BYTES {
+        return refuse(too_large());
+    }
+    // Read to the limit and no further, whatever the size was a moment ago.
+    let mut bytes = Vec::new();
+    let read = std::fs::File::open(path)
+        .and_then(|file| file.take(MAX_HOOKS_BYTES + 1).read_to_end(&mut bytes));
+    if let Err(err) = read {
+        return refuse(format!("cannot be read: {err}"));
+    }
+    if bytes.len() as u64 > MAX_HOOKS_BYTES {
+        return refuse(too_large());
+    }
+    let Ok(text) = String::from_utf8(bytes) else {
+        return refuse("is not UTF-8 text".to_owned());
+    };
+    match quill_tui::hook::parse(&text) {
+        Ok(hooks) => hooks,
+        Err(why) => refuse(why),
     }
 }
 
@@ -316,6 +376,122 @@ mod tests {
         assert_eq!(first_key(&loaded, CommandId::MessageToggleUnread), "u");
         assert_eq!(loaded.notices.len(), 1);
         assert!(loaded.notices[0].text.contains("no.such.command"));
+    }
+
+    #[test]
+    fn the_config_says_whether_messages_are_written_in_vim() {
+        let dir = TempDir::new().unwrap();
+        assert!(!load_from(&dir).env.compose.vim);
+        write(&dir, "config.toml", "[compose]\neditor = \"vim\"\n");
+        let loaded = load_from(&dir);
+        assert!(loaded.notices.is_empty(), "{:?}", loaded.notices);
+        assert!(loaded.env.compose.vim);
+        write(&dir, "config.toml", "[compose]\neditor = \"builtin\"\n");
+        assert!(!load_from(&dir).env.compose.vim);
+    }
+
+    #[test]
+    fn hooks_beside_the_config_are_handed_to_the_ui() {
+        let dir = TempDir::new().unwrap();
+        // With no file there are none, and that is not worth a notice.
+        let loaded = load_from(&dir);
+        assert!(loaded.env.hooks.is_empty() && loaded.notices.is_empty());
+
+        write(
+            &dir,
+            "hooks.toml",
+            "[[hook]]\nname = \"Save to notes\"\ncommand = [\"/usr/local/bin/save-note\", \"--from-mail\"]\n\n\
+             [[hook]]\nname = \"Word count\"\ncommand = [\"/usr/bin/wc\", \"-w\"]\ninput = \"text\"\n",
+        );
+        let loaded = load_from(&dir);
+        assert!(loaded.notices.is_empty(), "{:?}", loaded.notices);
+        let hooks = &loaded.env.hooks;
+        assert_eq!(hooks.len(), 2);
+        assert_eq!(hooks[0].name, "Save to notes");
+        assert_eq!(
+            hooks[0].command,
+            ["/usr/local/bin/save-note", "--from-mail"]
+        );
+        assert_eq!(hooks[0].input, quill_tui::hook::HookInput::Raw);
+        assert_eq!(hooks[1].input, quill_tui::hook::HookInput::Text);
+        // Whether they may run is not this file's to say: that is
+        // decided once it is known what hosts the UI.
+        assert!(!loaded.env.hooks_enabled);
+    }
+
+    #[test]
+    fn a_hooks_file_that_cannot_be_used_whole_is_not_used_at_all() {
+        let good = "[[hook]]\nname = \"Good\"\ncommand = [\"/bin/cat\"]\n";
+        let cases: [(String, &str); 5] = [
+            // A program found by searching, not by where it is.
+            (
+                format!("{good}[[hook]]\nname = \"Notes\"\ncommand = [\"save-note\"]\n"),
+                "hooks.toml: \"Notes\": the program must be an absolute path",
+            ),
+            // A line for a shell.
+            (
+                "[[hook]]\nname = \"Notes\"\ncommand = \"/bin/sh -c save-note\"\n".to_owned(),
+                "hooks.toml: line 3: ",
+            ),
+            // Not TOML at all.
+            (format!("{good}[[hook\n"), "hooks.toml: line 4: "),
+            // More than anyone means to have.
+            (
+                (0..51)
+                    .map(|number| {
+                        format!("[[hook]]\nname = \"Hook {number}\"\ncommand = [\"/bin/cat\"]\n")
+                    })
+                    .collect(),
+                "hooks.toml: there are 51 hooks, and the most is 50",
+            ),
+            // More than is read.
+            (
+                format!("{good}# {}\n", "x".repeat(MAX_HOOKS_BYTES as usize)),
+                "hooks.toml: is larger than 64 KiB",
+            ),
+        ];
+        for (text, complaint) in cases {
+            let dir = TempDir::new().unwrap();
+            write(&dir, "hooks.toml", &text);
+            let loaded = load_from(&dir);
+            // Not even the good hook that came first.
+            assert!(loaded.env.hooks.is_empty(), "{complaint}");
+            assert_eq!(loaded.notices.len(), 1, "{:?}", loaded.notices);
+            let notice = &loaded.notices[0];
+            assert_eq!(notice.kind, NoticeKind::Error);
+            assert!(notice.text.starts_with(complaint), "{}", notice.text);
+            assert!(
+                notice.text.ends_with(". No hooks are loaded."),
+                "{}",
+                notice.text
+            );
+            assert!(!notice.text.contains('\n'));
+        }
+
+        // Something that is not a file, or not text.
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("config/hooks.toml")).unwrap();
+        let loaded = load_from(&dir);
+        assert!(loaded.env.hooks.is_empty());
+        assert!(
+            loaded.notices[0]
+                .text
+                .starts_with("hooks.toml: is not a file")
+        );
+        let dir = TempDir::new().unwrap();
+        fs::create_dir_all(dir.path().join("config")).unwrap();
+        fs::write(
+            dir.path().join("config/hooks.toml"),
+            b"[[hook]]\nname = \"\xff\"\n",
+        )
+        .unwrap();
+        let loaded = load_from(&dir);
+        assert!(loaded.env.hooks.is_empty());
+        assert!(
+            loaded.notices[0]
+                .text
+                .starts_with("hooks.toml: is not UTF-8 text")
+        );
     }
 
     #[test]

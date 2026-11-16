@@ -31,6 +31,9 @@ pub enum Context {
     Templates,
     /// Choosing another spelling for a word of the message being written.
     Suggestions,
+    /// Choosing one of the user's programs to give a message to. Typing
+    /// narrows the list.
+    Hooks,
     /// Writing a message. Typing goes into the field with the cursor.
     Compose,
     /// Typing what to search for. The list shows what is found so far.
@@ -56,6 +59,7 @@ impl Context {
             Self::Folders => "Move to a folder",
             Self::Templates => "Insert a template",
             Self::Suggestions => "Spelling suggestions",
+            Self::Hooks => "Run a hook",
             Self::Compose => "Writing a message",
             Self::Search => "Search",
             Self::Palette => "Command palette",
@@ -79,6 +83,7 @@ const EVERYWHERE: &[Context] = &[
     Context::Folders,
     Context::Templates,
     Context::Suggestions,
+    Context::Hooks,
     Context::Compose,
     Context::Search,
     Context::Palette,
@@ -98,6 +103,7 @@ const LISTS: &[Context] = &[
     Context::Folders,
     Context::Templates,
     Context::Suggestions,
+    Context::Hooks,
     Context::Search,
     Context::Palette,
 ];
@@ -113,6 +119,7 @@ const LISTS_AND_FORM: &[Context] = &[
     Context::Folders,
     Context::Templates,
     Context::Suggestions,
+    Context::Hooks,
     Context::Search,
     Context::Palette,
 ];
@@ -173,6 +180,7 @@ pub enum CommandId {
     MessageLoadRemote,
     SenderAlwaysRemote,
     MessageUnsubscribe,
+    MessageHook,
     InviteAccept,
     InviteDecline,
     InviteTentative,
@@ -188,6 +196,7 @@ pub enum CommandId {
     ComposeAttach,
     ComposeBcc,
     ComposeTemplate,
+    ComposeVim,
     ComposeSpellSuggest,
     ComposeSpellNext,
     EditCopy,
@@ -335,6 +344,7 @@ impl Registry {
                         Context::Folders,
                         Context::Templates,
                         Context::Suggestions,
+                        Context::Hooks,
                         Context::Search,
                         Context::Palette,
                     ],
@@ -594,6 +604,14 @@ impl Registry {
                     MESSAGE,
                 ),
                 spec(
+                    MessageHook,
+                    "message.hook",
+                    "Run a hook on this message",
+                    Message,
+                    Some(Menu::Message),
+                    MESSAGE,
+                ),
+                spec(
                     InviteAccept,
                     "invite.accept",
                     "Accept the invitation",
@@ -721,6 +739,14 @@ impl Registry {
                     ComposeTemplate,
                     "compose.template",
                     "Insert a template",
+                    Message,
+                    Some(Menu::Message),
+                    COMPOSE,
+                ),
+                spec(
+                    ComposeVim,
+                    "compose.vim",
+                    "Write in Vim",
                     Message,
                     Some(Menu::Message),
                     COMPOSE,
@@ -875,6 +901,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         hint(&[MessageToggleUnread], "unread"),
         hint(&[MessageToggleStar], "star"),
         hint(&[SelectToggle], "select"),
+        hint_while_enabled(&[MessageHook], "hooks"),
         hint(&[FocusNext], "next pane"),
         hint(&[ViewZoom], "zoom"),
         hint(&[HelpToggle], "help"),
@@ -896,6 +923,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         hint(&[MessageViewHtml], "web page"),
         hint(&[MessageToggleUnread], "unread"),
         hint(&[MessageToggleStar], "star"),
+        hint_while_enabled(&[MessageHook], "hooks"),
         hint(&[ViewZoom], "zoom"),
         hint(&[HelpToggle], "help"),
         hint(&[AppQuit], "quit"),
@@ -941,6 +969,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         hint(&[NavOpen], "use this spelling"),
         hint(&[NavBack], "cancel"),
     ];
+    const HOOKS: &[Hint] = &[hint(&[NavOpen], "run it"), hint(&[NavBack], "cancel")];
     const COMPOSING: &[Hint] = &[
         hint(&[ComposeSend], "send"),
         hint(&[ComposeSave], "save draft"),
@@ -949,6 +978,8 @@ pub fn hints(context: Context) -> &'static [Hint] {
         hint_while_enabled(&[ComposeSpellSuggest], "spelling"),
         hint(&[FocusNext], "next field"),
         hint(&[NavBack], "close"),
+        // Last: the first to give way in a narrow window.
+        hint_while_enabled(&[ComposeVim], "Vim"),
     ];
     match context {
         Context::Compose => COMPOSING,
@@ -956,6 +987,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         Context::Unsubscribe => UNSUBSCRIBING,
         Context::Templates => TEMPLATES,
         Context::Suggestions => SUGGESTIONS,
+        Context::Hooks => HOOKS,
         Context::Setup => SETUP,
         Context::Certificate => CERTIFICATE,
         Context::SignIn => SIGNING_IN,
@@ -969,6 +1001,30 @@ pub fn hints(context: Context) -> &'static [Hint] {
         Context::Reader => READER,
         Context::Help => HELP,
     }
+}
+
+/// The hints the status bar shows while the message being written is in
+/// Vim: what can still be asked for from here.
+pub fn hints_in_vim() -> &'static [Hint] {
+    use CommandId::*;
+    const IN_VIM: &[Hint] = &[
+        Hint {
+            commands: &[ComposeSend],
+            label: "send",
+            only_enabled: true,
+        },
+        Hint {
+            commands: &[ComposeSave],
+            label: "save draft",
+            only_enabled: true,
+        },
+        Hint {
+            commands: &[NavBack],
+            label: "close Vim",
+            only_enabled: true,
+        },
+    ];
+    IN_VIM
 }
 
 #[cfg(test)]
@@ -1019,6 +1075,11 @@ mod tests {
                     let spec = registry.get(*id).unwrap();
                     assert!(spec.applies_in(*context), "{} in {context:?}", spec.name);
                 }
+            }
+        }
+        for hint in hints_in_vim() {
+            for id in hint.commands {
+                assert!(registry.get(*id).unwrap().applies_in(Context::Compose));
             }
         }
     }

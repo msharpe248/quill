@@ -133,6 +133,7 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
         || state.folders.is_some()
         || state.templates.is_some()
         || state.suggestions.is_some()
+        || state.hooks.is_some()
         || state.attachments.is_some()
     {
         // As tall as what it lists, as far as the screen allows. The folder
@@ -145,7 +146,8 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
                     60
                 } else if state.suggestions.is_some() {
                     44
-                } else if state.attachments.is_some() {
+                } else if state.attachments.is_some() || state.hooks.is_some() {
+                    // Room for a name and the program it runs.
                     76
                 } else {
                     100
@@ -163,6 +165,10 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
                 .suggestions
                 .as_ref()
                 .map_or(0, |picker| picker.words.len()),
+            // A line to type on, and every hook under it.
+            None if state.hooks.is_some() => {
+                state.hooks.as_ref().map_or(0, |picker| picker.total) + 1
+            }
             None if state.attachments.is_some() => state.reader.files().len(),
             None => state.reader.links.len(),
         };

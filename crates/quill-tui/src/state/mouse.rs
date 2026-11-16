@@ -175,7 +175,8 @@ impl State {
         let (Some(rect), Some(compose)) = (rect, &mut self.compose) else {
             return;
         };
-        if compose.sending {
+        // Being sent, or in Vim: there is nothing here to point at.
+        if compose.sending || compose.away.is_some() {
             return;
         }
         let body = layout::compose_body(rect, compose);

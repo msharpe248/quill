@@ -170,7 +170,7 @@ Press `?` at any time for the keys that apply where you are. The bottom bar show
 | `v` | View the message as a web page | `B` | Open that page in the browser |
 | `i` | Load remote pictures for this message | `I` | Always load them from this sender |
 | `x` | Select or unselect, and move on | `V` | Start or end a range |
-| `X` | Unsubscribe from a mailing list | | |
+| `X` | Unsubscribe from a mailing list | `\|` | Give the message to one of your own programs (in a terminal) |
 | `y` / `n` | Accept, decline an invitation | `M` | Answer an invitation with maybe |
 
 Arrow keys, `home`, `end`, `pageup` and `pagedown` work too. `ctrl-d` also pages down and `ctrl-c` also quits.
@@ -307,6 +307,7 @@ Files are written to a private folder that is removed when Quill quits, under na
 | `cmd-shift-a` or `ctrl-t` | Attach a file. The app shows its file panel; a terminal asks for the path, typed or pasted |
 | `cmd-shift-b` or `ctrl-o` | Add blind copies (Bcc) |
 | `cmd-shift-t` or `ctrl-r` | Insert a template, when there are any |
+| `cmd-shift-e` or `ctrl-v` | Write the message in Vim. See "Writing in Vim" |
 | `cmd-shift-g` or `ctrl-g` | Other spellings of the misspelt word at the cursor (in the app) |
 | `cmd-;` or `ctrl-y` | Go to the next misspelt word (in the app) |
 | `esc` | Close. What you wrote is kept in Drafts |
@@ -386,6 +387,46 @@ Any other placeholder, and one of these that has nothing to fill it yet (no reci
 
 Templates are read once, when Quill starts. A file over 64 KiB, one that is not UTF-8 text, and anything past the first 200 by name are left out, with a notice saying which.
 
+### Writing in Vim
+
+A message can be written in Vim instead of the editor above. `ctrl-v` (or `cmd-shift-e` in the app) hands over the message being written, as it stands. With `editor = "vim"` every message goes to Vim as soon as it opens: a new one, a reply, a forward, a draft, a mail link.
+
+```toml
+[compose]
+editor = "vim"    # "builtin" by default
+```
+
+Vim is given the message as a file: the header fields, an empty line, then the body.
+
+```
+From: Work <you@example.com>
+To: Ana Ruiz <ana.ruiz@example.com>
+Cc:
+Bcc:
+Subject: Q4 roadmap
+Attach: roadmap.pdf
+
+Ana,
+```
+
+Change any of it. `From` is there to be read: which account sends is not decided in Vim. Each attached file has an `Attach:` line; delete the line to take the file off, and add a line with a path to attach another. A header Quill does not know is dropped, not sent.
+
+| In Vim | Does |
+|---|---|
+| `:QuillSend` | Saves the message and sends it, with the same checks and the same undo as sending from Quill |
+| `:QuillPostpone` | Saves it as a draft and closes it |
+| `:QuillDiscard` | Throws it away |
+| `:QuillAttach PATH` | Adds the `Attach:` line for a file |
+| `ctrl-x ctrl-u` on a To, Cc or Bcc line | Completes an address from the people you write to most |
+| `:wq` | Brings the message back to Quill, open, for you to send, save or close |
+| `:cq` | Never mind: the message is as it was before Vim |
+
+What comes back is checked as if it had been written in Quill. A send that raises a question (no subject, say) leaves the message open with the question; a file that cannot be attached leaves it open saying why, and it is not sent or put away without the file. The message is saved as a draft before Vim starts, so nothing written so far depends on Vim.
+
+**In a terminal** Quill runs your own Vim, the `vim` on your `PATH`, with your own vimrc, in the terminal Quill is in, and takes the terminal back when Vim quits. Mail goes on being fetched and sent meanwhile. `QUILL_VIM` names another program to run in its place; it is started the same way. With no Vim to run, the message stays in Quill's editor and says so. Modelines are switched off for the draft, so a line of quoted mail cannot set options in your Vim.
+
+**In the app** Vim is one inside the app, in a pane beside the terminal, and nothing of your own setup is used unless you bring it in: "Import vimrc…" in the Quill menu copies one file. That Vim runs inside the app's sandbox, so settings and plugins that run other programs or read files elsewhere do not work there. Send and Save in the menus and toolbar reach it: Vim does as it would for `:QuillSend` or `:QuillPostpone`. `esc` in Quill asks it to save and close, and the message comes back open. The Vim that goes into the app is built by `app/build-vim.sh`, which has not been run yet. An app built without it says it has no Vim, and the message stays in Quill's editor.
+
 ## Rules for arriving mail
 
 A rule does something with mail as it arrives in an inbox: files it, marks it, or keeps quiet about it. Rules are written in the config and asked in order.
@@ -410,6 +451,34 @@ notify = false                   # stays in the inbox, with no notification
 A rule needs `match` and at least one thing to do. Every rule that matches marks the message; the first that files it is the one that files it. Mail a rule files out of the inbox is not announced unless the rule says `notify = true`.
 
 What a rule does is done on the server as well, the same way as when you do it yourself. Rules see who a message is from and to, its subject, its marks and whether it has attachments; the words of its body are not known when it arrives. They apply to mail arriving from now on, not to mail already there, and only while Quill is running or when `quill sync` runs.
+
+## Hooks
+
+A hook gives the message you are on to a program of your own: to file it in your notes, to print it, to feed a script. Hooks are listed in `hooks.toml` beside `config.toml`:
+
+```toml
+[[hook]]
+name = "Save to notes"
+command = ["/usr/local/bin/save-note", "--from-mail"]
+
+[[hook]]
+name = "Word count"
+command = ["/usr/bin/wc", "-w"]
+input = "text"      # "raw" by default
+```
+
+`|` on a message lists them, each with the program it runs. Typing narrows the list, `↓`/`↑` choose, `enter` runs the chosen one on that message, and `esc` closes the list. There is one key for the list, not a key for each hook.
+
+- **`command`** is the program by its full path, then its arguments, each a string of its own. It is not a line for a shell: nothing in it is expanded, and nothing of the message is ever put into it. For a pipe or a redirection, name a script.
+- **The message** arrives on the program's standard input: exactly as it came from the server (`raw`), or as a few header lines (From, To, Cc, Date, Subject, Message-ID), an empty line and the plain text (`text`). A message that has not been downloaded yet says so; open it first.
+- **Its environment** is `PATH`, `HOME` and `LANG` from Quill's own, and `QUILL_SUBJECT`, `QUILL_FROM` (the sender's address) and `QUILL_MESSAGE_ID`, each made one line with control characters removed. Mail is written by strangers: quote these in a script as you would anything typed by someone else.
+- **It runs** in your home folder, with no terminal, for at most 30 seconds; then it is stopped, and anything it started with it. Quitting Quill stops it too. One hook runs at a time.
+- **When it ends** the bottom bar shows the first line it printed. If it failed, a notice gives its exit status and the first line of its complaint. Only the first 64 KiB of what it prints is kept.
+- **Nothing runs by itself.** A hook runs when you choose it from the list, on the message you are on, and at no other time: not when mail arrives, and not when it is opened.
+
+`hooks.toml` is read once, when Quill starts. It may list up to 50 hooks. A file with a mistake in it (a program not given by its full path, say), or one over 64 KiB, loads no hooks at all, and a notice says why.
+
+Hooks work in a terminal only. The app is sandboxed and never starts a program outside its own bundle, so there the command is switched off and the list does not open.
 
 ## From a shell
 
@@ -440,6 +509,7 @@ Quill looks in `~/Library/Application Support/Quill/config/`:
 | `keys.toml` | Key overrides, on top of the chosen preset. |
 | `themes/NAME.toml` | Your own themes, selected with `theme = "NAME"`. |
 | `templates/NAME.md`, `templates/NAME.txt` | Text to put into messages. See "Templates". |
+| `hooks.toml` | Programs a message can be given to. See "Hooks". |
 
 Use `--config-dir` and `--data-dir`, or the `QUILL_CONFIG_DIR` and `QUILL_DATA_DIR` environment variables, to point elsewhere.
 
@@ -480,6 +550,7 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `compose.send_later` | Send the message being written at a time you type |
 | `compose.attach`, `compose.bcc` | Attach a file; add blind copies |
 | `compose.template` | Put a template into the message being written |
+| `compose.vim` | Write the message being written in Vim |
 | `compose.spell_suggest`, `compose.spell_next` | List other spellings of the misspelt word at the cursor; go to the next misspelt word |
 | `edit.undo` | Undo the last move, deletion or send |
 | `search.start` | Search |
@@ -488,6 +559,7 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `message.view_html`, `message.open_in_browser` | Show the message as a web page, beside the reader or in the browser |
 | `message.load_remote`, `sender.always_remote` | Let this message, or this sender's mail, load remote pictures |
 | `message.unsubscribe` | Unsubscribe from the list that sent the message, after asking |
+| `message.hook` | List your hooks, to give the message to one of them |
 | `invite.accept`, `invite.decline`, `invite.tentative` | Answer the invitation the message carries: yes, no or maybe |
 | `attachment.save`, `attachment.open` | Save the chosen attachment, or open it in its application |
 | `edit.copy`, `edit.cut`, `edit.select_all` | The app's Edit menu, while a message is being written |

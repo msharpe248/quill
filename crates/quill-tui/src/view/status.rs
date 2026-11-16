@@ -52,7 +52,19 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
 
     // Each hint as (keys, label, width). A command the user's keys.toml
     // unbound has nothing to advertise and is left out.
-    let hints: Vec<(String, &str, usize, bool)> = command::hints(state.context())
+    // A message that is in Vim has its own short list: the rest of what
+    // writing offers waits for it to come back.
+    let in_vim = state.context() == command::Context::Compose
+        && state
+            .compose
+            .as_ref()
+            .is_some_and(|compose| compose.away.is_some());
+    let offered = if in_vim {
+        command::hints_in_vim()
+    } else {
+        command::hints(state.context())
+    };
+    let hints: Vec<(String, &str, usize, bool)> = offered
         .iter()
         // A hint for a command that mostly has nothing to act on is kept
         // back until it has.

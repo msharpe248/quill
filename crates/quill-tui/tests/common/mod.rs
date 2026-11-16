@@ -148,6 +148,11 @@ impl Harness {
             // Tests that check spelling say so: most have no checker, as
             // a terminal has none.
             spell_check: false,
+            // As in a terminal: Vim is the user's own, and programs run.
+            editor_pane: false,
+            vim_program: None,
+            hooks: Vec::new(),
+            hooks_enabled: true,
         };
         adjust(&mut env);
         let scratch = tempfile::tempdir().unwrap();
@@ -189,6 +194,35 @@ impl Harness {
                 queue.extend(effects.data);
             }
         }
+    }
+
+    /// The draft file Vim was last asked to run on, and the draft's own
+    /// folder: what the host would have been handed.
+    pub fn in_vim(&self) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+        self.host_requests
+            .iter()
+            .rev()
+            .find_map(|request| match request {
+                HostRequest::EditDraft { path, dir, .. } => Some((path.clone(), dir.clone())),
+                _ => None,
+            })
+    }
+
+    /// Vim has gone, with this exit status: what the run loop tells the
+    /// UI when the editor it started ends.
+    pub fn vim_exits(&mut self, status: i32) {
+        self.act(Action::EditorExited { ran: true, status });
+    }
+
+    /// The hook the UI last asked to have run, with its message.
+    pub fn hook_asked(&self) -> Option<quill_tui::hook::HookRun> {
+        self.host_requests
+            .iter()
+            .rev()
+            .find_map(|request| match request {
+                HostRequest::RunHook(run) => Some((**run).clone()),
+                _ => None,
+            })
     }
 
     /// Presses keys written as in the help overlay, separated by spaces:

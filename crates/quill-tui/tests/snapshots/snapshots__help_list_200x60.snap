@@ -41,6 +41,7 @@ expression: harness.screen()
 │                          │┃                                       ┃   i                        Load remote pictures for this me… ┃                                                                   │
 │                          │┃                                       ┃   I                        Always load remote pictures from… ┃                                                                   │
 │                          │┃                                       ┃   X                        Unsubscribe from this list        ┃                                                                   │
+│                          │┃                                       ┃   |                        Run a hook on this message        ┃                                                                   │
 │                          │┃                                       ┃   y                        Accept the invitation             ┃                                                                   │
 │                          │┃                                       ┃   n                        Decline the invitation            ┃                                                                   │
 │                          │┃                                       ┃   M                        Answer the invitation with maybe  ┃                                                                   │
@@ -57,7 +58,6 @@ expression: harness.screen()
 │                          │┃                                       ┃   A                        Add an account                    ┃                                                                   │
 │                          │┃                                       ┃   S                        Sign in to an account             ┃                                                                   │
 │                          │┃                                       ┃   ?                        Help for this context             ┃                                                                   │
-│                          │┃                                       ┃                                                              ┃                                                                   │
 │                          │┃                                       ┃                                                              ┃                                                                   │
 │                          │┃                                       ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛                                                                   │
 └──────────────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛└────────────────────────────────────────────────────────────────────────────────────┘

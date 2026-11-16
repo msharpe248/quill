@@ -30,6 +30,12 @@ public struct VimLaunch: Equatable, Sendable {
     /// `source file` with the path written into it, where a space, a quote
     /// or a `%` in the name of the folder the app is installed in would be
     /// read as part of the command.
+    /// Run before any file is read: modelines are off for every buffer.
+    /// In a group of its own, because a vimrc that starts with a bare
+    /// `autocmd!` clears every command that is in no group.
+    public static let noModelines =
+        "augroup QuillNoModelines | execute 'autocmd BufReadPre * setlocal nomodeline' | augroup END"
+
     public static let loadPlugin = "execute 'source' fnameescape($VIM . '/quill.vim')"
 
     /// A program that does nothing and fails. Vim is told this is the shell,
@@ -70,6 +76,10 @@ public struct VimLaunch: Equatable, Sendable {
             // message but the draft.
             "-i", "NONE",
             "-n",
+            // A message quotes other people's words, and a line of them
+            // that looks like a modeline must not set options here,
+            // whatever the vimrc says about modelines.
+            "--cmd", Self.noModelines,
             "-c", Self.loadPlugin,
             // Whatever follows is a file, even if it were to start with a
             // dash or a plus.

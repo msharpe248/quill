@@ -61,4 +61,4 @@ expression: harness.screen()
 ┃                                                                                                                                                                                                      ┃
 ┃                                                                                                                                                                                                      ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
- cmd-enter send  cmd-s save draft  cmd-A attach  tab next field  esc close
+ cmd-enter send  cmd-s save draft  cmd-A attach  tab next field  esc close  cmd-E Vim

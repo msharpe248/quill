@@ -188,3 +188,28 @@ fn compose_zoomed() {
         snapshot("compose_zoomed", &harness);
     }
 }
+
+#[test]
+fn compose_in_vim() {
+    for (width, height) in SIZES {
+        let mut harness = Harness::demo(width, height);
+        harness.keys("c");
+        harness.type_text("ana.ruiz@example.com");
+        harness.keys("ctrl-v");
+        snapshot("compose_in_vim", &harness);
+    }
+}
+
+#[test]
+fn hook_picker() {
+    for (width, height) in SIZES {
+        let mut harness = Harness::demo(width, height);
+        harness.env.hooks = quill_tui::hook::parse(
+            "[[hook]]\nname = \"Save to notes\"\ncommand = [\"/usr/local/bin/save-note\", \"--from-mail\"]\n\
+             [[hook]]\nname = \"Word count\"\ncommand = [\"/usr/bin/wc\", \"-w\"]\ninput = \"text\"\n",
+        )
+        .unwrap();
+        harness.keys("| down");
+        snapshot("hook_picker", &harness);
+    }
+}

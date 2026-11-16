@@ -9,7 +9,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Padding;
 
 use super::pane_block;
-use crate::compose::Field;
+use crate::compose::{Away, Field};
 use crate::editor::{SpanKind, ViewSpan};
 use crate::input::LineInput;
 use crate::layout;
@@ -27,7 +27,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
     let styles = &env.styles;
     let mut block = pane_block(3, compose.title, true, styles).padding(Padding::horizontal(1));
     let view = &compose.body_view;
-    if view.total_rows > view.lines.len() && !view.lines.is_empty() {
+    if compose.away.is_none() && view.total_rows > view.lines.len() && !view.lines.is_empty() {
         let first = view.first_row + 1;
         let last = view.first_row + view.lines.len();
         block = block.title_bottom(
@@ -44,6 +44,10 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         return;
     }
     let width = usize::from(inner.width);
+    if let Some(away) = compose.away {
+        in_vim(frame, inner, away, env);
+        return;
+    }
     let typing = !compose.sending && compose.attaching.is_none();
     let bottom = inner.y + inner.height;
     let mut y = inner.y;
@@ -286,6 +290,49 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
                     styles.dim()
                 },
             );
+        }
+    }
+}
+
+/// What the pane says while the message is in Vim: where it is, and how
+/// it comes back. The fields are not drawn: they are what the message was
+/// when it left, and nothing typed here changes them.
+fn in_vim(frame: &mut Frame, inner: Rect, away: Away, env: &Env) {
+    let styles = &env.styles;
+    let width = usize::from(inner.width);
+    let said: &[(&str, bool)] = match away {
+        Away::Leaving => &[("Handing this message to Vim…", false)],
+        Away::Returning => &[("Reading back what was written in Vim…", false)],
+        Away::InVim => &[
+            ("This message is being written in Vim.", false),
+            ("", true),
+            (":QuillSend sends it.", true),
+            (":QuillPostpone saves it as a draft and closes it.", true),
+            (":QuillDiscard throws it away.", true),
+            (
+                ":wq brings it back here, to send, to save or to close.",
+                true,
+            ),
+            (":cq leaves it as it was before Vim.", true),
+        ],
+    };
+    let mut y = inner.y;
+    for (words, dim) in said {
+        let lines = if words.is_empty() {
+            vec![String::new()]
+        } else {
+            text::wrap(words, width)
+        };
+        for line in lines {
+            if y >= inner.y + inner.height {
+                return;
+            }
+            let style = if *dim { styles.dim() } else { styles.text() };
+            frame.render_widget(
+                Line::styled(text::truncate(&line, width), style),
+                Rect::new(inner.x, y, inner.width, 1),
+            );
+            y += 1;
         }
     }
 }

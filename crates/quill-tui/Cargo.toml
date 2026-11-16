@@ -23,7 +23,9 @@ crossterm.workspace = true
 futures-util.workspace = true
 jiff.workspace = true
 ratatui.workspace = true
-rustix.workspace = true
+# `process`, to stop a hook that has run out of time together with
+# whatever it started.
+rustix = { workspace = true, features = ["process"] }
 serde.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }

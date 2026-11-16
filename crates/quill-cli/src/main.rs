@@ -368,19 +368,37 @@ async fn tui(args: TuiArgs) -> anyhow::Result<()> {
     // terminal says it is.
     // The demo mailbox has no config to add an account to.
     env.accounts = !args.demo;
-    // A terminal program keeps cmd for itself; the shell passes it on.
-    env.cmd_keys = attached.host.is_shell();
-    // And it has a panel to choose files in.
-    env.file_panel = attached.host.is_shell();
-    // And the system's own readers for pictures Quill cannot decode.
-    env.thumbnails = attached.host.is_shell();
-    // And the system's spelling checker.
-    env.spell_check = attached.host.is_shell();
+    suit_host(
+        &mut env,
+        attached.host.is_shell(),
+        std::env::var_os("QUILL_VIM"),
+    );
     env.images = attached.host.is_shell()
         || quill_media::kitty::supported_by_environment(|name| std::env::var(name).ok());
     app::run(store, env, notices, attached, sync, accounts)
         .await
         .context("the terminal UI stopped")
+}
+
+/// Sets what depends on where Quill is running: inside its own app
+/// (`shell`), or in a terminal. `vim` is what `QUILL_VIM` says.
+fn suit_host(env: &mut quill_tui::state::Env, shell: bool, vim: Option<std::ffi::OsString>) {
+    // A terminal program keeps cmd for itself; the shell passes it on.
+    env.cmd_keys = shell;
+    // And it has a panel to choose files in.
+    env.file_panel = shell;
+    // And the system's own readers for pictures Quill cannot decode.
+    env.thumbnails = shell;
+    // And the system's spelling checker.
+    env.spell_check = shell;
+    // And a Vim of its own, in a pane. In a terminal the user's own Vim
+    // is run there: `vim`, or the program QUILL_VIM names. The app never
+    // runs that one, whatever its environment says.
+    env.editor_pane = shell;
+    env.vim_program = vim.filter(|name| !shell && !name.is_empty());
+    // The app is sandboxed and starts no program outside its bundle, so
+    // hooks run only in a terminal.
+    env.hooks_enabled = !shell;
 }
 
 /// `quill account ...`: the saved passwords and sign-ins of the configured
@@ -545,6 +563,36 @@ mod tests {
         assert_eq!(args.dirs.data_dir, None);
         assert!(Cli::try_parse_from(["quill"]).is_err());
         assert!(Cli::try_parse_from(["quill", "tui", "--bogus"]).is_err());
+    }
+
+    #[test]
+    fn the_app_runs_no_programs_and_a_terminal_has_no_panels() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths {
+            config_dir: dir.path().join("config"),
+            data_dir: dir.path().join("data"),
+        };
+        let load = || setup::load(&paths, ColorMode::None, TimeZone::UTC).env;
+
+        // In Quill's own app: its panels and its Vim, and no hooks.
+        let mut env = load();
+        suit_host(&mut env, true, Some("/opt/homebrew/bin/nvim".into()));
+        assert!(env.cmd_keys && env.file_panel && env.thumbnails && env.spell_check);
+        assert!(env.editor_pane);
+        assert!(!env.hooks_enabled);
+        assert_eq!(env.vim_program, None);
+
+        // In a terminal: the user's own Vim, and their hooks.
+        let mut env = load();
+        suit_host(&mut env, false, Some("/opt/homebrew/bin/nvim".into()));
+        assert!(!env.cmd_keys && !env.file_panel && !env.thumbnails && !env.spell_check);
+        assert!(!env.editor_pane);
+        assert!(env.hooks_enabled);
+        assert_eq!(env.vim_program, Some("/opt/homebrew/bin/nvim".into()));
+        suit_host(&mut env, false, Some("".into()));
+        assert_eq!(env.vim_program, None);
+        suit_host(&mut env, false, None);
+        assert_eq!(env.vim_program, None);
     }
 
     #[cfg(unix)]

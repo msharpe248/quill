@@ -7,7 +7,9 @@
 
 use std::io::{self, Write, stdout};
 use std::path::PathBuf;
+use std::process::ExitStatus;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use base64::Engine;
@@ -23,6 +25,7 @@ use ratatui::crossterm::cursor::MoveTo;
 use ratatui::crossterm::event::{Event, EventStream, MouseButton, MouseEventKind};
 use ratatui::crossterm::queue;
 use ratatui::crossterm::style::{Attribute, ContentStyle, Print, SetAttribute, SetStyle};
+use ratatui::crossterm::terminal::{Clear, ClearType};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::command::{Context, Menu};
@@ -32,7 +35,7 @@ use crate::keymap::KeyChord;
 use crate::setup::{AccountEvent, AccountRequest};
 use crate::state::{Action, Effects, Env, HostRequest, HostState, Mouse, MouseKind, Notice, State};
 use crate::view::{ImagePlacement, LinkPlacement};
-use crate::{hyperlink, terminal, view};
+use crate::{hook, hyperlink, terminal, view, vim};
 
 /// The sync engine, as the UI holds it: where to send requests, and where
 /// its news arrives. With no engine (the demo mailbox) there is only the
@@ -123,6 +126,8 @@ pub async fn run(
         last_host_state: None,
         images: Images::default(),
         thumbnails: std::collections::HashMap::new(),
+        editor_wanted: None,
+        closing: Arc::new(AtomicBool::new(false)),
     };
     let mut inbound = Inbound {
         data: events,
@@ -132,6 +137,8 @@ pub async fn run(
         injected,
     };
     let result = event_loop(&mut screen, &env, notices, &mut io, &mut inbound).await;
+    // A hook still running is stopped: nothing started here outlives Quill.
+    io.closing.store(true, Ordering::SeqCst);
     io.images.forget();
     terminal::leave();
     // Files written for viewing do not outlive the run. The store worker
@@ -155,6 +162,11 @@ struct Io<'a> {
     /// Pictures the host has been asked to make, by the id asked under,
     /// and where each will be written.
     thumbnails: std::collections::HashMap<u64, PathBuf>,
+    /// A draft file, and its folder, that Vim is to be run on in this
+    /// terminal. The loop does it, since it owns the terminal.
+    editor_wanted: Option<(PathBuf, PathBuf)>,
+    /// Set as the UI closes, for work started here that must end with it.
+    closing: Arc<AtomicBool>,
 }
 
 /// The most pictures the terminal is left holding at once. Each is a few
@@ -349,6 +361,23 @@ impl Io<'_> {
                         });
                     }
                 }
+                // Quill's own app runs the Vim inside it, in a pane, and
+                // answers when it has gone. The app is sandboxed: when it
+                // will not, nothing here runs a Vim in its place.
+                HostRequest::EditDraft { path, dir, title } if self.host.is_shell() => {
+                    if !self.host.edit_draft(&path, &dir, &title) {
+                        let _ = self.injected.send(Action::EditorExited {
+                            ran: false,
+                            status: 0,
+                        });
+                    }
+                }
+                // In a terminal, the user's own Vim takes the terminal.
+                HostRequest::EditDraft { path, dir, .. } => {
+                    self.editor_wanted = Some((path, dir));
+                }
+                HostRequest::ClosePane => self.host.close_pane(),
+                HostRequest::RunHook(run) => self.run_hook(*run),
                 HostRequest::SaveFile { path, name } => {
                     // Only asked for where the host has a panel. Should it
                     // not, say so rather than nothing.
@@ -421,6 +450,8 @@ impl Io<'_> {
                 Context::Templates => bridge::Context::Folders,
                 // A list to choose from, over the message.
                 Context::Suggestions => bridge::Context::Folders,
+                // A list to narrow by typing, over the message.
+                Context::Hooks => bridge::Context::Folders,
                 Context::Compose => bridge::Context::Compose,
                 Context::Search => bridge::Context::Search,
                 Context::Palette => bridge::Context::Palette,
@@ -435,6 +466,27 @@ impl Io<'_> {
             title: current.title.clone(),
         });
         self.last_host_state = Some(current);
+    }
+
+    /// Runs one of the user's programs on a message, off the UI task, and
+    /// says how it went. Never in Quill's own app, whatever asked.
+    fn run_hook(&self, run: hook::HookRun) {
+        let injected = self.injected.clone();
+        if self.host.is_shell() {
+            let _ = injected.send(Action::HookDone {
+                name: run.name,
+                outcome: hook::HookOutcome::not_allowed(),
+            });
+            return;
+        }
+        let closing = Arc::clone(&self.closing);
+        tokio::task::spawn_blocking(move || {
+            let outcome = hook::run(&run, hook::Limits::default(), &closing);
+            let _ = injected.send(Action::HookDone {
+                name: run.name,
+                outcome,
+            });
+        });
     }
 
     /// Gets a picture ready to draw: from the terminal's own memory if it
@@ -551,15 +603,18 @@ async fn event_loop(
         io.data.send(request);
     }
 
-    let mut input = EventStream::new();
+    // `None` while Vim has the terminal: its keys are not Quill's to read.
+    let mut input = Some(EventStream::new());
+    // Vim, while it runs on this terminal in Quill's place.
+    let mut away: Option<EditorWait> = None;
     // Often enough that a draft being written is saved every few seconds.
     let mut clock = tokio::time::interval(Duration::from_secs(5));
     // When a key last arrived. Spelling is checked once the keys have
     // been quiet for a moment, never as each one is typed.
     let mut last_typed = tokio::time::Instant::now();
     loop {
-        // Redraw only on change.
-        if state.dirty {
+        // Redraw only on change, and never over Vim.
+        if state.dirty && away.is_none() {
             let mut overlays = view::Overlays::default();
             let frame = step(
                 "cannot draw",
@@ -579,11 +634,29 @@ async fn event_loop(
             .spell_check_due(env)
             .then(|| last_typed + TYPING_PAUSE);
         let action = tokio::select! {
-            event = input.next() => match event {
+            event = next_input(&mut input) => match event {
                 Some(Ok(event)) => translate(event),
                 Some(Err(err)) => return step("cannot read input", Err(err)),
                 None => break,
             },
+            ended = editor_ended(&mut away) => {
+                away = None;
+                // The terminal is Quill's again: as at the start, and with
+                // everything drawn afresh.
+                *terminal = step("cannot take the terminal back", retake(env.mouse))?;
+                input = Some(EventStream::new());
+                let size = step("cannot read the terminal size", terminal.size())?;
+                state.update(env, Action::Resize(size.width, size.height));
+                state.dirty = true;
+                Some(match ended {
+                    Ok(status) => Action::EditorExited {
+                        ran: true,
+                        // Killed by a signal is not a clean exit.
+                        status: status.code().unwrap_or(-1),
+                    },
+                    Err(_) => Action::EditorExited { ran: true, status: -1 },
+                })
+            }
             Some(event) = inbound.data.recv() => Some(Action::Data(event)),
             Some(event) = inbound.host.recv() => match event {
                 HostEvent::RunCommand(name) => Some(match env.registry.by_name(&name) {
@@ -601,8 +674,9 @@ async fn event_loop(
                 HostEvent::Suggestions { id, words } => {
                     Some(Action::Suggestions { id, words })
                 }
-                // The editor pane is not asked for yet either.
-                HostEvent::EditorExited { .. } => None,
+                HostEvent::EditorExited { ran, status } => {
+                    Some(Action::EditorExited { ran, status })
+                }
                 HostEvent::NotificationUsed { id, action } => {
                     Some(Action::Notification { id, action })
                 }
@@ -627,6 +701,22 @@ async fn event_loop(
             let effects = state.update(env, action);
             io.perform(effects);
         }
+        if let Some((path, dir)) = io.editor_wanted.take() {
+            match run_editor(terminal, env, io, &mut input, &path, &dir)? {
+                Some(wait) => away = Some(wait),
+                // Nothing ran, and the terminal was never given up.
+                None => {
+                    let effects = state.update(
+                        env,
+                        Action::EditorExited {
+                            ran: false,
+                            status: 0,
+                        },
+                    );
+                    io.perform(effects);
+                }
+            }
+        }
         if state.should_quit {
             break;
         }
@@ -638,6 +728,84 @@ async fn event_loop(
     }
     io.data.finish();
     Ok(())
+}
+
+/// Vim running on this terminal: the wait for it to end, off the UI task.
+type EditorWait = tokio::task::JoinHandle<io::Result<ExitStatus>>;
+
+/// The next thing from the keyboard, or nothing for ever while the
+/// terminal is not Quill's to read.
+async fn next_input(input: &mut Option<EventStream>) -> Option<io::Result<Event>> {
+    match input {
+        Some(input) => input.next().await,
+        None => std::future::pending().await,
+    }
+}
+
+/// Waits for Vim to end, or for ever when it is not running.
+async fn editor_ended(away: &mut Option<EditorWait>) -> io::Result<ExitStatus> {
+    match away {
+        Some(wait) => wait.await.map_err(io::Error::other)?,
+        None => std::future::pending().await,
+    }
+}
+
+/// Gives the terminal to the user's Vim, started on the draft at `path`.
+/// Returns the wait for it, or `None` when there is no Vim to run or it
+/// would not start: then the terminal is Quill's as before. An error is
+/// the terminal not coming back.
+///
+/// Vim is a child on the same terminal, started from an argv and never
+/// through a shell. Everything else Quill does carries on meanwhile: mail
+/// is fetched and sent; only the screen and the keys are Vim's.
+fn run_editor(
+    terminal: &mut DefaultTerminal,
+    env: &Env,
+    io: &mut Io<'_>,
+    input: &mut Option<EventStream>,
+    path: &std::path::Path,
+    dir: &std::path::Path,
+) -> io::Result<Option<EditorWait>> {
+    // Looked for before anything is given up, so that having no Vim
+    // costs nothing but a line saying so.
+    let Some(program) = vim::find_program(
+        vim::program_name(env.vim_program.as_ref()),
+        std::env::var_os("PATH").as_deref(),
+    ) else {
+        return Ok(None);
+    };
+    // Stop reading the keyboard: what is typed from here on is Vim's.
+    // Dropping the stream stops its reader; looking once more makes sure
+    // it has let go, and anything already typed is not kept for later.
+    *input = None;
+    let _ = ratatui::crossterm::event::poll(Duration::from_millis(20));
+    while matches!(ratatui::crossterm::event::poll(Duration::ZERO), Ok(true)) {
+        let _ = ratatui::crossterm::event::read();
+    }
+    // Pictures are drawn over the screen being left: take them down.
+    let _ = io.images.sync(Vec::new(), io.images.size);
+    let _ = terminal.show_cursor();
+    terminal::leave();
+    match vim::command(&program, path, dir).spawn() {
+        Ok(mut child) => Ok(Some(tokio::task::spawn_blocking(move || child.wait()))),
+        Err(_) => {
+            // It was there and would not start. Take the terminal back.
+            *terminal = step("cannot take the terminal back", retake(env.mouse))?;
+            *input = Some(EventStream::new());
+            Ok(None)
+        }
+    }
+}
+
+/// Takes the terminal over again after Vim, as at the start: the same
+/// modes, an empty screen, and a frame with nothing in it, so that the
+/// next draw writes everything.
+fn retake(mouse: bool) -> io::Result<DefaultTerminal> {
+    let terminal = terminal::enter(mouse)?;
+    // Asked of the terminal directly: nothing here waits on an answer
+    // from it.
+    ratatui::crossterm::execute!(stdout(), Clear(ClearType::All))?;
+    Ok(terminal)
 }
 
 /// How long the keys are quiet before the spelling of what was typed is
@@ -720,6 +888,10 @@ mod tests {
             searches: Vec::new(),
             templates: Vec::new(),
             spell_check: false,
+            editor_pane: false,
+            vim_program: None,
+            hooks: Vec::new(),
+            hooks_enabled: false,
         }
     }
 

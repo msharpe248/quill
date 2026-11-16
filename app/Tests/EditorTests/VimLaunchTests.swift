@@ -56,6 +56,7 @@ struct VimLaunchTests {
         #expect(
             launch.arguments == [
                 "-N", "-u", "DEFAULTS", "-i", "NONE", "-n",
+                "--cmd", "augroup QuillNoModelines | execute 'autocmd BufReadPre * setlocal nomodeline' | augroup END",
                 "-c", "execute 'source' fnameescape($VIM . '/quill.vim')", "--",
                 Self.container + "/tmp/quill-edit-812/message.quill",
             ])
@@ -70,6 +71,7 @@ struct VimLaunchTests {
         #expect(
             launch.arguments == [
                 "-N", "-u", Self.container + "/Library/Application Support/Quill/vim/vimrc", "-i", "NONE", "-n",
+                "--cmd", "augroup QuillNoModelines | execute 'autocmd BufReadPre * setlocal nomodeline' | augroup END",
                 "-c", "execute 'source' fnameescape($VIM . '/quill.vim')", "--",
                 Self.container + "/tmp/quill-edit-812/message.quill",
             ])
@@ -138,10 +140,13 @@ struct VimLaunchTests {
         let launch = try makeLaunch(bundle: bundle)
         // The program is the one in the bundle, started as itself.
         #expect(launch.argv[0].hasPrefix(bundle.path + "/"))
-        #expect(!launch.argv.contains { $0.hasSuffix("/sh") || $0.hasSuffix("/zsh") || $0 == "--cmd" })
-        // One command, and it is always the same one.
+        #expect(!launch.argv.contains { $0.hasSuffix("/sh") || $0.hasSuffix("/zsh") })
+        // One command before the vimrc and one after the draft is read, and
+        // they are always the same two.
+        #expect(launch.argv.filter { $0 == "--cmd" }.count == 1)
+        #expect(launch.arguments[6...7] == ["--cmd", VimLaunch.noModelines])
         #expect(launch.argv.filter { $0 == "-c" || $0 == "-S" || $0.hasPrefix("+") }.count == 1)
-        #expect(launch.arguments[6...7] == ["-c", VimLaunch.loadPlugin])
+        #expect(launch.arguments[8...9] == ["-c", VimLaunch.loadPlugin])
         // Vim is told the shell is a program that does nothing.
         #expect(launch.environment["SHELL"] == "/usr/bin/false")
         #expect(launch.environment["PATH"] == nil)
@@ -164,7 +169,7 @@ struct VimLaunchTests {
             // marker that says only files follow.
             #expect(launch.arguments.last == path, "\(dir.debugDescription)")
             #expect(launch.arguments.dropLast().last == "--")
-            #expect(launch.arguments.count == 10)
+            #expect(launch.arguments.count == 12)
             // No other argument has any of it in it.
             for argument in launch.arguments.dropLast() {
                 #expect(!argument.contains(dir), "\(argument.debugDescription)")
@@ -197,7 +202,7 @@ struct VimLaunchTests {
         let scratch = try Scratch()
         let bundle = try scratch.bundleWithVim("My \"Apps\" 100%/Quill's.app")
         let launch = try makeLaunch(bundle: bundle)
-        #expect(launch.arguments[6...7] == ["-c", "execute 'source' fnameescape($VIM . '/quill.vim')"])
+        #expect(launch.arguments[8...9] == ["-c", "execute 'source' fnameescape($VIM . '/quill.vim')"])
         #expect(launch.arguments == (try makeLaunch(bundle: scratch.bundleWithVim("Plain.app"))).arguments)
         #expect(launch.environment["VIM"] == bundle.path + "/Contents/Resources/vim")
         #expect(launch.environment["VIMRUNTIME"] == bundle.path + "/Contents/Resources/vim/runtime")

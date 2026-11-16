@@ -94,6 +94,17 @@ pub enum Did {
     Attach(String),
 }
 
+/// Where a message stands while it is being written in Vim and not here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Away {
+    /// Its draft file is being written out.
+    Leaving,
+    /// Vim has it.
+    InVim,
+    /// Vim has gone, and what it left is being read back.
+    Returning,
+}
+
 pub struct Compose {
     pub draft: Option<DraftId>,
     pub account: LocalAccountId,
@@ -120,6 +131,9 @@ pub struct Compose {
     pub error: Option<String>,
     /// Sending has been asked for and not yet answered.
     pub sending: bool,
+    /// The message is being written in Vim. Until it is back, nothing
+    /// typed here changes it: what is here is what it was when it left.
+    pub away: Option<Away>,
     /// The header fields have changed since the last save. The body keeps
     /// its own account of that.
     touched: bool,
@@ -151,6 +165,7 @@ impl Compose {
             doubts: Vec::new(),
             error: prefill.note,
             sending: false,
+            away: None,
             touched: false,
         }
     }
@@ -244,7 +259,12 @@ impl Compose {
     /// Takes the people found for what was typed. An answer for something
     /// typed over since is dropped.
     pub fn offer(&mut self, typed: String, people: Vec<Contact>) {
-        if self.address_in_progress() != Some(typed.as_str()) || people.is_empty() {
+        // Nor is anyone offered for a message that has gone to Vim since
+        // the question was asked: there is no field here to complete.
+        if self.away.is_some()
+            || self.address_in_progress() != Some(typed.as_str())
+            || people.is_empty()
+        {
             self.completion = None;
             return;
         }
@@ -277,9 +297,58 @@ impl Compose {
         self.touched = true;
     }
 
+    /// Takes the message back from an editor that is not Quill's own:
+    /// the recipients, subject and body as its file has them, and of the
+    /// files attached when it left (the first `had` here), those the file
+    /// still names. A file attached here in the meantime is kept. What a
+    /// file cannot say (what the message answers, who sends it) stays as
+    /// it is.
+    pub fn take_back(&mut self, written: DraftContent, had: usize) {
+        self.completion = None;
+        self.attaching = None;
+        self.doubts.clear();
+        self.error = None;
+        let mut changed = false;
+        for (input, value) in [
+            (&mut self.to, &written.to),
+            (&mut self.cc, &written.cc),
+            (&mut self.bcc, &written.bcc),
+            (&mut self.subject, &written.subject),
+        ] {
+            // One line, with nothing in it that is not text, however the
+            // file was edited.
+            let mut line = LineInput::default();
+            line.insert(value.trim());
+            // The gap left after a completed address is not a difference.
+            if line.text() != input.text().trim() {
+                *input = line;
+                changed = true;
+            }
+        }
+        // A file ends with a line break whether or not the body did: that
+        // alone is not a change. Put in as typing would be, so that it
+        // can be undone here.
+        let body = self.body.text();
+        if written.body.trim_end_matches('\n') != body.trim_end_matches('\n') {
+            self.body.select_all();
+            self.body.insert(&written.body);
+        }
+        let mut attachments = written.attachments;
+        attachments.extend(self.attachments.iter().skip(had).cloned());
+        if attachments != self.attachments {
+            self.attachments = attachments;
+            changed = true;
+        }
+        self.touched |= changed;
+        self.field = Field::Body;
+    }
+
     /// Pasted text goes where the cursor is. In an address field what is
     /// now being typed is looked up, as if it had been typed.
     pub fn paste(&mut self, text: &str) -> Did {
+        if self.away.is_some() {
+            return Did::Handled;
+        }
         self.error = None;
         self.doubts.clear();
         if let Some(path) = &mut self.attaching {
@@ -342,6 +411,15 @@ impl Compose {
     /// Takes a key. `accounts` is how many accounts there are to send
     /// from; the From field moves between them.
     pub fn key(&mut self, chord: KeyChord, accounts: &[LocalAccountId]) -> Did {
+        if self.away.is_some() {
+            // The message is in Vim. A key that would have been typing
+            // goes nowhere; one held with ctrl or cmd may be a command.
+            let held = chord.mods.ctrl || chord.mods.cmd || chord.mods.alt;
+            return match chord.key {
+                Key::Char(_) | Key::Enter | Key::Backspace | Key::Delete if !held => Did::Handled,
+                _ => Did::Nothing,
+            };
+        }
         if self.sending {
             // Keys wait while the message is being handed over.
             return match chord.key {

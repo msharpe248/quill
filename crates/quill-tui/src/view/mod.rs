@@ -4,6 +4,7 @@ mod attachments;
 mod compose;
 mod folders;
 pub mod help;
+mod hooks;
 mod links;
 mod list;
 mod palette;
@@ -108,6 +109,8 @@ pub fn render(frame: &mut Frame, state: &State, env: &Env) -> Overlays {
             templates::render(frame, rect, state, env);
         } else if state.suggestions.is_some() {
             suggestions::render(frame, rect, state, env);
+        } else if state.hooks.is_some() {
+            hooks::render(frame, rect, state, env);
         } else if state.attachments.is_some() {
             attachments::render(frame, rect, state, env);
         } else {

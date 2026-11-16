@@ -15,11 +15,12 @@ use quill_store::{AccountRow, DraftContent, DraftId, FolderRow, Mailbox, Message
 use quill_sync::{SyncEvent, SyncRequest};
 
 use crate::command::{CommandId, Context, Registry};
-use crate::compose::{Compose, Did, Field, Prefill};
+use crate::compose::{Away, Compose, Did, Field, Prefill};
 use crate::data::{Bulk, DataEvent, DataRequest, FileUse, LoadedBody, PageUse};
 use crate::editor::Editor;
 use crate::files::RemoteContent;
 use crate::files::{AttachedFile, ExtractedFile};
+use crate::hook::{Hook, HookOutcome, HookRun};
 use crate::input::LineInput;
 use crate::invite::CardRow;
 use crate::keymap::{Key, KeyChord, Keymap, Mods, Resolution};
@@ -33,6 +34,7 @@ use crate::setup::{
 };
 use crate::template::{self, Template};
 use crate::theme::Styles;
+use crate::vim::Verdict;
 use crate::{text, view};
 pub use mouse::{Mouse, MouseKind};
 
@@ -92,6 +94,19 @@ pub struct Env {
     /// Whether the host has a spelling checker to ask. A terminal has
     /// none.
     pub spell_check: bool,
+    /// Whether the host runs Vim itself, in a pane of its own, as
+    /// Quill's app does. In a terminal Quill runs the user's own Vim
+    /// there, and gives it a copy of the plugin.
+    pub editor_pane: bool,
+    /// The program a terminal runs as Vim, when it is not to be `vim`.
+    pub vim_program: Option<std::ffi::OsString>,
+    /// The user's programs that a message can be given to, from
+    /// `hooks.toml`.
+    pub hooks: Vec<Hook>,
+    /// Whether the user's programs may be run from here at all. Never in
+    /// Quill's own app: it is sandboxed, and starts nothing outside its
+    /// bundle.
+    pub hooks_enabled: bool,
 }
 
 impl Env {
@@ -117,6 +132,9 @@ pub struct ComposeSettings {
     pub undo_send_seconds: u32,
     /// Check the spelling of what is written, where the host can.
     pub spell_check: bool,
+    /// A message is written in Vim from the start (`editor = "vim"`).
+    /// Otherwise only when asked for.
+    pub vim: bool,
 }
 
 impl Default for ComposeSettings {
@@ -126,6 +144,7 @@ impl Default for ComposeSettings {
             reply_above: true,
             undo_send_seconds: 10,
             spell_check: true,
+            vim: false,
         }
     }
 }
@@ -193,6 +212,17 @@ pub enum Action {
     Suggestions {
         id: u64,
         words: Vec<String>,
+    },
+    /// The answer to [`HostRequest::EditDraft`]: Vim has gone, with this
+    /// exit status, or (`ran` false) could not be started at all.
+    EditorExited {
+        ran: bool,
+        status: i32,
+    },
+    /// The answer to [`HostRequest::RunHook`].
+    HookDone {
+        name: String,
+        outcome: HookOutcome,
     },
 }
 
@@ -273,6 +303,21 @@ pub enum HostRequest {
     /// Ask what a misspelt word might have been meant to be. Answered by
     /// [`Action::Suggestions`].
     SpellSuggest { id: u64, word: String },
+    /// Run Vim on a draft file: `path` in the draft's own folder `dir`.
+    /// Quill's app does it in a pane; in a terminal Vim takes the
+    /// terminal until it is done. Answered by [`Action::EditorExited`].
+    EditDraft {
+        path: PathBuf,
+        dir: PathBuf,
+        title: String,
+    },
+    /// Close the host's pane. With Vim in it, that is asking Vim to save
+    /// and go.
+    ClosePane,
+    /// Run one of the user's programs on a message. Only ever on the
+    /// user's own key press, and never in Quill's own app. Answered by
+    /// [`Action::HookDone`].
+    RunHook(Box<HookRun>),
 }
 
 /// What the app shell mirrors: enough to enable menu items, badge the Dock
@@ -529,6 +574,41 @@ pub struct TemplatePicker {
     /// How many templates there are before any narrowing, which is how
     /// tall the box is.
     pub total: usize,
+}
+
+/// The user's hooks, open to choose one to give a message to. Typing
+/// narrows the list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HookPicker {
+    /// The message the chosen program is given: the one the user was on
+    /// when the list was opened.
+    pub message: LocalMessageId,
+    pub filter: LineInput,
+    pub selected: usize,
+    pub offset: usize,
+    /// How many hooks there are before any narrowing, which is how tall
+    /// the box is.
+    pub total: usize,
+}
+
+/// A message handed to Vim: what is needed to take it back.
+#[derive(Debug)]
+struct VimEdit {
+    /// The message as it was written out. Reading the file back starts
+    /// from this.
+    handed: DraftContent,
+    /// The draft's own folder, once it is made.
+    dir: Option<PathBuf>,
+}
+
+/// What to do with a message that has come back from Vim, once the files
+/// it newly names have been attached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AfterVim {
+    verdict: Option<Verdict>,
+    /// A file it named could not be attached. The message stays open,
+    /// with the reason on show: it is not sent or put away without it.
+    attach_failed: bool,
 }
 
 /// Other spellings of a word in the message being written, open to choose
@@ -819,6 +899,16 @@ pub struct State {
     /// Other spellings of a word to choose from, over the message being
     /// written.
     pub suggestions: Option<SuggestionPicker>,
+    /// The hooks to choose from, over the message one is for.
+    pub hooks: Option<HookPicker>,
+    /// The hook that is running, by name. One runs at a time.
+    hook_running: Option<String>,
+    /// The message Vim has, while it has it.
+    vim: Option<VimEdit>,
+    /// A message has just opened that is to go to Vim at once.
+    vim_wanted: bool,
+    /// What Vim said to do with the message it gave back.
+    after_vim: Option<AfterVim>,
     spell: Spell,
     /// The question to answer before unsubscribing from a list.
     pub unsubscribe: Option<UnsubscribePrompt>,
@@ -886,6 +976,11 @@ impl State {
             folders: None,
             templates: None,
             suggestions: None,
+            hooks: None,
+            hook_running: None,
+            vim: None,
+            vim_wanted: false,
+            after_vim: None,
             spell: Spell::default(),
             unsubscribe: None,
             compose: None,
@@ -958,6 +1053,9 @@ impl State {
         if self.suggestions.is_some() {
             return Context::Suggestions;
         }
+        if self.hooks.is_some() {
+            return Context::Hooks;
+        }
         if self.compose.is_some() {
             return Context::Compose;
         }
@@ -1004,6 +1102,19 @@ impl State {
             }
             Action::Spelling { id, words } => self.on_spelling(id, &words),
             Action::Suggestions { id, words } => self.on_suggestions(id, words),
+            Action::EditorExited { ran, status } => {
+                self.on_editor_exited(env, ran, status, &mut out);
+            }
+            Action::HookDone { name, outcome } => {
+                self.hook_running = None;
+                let said = outcome.said(&name);
+                if outcome.succeeded() {
+                    self.flash = Some((said, false));
+                } else {
+                    // A failure is not to be missed for the next key.
+                    self.notices.push_back(Notice::error(said));
+                }
+            }
             Action::ClockTick(now) => {
                 // Dates are drawn relative to today, so only a new day shows.
                 changed = text::local_day(now, &env.tz) != text::local_day(self.now, &env.tz);
@@ -1044,6 +1155,13 @@ impl State {
                 }
                 Context::Templates => {
                     if let Some(picker) = &mut self.templates {
+                        picker.filter.insert(&text);
+                        picker.selected = 0;
+                        picker.offset = 0;
+                    }
+                }
+                Context::Hooks => {
+                    if let Some(picker) = &mut self.hooks {
                         picker.filter.insert(&text);
                         picker.selected = 0;
                         picker.offset = 0;
@@ -1110,7 +1228,24 @@ impl State {
             }
         }
         if let Some(prefill) = self.compose_pending.take() {
-            self.open_compose(env, *prefill);
+            if self
+                .compose
+                .as_ref()
+                .is_some_and(|compose| compose.away.is_some())
+            {
+                // Vim has a message, and it is not put aside for another.
+                self.flash = Some((
+                    "A message is being written in Vim. Finish it first.".to_owned(),
+                    false,
+                ));
+            } else {
+                self.open_compose(env, *prefill);
+            }
+        }
+        // With `editor = "vim"` a message goes to Vim as soon as it is
+        // open with what it starts from.
+        if std::mem::take(&mut self.vim_wanted) {
+            self.start_vim(env, &mut out);
         }
         self.settle_notifications(&mut out);
         // With no accounts there is nothing to read: offer to add one,
@@ -1172,6 +1307,16 @@ impl State {
             }
             Context::Templates => {
                 if let Some(picker) = &mut self.templates
+                    && picker.filter.key(chord)
+                {
+                    // A narrower list starts again from its top.
+                    picker.selected = 0;
+                    picker.offset = 0;
+                    return;
+                }
+            }
+            Context::Hooks => {
+                if let Some(picker) = &mut self.hooks
                     && picker.filter.key(chord)
                 {
                     // A narrower list starts again from its top.
@@ -1250,6 +1395,8 @@ impl State {
             && let Some(compose) = &mut self.compose
         {
             match id {
+                // In Vim, the message has no field here to move to.
+                CommandId::FocusNext | CommandId::FocusPrev if compose.away.is_some() => return,
                 CommandId::FocusNext => {
                     compose.move_field(true);
                     return;
@@ -1334,6 +1481,7 @@ impl State {
                 self.answer_unsubscribe(env, out);
             }
             CommandId::NavOpen if context == Context::Templates => self.insert_template(env),
+            CommandId::NavOpen if context == Context::Hooks => self.run_hook(env, out),
             CommandId::NavOpen if context == Context::Suggestions => self.use_suggestion(),
             CommandId::NavOpen if context == Context::Folders => {
                 if let Some(picker) = self.folders.take()
@@ -1430,7 +1578,30 @@ impl State {
                     });
                 }
             }
-            CommandId::ComposeSend => self.send(env, None, out),
+            // While Vim has the message, what is here is what it was:
+            // Vim is asked to send what it has, and its going does the rest.
+            CommandId::ComposeSend => match self.vim_dir() {
+                Some(dir) => {
+                    out.data.push(DataRequest::EditTell {
+                        dir,
+                        verdict: Verdict::Send,
+                    });
+                    self.flash = Some(("Asked Vim to send it.".to_owned(), false));
+                }
+                None => self.send(env, None, out),
+            },
+            CommandId::ComposeVim => self.start_vim(env, out),
+            CommandId::MessageHook => {
+                if let Some(message) = self.hook_message() {
+                    self.hooks = Some(HookPicker {
+                        message,
+                        filter: LineInput::default(),
+                        selected: 0,
+                        offset: 0,
+                        total: env.hooks.len(),
+                    });
+                }
+            }
             CommandId::ComposeSendLater => {
                 self.when = Some(WhenPrompt {
                     input: LineInput::default(),
@@ -1453,7 +1624,13 @@ impl State {
                 }
             }
             CommandId::ComposeSave => {
-                if let Some(compose) = &self.compose {
+                if let Some(dir) = self.vim_dir() {
+                    out.data.push(DataRequest::EditTell {
+                        dir,
+                        verdict: Verdict::Postpone,
+                    });
+                    self.flash = Some(("Asked Vim to save it as a draft.".to_owned(), false));
+                } else if let Some(compose) = &self.compose {
                     out.data.push(DataRequest::SaveDraft {
                         draft: compose.draft,
                         account: compose.account,
@@ -1688,10 +1865,29 @@ impl State {
                 self.target_row()
                     .is_some_and(|row| DraftId::from_message_id(row.id).is_none())
             }
-            CommandId::ComposeSend | CommandId::ComposeSendLater => self
+            // A message in Vim is sent and saved by asking Vim; while it
+            // is on its way there or back there is nobody to ask.
+            CommandId::ComposeSend | CommandId::ComposeSave => {
+                self.compose.as_ref().is_some_and(|compose| {
+                    !compose.sending && matches!(compose.away, None | Some(Away::InVim))
+                })
+            }
+            // Everything else about writing waits for it to come back.
+            CommandId::ComposeSendLater | CommandId::ComposeVim => self
                 .compose
                 .as_ref()
-                .is_some_and(|compose| !compose.sending),
+                .is_some_and(|compose| !compose.sending && compose.away.is_none()),
+            CommandId::ComposeAttach | CommandId::ComposeBcc => self
+                .compose
+                .as_ref()
+                .is_none_or(|compose| compose.away.is_none()),
+            CommandId::MessageHook => {
+                env.hooks_enabled && !env.hooks.is_empty() && self.hook_message().is_some()
+            }
+            CommandId::NavOpen if context == Context::Hooks => self
+                .hooks
+                .as_ref()
+                .is_some_and(|picker| !self.hook_choices(env, picker).is_empty()),
             CommandId::MessageSnooze => self
                 .targets()
                 .iter()
@@ -1712,6 +1908,7 @@ impl State {
                         compose.field == Field::Body
                             && compose.attaching.is_none()
                             && !compose.sending
+                            && compose.away.is_none()
                             && compose.body.misspelling_at_cursor().is_some()
                     })
             }
@@ -1720,6 +1917,7 @@ impl State {
                     && self.compose.as_ref().is_some_and(|compose| {
                         compose.attaching.is_none()
                             && !compose.sending
+                            && compose.away.is_none()
                             && compose.body.has_misspellings()
                     })
             }
@@ -1730,10 +1928,9 @@ impl State {
             }
             CommandId::ComposeTemplate => {
                 !env.templates.is_empty()
-                    && self
-                        .compose
-                        .as_ref()
-                        .is_some_and(|compose| !compose.sending && compose.attaching.is_none())
+                    && self.compose.as_ref().is_some_and(|compose| {
+                        !compose.sending && compose.attaching.is_none() && compose.away.is_none()
+                    })
             }
             CommandId::MessageUnsubscribe => self.unsubscribe_offer(env, context).is_some(),
             // Only where the body's own selection is the one meant.
@@ -1742,11 +1939,15 @@ impl State {
                     compose.field == Field::Body
                         && compose.attaching.is_none()
                         && !compose.sending
+                        && compose.away.is_none()
                         && compose.body.selection().is_some()
                 })
             }
             CommandId::EditSelectAll => self.compose.as_ref().is_some_and(|compose| {
-                compose.field == Field::Body && compose.attaching.is_none() && !compose.sending
+                compose.field == Field::Body
+                    && compose.attaching.is_none()
+                    && !compose.sending
+                    && compose.away.is_none()
             }),
             // A draft is in no folder of any server: it can be thrown away,
             // not filed or flagged.
@@ -1787,6 +1988,7 @@ impl State {
                     || self.folders.is_some()
                     || self.templates.is_some()
                     || self.suggestions.is_some()
+                    || self.hooks.is_some()
                     || self.unsubscribe.is_some()
                     || self.compose.is_some()
                     || self.setup.is_some()
@@ -1909,6 +2111,15 @@ impl State {
         if let Some(picker) = &mut self.suggestions {
             let page = areas.links.map_or(1, layout::inner_height).max(1);
             picker.selected = step(picker.selected, picker.words.len(), motion, page);
+            return;
+        }
+        if let Some(picker) = &self.hooks {
+            let count = self.hook_choices(env, picker).len();
+            let page = areas.links.map_or(1, layout::inner_height).max(1);
+            let selected = step(picker.selected, count, motion, page);
+            if let Some(picker) = &mut self.hooks {
+                picker.selected = selected;
+            }
             return;
         }
         match self.focus {
@@ -2042,25 +2253,18 @@ impl State {
             self.templates = None;
         } else if self.suggestions.is_some() {
             self.suggestions = None;
-        } else if let Some(compose) = self.compose.take() {
-            // Closing keeps what was written. A reply opened and closed
-            // untouched leaves nothing behind, and a draft emptied out is
-            // a draft thrown away.
-            if compose.sending {
-                // It is on its way to the outbox; there is nothing to keep.
-            } else if !compose.is_blank() {
-                if compose.is_modified() {
-                    out.data.push(DataRequest::SaveDraft {
-                        draft: compose.draft,
-                        account: compose.account,
-                        content: Box::new(compose.content()),
-                        announce: true,
-                    });
-                }
-            } else if let Some(draft) = compose.draft {
-                out.data.push(DataRequest::Delete(draft.as_message_id()));
+        } else if self.hooks.is_some() {
+            self.hooks = None;
+        } else if let Some(away) = self.compose.as_ref().and_then(|compose| compose.away) {
+            // Vim has the message. Closing here would close it on what it
+            // was before: Vim is asked to save and go instead, and the
+            // message comes back to be sent, saved or closed.
+            if away == Away::InVim {
+                out.host.push(HostRequest::ClosePane);
+                self.flash = Some(("Asked Vim to save and close.".to_owned(), false));
             }
-            self.set_focus(Pane::List);
+        } else if self.compose.is_some() {
+            self.put_away(false, out);
         } else if self.notices.pop_front().is_some() {
             // One notice dismissed per press.
         } else if self.list.has_marks() && self.focus != Pane::Reader {
@@ -2091,6 +2295,32 @@ impl State {
                 Pane::Sidebar | Pane::List => {}
             }
         }
+    }
+
+    /// Closes the message being written, keeping what was written. A
+    /// reply opened and closed untouched leaves nothing behind, and a
+    /// draft emptied out is a draft thrown away. `asked`: saving is what
+    /// the user asked for, so it is said to be saved even when the draft
+    /// already had everything.
+    fn put_away(&mut self, asked: bool, out: &mut Effects) {
+        let Some(compose) = self.compose.take() else {
+            return;
+        };
+        if compose.sending {
+            // It is on its way to the outbox; there is nothing to keep.
+        } else if !compose.is_blank() {
+            if compose.is_modified() || asked {
+                out.data.push(DataRequest::SaveDraft {
+                    draft: compose.draft,
+                    account: compose.account,
+                    content: Box::new(compose.content()),
+                    announce: true,
+                });
+            }
+        } else if let Some(draft) = compose.draft {
+            out.data.push(DataRequest::Delete(draft.as_message_id()));
+        }
+        self.set_focus(Pane::List);
     }
 
     /// What to ask of the store as Quill closes: a message being written
@@ -2247,9 +2477,14 @@ impl State {
         }
         compose.body.mark_saved();
         self.compose = Some(compose);
+        // Whatever Vim had belonged to a message that is no longer here:
+        // its folder is cleared away when Vim goes.
+        self.after_vim = None;
+        self.vim_wanted = env.compose.vim;
         self.help = None;
         self.links = None;
         self.folders = None;
+        self.hooks = None;
         // What was known of the last message's spelling says nothing of
         // this one's. A check still out is waited for, and then dropped.
         self.suggestions = None;
@@ -2259,6 +2494,251 @@ impl State {
             *revision = None;
         }
         self.set_focus(Pane::Reader);
+    }
+
+    /// The folder of the draft Vim is running on, while it is.
+    fn vim_dir(&self) -> Option<PathBuf> {
+        let compose = self.compose.as_ref()?;
+        (compose.away == Some(Away::InVim))
+            .then(|| self.vim.as_ref()?.dir.clone())
+            .flatten()
+    }
+
+    /// Hands the message being written to Vim: asks for it to be written
+    /// out as a draft file. Vim is started when that is done.
+    fn start_vim(&mut self, env: &Env, out: &mut Effects) {
+        let Some(compose) = &mut self.compose else {
+            return;
+        };
+        if compose.sending || compose.away.is_some() {
+            return;
+        }
+        compose.completion = None;
+        compose.attaching = None;
+        compose.doubts.clear();
+        compose.error = None;
+        let content = compose.content();
+        // Saved first, so that whatever becomes of Vim or of the terminal
+        // it takes over, what has been written so far is a draft.
+        if compose.is_modified() && !compose.is_blank() {
+            out.data.push(DataRequest::SaveDraft {
+                draft: compose.draft,
+                account: compose.account,
+                content: Box::new(content.clone()),
+                announce: false,
+            });
+        }
+        compose.away = Some(Away::Leaving);
+        out.data.push(DataRequest::EditOut {
+            account: compose.account,
+            content: Box::new(content.clone()),
+            // Quill's own Vim has the plugin beside it; the user's is
+            // given a copy.
+            plugin: !env.editor_pane,
+        });
+        self.vim = Some(VimEdit {
+            handed: content,
+            dir: None,
+        });
+        self.templates = None;
+        self.suggestions = None;
+        self.when = None;
+    }
+
+    /// The draft file is written: have Vim run on it.
+    fn on_edit_ready(&mut self, dir: PathBuf, path: PathBuf, out: &mut Effects) {
+        match (&mut self.compose, &mut self.vim) {
+            (Some(compose), Some(edit)) if compose.away == Some(Away::Leaving) => {
+                compose.away = Some(Away::InVim);
+                edit.dir = Some(dir.clone());
+                let subject = compose.subject.text().trim();
+                let title = if subject.is_empty() {
+                    compose.title.to_owned()
+                } else {
+                    text::sanitize_line(subject)
+                };
+                out.host.push(HostRequest::EditDraft { path, dir, title });
+            }
+            // The message it was for has gone.
+            _ => {
+                self.vim = None;
+                out.data.push(DataRequest::EditDrop { dir });
+            }
+        }
+    }
+
+    /// Vim has gone, or never started.
+    fn on_editor_exited(&mut self, env: &Env, ran: bool, status: i32, out: &mut Effects) {
+        let Some(edit) = self.vim.take() else {
+            return;
+        };
+        let compose = self
+            .compose
+            .as_mut()
+            .filter(|compose| compose.away == Some(Away::InVim));
+        let (Some(compose), Some(dir)) = (compose, edit.dir.clone()) else {
+            // Nothing here is waiting for it: only its folder is left.
+            if let Some(dir) = edit.dir {
+                out.data.push(DataRequest::EditDrop { dir });
+            }
+            return;
+        };
+        if !ran {
+            compose.away = None;
+            // Said in the message's own pane, where the next key clears
+            // it: the message is still there to write.
+            compose.error = Some(
+                if env.editor_pane {
+                    "This copy of Quill has no Vim inside it, so the message stays here."
+                } else {
+                    "Vim could not be started, so the message stays here. Quill runs \
+                     the `vim` on your PATH."
+                }
+                .to_owned(),
+            );
+            out.data.push(DataRequest::EditDrop { dir });
+        } else if status != 0 {
+            // `:cq`, or a crash: never mind. The message is as it was.
+            compose.away = None;
+            self.flash = Some((
+                "Vim quit without handing the message back: it is as it was.".to_owned(),
+                false,
+            ));
+            out.data.push(DataRequest::EditDrop { dir });
+        } else {
+            compose.away = Some(Away::Returning);
+            out.data.push(DataRequest::EditBack {
+                dir,
+                before: Box::new(edit.handed.clone()),
+            });
+            self.vim = Some(edit);
+        }
+    }
+
+    /// What was written in Vim has been read: the message takes it, and
+    /// then what Vim said is done with it.
+    fn on_edit_back(
+        &mut self,
+        file: quill_store::draft_file::DraftFile,
+        verdict: Option<Verdict>,
+        out: &mut Effects,
+    ) {
+        let Some(edit) = self.vim.take() else {
+            return;
+        };
+        let Some(compose) = self
+            .compose
+            .as_mut()
+            .filter(|compose| compose.away == Some(Away::Returning))
+        else {
+            return;
+        };
+        compose.take_back(file.content, edit.handed.attachments.len());
+        if verdict == Some(Verdict::Discard) {
+            // Thrown away, files and all: nothing more is attached to it.
+            compose.away = None;
+            self.discard_compose(out);
+            return;
+        }
+        // Files newly named are attached as if their paths had been typed
+        // here, with the same limits. What Vim said waits for them: the
+        // store answers `Settle` only once it has dealt with them all.
+        out.data.extend(
+            file.attach
+                .into_iter()
+                .map(|path| DataRequest::Attach { path, handed: None }),
+        );
+        self.after_vim = Some(AfterVim {
+            verdict,
+            attach_failed: false,
+        });
+        out.data.push(DataRequest::Settle);
+    }
+
+    /// The message is back from Vim with its files attached: send it,
+    /// put it away, or leave it open, as Vim said.
+    fn after_vim(&mut self, env: &Env, out: &mut Effects) {
+        let Some(after) = self.after_vim.take() else {
+            return;
+        };
+        let Some(compose) = self
+            .compose
+            .as_mut()
+            .filter(|compose| compose.away == Some(Away::Returning))
+        else {
+            return;
+        };
+        compose.away = None;
+        if after.attach_failed {
+            // Why is on show. The message stays, for the user to decide.
+            return;
+        }
+        match after.verdict {
+            Some(Verdict::Send) => self.send(env, None, out),
+            Some(Verdict::Postpone) => self.put_away(true, out),
+            Some(Verdict::Discard) => self.discard_compose(out),
+            // `:wq` with nothing said: the message is here, to send, to
+            // save or to close.
+            None => self.flash = Some(("Back from Vim.".to_owned(), false)),
+        }
+    }
+
+    /// Throws the message being written away, and its draft with it.
+    fn discard_compose(&mut self, out: &mut Effects) {
+        let Some(compose) = self.compose.take() else {
+            return;
+        };
+        match compose.draft {
+            // The store says so once it is gone.
+            Some(draft) => out.data.push(DataRequest::Delete(draft.as_message_id())),
+            None => self.flash = Some(("Thrown away.".to_owned(), false)),
+        }
+        self.set_focus(Pane::List);
+    }
+
+    /// The message a hook would be given: the one the user is on, when it
+    /// is mail and not something still being written.
+    fn hook_message(&self) -> Option<LocalMessageId> {
+        self.target_row()
+            .map(|row| row.id)
+            .filter(|id| DraftId::from_message_id(*id).is_none())
+    }
+
+    /// The hooks the picker offers, as places in `env.hooks`: those whose
+    /// names what has been typed narrows to.
+    pub fn hook_choices(&self, env: &Env, picker: &HookPicker) -> Vec<usize> {
+        env.hooks
+            .iter()
+            .enumerate()
+            .filter(|(_, hook)| template::narrows(picker.filter.text(), &hook.name))
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    /// Gives the message to the chosen hook: asks the store for the
+    /// message in the form the hook wants. The program is started when
+    /// that arrives.
+    fn run_hook(&mut self, env: &Env, out: &mut Effects) {
+        let Some(picker) = self.hooks.take() else {
+            return;
+        };
+        let chosen = self
+            .hook_choices(env, &picker)
+            .get(picker.selected)
+            .and_then(|index| env.hooks.get(*index));
+        let Some(hook) = chosen.filter(|_| env.hooks_enabled) else {
+            return;
+        };
+        if let Some(running) = &self.hook_running {
+            self.flash = Some((format!("{running} is still running."), false));
+            return;
+        }
+        self.hook_running = Some(hook.name.clone());
+        self.flash = Some((format!("Running {}…", hook.name), false));
+        out.data.push(DataRequest::ReadForHook {
+            message: picker.message,
+            hook: Box::new(hook.clone()),
+        });
     }
 
     /// Whether spelling is checked at all: the user wants it and the host
@@ -3696,6 +4176,42 @@ impl State {
                 if let Some(compose) = &mut self.compose {
                     compose.error = Some(text::sanitize_line(&reason));
                 }
+                if let Some(after) = &mut self.after_vim {
+                    after.attach_failed = true;
+                }
+            }
+            DataEvent::EditReady { dir, path } => self.on_edit_ready(dir, path, out),
+            DataEvent::EditFailed(reason) => {
+                self.vim = None;
+                if let Some(compose) = &mut self.compose
+                    && compose.away.take().is_some()
+                {
+                    compose.error = Some(text::sanitize_line(&reason));
+                }
+            }
+            DataEvent::EditBack { file, verdict } => self.on_edit_back(*file, verdict, out),
+            DataEvent::EditUnread(reason) => {
+                // Nothing came back: the message is as it was before Vim.
+                self.vim = None;
+                if let Some(compose) = &mut self.compose
+                    && compose.away.take().is_some()
+                {
+                    compose.error = Some(text::sanitize_line(&reason));
+                }
+            }
+            DataEvent::Settled => self.after_vim(env, out),
+            DataEvent::HookReady(run) => {
+                // Asked for by a key a moment ago, and still not something
+                // Quill's own app ever does.
+                if env.hooks_enabled {
+                    out.host.push(HostRequest::RunHook(run));
+                } else {
+                    self.hook_running = None;
+                }
+            }
+            DataEvent::HookUnread(reason) => {
+                self.hook_running = None;
+                self.flash = Some((text::sanitize_line(&reason), false));
             }
             DataEvent::ComposeReady(prefill) => self.compose_pending = Some(prefill),
             DataEvent::Extracted { files, index, then } => {
@@ -3928,6 +4444,22 @@ impl State {
             let count = self.template_choices(env, picker).len();
             let rect = layout::compute(self, self.size, env.reader_width).links;
             if let Some(picker) = &mut self.templates {
+                picker.selected = picker.selected.min(count.saturating_sub(1));
+                if let Some(rect) = rect {
+                    keep_visible(
+                        &mut picker.offset,
+                        picker.selected,
+                        // One row of the box is the line being typed.
+                        layout::inner_height(rect).saturating_sub(1),
+                        count,
+                    );
+                }
+            }
+        }
+        if let Some(picker) = &self.hooks {
+            let count = self.hook_choices(env, picker).len();
+            let rect = layout::compute(self, self.size, env.reader_width).links;
+            if let Some(picker) = &mut self.hooks {
                 picker.selected = picker.selected.min(count.saturating_sub(1));
                 if let Some(rect) = rect {
                     keep_visible(

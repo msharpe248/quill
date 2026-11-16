@@ -61,4 +61,4 @@ expression: harness.screen()
 │                          ││                                                                                    │┃ The message mentions an attachment and has none.                                   ┃
 │                          ││                                                                                    │┃ cmd-enter again sends it as it is.                                                 ┃
 └──────────────────────────┘└────────────────────────────────────────────────────────────────────────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
- cmd-enter send  cmd-s save draft  cmd-A attach  tab next field  esc close
+ cmd-enter send  cmd-s save draft  cmd-A attach  tab next field  esc close  cmd-E Vim

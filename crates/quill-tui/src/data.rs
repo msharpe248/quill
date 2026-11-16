@@ -17,7 +17,9 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::compose::Prefill;
 use crate::files::{self, AttachedFile, ExtractedFile, Files, RemoteContent, WebPage};
+use crate::hook::{self, Hook, HookInput, HookRun};
 use crate::outgoing::{self, Response, SendRequest};
+use crate::vim::{self, Verdict};
 
 /// What a message's page is wanted for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,6 +140,39 @@ pub enum DataRequest {
         message: LocalMessageId,
         part: u32,
     },
+    /// Write the message being written out as a draft file for Vim, in a
+    /// folder of its own. `plugin`: put a copy of Quill's Vim plugin
+    /// beside it, for a Vim that is not Quill's own.
+    EditOut {
+        account: LocalAccountId,
+        content: Box<DraftContent>,
+        plugin: bool,
+    },
+    /// Vim has gone: read the draft file and what Vim said to do with it,
+    /// and remove the folder. `before` is the draft as it was written out.
+    EditBack {
+        dir: std::path::PathBuf,
+        before: Box<DraftContent>,
+    },
+    /// Remove a draft's folder unread: Vim never ran on it, or what it
+    /// left is not wanted.
+    EditDrop {
+        dir: std::path::PathBuf,
+    },
+    /// Tell the Vim running on a draft's folder to do this with it now.
+    EditTell {
+        dir: std::path::PathBuf,
+        verdict: Verdict,
+    },
+    /// Nothing to do but answer: the answer comes when everything asked
+    /// before this has been done.
+    Settle,
+    /// Read a message in the form a hook takes it, ready to give to the
+    /// hook's program. Nothing is run here.
+    ReadForHook {
+        message: LocalMessageId,
+        hook: Box<Hook>,
+    },
 }
 
 /// The most messages a search shows. Past this the thing to do is to say
@@ -232,6 +267,27 @@ pub enum DataEvent {
     /// The message to answer has not been downloaded: this is the request
     /// to make again once it has.
     RespondNeedsBody(Box<DataRequest>),
+    /// The message being written is in a draft file at `path`, in the
+    /// folder `dir`, for Vim.
+    EditReady {
+        dir: std::path::PathBuf,
+        path: std::path::PathBuf,
+    },
+    /// It could not be written out, and why. Nothing was left behind.
+    EditFailed(String),
+    /// What was written in Vim, and what Vim said to do with it.
+    EditBack {
+        file: Box<quill_store::draft_file::DraftFile>,
+        verdict: Option<Verdict>,
+    },
+    /// What was written in Vim could not be read, and why.
+    EditUnread(String),
+    /// The answer to [`DataRequest::Settle`].
+    Settled,
+    /// A hook and its message, ready to run.
+    HookReady(Box<HookRun>),
+    /// The message cannot be given to a hook, and why.
+    HookUnread(String),
     /// Something done, in a few words, to show until the next key.
     /// `undoable` says the undo command would take it back.
     Flash {
@@ -514,6 +570,34 @@ fn run(
                 Err(problem) => vec![flash(&problem.0)],
             }
         }
+        DataRequest::EditOut {
+            account,
+            content,
+            plugin,
+        } => match vim::hand_out(store, files, account, &content, plugin) {
+            Ok(out) => vec![DataEvent::EditReady {
+                dir: out.dir,
+                path: out.path,
+            }],
+            Err(why) => vec![DataEvent::EditFailed(why)],
+        },
+        DataRequest::EditBack { dir, before } => match vim::take_back(files, &dir, &before) {
+            Ok((file, verdict)) => vec![DataEvent::EditBack {
+                file: Box::new(file),
+                verdict,
+            }],
+            Err(why) => vec![DataEvent::EditUnread(why)],
+        },
+        DataRequest::EditDrop { dir } => {
+            vim::drop_folder(files, &dir);
+            Vec::new()
+        }
+        DataRequest::EditTell { dir, verdict } => match vim::tell(files, &dir, verdict) {
+            Ok(()) => Vec::new(),
+            Err(why) => vec![flash(&why)],
+        },
+        DataRequest::Settle => vec![DataEvent::Settled],
+        DataRequest::ReadForHook { message, hook } => read_for_hook(store, message, &hook)?,
         DataRequest::Undo => {
             let at = now();
             let undone = match store.undoable(at)? {
@@ -541,6 +625,33 @@ fn run(
             }
         }
     })
+}
+
+/// Reads a message for a hook: as it arrived, or as its headers and plain
+/// text. A message that is not here in that form says so.
+fn read_for_hook(
+    store: &Store,
+    message: LocalMessageId,
+    hook: &Hook,
+) -> quill_store::Result<Vec<DataEvent>> {
+    let unread = |why: &str| Ok(vec![DataEvent::HookUnread(why.to_owned())]);
+    let Some(row) = store.message_rows(&[message])?.into_iter().next() else {
+        return unread("That message is no longer here.");
+    };
+    let not_downloaded = "That message has not been downloaded yet. Open it first.";
+    let input = match hook.input {
+        HookInput::Raw => match store.raw(message)? {
+            Some(raw) => raw,
+            None => return unread(not_downloaded),
+        },
+        HookInput::Text => match store.body(message)? {
+            Some(body) => hook::as_text(&row, &body).into_bytes(),
+            None => return unread(not_downloaded),
+        },
+    };
+    Ok(vec![DataEvent::HookReady(Box::new(HookRun::new(
+        hook, &row, input,
+    )))])
 }
 
 /// Changes a message's flags here and queues the change for its server.
