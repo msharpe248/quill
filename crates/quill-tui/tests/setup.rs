@@ -40,6 +40,7 @@ fn found(address: &str) -> AccountEvent {
             found: true,
             note: Some("Found in the DNS records of example.com.".to_owned()),
             microsoft_application: None,
+            microsoft_own: false,
         },
     }
 }

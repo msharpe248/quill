@@ -14,9 +14,9 @@ use quill_host::bridge::{
 };
 
 use super::{
-    ADDRESS_NOTE, AccountRequest, Kind, MICROSOFT_NOTE, NO_ENCRYPTION, NO_SENDING, SECURITIES,
-    ServerField, Setup, Step, UNREADABLE_CERTIFICATE, certificate_note, certificate_reason,
-    grouped_fingerprint, security_label,
+    ADDRESS_NOTE, AccountRequest, Kind, MICROSOFT_NOTE, MICROSOFT_OWN_NOTE, NO_ENCRYPTION,
+    NO_SENDING, SECURITIES, ServerField, Setup, Step, UNREADABLE_CERTIFICATE, certificate_note,
+    certificate_reason, grouped_fingerprint, security_label,
 };
 use crate::input::LineInput;
 use crate::text;
@@ -279,6 +279,18 @@ impl Setup {
                 ));
                 fields.push(server(ServerField::Name, "Name:", &self.name, None));
                 match self.kind {
+                    // Signing in as Quill itself: nothing more to fill in.
+                    Kind::Microsoft if self.own_application => {
+                        let mut address = shown(
+                            ADDRESS,
+                            "Address:",
+                            text::sanitize_line(self.address.text()),
+                        );
+                        if let FormField::Static { help, .. } = &mut address {
+                            *help = Some(MICROSOFT_OWN_NOTE.to_owned());
+                        }
+                        fields.push(address);
+                    }
                     Kind::Microsoft => {
                         fields.push(shown(
                             ADDRESS,

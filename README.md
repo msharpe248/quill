@@ -20,7 +20,7 @@ Every milestone in the spec, M0 to M10, is built. M0 to M4 and POP3 have passed 
 
 What needs a person, in the order it is worth doing:
 
-1. **Register Quill with Microsoft and Google** and put the two client ids in the config: [docs/oauth.md](docs/oauth.md) has the steps. (The form for adding an account takes the Microsoft one.) Then `S` on an account, or `quill account sign-in`, signs in. Nothing here has yet met a real Microsoft 365 or Gmail mailbox.
+1. **Sign in to a Microsoft account.** Add it from the form and Microsoft's sign-in page opens: Quill is registered with Microsoft and needs nothing from you but the sign-in. Nothing here has yet met a real Microsoft 365 or Outlook.com mailbox. Gmail by sign-in still needs an application registered with Google ([docs/oauth.md](docs/oauth.md)); Gmail with an app password does not.
 2. **Choose an editor**, if you would sooner write mail outside Quill's own: `editor = "vim"`, `"nano"` or `"script"` under `[compose]`. The last is your own Vim, with all of your setup, through `editor-command.sh`.
 3. **Allow notifications** when the app first asks, and make Quill the default mail program in Mail's settings if you want `mailto:` links to come here.
 4. **An Apple Developer account**, for signing and App Store validation. Deferred from M1, and the last thing outstanding.
@@ -60,7 +60,7 @@ Press `A` (or File, Add an Account in the app). Quill asks for:
 2. **The type and the servers.** "Type" is the kind of account: "IMAP (password)" for a mail server that takes a password, or "Microsoft (sign in)" for a Microsoft mailbox. Quill chooses it from the server it found; with the cursor on it, `←`/`→` changes it. For an IMAP account the servers follow, as found, to confirm or correct: the one mail is read from (its name, port, security and the name to sign in with) and, under "Send via", the one it is sent through. `tab` moves between the fields and `←`/`→` changes the security. Clear "Send via" to add an account that only reads.
 3. **The password.** Quill signs in to both servers to check it, and sends nothing. Only when that works is anything saved: the account in `config.toml`, the password in your Keychain and nowhere else. If reading works and sending does not, the form says so and goes back to the sending server.
 
-A Microsoft mailbox (Outlook.com, Hotmail, Microsoft 365) takes no password from a mail program, so its form has no servers and no password. It asks for a name, for the application id, and for a tenant, which most accounts leave empty. The application id is the "Application (client) ID" Microsoft shows once Quill is registered with it; [docs/oauth.md](docs/oauth.md) goes through that, and it is done once. If the config already has a Microsoft account, its application id is filled in for you. `enter` saves the account in `config.toml` and goes straight on to signing in with Microsoft, as described under "Microsoft 365 and Gmail" below. Nothing goes in the Keychain until you have signed in. Asked for an "IMAP (password)" account at one of Microsoft's servers, the form goes no further and says to change the type.
+A Microsoft mailbox (Outlook.com, Hotmail, Microsoft 365) takes no password from a mail program, so its form has no servers and no password: only a name to give the account. Continuing saves the account in `config.toml` and goes straight on to signing in with Microsoft, as described under "Microsoft 365 and Gmail" below. Nothing goes in the Keychain until you have signed in. Quill signs in as the application it is registered as with Microsoft; an account whose config names another (`oauth_client_id`) is shown that id and a tenant to change. Asked for an "IMAP (password)" account at one of Microsoft's servers, the form goes no further and says to change the type.
 
 In a terminal, `enter` goes on and `esc` goes back a step.
 
@@ -96,17 +96,18 @@ A Keychain item belongs to the program that made it. If you build Quill from sou
 
 A Microsoft 365 or Outlook.com mailbox is read and sent through Microsoft Graph, and signs in with OAuth: in your browser, at Microsoft, with Quill never seeing the password. Gmail can sign in the same way, in place of an app password.
 
-Both need an application id that you register with the provider once. [docs/oauth.md](docs/oauth.md) goes through it step by step.
+A provider has to know which application is asking. For Microsoft that is Quill itself: it is registered with Microsoft, and its application id is built in. For Google you register an application of your own once; [docs/oauth.md](docs/oauth.md) goes through it.
 
-With the id in hand, a Microsoft account is added from the form: press `A`, give the address, and at "Type: Microsoft (sign in)" give the application id (see "Adding an account" above). Quill saves the account and opens the sign-in at once. Written by hand, the same account is a few lines in `config.toml`:
+A Microsoft account is added from the form: press `A` and give the address (see "Adding an account" above). Quill saves the account and opens the sign-in at once. Written by hand, the same account is a few lines in `config.toml`:
 
 ```toml
 [[account]]
 name = "Work"
 type = "graph"
 address = "you@example.com"
-oauth_client_id = "the id of the application you registered"
 ```
+
+`oauth_client_id = "..."` on a Microsoft account makes it sign in as an application of your own instead of Quill's, and `oauth_tenant` keeps it to one organisation.
 
 A Gmail account that signs in this way is written by hand only; the form adds Gmail with an app password.
 

@@ -117,6 +117,8 @@ impl Service {
                 // The form reads no config: what it may offer from there
                 // goes with the answer.
                 found.microsoft_application = self.microsoft_application().await;
+                found.microsoft_own =
+                    found.microsoft_application.as_deref() == Some(oauth::MICROSOFT_APPLICATION);
                 AccountEvent::Discovered { address, found }
             }
             AccountRequest::Verify {
@@ -1343,6 +1345,7 @@ mod tests {
         let rig = Rig::new();
         let found = discovered(rig.service.handle(look.clone()).await);
         assert_eq!(found.microsoft_application.as_deref(), quills);
+        assert!(found.microsoft_own);
 
         // Only an application registered with Microsoft is offered: not
         // the one a Gmail account signs in to Google as.
@@ -1352,6 +1355,7 @@ mod tests {
         );
         let found = discovered(rig.service.handle(look.clone()).await);
         assert_eq!(found.microsoft_application.as_deref(), quills);
+        assert!(found.microsoft_own);
 
         // A Microsoft account's is, trimmed; one with none is passed over.
         write_config(
@@ -1361,6 +1365,9 @@ mod tests {
         );
         let found = discovered(rig.service.handle(look.clone()).await);
         assert_eq!(found.microsoft_application.as_deref(), Some("app-1"));
+        // That one is the account's own, and is shown to be changed;
+        // Quill's own is not.
+        assert!(!found.microsoft_own);
         // The rest of the answer is discovery's own.
         assert_eq!(found.draft.address, "sam@example.com");
         assert!(!found.found);

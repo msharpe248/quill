@@ -2,7 +2,7 @@
 
 Microsoft 365 and Gmail do not take a password from a mail program. You sign in to the provider in your browser, and the provider hands Quill a sign-in it can use from then on. Quill never sees your password, and keeps the sign-in in the macOS Keychain.
 
-For this the provider has to know which application is asking. Quill does not ship with an application id of its own: you register one, once, and give Quill its id. It takes about ten minutes for each provider and costs nothing.
+For this the provider has to know which application is asking. With Microsoft that is Quill itself: it is registered there, its application id is built in, and you only sign in. With Google there is no application of Quill's: you register one, once, and give Quill its id.
 
 Nothing here has been checked against the real services yet. The steps follow the providers' documentation as it stood when this was written; if a screen has moved, the names of the settings are what to look for.
 
@@ -10,7 +10,9 @@ Nothing here has been checked against the real services yet. The steps follow th
 
 Quill reads and sends this mail through Microsoft Graph.
 
-### Register the application
+To add a Microsoft account, press `A` in Quill, type the address and continue: Microsoft's sign-in page opens in your browser. The rest of this section is only for someone who wants Quill to sign in as an application of their own, such as an organisation that allows only applications it has registered.
+
+### Register an application of your own
 
 1. Go to <https://entra.microsoft.com> and sign in. A work account may need its administrator's leave to register applications; a personal Microsoft account can use <https://portal.azure.com> the same way.
 2. In the menu on the left open **Entra ID**, then **App registrations**, then press **New registration**. (Older screens have it under **Applications**. If there is no App registrations at all, or you are told you have no directory, see the note below the list.)
@@ -25,13 +27,11 @@ An application is registered in a directory (a "tenant"). A work or school accou
 
 Do not create a client secret. A desktop application cannot keep one, and Microsoft does not ask a public client for one.
 
-### Add the account in Quill
+### Use it for an account
 
-Press `A` and type the address. At the next step "Type" should read "Microsoft (sign in)": Quill chooses that for an address it knows to be Microsoft's, and `←`/`→` changes it when it does not. Put the Application (client) ID in "Application id". Leave "Tenant" empty unless you chose a single organisation in step 4; then it is that organisation's id or one of its domain names.
+An application of your own is named in the config, since the form adds Microsoft accounts as Quill itself. Write the account as below. If the config already has a Microsoft account that names an application, the form offers that id for the next one, with a tenant to give.
 
-`enter` saves the account and takes you straight to the sign-in described below. A second Microsoft account needs no second registration: Quill fills in the id the first one has.
-
-### Or write the account in config.toml
+### The account in config.toml
 
 ```toml
 [[account]]

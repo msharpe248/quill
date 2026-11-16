@@ -36,7 +36,13 @@ pub const NO_SENDING: &str = "Empty: the account will read mail and not send it.
 pub const NO_ENCRYPTION: &str =
     "With no encryption, your password and mail cross the network readable by anyone on the way.";
 
-/// What the form says under the fields of a Microsoft account.
+/// What the form says of a Microsoft account that signs in as Quill
+/// itself: there is nothing to fill in but its name.
+pub const MICROSOFT_OWN_NOTE: &str =
+    "Continue, and Microsoft's sign-in page opens in your browser.";
+
+/// What the form says under the fields of a Microsoft account that names
+/// an application of its own.
 pub const MICROSOFT_NOTE: &str = "Register Quill with Microsoft once to get the application id: see docs/oauth.md. Tenant may be left empty.";
 
 /// What is said of a certificate that could not even be read.
@@ -262,6 +268,9 @@ pub struct Discovery {
     /// The application id an account in the config already signs in to
     /// Microsoft with, to offer again. The form reads no config itself.
     pub microsoft_application: Option<String>,
+    /// That id is Quill's own, the one every Microsoft account uses unless
+    /// its config names another. The form then has no need to show it.
+    pub microsoft_own: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -362,6 +371,10 @@ pub struct Setup {
     /// For a Microsoft account: the application id, and the organisation.
     pub application: LineInput,
     pub tenant: LineInput,
+    /// The application id is Quill's own, offered by the service and not
+    /// typed. Its field and the tenant's are then not shown: an account
+    /// that wants another application names it in the config.
+    pub own_application: bool,
     /// Which field of the server step has the cursor.
     pub field: usize,
     /// What is being waited for, in words. Keys other than `esc` wait too.
@@ -390,6 +403,7 @@ impl Default for Setup {
             password: LineInput::masked(),
             application: LineInput::default(),
             tenant: LineInput::default(),
+            own_application: false,
             field: ServerField::Name.index(),
             busy: None,
             error: None,
@@ -476,7 +490,9 @@ impl Setup {
             ServerField::SmtpPort | ServerField::SmtpSecurity => {
                 self.kind == Kind::Imap && !self.smtp_host.is_empty()
             }
-            ServerField::Application | ServerField::Tenant => self.kind == Kind::Microsoft,
+            ServerField::Application | ServerField::Tenant => {
+                self.kind == Kind::Microsoft && !self.own_application
+            }
         }
     }
 
@@ -882,6 +898,7 @@ impl Setup {
                     && let Some(id) = found.microsoft_application
                 {
                     self.application.set(id);
+                    self.own_application = found.microsoft_own;
                 }
                 // Found: the cursor waits on the name, the one thing only
                 // the user can choose. Not found: on the server to fill in.
@@ -1075,6 +1092,7 @@ mod tests {
                 found: true,
                 note: Some("Found in the DNS records of example.com.".to_owned()),
                 microsoft_application: None,
+                microsoft_own: false,
             },
         }
     }
@@ -1240,6 +1258,85 @@ mod tests {
         assert_eq!(setup.server_field(), ServerField::Name);
         keys(&mut setup, "left right");
         assert_eq!(setup.kind, Kind::Microsoft);
+    }
+
+    #[test]
+    fn a_microsoft_account_that_signs_in_as_quill_asks_for_nothing_but_its_name() {
+        // The service offers Quill's own application: there is no id to
+        // type and no tenant to name.
+        let mut setup = Setup::default();
+        setup.address.set("robin@example.com");
+        setup.advance();
+        let AccountEvent::Discovered { address, mut found } =
+            found_at_microsoft("robin@example.com", Some("quills-own-id"))
+        else {
+            unreachable!()
+        };
+        found.microsoft_own = true;
+        setup.on_event(AccountEvent::Discovered { address, found });
+        assert_eq!(setup.step, Step::Server);
+        assert_eq!(setup.kind, Kind::Microsoft);
+        assert!(setup.own_application);
+        assert!(!setup.shows(ServerField::Application));
+        assert!(!setup.shows(ServerField::Tenant));
+        // The cursor is on the name, and tab goes round the two fields
+        // there are without stopping at one that is not shown.
+        assert_eq!(setup.server_field(), ServerField::Name);
+        setup.move_field(true);
+        assert_eq!(setup.server_field(), ServerField::Type);
+        setup.move_field(true);
+        assert_eq!(setup.server_field(), ServerField::Name);
+        // Continuing saves it with that application and no tenant.
+        assert_eq!(
+            setup.advance(),
+            [AccountRequest::SaveSignIn {
+                draft: SignInDraft {
+                    name: "Example".to_owned(),
+                    address: "robin@example.com".to_owned(),
+                    application_id: "quills-own-id".to_owned(),
+                    tenant: None,
+                },
+            }]
+        );
+        // The sheet is told the same: no field for the id, and what will
+        // happen said under the address.
+        use quill_host::bridge::FormField;
+        let form = at_own_microsoft().form(&jiff::tz::TimeZone::UTC).unwrap();
+        let ids: Vec<&str> = form.fields().iter().map(FormField::id).collect();
+        assert!(
+            !ids.contains(&"application") && !ids.contains(&"tenant"),
+            "{ids:?}"
+        );
+        assert!(
+            form.fields().iter().any(|field| matches!(
+                field,
+                FormField::Static { help: Some(help), .. } if help == MICROSOFT_OWN_NOTE
+            )),
+            "{:?}",
+            form.fields()
+        );
+
+        // An application of the account's own, from the config, is shown
+        // to be seen and changed, as before.
+        let theirs = at_microsoft(Some("app-1"));
+        assert!(!theirs.own_application);
+        assert!(theirs.shows(ServerField::Application));
+    }
+
+    /// The form at the server step for an address Microsoft hosts, with
+    /// Quill's own application on offer.
+    fn at_own_microsoft() -> Setup {
+        let mut setup = Setup::default();
+        setup.address.set("robin@example.com");
+        setup.advance();
+        let AccountEvent::Discovered { address, mut found } =
+            found_at_microsoft("robin@example.com", Some("quills-own-id"))
+        else {
+            unreachable!()
+        };
+        found.microsoft_own = true;
+        setup.on_event(AccountEvent::Discovered { address, found });
+        setup
     }
 
     #[test]

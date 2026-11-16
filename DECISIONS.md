@@ -431,6 +431,14 @@ Built in `quill-auth` and tested against a local stand-in. No real provider was 
 - **Not built:** checking that the account signed in is the address typed; revoking the token at the provider when an account is removed; honouring `Retry-After` on the token endpoint.
 - **Remembered, to confirm with real registrations:** the endpoints; that a public client registered with `http://localhost` is accepted on any port; that the exchange and refresh work without a `scope` field; that Google's token endpoint wants the client secret alongside PKCE; that Google refresh tokens for an app in testing expire after seven days, which would look like a weekly request to sign in again.
 
+### Quill's own application with Microsoft
+
+- **Quill's application id for Microsoft is built in** (`oauth::MICROSOFT_APPLICATION`), and a Microsoft account signs in as it unless its config names another. The spec says "Client IDs come from config"; the owner changed that on 2026-11-15, after an evening spent finding out what registering an application asks of a person: a personal Microsoft account has no directory to register one in until it has an Azure account. That is a publisher's chore, done once, and not something every user should repeat. The owner registered Quill as a public client for any organisation's accounts and personal ones, and gave the id.
+- **The id is not a secret**, so it is in the repository: a desktop application cannot keep a secret, Microsoft asks a public client for none, and the id is in the address of every sign-in page Quill opens. It says which application is asking and proves nothing.
+- **The form does not show it.** With Quill's own id on offer, a Microsoft account's form has a name to give and nothing else, in the terminal and in the app's sheet; an account saved that way has no `oauth_client_id` written, so it follows whatever Quill's id is. An account whose config names an application of its own is still shown that id and a tenant.
+- **Google has no application of Quill's.** A Gmail account that signs in with Google still names its own; Gmail with an app password needs none.
+- **Not seen working:** nothing has yet signed in to Microsoft with this id. What was seen, on scratch folders: the form saving the account and opening Microsoft's sign-in address with the id in it. Whether an organisation's administrator will let an application its publisher has not verified read mail is Microsoft's and theirs to say.
+
 ## M6, daily driver (built, not yet accepted)
 
 ### Push

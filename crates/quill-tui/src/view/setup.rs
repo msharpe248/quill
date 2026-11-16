@@ -10,9 +10,9 @@ use ratatui::widgets::{Block, BorderType, Padding};
 use crate::command::CommandId;
 use crate::input::LineInput;
 use crate::setup::{
-    ADDRESS_NOTE, Kind, MICROSOFT_NOTE, NO_ENCRYPTION, NO_SENDING, ServerField, Setup, SignInStage,
-    Step, UNREADABLE_CERTIFICATE, certificate_note, certificate_reason, grouped_fingerprint,
-    security_label,
+    ADDRESS_NOTE, Kind, MICROSOFT_NOTE, MICROSOFT_OWN_NOTE, NO_ENCRYPTION, NO_SENDING, ServerField,
+    Setup, SignInStage, Step, UNREADABLE_CERTIFICATE, certificate_note, certificate_reason,
+    grouped_fingerprint, security_label,
 };
 use crate::state::{Env, State, UnsubscribeHow, WhenFor};
 use crate::text;
@@ -266,6 +266,12 @@ fn microsoft(rows: &mut Rows<'_, '_>, setup: &Setup, typing: bool) {
     );
     rows.field("Name:", &setup.name, typing && at == ServerField::Name);
     rows.pair("Address:", setup.address.text());
+    // Signing in as Quill itself: nothing more to fill in.
+    if setup.own_application {
+        rows.blank();
+        rows.dim(MICROSOFT_OWN_NOTE);
+        return;
+    }
     rows.field(
         "Application id:",
         &setup.application,
