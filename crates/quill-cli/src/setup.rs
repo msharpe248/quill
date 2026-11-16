@@ -123,6 +123,7 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
         // says is kept for it.
         web_pane: false,
         web_reading: config.ui.web_reading,
+        sidebar: config.ui.sidebar,
         // What the sync engine is told once, as it starts.
         cache_gb: config.storage.cache_gb,
     };
@@ -459,6 +460,16 @@ mod tests {
         // Loading creates nothing on disk.
         assert!(!dir.path().join("config").exists());
         assert!(!dir.path().join("data").exists());
+    }
+
+    #[test]
+    fn the_accounts_pane_is_on_show_unless_the_config_says_not() {
+        let dir = TempDir::new().unwrap();
+        assert!(load_from(&dir).env.sidebar);
+        write(&dir, "config.toml", "[ui]\nsidebar = false\n");
+        let loaded = load_from(&dir);
+        assert!(!loaded.env.sidebar);
+        assert!(loaded.notices.is_empty(), "{:?}", loaded.notices);
     }
 
     #[test]

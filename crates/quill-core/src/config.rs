@@ -92,6 +92,10 @@ pub struct UiConfig {
     /// place of the text reader, where the host has one (Quill's own
     /// window). Quill writes this itself when the user switches.
     pub web_reading: bool,
+    /// Show the accounts pane beside the others. Hidden, it comes up over
+    /// them when the keys are taken to it. Quill writes this itself when
+    /// the user hides it or puts it back.
+    pub sidebar: bool,
 }
 
 impl Default for UiConfig {
@@ -110,6 +114,7 @@ impl Default for UiConfig {
             notifications: true,
             threads: true,
             web_reading: false,
+            sidebar: true,
         }
     }
 }

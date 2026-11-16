@@ -114,6 +114,13 @@ pub fn set_web_reading(text: &str, on: bool) -> Result<String, String> {
     set_value(text, "ui", "web_reading", Value::from(on))
 }
 
+/// `text` with `sidebar` under `[ui]` set: whether the accounts pane is
+/// on show. Written when the user hides it or puts it back, like
+/// [`set_web_reading`].
+pub fn set_sidebar(text: &str, on: bool) -> Result<String, String> {
+    set_value(text, "ui", "sidebar", Value::from(on))
+}
+
 /// `text` with one setting given another value: what was changed in the
 /// app's settings window. The line is changed where it stands, with the
 /// comment on it kept; a setting the file does not have yet is added to

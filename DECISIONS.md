@@ -936,3 +936,15 @@ The owner asked for a menu item and a terminal command that show what the keys a
 - **In the app it is the terminal's overlay, not a window,** as the help is. A window of its own would be the more Mac thing and was not asked for.
 - **Not seen in the app:** the Help menu takes its items from the core's commands, as it does for Help itself, and that was not run: the owner had Quill open.
 
+## Tab, and hiding the accounts pane (2026-11-16)
+
+The owner asked for two things: `tab` to keep to the list and the message, with the accounts on `shift-tab`; and a way to collapse the accounts pane.
+
+- **Tab:** list to message, message to list, accounts to list. **Shift-tab:** list or message to the accounts, accounts to the message. `1` `2` `3` are as they were.
+- **With the web reading pane on** there is no message pane in the terminal to go to, and the keys for the message already work from the list. `tab` does nothing from the list there (`focus.next` is off, so its hint and menu item say so); `shift-tab` goes to the accounts and either key comes back. Giving the web view the keys was not done: it would need a way back out of it.
+- **Hiding:** `view.sidebar` ("Show the accounts pane", `\`, View menu and a toolbar button in the app, checked while shown). The pane then has no columns; the list and the reader share the width.
+- **Hidden is not gone.** Going to the accounts (`shift-tab`, `1`) draws them over the other panes, as a terminal under 60 columns always has, and they go when a mailbox is chosen or the keys leave. One rule for both: `layout::sidebar_floats`.
+- **In the app with web reading on,** the list keeps its width and the reading pane has the room, as Mail does: `reading.place` gives the list's columns alone. The run loop waits for the terminal's new width before it draws, as it does when web reading is switched.
+- **A divider the user dragged stays where they left it** (the shell's remembered columns win over `reading.place`, as before). Hiding the accounts then gives their columns to the list instead.
+- **Not seen in the app:** the owner had Quill open, so nothing was built over it or run beside it. The terminal's side is in the tests and snapshots; the toolbar button, the menu's check mark and the reading pane's new place were not looked at.
+- **Remembered** as `sidebar` under `[ui]`, written when it is switched (`Preference::Sidebar`), like `web_reading`. It is not in the Settings window: a Mac app has this in its View menu and nowhere else.

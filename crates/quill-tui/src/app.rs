@@ -880,6 +880,7 @@ async fn event_loop(
         }
         if let Some(action) = action {
             let web = state.web_reading;
+            let (accounts_hidden, place) = (state.sidebar_hidden, state.reading_place(env));
             let mut effects = state.update(env, action);
             // Settings that hold from now are put where the next update
             // and the next frame find them. With other keys, the host is
@@ -903,6 +904,11 @@ async fn event_loop(
                 width_due = state
                     .resize_expected()
                     .then(|| tokio::time::Instant::now() + WIDTH_WAIT);
+            } else if state.sidebar_hidden != accounts_hidden && state.reading_place(env) != place {
+                // The accounts have come or gone beside the host's pane,
+                // and the terminal is about to be that much wider or
+                // narrower: wait for it, as above.
+                width_due = Some(tokio::time::Instant::now() + WIDTH_WAIT);
             }
         }
         if let Some((path, dir, editor, body_line)) = io.editor_wanted.take() {
@@ -1113,6 +1119,7 @@ mod tests {
             hooks_enabled: false,
             web_pane: false,
             web_reading: false,
+            sidebar: true,
             cache_gb: 5.0,
         }
     }

@@ -221,6 +221,7 @@ impl Harness {
             // As in a terminal: there is no web view pane to read in.
             web_pane: false,
             web_reading: false,
+            sidebar: true,
             cache_gb: 5.0,
         };
         adjust(&mut env);

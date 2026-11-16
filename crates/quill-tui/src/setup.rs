@@ -233,6 +233,8 @@ pub enum AccountRequest {
 pub enum Preference {
     /// `web_reading` under `[ui]`.
     WebReading(bool),
+    /// `sidebar` under `[ui]`: whether the accounts pane is on show.
+    Sidebar(bool),
 }
 
 /// The answers.

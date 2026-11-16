@@ -165,6 +165,7 @@ fn remember(config_file: &Path, preference: Preference) -> Result<(), String> {
     };
     let after = match preference {
         Preference::WebReading(on) => config_edit::set_web_reading(&before, on)?,
+        Preference::Sidebar(on) => config_edit::set_sidebar(&before, on)?,
     };
     if after == before {
         return Ok(());
@@ -1840,6 +1841,21 @@ mod tests {
         );
         assert!(!rig.config().ui.web_reading);
         assert_eq!(rig.config().accounts.len(), 1);
+
+        // Hiding the accounts pane is kept the same way, on a line of
+        // its own, and showing it again changes that line.
+        assert!(rig.config().ui.sidebar);
+        for shown in [false, true] {
+            assert_eq!(
+                rig.service
+                    .handle(AccountRequest::Remember(Preference::Sidebar(shown)))
+                    .await,
+                AccountEvent::Remembered(Ok(()))
+            );
+            assert_eq!(rig.config().ui.sidebar, shown);
+            assert!(config_text(&rig).contains(&format!("\nsidebar = {shown}\n")));
+        }
+        assert!(config_text(&rig).contains("theme = \"light\"   # easier on the eyes"));
 
         // A config Quill cannot read is left exactly as it is, and the
         // reason comes back.

@@ -25,4 +25,4 @@ expression: harness.screen()
 ┃                ┃│                                                            │
 ┃                ┃│                                                            │
 ┗━━━━━━━━━━━━━━━━┛└────────────────────────────────────────────────────────────┘
- j/k move  enter open  h hide folders  tab next pane  z zoom  ? help  q quit
+ j/k move  enter open  h hide folders  tab list  z zoom  ? help  q quit

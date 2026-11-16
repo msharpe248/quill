@@ -72,9 +72,11 @@ fn wide_sidebar(width: u16) -> u16 {
 }
 
 /// How `width` columns, at least [`WIDE_COLUMNS`] of them, are divided
-/// among the accounts, the list and the reader.
-fn wide_split(width: u16, reader_width: f32) -> (u16, u16, u16) {
-    let sidebar = wide_sidebar(width);
+/// among the accounts, the list and the reader. With the accounts hidden
+/// (`accounts` false) they have no columns, and the other two have them
+/// all.
+fn wide_split(width: u16, reader_width: f32, accounts: bool) -> (u16, u16, u16) {
+    let sidebar = if accounts { wide_sidebar(width) } else { 0 };
     let rest = width - sidebar;
     let reader = (f32::from(rest) * reader_width).round() as u16;
     let reader = reader.clamp(MIN_PANE, rest.saturating_sub(MIN_PANE).max(MIN_PANE));
@@ -86,13 +88,17 @@ fn wide_split(width: u16, reader_width: f32) -> (u16, u16, u16) {
 /// accounts' and the list's, so that the pane has exactly the reader's
 /// place and neither of the others moves when it comes or goes.
 ///
+/// With the accounts hidden (`accounts` false) the terminal keeps the
+/// list's columns alone: the list stays as wide as it was and the pane
+/// has the room the accounts gave up.
+///
 /// A window too narrow for three panes has no reader beside its list. The
 /// pane is given the reader's share of the whole window there, and the
 /// terminal draws in what is left.
-pub fn beside_reading(window: u16, reader_width: f32) -> u16 {
+pub fn beside_reading(window: u16, reader_width: f32, accounts: bool) -> u16 {
     if window >= WIDE_COLUMNS {
-        let (sidebar, list, _) = wide_split(window, reader_width);
-        sidebar + list
+        let (sidebar, list, _) = wide_split(window, reader_width, true);
+        if accounts { sidebar + list } else { list }
     } else {
         let reader = (f32::from(window) * reader_width).round() as u16;
         window
@@ -123,7 +129,10 @@ impl WebColumns {
     /// the pane is not up yet, is drawn in as it will be once it is, so
     /// that nothing moves when the pane arrives. One of any other width
     /// (the user has moved the divider) gives the difference to the list.
-    fn of(window: Option<u16>, width: u16, reader_width: f32) -> Self {
+    ///
+    /// `accounts`: whether the accounts are on show at all. Hidden, they
+    /// have no columns at any width.
+    fn of(window: Option<u16>, width: u16, reader_width: f32, accounts: bool) -> Self {
         let Some(window) = window else {
             // A host that has not said: by the terminal's own width.
             let sidebar = match LayoutMode::for_width(width) {
@@ -133,11 +142,11 @@ impl WebColumns {
             };
             return Self {
                 drawn: width,
-                sidebar,
+                sidebar: sidebar.filter(|_| accounts),
             };
         };
         let drawn = if width >= window {
-            beside_reading(window, reader_width).min(width)
+            beside_reading(window, reader_width, accounts).min(width)
         } else {
             width
         };
@@ -148,7 +157,9 @@ impl WebColumns {
         };
         Self {
             drawn,
-            sidebar: sidebar.or_else(|| (drawn >= NARROW_COLUMNS).then_some(MEDIUM_SIDEBAR)),
+            sidebar: sidebar
+                .or_else(|| (drawn >= NARROW_COLUMNS).then_some(MEDIUM_SIDEBAR))
+                .filter(|_| accounts),
         }
     }
 
@@ -165,10 +176,19 @@ impl WebColumns {
 /// [`compute`] goes by.
 pub fn mode(state: &State, width: u16, reader_width: f32) -> LayoutMode {
     if state.web_reading {
-        WebColumns::of(state.window_columns, width, reader_width).mode()
+        let accounts = !state.sidebar_hidden;
+        WebColumns::of(state.window_columns, width, reader_width, accounts).mode()
     } else {
         LayoutMode::for_width(width)
     }
+}
+
+/// Whether the accounts have no place of their own beside the other
+/// panes, and so are drawn over them while they have the keys and are
+/// gone again after: where there is no room for them, and wherever the
+/// user has hidden them.
+pub fn sidebar_floats(state: &State, width: u16, reader_width: f32) -> bool {
+    state.sidebar_hidden || mode(state, width, reader_width) == LayoutMode::Narrow
 }
 
 pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
@@ -178,9 +198,10 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
     // With web reading on the message is in the host's pane, not here:
     // the accounts and the list are what is drawn, at any width, and only
     // a message being written takes the list's place.
+    let accounts = !state.sidebar_hidden;
     let web = state
         .web_reading
-        .then(|| WebColumns::of(state.window_columns, width, reader_width));
+        .then(|| WebColumns::of(state.window_columns, width, reader_width, accounts));
     let mode = web.map_or_else(|| LayoutMode::for_width(width), WebColumns::mode);
     let mut areas = Areas {
         mode,
@@ -203,6 +224,14 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
         MainPane::List => areas.list = Some(rect),
         MainPane::Reader => areas.reader = Some(rect),
     };
+    // The accounts where they have no columns of their own: over the
+    // left of what is drawn in `across` columns, while they have the keys.
+    let float = |areas: &mut Areas, across: u16| {
+        if state.focus == Pane::Sidebar {
+            areas.sidebar = Some(Rect::new(0, 0, across.min(OVERLAY_SIDEBAR), body_height));
+            areas.sidebar_overlay = true;
+        }
+    };
 
     if state.zoomed {
         match state.focus {
@@ -221,20 +250,24 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
             }
             None => {
                 show_main(&mut areas, Rect::new(0, 0, web.drawn, body_height));
-                if state.focus == Pane::Sidebar {
-                    areas.sidebar =
-                        Some(Rect::new(0, 0, web.drawn.min(OVERLAY_SIDEBAR), body_height));
-                    areas.sidebar_overlay = true;
-                }
+                float(&mut areas, web.drawn);
             }
         }
     } else {
         match mode {
             LayoutMode::Wide => {
-                let (sidebar, list, reader) = wide_split(width, reader_width);
-                areas.sidebar = Some(Rect::new(0, 0, sidebar, body_height));
+                let (sidebar, list, reader) = wide_split(width, reader_width, accounts);
                 areas.list = Some(Rect::new(sidebar, 0, list, body_height));
                 areas.reader = Some(Rect::new(sidebar + list, 0, reader, body_height));
+                if accounts {
+                    areas.sidebar = Some(Rect::new(0, 0, sidebar, body_height));
+                } else {
+                    float(&mut areas, width);
+                }
+            }
+            LayoutMode::Medium if !accounts => {
+                show_main(&mut areas, body);
+                float(&mut areas, width);
             }
             LayoutMode::Medium => {
                 areas.sidebar = Some(Rect::new(0, 0, MEDIUM_SIDEBAR, body_height));
@@ -245,10 +278,7 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
             }
             LayoutMode::Narrow => {
                 show_main(&mut areas, body);
-                if state.focus == Pane::Sidebar {
-                    areas.sidebar = Some(Rect::new(0, 0, width.min(OVERLAY_SIDEBAR), body_height));
-                    areas.sidebar_overlay = true;
-                }
+                float(&mut areas, width);
             }
         }
     }
@@ -485,6 +515,40 @@ mod tests {
     }
 
     #[test]
+    fn with_the_accounts_hidden_the_others_have_the_width_and_the_accounts_float() {
+        for width in [60, 80, 100, 120, 200, 317] {
+            let mut hidden = state(Pane::List, MainPane::List);
+            hidden.sidebar_hidden = true;
+            let areas = compute(&hidden, (width, 40), 0.5);
+            assert_eq!(areas.sidebar, None, "{width}");
+            let list = areas.list.unwrap();
+            assert_eq!(list.x, 0, "{width}");
+            match areas.reader {
+                Some(reader) => {
+                    assert!(width >= WIDE_COLUMNS);
+                    assert_eq!(right(list), reader.x, "{width}");
+                    assert_eq!(right(reader), width, "{width}");
+                    assert!(list.width >= MIN_PANE && reader.width >= MIN_PANE);
+                }
+                None => assert_eq!(list.width, width, "{width}"),
+            }
+            assert!(sidebar_floats(&hidden, width, 0.5));
+
+            // With the keys, the accounts are over the left of the rest,
+            // which stays where it was.
+            hidden.focus = Pane::Sidebar;
+            let over = compute(&hidden, (width, 40), 0.5);
+            assert_eq!(over.sidebar, Some(Rect::new(0, 0, OVERLAY_SIDEBAR, 39)));
+            assert!(over.sidebar_overlay);
+            assert_eq!((over.list, over.reader), (areas.list, areas.reader));
+        }
+        // Shown, they float only where there is no room beside the rest.
+        let shown = state(Pane::List, MainPane::List);
+        assert!(!sidebar_floats(&shown, 100, 0.5) && !sidebar_floats(&shown, 60, 0.5));
+        assert!(sidebar_floats(&shown, 59, 0.5));
+    }
+
+    #[test]
     fn wide_shows_three_panes_that_tile_the_width() {
         for width in [100, 120, 200, 317] {
             let areas = compute(&state(Pane::List, MainPane::List), (width, 40), 0.5);
@@ -536,7 +600,7 @@ mod tests {
                 let off = compute(&state(Pane::List, MainPane::List), (window, 40), share);
                 let (sidebar, list, reader) =
                     (off.sidebar.unwrap(), off.list.unwrap(), off.reader.unwrap());
-                let kept = beside_reading(window, share);
+                let kept = beside_reading(window, share, true);
                 assert_eq!(kept, sidebar.width + list.width, "{window} {share}");
                 assert_eq!(kept + reader.width, window, "{window} {share}");
 
@@ -555,9 +619,9 @@ mod tests {
         // alone, so switching back and forth, or resizing in between,
         // cannot make it creep.
         let widths = [147_u16, 100, 233, 147, 99, 147, 180, 147];
-        let first = beside_reading(147, 0.5);
+        let first = beside_reading(147, 0.5, true);
         for (index, window) in widths.into_iter().enumerate() {
-            let kept = beside_reading(window, 0.5);
+            let kept = beside_reading(window, 0.5, true);
             if window == 147 {
                 assert_eq!(kept, first, "at step {index}");
             }
@@ -579,7 +643,7 @@ mod tests {
         // is about to cover are left empty, and nothing moves when it
         // comes.
         for window in [100_u16, 147, 200, 317] {
-            let kept = beside_reading(window, 0.5);
+            let kept = beside_reading(window, 0.5, true);
             let waiting = compute(&reading_in(window), (window, 40), 0.5);
             let beside = compute(&reading_in(window), (kept, 40), 0.5);
             assert_eq!(waiting.sidebar, beside.sidebar, "{window}");
@@ -624,7 +688,7 @@ mod tests {
     fn a_window_too_narrow_for_three_panes_gives_the_pane_the_readers_share() {
         for share in SHARES {
             for window in 1..WIDE_COLUMNS {
-                let kept = beside_reading(window, share);
+                let kept = beside_reading(window, share, true);
                 assert!(kept >= 1 && kept <= window, "{window} {share}: {kept}");
                 // The terminal is never asked to be too narrow to draw
                 // in while the window has the room.
@@ -643,8 +707,8 @@ mod tests {
             }
         }
         // Half of eighty columns each, by default.
-        assert_eq!(beside_reading(80, 0.5), 40);
-        assert_eq!(beside_reading(99, 0.5), 49);
+        assert_eq!(beside_reading(80, 0.5, true), 40);
+        assert_eq!(beside_reading(99, 0.5, true), 49);
     }
 
     #[test]

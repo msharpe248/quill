@@ -35,7 +35,7 @@ You need a stable Rust toolchain (1.98 or later; `rust-toolchain.toml` selects i
 cargo run --release -- tui --demo
 ```
 
-`--demo` opens an invented mailbox held in memory. It reads your config, theme and keys if you have them, and writes nothing. (In the app it does write what you change yourself: the choice of reading pane, `web_reading`, when you switch it, and whatever you change in the Settings window. The demo is then a way to try the settings: see "The Settings window".)
+`--demo` opens an invented mailbox held in memory. It reads your config, theme and keys if you have them, and writes nothing. (In the app it does write what you change yourself: the choice of reading pane, `web_reading`, when you switch it, whether the accounts pane is on show, `sidebar`, when you hide it or put it back, and whatever you change in the Settings window. The demo is then a way to try the settings: see "The Settings window".)
 
 Without `--demo`, `quill tui` opens your own mail. The first time, with no accounts yet, it opens the form for adding one.
 
@@ -190,8 +190,9 @@ Press `?` at any time for the keys that apply where you are, and `K` (or `f1`) f
 | Key | Action | Key | Action |
 |---|---|---|---|
 | `j` / `k` | Next, previous | `1` `2` `3` | Focus accounts, list, reader |
-| `g g` / `G` | Top, bottom | `tab` / `shift-tab` | Next, previous pane |
-| `space` / `ctrl-u` | Page down, up | `z` | Zoom the focused pane |
+| `g g` / `G` | Top, bottom | `tab` | Between the list and the message |
+| `space` / `ctrl-u` | Page down, up | `shift-tab` | To the accounts |
+| `\` | Hide the accounts pane, or put it back | `z` | Zoom the focused pane |
 | `enter` | Open | `u` | Mark read or unread |
 | `esc` | Back, close, dismiss | `s` | Star or unstar |
 | `?` | Help for this context | `q` | Quit |
@@ -209,6 +210,10 @@ Press `?` at any time for the keys that apply where you are, and `K` (or `f1`) f
 | `X` | Unsubscribe from a mailing list | `\|` | Give the message to one of your own programs (in a terminal) |
 | `y` / `n` | Accept, decline an invitation | `M` | Answer an invitation with maybe |
 | `l` / `h` | In the accounts pane: show, hide an account's folders | `K` | Every key, and what it does |
+
+`tab` keeps to the two panes of everyday use: from the list it goes to the message and from the message back to the list. `shift-tab` goes to the accounts from either, and from the accounts `tab` goes to the list and `shift-tab` to the message. (With the web reading pane on there is no message pane in the terminal to go to: `tab` does nothing from the list, and the keys for the message work from there.)
+
+`\` hides the accounts pane and gives its room to the others; in the app that is View > Show the Accounts Pane and a button in the toolbar. Hidden, the accounts still come up over the other panes when you go to them (`shift-tab` or `1`) and are gone again when you choose a mailbox or leave (`esc`, `tab`, a click elsewhere). The choice is kept, as `sidebar = false` under `[ui]` in `config.toml`.
 
 Arrow keys, `home`, `end`, `pageup` and `pagedown` work too; in the accounts pane `→` shows an account's folders and `←` hides them. `ctrl-d` also pages down and `ctrl-c` also quits.
 
@@ -669,7 +674,8 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `nav.open` | Open the message or mailbox |
 | `nav.back` | Go back, close help, dismiss a notice |
 | `focus.sidebar`, `focus.list`, `focus.reader` | Focus a pane |
-| `focus.next`, `focus.prev` | Cycle the panes |
+| `focus.next`, `focus.prev` | `focus.next` goes between the list and the message, and from the accounts to the list. `focus.prev` goes to the accounts, and from them to the message |
+| `view.sidebar` | Hide the accounts pane, or put it back |
 | `view.zoom` | Zoom the focused pane |
 | `view.threads` | List conversations together, or every message by itself |
 | `view.web_reading` | In the app, read in a web pane that follows the list, or in the text reader |

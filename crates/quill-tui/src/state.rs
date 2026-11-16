@@ -24,7 +24,7 @@ use crate::hook::{Hook, HookOutcome, HookRun};
 use crate::input::LineInput;
 use crate::invite::CardRow;
 use crate::keymap::{Key, KeyChord, Keymap, Mods, Resolution};
-use crate::layout::{self, LayoutMode};
+use crate::layout;
 use crate::outgoing::{Handed, InviteAnswer, Response, SendRequest};
 use crate::palette::{self, Item, Palette, What};
 
@@ -145,6 +145,9 @@ pub struct Env {
     /// Web reading is on as Quill starts: `web_reading` under `[ui]` in
     /// the config. It means nothing without [`Env::web_pane`].
     pub web_reading: bool,
+    /// The accounts pane is on show as Quill starts: `sidebar` under
+    /// `[ui]` in the config.
+    pub sidebar: bool,
     /// The room downloaded mail was given as Quill started, in gigabytes
     /// (`cache_gb` under `[storage]`; 0 is no limit). The sync engine was
     /// told once, so this is what holds until Quill is started again,
@@ -461,19 +464,21 @@ pub enum Pane {
 }
 
 impl Pane {
+    /// Where `tab` goes: between the list and the message, the two panes
+    /// of everyday use, and from the accounts to the list.
     fn next(self) -> Self {
         match self {
-            Self::Sidebar => Self::List,
+            Self::Sidebar | Self::Reader => Self::List,
             Self::List => Self::Reader,
-            Self::Reader => Self::Sidebar,
         }
     }
 
+    /// Where `shift-tab` goes: to the accounts from either of the other
+    /// two, and from the accounts to the message.
     fn prev(self) -> Self {
         match self {
             Self::Sidebar => Self::Reader,
-            Self::List => Self::Sidebar,
-            Self::Reader => Self::List,
+            Self::List | Self::Reader => Self::Sidebar,
         }
     }
 }
@@ -1253,6 +1258,13 @@ pub struct State {
     /// The user has switched web reading the other way from what the
     /// config says, in this run.
     web_flipped: bool,
+    /// The accounts pane is hidden: it has no columns beside the other
+    /// panes, and is drawn over them while it has the keys. Worked out
+    /// from the config and [`State::sidebar_flipped`] at every update.
+    pub sidebar_hidden: bool,
+    /// The user has switched the accounts pane the other way from the
+    /// one Quill started with.
+    sidebar_flipped: bool,
     /// How many columns the host's window has room for, once it has said:
     /// the terminal's own while it has the window to itself, and more
     /// than that while a pane of the host's stands beside it.
@@ -1322,6 +1334,8 @@ impl State {
             form_hosted: false,
             web_reading: false,
             web_flipped: false,
+            sidebar_hidden: false,
+            sidebar_flipped: false,
             window_columns: None,
             follow: Follow::default(),
             sign_in: None,
@@ -1412,6 +1426,7 @@ impl State {
         self.form_hosted = env.sheets;
         // And so is whether there is a pane to read mail in.
         self.web_reading = self.web_reading_wanted(env);
+        self.sidebar_hidden = env.sidebar == self.sidebar_flipped;
         match action {
             Action::Key(chord) => self.on_key(env, chord, &mut out),
             Action::Command(id) => self.run(env, id, &mut out),
@@ -2114,16 +2129,18 @@ impl State {
             CommandId::FocusSidebar => self.set_focus(Pane::Sidebar),
             CommandId::FocusList => self.set_focus(Pane::List),
             CommandId::FocusReader => self.set_focus(Pane::Reader),
-            // With the message in the host's pane there are two panes
-            // here to go between.
+            // With the message in the host's pane there is no reader
+            // here to go to: the list has the keys for both, and only the
+            // accounts are anywhere else.
             CommandId::FocusNext | CommandId::FocusPrev if self.web_reading => {
-                self.set_focus(match self.focus {
-                    Pane::Sidebar => Pane::List,
-                    Pane::List | Pane::Reader => Pane::Sidebar,
+                self.set_focus(match (id, self.focus) {
+                    (CommandId::FocusPrev, Pane::List | Pane::Reader) => Pane::Sidebar,
+                    _ => Pane::List,
                 });
             }
             CommandId::FocusNext => self.set_focus(self.focus.next()),
             CommandId::FocusPrev => self.set_focus(self.focus.prev()),
+            CommandId::ViewSidebar => self.toggle_sidebar(env, out),
             CommandId::ViewZoom => self.zoomed = !self.zoomed,
             CommandId::ViewWebReading => self.toggle_web_reading(env, out),
             CommandId::ViewThreads => {
@@ -2407,6 +2424,8 @@ impl State {
             // There is no reader here to go to: the message is in the
             // host's pane, and the keys that work on it work from the list.
             CommandId::FocusReader => !self.web_reading,
+            // Nor from the list with `tab`, which goes nowhere else.
+            CommandId::FocusNext => !(self.web_reading && context == Context::List),
             CommandId::MessageOpenLink => !self.reader.links.is_empty(),
             // The files listed are those of the message in the reader, so
             // from the list it must be the one under the cursor.
@@ -2443,7 +2462,7 @@ impl State {
                     || self.focus == Pane::Reader
                     || self.list.has_marks()
                     || (self.focus == Pane::Sidebar
-                        && layout::mode(self, self.size.0, env.reader_width) == LayoutMode::Narrow)
+                        && layout::sidebar_floats(self, self.size.0, env.reader_width))
             }
             CommandId::MessageToggleUnread | CommandId::MessageToggleStar => self
                 .target_row()
@@ -2497,6 +2516,7 @@ impl State {
     pub fn is_on(&self, id: CommandId) -> bool {
         match id {
             CommandId::ViewWebReading => self.web_reading,
+            CommandId::ViewSidebar => !self.sidebar_hidden,
             _ => false,
         }
     }
@@ -2763,9 +2783,7 @@ impl State {
         } else {
             match self.focus {
                 Pane::Reader => self.set_focus(Pane::List),
-                Pane::Sidebar
-                    if layout::mode(self, self.size.0, env.reader_width) == LayoutMode::Narrow =>
-                {
+                Pane::Sidebar if layout::sidebar_floats(self, self.size.0, env.reader_width) => {
                     // Close the overlay and return to whatever was under it.
                     self.focus = match self.main_pane {
                         MainPane::List => Pane::List,
@@ -4412,6 +4430,34 @@ impl State {
         self.web_reading_switched(env, out);
     }
 
+    /// Hides the accounts pane or puts it back, and has the choice
+    /// remembered. Hidden, it still comes up over the other panes when
+    /// the keys are taken to it, and goes when they leave.
+    fn toggle_sidebar(&mut self, env: &Env, out: &mut Effects) {
+        self.sidebar_flipped = !self.sidebar_flipped;
+        self.sidebar_hidden = env.sidebar == self.sidebar_flipped;
+        out.accounts
+            .push(AccountRequest::Remember(Preference::Sidebar(
+                !self.sidebar_hidden,
+            )));
+        if self.sidebar_hidden {
+            // Hiding it is not a way to end up in it.
+            if self.focus == Pane::Sidebar {
+                self.focus = match self.main_pane {
+                    MainPane::List => Pane::List,
+                    MainPane::Reader => Pane::Reader,
+                };
+            }
+            let peek = env
+                .hint_key(CommandId::FocusPrev)
+                .map_or_else(String::new, |key| format!(" {key} brings it up;"));
+            let back = env
+                .hint_key(CommandId::ViewSidebar)
+                .map_or_else(String::new, |key| format!(" {key} puts it back."));
+            self.flash = Some((format!("The accounts pane is hidden.{peek}{back}"), false));
+        }
+    }
+
     /// Web reading has just been switched, by its command or in the
     /// host's settings window: what follows from it either way.
     fn web_reading_switched(&mut self, env: &Env, out: &mut Effects) {
@@ -4449,7 +4495,11 @@ impl State {
     /// window is.
     pub fn reading_place(&self, env: &Env) -> Option<u16> {
         let window = self.window_columns.filter(|_| self.web_reading)?;
-        Some(layout::beside_reading(window, env.reader_width))
+        Some(layout::beside_reading(
+            window,
+            env.reader_width,
+            !self.sidebar_hidden,
+        ))
     }
 
     /// Whether the terminal is about to be given a different width by the

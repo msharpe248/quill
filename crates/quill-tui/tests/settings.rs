@@ -943,7 +943,7 @@ fn web_reading_is_switched_from_the_window_as_its_command_switches_it() {
     assert_eq!((pages(&window), closed(&window)), (1, 0));
     assert_eq!(
         window.harness.state.host_state(&window.harness.env).checked,
-        [CommandId::ViewWebReading]
+        [CommandId::ViewSidebar, CommandId::ViewWebReading]
     );
     assert!(!window.harness.screen().contains("[3]"));
 

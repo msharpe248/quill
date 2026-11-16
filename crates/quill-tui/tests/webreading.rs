@@ -130,7 +130,10 @@ fn in_a_terminal_there_is_no_web_reading_and_nothing_changes() {
         assert_eq!(harness.screen(), before);
         assert!(harness.account_requests.is_empty());
         assert!(harness.host_requests.is_empty());
-        assert!(harness.state.host_state(&harness.env).checked.is_empty());
+        assert_eq!(
+            harness.state.host_state(&harness.env).checked,
+            [CommandId::ViewSidebar]
+        );
         assert_eq!(harness.state.settle_due(), None);
 
         // And it is not offered: not in the help, not in the palette, not
@@ -161,7 +164,10 @@ fn in_the_app_it_is_off_until_it_is_switched_on_and_the_choice_is_remembered() {
             .state
             .is_enabled(&harness.env, CommandId::ViewWebReading)
     );
-    assert!(harness.state.host_state(&harness.env).checked.is_empty());
+    assert_eq!(
+        harness.state.host_state(&harness.env).checked,
+        [CommandId::ViewSidebar]
+    );
     assert!(
         status(&harness).contains("w web/text"),
         "{}",
@@ -179,7 +185,7 @@ fn in_the_app_it_is_off_until_it_is_switched_on_and_the_choice_is_remembered() {
     assert_eq!(remembered(&harness), [true]);
     assert_eq!(
         harness.state.host_state(&harness.env).checked,
-        [CommandId::ViewWebReading]
+        [CommandId::ViewSidebar, CommandId::ViewWebReading]
     );
     let page = showing(&harness);
     assert_eq!(page.title, "Q4 roadmap");
@@ -217,7 +223,10 @@ fn in_the_app_it_is_off_until_it_is_switched_on_and_the_choice_is_remembered() {
         harness.host_requests.last(),
         Some(&HostRequest::CloseReading)
     );
-    assert!(harness.state.host_state(&harness.env).checked.is_empty());
+    assert_eq!(
+        harness.state.host_state(&harness.env).checked,
+        [CommandId::ViewSidebar]
+    );
     let screen = harness.screen();
     assert!(screen.contains("[3] Reader"), "{screen}");
     // With its text laid out for it again.
@@ -253,7 +262,7 @@ fn it_starts_on_when_the_config_says_so_and_shows_the_first_message_without_read
     assert!(remembered(&harness).is_empty());
     assert_eq!(
         harness.state.host_state(&harness.env).checked,
-        [CommandId::ViewWebReading]
+        [CommandId::ViewSidebar, CommandId::ViewWebReading]
     );
 }
 
@@ -534,8 +543,13 @@ fn the_keys_for_the_message_work_from_the_list() {
     assert_eq!(harness.host_requests.len(), before);
     assert_eq!(harness.state.focus, Pane::List);
 
-    // Tab goes between the two panes there are.
+    // Tab has nowhere to take the keys from the list, with the message
+    // in the host's pane, and says so by being off; shift-tab goes to the
+    // accounts, and either comes back from them.
+    assert!(!harness.state.is_enabled(&harness.env, CommandId::FocusNext));
     harness.keys("tab");
+    assert_eq!(harness.state.focus, Pane::List);
+    harness.keys("shift-tab");
     assert_eq!(harness.state.focus, Pane::Sidebar);
     harness.keys("tab");
     assert_eq!(harness.state.focus, Pane::List);
@@ -854,6 +868,41 @@ fn the_reading_pane_takes_the_readers_place_and_the_list_keeps_its_width() {
             assert_eq!(widths(&harness), (accounts, list, true));
             assert_eq!(panes(&harness, kept), drawn, "{window}, round {round}");
         }
+    }
+}
+
+#[test]
+fn with_the_accounts_hidden_the_reading_pane_has_their_columns_and_the_list_keeps_its() {
+    for window in [100_u16, 147, 200, 233] {
+        let mut harness = Harness::in_the_app(window, 40, true);
+        harness.act(Action::WindowColumns(window));
+        harness.settle();
+        let place = |harness: &Harness| harness.state.reading_place(&harness.env).unwrap();
+        let kept = place(&harness);
+        harness.resize(kept, 40);
+        let (accounts, list, _) = widths(&harness);
+        assert!(accounts > 0 && accounts + list == kept, "{window}");
+
+        // Hidden: the terminal is to keep the list's columns alone.
+        harness.keys("\\");
+        assert_eq!(place(&harness), list, "{window}");
+        harness.resize(list, 40);
+        assert_eq!(widths(&harness), (0, list, false), "{window}");
+        assert!(!harness.screen().contains("[1] Accounts"));
+        // Gone to, the accounts come up over the list, and tab puts
+        // them away again.
+        harness.keys("shift-tab");
+        assert!(harness.screen().contains("[1] Accounts"));
+        assert_eq!(place(&harness), list, "{window}");
+        harness.keys("tab");
+        assert_eq!(harness.state.focus, Pane::List);
+        assert!(!harness.screen().contains("[1] Accounts"));
+
+        // Put back: the place it had, and the list no wider or narrower.
+        harness.keys("\\");
+        assert_eq!(place(&harness), kept, "{window}");
+        harness.resize(kept, 40);
+        assert_eq!(widths(&harness), (accounts, list, false), "{window}");
     }
 }
 

@@ -159,6 +159,7 @@ pub enum CommandId {
     FocusReader,
     FocusNext,
     FocusPrev,
+    ViewSidebar,
     ViewZoom,
     ViewThreads,
     ViewWebReading,
@@ -405,6 +406,17 @@ impl Registry {
                     Panes,
                     Some(Menu::View),
                     PANES_AND_FORMS,
+                ),
+                with_symbol(
+                    spec(
+                        ViewSidebar,
+                        "view.sidebar",
+                        "Show the accounts pane",
+                        Panes,
+                        Some(Menu::View),
+                        PANES,
+                    ),
+                    "sidebar.left",
                 ),
                 with_symbol(
                     spec(
@@ -929,7 +941,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         // One or the other, and only on an account or one of its folders.
         hint_while_enabled(&[SidebarOpen], "show folders"),
         hint_while_enabled(&[SidebarClose], "hide folders"),
-        hint(&[FocusNext], "next pane"),
+        hint(&[FocusNext], "list"),
         hint(&[ViewZoom], "zoom"),
         hint(&[HelpToggle], "help"),
         hint(&[AppQuit], "quit"),
@@ -949,7 +961,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         hint(&[SelectToggle], "select"),
         hint_while_enabled(&[MessageHook], "hooks"),
         hint_while_enabled(&[ViewWebReading], "web/text"),
-        hint(&[FocusNext], "next pane"),
+        hint_while_enabled(&[FocusNext], "message"),
         hint(&[ViewZoom], "zoom"),
         hint(&[HelpToggle], "help"),
         hint(&[AppQuit], "quit"),

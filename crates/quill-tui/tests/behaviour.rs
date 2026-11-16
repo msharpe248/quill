@@ -14,7 +14,8 @@ use quill_store::Mailbox;
 use quill_tui::command::{CommandId, Context, Registry};
 use quill_tui::data::{DataEvent, DataRequest};
 use quill_tui::keymap::Keymap;
-use quill_tui::state::{Action, Body, HostRequest, MainPane, Notice, Pane};
+use quill_tui::setup::{AccountRequest, Preference};
+use quill_tui::state::{Action, Body, HostRequest, MainPane, Mouse, MouseKind, Notice, Pane};
 use quill_tui::theme::ColorMode;
 use ratatui::style::Modifier;
 
@@ -315,16 +316,26 @@ fn hostile_escape_sequences_never_reach_the_screen() {
 }
 
 #[test]
-fn tab_cycles_the_panes_both_ways_and_numbers_jump() {
+fn tab_goes_between_the_list_and_the_message_shift_tab_to_the_accounts_and_numbers_jump() {
     let mut harness = Harness::demo(200, 60);
+    // Tab: the list and the message, back and forth, and never the
+    // accounts.
     harness.keys("tab");
     assert_eq!(harness.state.focus, Pane::Reader);
     harness.keys("tab");
+    assert_eq!(harness.state.focus, Pane::List);
+    harness.keys("tab");
+    assert_eq!(harness.state.focus, Pane::Reader);
+    // Shift-tab: to the accounts, from the message and from the list.
+    harness.keys("shift-tab");
     assert_eq!(harness.state.focus, Pane::Sidebar);
+    // From the accounts, tab is the list and shift-tab the message.
     harness.keys("tab");
     assert_eq!(harness.state.focus, Pane::List);
     harness.keys("shift-tab");
     assert_eq!(harness.state.focus, Pane::Sidebar);
+    harness.keys("shift-tab");
+    assert_eq!(harness.state.focus, Pane::Reader);
     harness.keys("3");
     assert_eq!(harness.state.focus, Pane::Reader);
     harness.keys("2");
@@ -333,6 +344,123 @@ fn tab_cycles_the_panes_both_ways_and_numbers_jump() {
     assert_eq!(harness.state.focus, Pane::Sidebar);
     // The focused pane is the one with the thick border.
     assert!(harness.screen().starts_with("┏ [1] Accounts"));
+}
+
+/// What the accounts pane's command asked to have remembered, in order.
+fn sidebar_remembered(harness: &Harness) -> Vec<bool> {
+    harness
+        .account_requests
+        .iter()
+        .filter_map(|request| match request {
+            AccountRequest::Remember(Preference::Sidebar(on)) => Some(*on),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The columns of the accounts, the list and the reader, 0 for one that
+/// is not drawn, and whether the accounts are drawn over the others.
+fn pane_widths(harness: &Harness) -> (u16, u16, u16, bool) {
+    let areas =
+        quill_tui::layout::compute(&harness.state, harness.state.size, harness.env.reader_width);
+    (
+        areas.sidebar.map_or(0, |rect| rect.width),
+        areas.list.map_or(0, |rect| rect.width),
+        areas.reader.map_or(0, |rect| rect.width),
+        areas.sidebar_overlay,
+    )
+}
+
+#[test]
+fn the_accounts_pane_is_hidden_and_put_back_and_the_choice_is_remembered() {
+    let mut harness = Harness::demo(200, 60);
+    let (accounts, list, reader, _) = pane_widths(&harness);
+    assert!(accounts > 0 && accounts + list + reader == 200);
+    assert!(harness.screen().contains("[1] Accounts"));
+    assert!(
+        harness
+            .state
+            .host_state(&harness.env)
+            .checked
+            .contains(&CommandId::ViewSidebar)
+    );
+
+    // Hidden: the list and the message have the whole width between them.
+    harness.keys("\\");
+    assert!(!harness.screen().contains("[1] Accounts"));
+    let (accounts, list, reader, _) = pane_widths(&harness);
+    assert_eq!((accounts, list + reader), (0, 200));
+    assert!(harness.screen().starts_with("┏ [2] Inbox"));
+    assert!(harness.screen().contains("[3] Reader"));
+    assert_eq!(sidebar_remembered(&harness), [false]);
+    assert!(
+        !harness
+            .state
+            .host_state(&harness.env)
+            .checked
+            .contains(&CommandId::ViewSidebar)
+    );
+    let bar = harness.screen().lines().last().unwrap().to_owned();
+    assert!(
+        bar.contains("The accounts pane is hidden. shift-tab brings it up; \\ puts it back."),
+        "{bar}"
+    );
+
+    // It is still there to go to: over the other panes while it has the
+    // keys, which do not move for it, and gone when the keys leave.
+    harness.keys("shift-tab");
+    assert_eq!(harness.state.focus, Pane::Sidebar);
+    assert!(harness.screen().starts_with("┏ [1] Accounts"));
+    assert_eq!(pane_widths(&harness), (26, list, reader, true));
+    harness.keys("esc");
+    assert_eq!(harness.state.focus, Pane::List);
+    assert!(!harness.screen().contains("[1] Accounts"));
+    // Choosing a mailbox in it puts it away too.
+    harness.keys("1 j enter");
+    assert_eq!(harness.state.focus, Pane::List);
+    assert!(!harness.screen().contains("[1] Accounts"));
+    // And so does a click beside it.
+    harness.keys("1");
+    harness.act(Action::Mouse(Mouse {
+        kind: MouseKind::Press,
+        column: 100,
+        row: 10,
+    }));
+    assert_eq!(harness.state.focus, Pane::List);
+    assert!(!harness.screen().contains("[1] Accounts"));
+    // Nothing of that was a change to remember.
+    assert_eq!(sidebar_remembered(&harness), [false]);
+
+    // Put back while it is up: it stays, with the keys, in its own place.
+    harness.keys("shift-tab \\");
+    assert_eq!(harness.state.focus, Pane::Sidebar);
+    let (accounts, _, _, over) = pane_widths(&harness);
+    assert!(accounts > 26 && !over);
+    assert_eq!(sidebar_remembered(&harness), [false, true]);
+    // Hidden from inside it: the keys go back to the list.
+    harness.keys("\\");
+    assert_eq!(harness.state.focus, Pane::List);
+    assert!(!harness.screen().contains("[1] Accounts"));
+    assert_eq!(sidebar_remembered(&harness), [false, true, false]);
+}
+
+#[test]
+fn the_accounts_pane_starts_hidden_when_the_config_says_so() {
+    for (width, height) in [(200, 60), (80, 24)] {
+        let mut harness = Harness::demo(width, height);
+        harness.env.sidebar = false;
+        harness.keys("j");
+        assert!(!harness.screen().contains("[1] Accounts"), "{width}");
+        let (accounts, list, reader, _) = pane_widths(&harness);
+        assert_eq!((accounts, list + reader), (0, width), "{width}");
+        // Nothing was switched, so nothing is written.
+        assert!(sidebar_remembered(&harness).is_empty());
+        // Its key puts it back, and that is remembered.
+        harness.keys("\\");
+        assert!(harness.screen().contains("[1] Accounts"), "{width}");
+        assert_eq!(sidebar_remembered(&harness), [true]);
+        assert!(pane_widths(&harness).0 > 0);
+    }
 }
 
 #[test]
@@ -752,7 +880,7 @@ fn the_status_bar_shows_the_keys_of_the_focused_context() {
     );
     harness.keys("1");
     let bar = harness.screen().lines().last().unwrap().to_owned();
-    assert!(bar.starts_with(" j/k move  enter open  tab next pane"));
+    assert!(bar.starts_with(" j/k move  enter open  tab list"), "{bar}");
     assert!(!bar.contains("star"));
     harness.keys("3");
     assert!(
@@ -805,7 +933,7 @@ fn overridden_keys_show_up_in_the_hints_and_in_help() {
     let bar = harness.screen().lines().last().unwrap().to_owned();
     assert!(
         bar.starts_with(
-            " n/p move  enter open  / search  c write  r reply  e archive  d delete  u unread  x select  tab next pane"
+            " n/p move  enter open  / search  c write  r reply  e archive  d delete  u unread  x select  tab message"
         ),
         "{bar}"
     );
@@ -963,8 +1091,8 @@ fn the_host_is_told_what_applies_where_the_focus_is() {
     // As the system is, until the settings say otherwise.
     assert_eq!(appearance, quill_core::config::Appearance::System);
     assert_eq!(context, Context::List);
-    // Nothing that is switched on and off is on.
-    assert!(checked.is_empty());
+    // Of what is switched on and off, only the accounts pane is on.
+    assert_eq!(checked, [CommandId::ViewSidebar]);
     assert_eq!((unread, title.as_str()), (12, "Inbox (unified)"));
     // The dark theme's own background and text.
     assert_eq!(
