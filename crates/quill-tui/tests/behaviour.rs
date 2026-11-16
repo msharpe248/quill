@@ -464,6 +464,81 @@ fn help_lists_the_commands_of_the_context_it_was_opened_from() {
 }
 
 #[test]
+fn the_list_of_every_key_has_each_command_once_wherever_it_is_opened_from() {
+    use quill_tui::view::help::{HelpLine, all_lines, all_text};
+
+    let mut harness = Harness::demo(200, 60);
+    harness.keys("K");
+    assert_eq!(harness.state.context(), Context::Help);
+    let screen = harness.screen();
+    assert!(screen.contains(" Keyboard shortcuts "), "{screen}");
+    assert!(!screen.contains("Help: Message list"));
+    assert!(screen.contains("Star or unstar"));
+    // The same key puts it away.
+    harness.keys("K");
+    assert!(harness.state.help.is_none());
+    // From the accounts pane it is the same list: the message keys too.
+    harness.keys("1 f1");
+    assert!(harness.screen().contains("Star or unstar"));
+    // The key for the help of this place swaps the two, and back.
+    harness.keys("?");
+    assert!(harness.screen().contains("Help: Accounts"));
+    assert!(!harness.screen().contains("Star or unstar"));
+    harness.keys("K");
+    assert!(harness.screen().contains(" Keyboard shortcuts "));
+    // It scrolls to its end, where writing a message and the list of
+    // attachments have their own keys.
+    harness.keys("G");
+    let screen = harness.screen();
+    assert!(screen.contains("Writing a message"), "{screen}");
+    assert!(screen.contains("Save as a draft"));
+    assert!(screen.contains("In the list of attachments"));
+    harness.keys("esc");
+    assert!(harness.state.help.is_none());
+
+    // Every command is in it, once, with its keys; web reading only
+    // where there is a web pane to read in.
+    let env = &harness.env;
+    let titles = |web_pane: bool| -> Vec<&'static str> {
+        all_lines(&env.registry, &env.keymap, web_pane)
+            .into_iter()
+            .filter_map(|line| match line {
+                HelpLine::Entry { title, .. } => Some(title),
+                _ => None,
+            })
+            .collect()
+    };
+    let with = titles(true);
+    assert_eq!(with.len(), env.registry.specs().len());
+    for spec in env.registry.specs() {
+        assert_eq!(
+            with.iter().filter(|title| **title == spec.title).count(),
+            1,
+            "{}",
+            spec.name
+        );
+    }
+    assert_eq!(titles(false).len(), with.len() - 1);
+    assert!(!titles(false).contains(&"Web reading pane"));
+
+    // In print: headings at the margin, keys set in and lined up.
+    let text = all_text(&env.registry, &env.keymap, false);
+    assert!(text.starts_with("Navigation\n  j, down "), "{text}");
+    assert!(text.contains("\n\nWriting a message\n"));
+    assert!(text.contains("  K, f1 "));
+    let columns: Vec<usize> = text
+        .lines()
+        .filter(|line| line.starts_with("  "))
+        .filter_map(|line| {
+            line.find("Star or unstar")
+                .or_else(|| line.find("Reply to all"))
+        })
+        .collect();
+    assert_eq!(columns.len(), 2);
+    assert_eq!(columns[0], columns[1]);
+}
+
+#[test]
 fn keys_scroll_the_help_overlay_not_the_pane_under_it() {
     let mut harness = Harness::demo(80, 14);
     harness.keys("?");

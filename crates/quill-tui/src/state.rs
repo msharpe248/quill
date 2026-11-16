@@ -1175,6 +1175,8 @@ pub struct Help {
     /// The context help was opened from, and so describes.
     pub context: Context,
     pub scroll: usize,
+    /// It lists every key Quill has, not only the ones for `context`.
+    pub all: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2223,10 +2225,22 @@ impl State {
                     });
                 }
             }
-            CommandId::HelpToggle => {
+            CommandId::HelpToggle | CommandId::HelpKeys => {
+                // Either key puts away the list it brought up, and the
+                // other's list takes its place.
+                let all = id == CommandId::HelpKeys;
                 self.help = match self.help {
-                    Some(_) => None,
-                    None => Some(Help { context, scroll: 0 }),
+                    Some(help) if help.all == all => None,
+                    Some(help) => Some(Help {
+                        context: help.context,
+                        scroll: 0,
+                        all,
+                    }),
+                    None => Some(Help {
+                        context,
+                        scroll: 0,
+                        all,
+                    }),
                 }
             }
         }
@@ -5543,7 +5557,7 @@ impl State {
             }
         }
         if let (Some(help), Some(rect)) = (&mut self.help, areas.help) {
-            let lines = view::help::lines(env, help.context).len();
+            let lines = view::help::shown(env, help).len();
             help.scroll = help
                 .scroll
                 .min(lines.saturating_sub(layout::inner_height(rect)));

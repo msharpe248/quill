@@ -916,3 +916,23 @@ The owner clicked links in the terminal's reader and nothing opened. A click ope
 - **Only the words are marked as a terminal hyperlink,** as before (a cell can otherwise keep a stale link). The rule for a click is separate, in `state/mouse.rs`.
 - **Seen in the app** with the build before the fix: a click on a link's words reached the opener, and a click on its number or its line did not (`clicktext:TEXT`, new, clicks the terminal where some text is). The fix itself is tested in the core; it was not run in the app, because the owner had Quill open and the app was not to be rebuilt under them.
 
+## The app's icon (2026-11-16)
+
+The owner had icons made (a copper feather over an "@", on a slate tile) and asked for them to be looked over and put in the repo.
+
+- **What is kept:** the ten pictures of the icon set, `app/Resources/icon/Quill.iconset` (16 to 1024 pixels, 1.5 MB). They are the source: `app/build-app.sh` makes `Quill.icns` from them with `iconutil` on every build, and `Info.plist` names it.
+- **What is not:** the compiled `.icns`, the Xcode asset catalogue and the loose PNGs (the same ten pictures again; there is no Xcode project to put a catalogue in), the zip of all of it, the nine designs that were not chosen and the prompts they were made from (13 MB of pictures nothing uses). They are still in the owner's `~/quill-icons`, untouched.
+- **Looked over:** the tile sits inside the margin a Mac icon keeps (about 815 of 1024 pixels), the corners are transparent, and every size the set must have is there at the right size. The small sizes are the large one scaled down, not redrawn: at 16 pixels the "@" and the prompt are gone and the feather is what is left, which reads.
+- **Not seen:** the icon in the Dock and in Finder. The bundle was built and checked (the `.icns` is in it, the plist names it, the signature holds), but not started: the owner had Quill open.
+- `QUILL_APP_OUT` tells the build script to put the bundle somewhere else, so that a check build is never made over a Quill that is running.
+
+## The list of every key (2026-11-16)
+
+The owner asked for a menu item and a terminal command that show what the keys are: documentation, nothing clever.
+
+- **In Quill:** `help.keys` ("Keyboard shortcuts", `K` or `f1`, Help menu in the app) puts every key in the help overlay: the keys for reading mail by kind, as `?` has them, then what is particular to writing a message and to the list of attachments. Each command once. `?` is still the keys for where you are; either key swaps to the other list.
+- **In a shell:** `quill keys` prints the same list, for the preset the config names with `keys.toml` on top. It reads those two files only.
+- **Made from the registry and the keymap,** like the help: a list written by hand would be wrong the first time a key changed, and the user's own keys would not be in it.
+- **In the app it is the terminal's overlay, not a window,** as the help is. A window of its own would be the more Mac thing and was not asked for.
+- **Not seen in the app:** the Help menu takes its items from the core's commands, as it does for Help itself, and that was not run: the owner had Quill open.
+

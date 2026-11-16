@@ -185,7 +185,7 @@ With anything but `"never"`, the mail on this Mac is the only copy. Back it up: 
 
 ## Keys
 
-Press `?` at any time for the keys that apply where you are. The bottom bar shows the most useful ones.
+Press `?` at any time for the keys that apply where you are, and `K` (or `f1`) for every key Quill has: in the app that is Help > Keyboard shortcuts, and `quill keys` prints the same list in a shell. The bottom bar shows the most useful ones.
 
 | Key | Action | Key | Action |
 |---|---|---|---|
@@ -208,7 +208,7 @@ Press `?` at any time for the keys that apply where you are. The bottom bar show
 | `x` | Select or unselect, and move on | `V` | Start or end a range |
 | `X` | Unsubscribe from a mailing list | `\|` | Give the message to one of your own programs (in a terminal) |
 | `y` / `n` | Accept, decline an invitation | `M` | Answer an invitation with maybe |
-| `l` / `h` | In the accounts pane: show, hide an account's folders | | |
+| `l` / `h` | In the accounts pane: show, hide an account's folders | `K` | Every key, and what it does |
 
 Arrow keys, `home`, `end`, `pageup` and `pagedown` work too; in the accounts pane `→` shows an account's folders and `←` hides them. `ctrl-d` also pages down and `ctrl-c` also quits.
 
@@ -593,11 +593,14 @@ echo "Running late." | quill send --to ana.ruiz@example.com --subject "Today"
 quill sync                         # fetch, carry out what is queued, send, stop
 quill theme list --ghostty         # the themes there are, and Ghostty's to import
 quill theme import "Catppuccin Mocha"
+quill keys                         # every key and what it does
 ```
 
 `list`, `search` and `read` look at the mail already on this Mac and reach no server. `send` checks the message as the compose screen would and puts it in the Outbox; it goes at the next sync, from the app if it is running or from `quill sync`. `--account NAME` chooses which account sends, and `--attach FILE` attaches. `quill sync` exits with an error if anything could not be done, and says what.
 
 `quill theme` lists the themes Quill has and imports one made for Ghostty; see "Themes".
+
+`quill keys` prints every key and what it does, as they are for you: the keys of the `keymap` your config names, with your own from `keys.toml` in place. It reads those two files and nothing else.
 
 JSON times are RFC 3339 in UTC. What mail says is printed safely: control characters and escape sequences never reach your terminal, and in JSON they are escaped as JSON escapes them.
 
@@ -700,6 +703,7 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `account.add` | Add an account |
 | `account.sign_in` | Sign an account in to Microsoft or Google |
 | `help.toggle` | Show or hide help |
+| `help.keys` | Show or hide the list of every key |
 | `app.quit` | Quit |
 
 ### Disk space

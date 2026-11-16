@@ -745,6 +745,7 @@ mod tests {
         state.help = Some(crate::state::Help {
             context: crate::command::Context::List,
             scroll: 0,
+            all: false,
         });
         let areas = compute(&state, (80, 24), 0.5);
         assert_eq!(areas.help, Some(Rect::new(8, 1, 64, 21)));
@@ -760,6 +761,7 @@ mod tests {
                 state.help = Some(crate::state::Help {
                     context: crate::command::Context::List,
                     scroll: 0,
+                    all: false,
                 });
                 compute(&state, size, 0.5);
                 state.zoomed = true;

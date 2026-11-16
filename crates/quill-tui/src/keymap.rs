@@ -347,6 +347,7 @@ const VIM: PresetTable = &[
     (CommandId::SidebarOpen, &["l", "right"]),
     (CommandId::SidebarClose, &["h", "left"]),
     (CommandId::HelpToggle, &["?"]),
+    (CommandId::HelpKeys, &["K", "f1"]),
 ];
 
 const MUTT: PresetTable = &[
@@ -417,6 +418,7 @@ const MUTT: PresetTable = &[
     (CommandId::SidebarOpen, &["right"]),
     (CommandId::SidebarClose, &["left"]),
     (CommandId::HelpToggle, &["?"]),
+    (CommandId::HelpKeys, &["K", "f1"]),
 ];
 
 impl Keymap {

@@ -209,6 +209,7 @@ pub enum CommandId {
     SidebarOpen,
     SidebarClose,
     HelpToggle,
+    HelpKeys,
 }
 
 /// How the help overlay groups commands.
@@ -868,6 +869,14 @@ impl Registry {
                         EVERYWHERE,
                     ),
                     "questionmark.circle",
+                ),
+                spec(
+                    HelpKeys,
+                    "help.keys",
+                    "Keyboard shortcuts",
+                    General,
+                    Some(Menu::Help),
+                    EVERYWHERE,
                 ),
             ],
         }

@@ -134,6 +134,12 @@ enum Command {
         #[command(subcommand)]
         action: ThemeAction,
     },
+    /// Print every key Quill has and what it does, with your own from
+    /// keys.toml
+    Keys {
+        #[command(flatten)]
+        dirs: Dirs,
+    },
 }
 
 #[derive(Subcommand)]
@@ -332,6 +338,15 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 ghostty,
                 output.json,
             )
+        }
+        Command::Keys { dirs } => {
+            let paths = themes::paths(dirs.config_dir, dirs.data_dir)?;
+            let (text, problems) = setup::keys_listing(&paths);
+            for problem in problems {
+                eprintln!("quill: {problem}");
+            }
+            print!("{text}");
+            Ok(())
         }
         Command::Theme {
             action: ThemeAction::Import { what, output },
@@ -655,6 +670,11 @@ mod tests {
 
     #[test]
     fn theme_commands_parse() {
+        let cli = Cli::try_parse_from(["quill", "keys", "--config-dir", "/c"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Keys { dirs } if dirs.config_dir.as_deref() == Some(std::path::Path::new("/c"))
+        ));
         let cli = Cli::try_parse_from(["quill", "theme", "list", "--ghostty", "--json"]).unwrap();
         assert!(matches!(
             cli.command,

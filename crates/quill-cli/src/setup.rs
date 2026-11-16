@@ -152,6 +152,44 @@ pub fn keymap_for(
     }
 }
 
+/// Every key Quill has and what it does, as `quill keys` prints it: the
+/// keys of the preset the config names with the user's own from
+/// `keys.toml` on top, as the UI would have them. With it, whatever was
+/// wrong with either file: the list is then of the keys Quill falls back
+/// on, as the UI does.
+pub fn keys_listing(paths: &crate::paths::Paths) -> (String, Vec<String>) {
+    let mut problems = Vec::new();
+    let config = Config::load(&paths.config_file()).unwrap_or_else(|err| {
+        problems.push(format!("{err}. Using the default settings."));
+        Config::default()
+    });
+    let registry = Registry::builtin();
+    let (keymap, problem) = keymap_for(&paths.config_dir, config.ui.keymap, &registry);
+    problems.extend(problem);
+    let mut text = format!(
+        "{} ({} keys)\n\n",
+        quill_tui::view::help::ALL_KEYS_TITLE,
+        config.ui.keymap.as_str()
+    );
+    // A terminal has no web pane, and this is a terminal's list.
+    text.push_str(&quill_tui::view::help::all_text(&registry, &keymap, false));
+    // How to see the same in Quill, by the keys as they are now.
+    let key = |id| {
+        keymap
+            .keys_for(id)
+            .first()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| "the command palette".to_owned())
+    };
+    text.push_str(&format!(
+        "\nIn Quill, {} lists the keys for where you are and {} lists them all.\n\
+         Your own keys go in keys.toml, beside config.toml.\n",
+        key(quill_tui::command::CommandId::HelpToggle),
+        key(quill_tui::command::CommandId::HelpKeys),
+    ));
+    (text, problems)
+}
+
 /// Whether Quill is light or dark and the theme for each, as the config
 /// says, with why another theme stands in for the light one and for the
 /// dark one, if one does. A config that names one theme for both, as every
@@ -614,6 +652,61 @@ mod tests {
         assert_eq!(notices.len(), 2);
         assert!(notices[0].text.contains("\"neither\""), "{notices:?}");
         assert!(notices[1].text.contains("\"nope\""), "{notices:?}");
+    }
+
+    #[test]
+    fn the_printed_keys_are_the_presets_with_the_users_own_on_top() {
+        let dir = TempDir::new().unwrap();
+        let paths = paths(&dir);
+        // No files at all: the default preset, and nothing to complain of.
+        let (text, problems) = keys_listing(&paths);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert!(
+            text.starts_with("Keyboard shortcuts (vim keys)\n\nNavigation\n"),
+            "{text}"
+        );
+        assert!(text.contains("  u  "), "{text}");
+        assert!(text.contains("Mark read or unread"));
+        assert!(text.contains("\nWriting a message\n"));
+        assert!(
+            text.contains("In Quill, ? lists the keys for where you are and K lists them all.")
+        );
+        // A terminal has no web pane to read in.
+        assert!(!text.contains("Web reading pane"));
+
+        // The preset the config names, and a key of the user's own.
+        write(&dir, "config.toml", "[ui]\nkeymap = \"mutt\"\n");
+        write(
+            &dir,
+            "keys.toml",
+            "\"help.keys\" = \"f2\"\n\"message.toggle_unread\" = \"ctrl-n\"\n",
+        );
+        let (text, problems) = keys_listing(&paths);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert!(text.starts_with("Keyboard shortcuts (mutt keys)"), "{text}");
+        assert!(line_of(&text, "Mark read or unread").starts_with("ctrl-n "));
+        assert!(line_of(&text, "Keyboard shortcuts").starts_with("f2 "));
+        assert!(text.contains("and f2 lists them all."));
+
+        // A keys.toml that is wrong is said, and the preset is listed whole.
+        write(&dir, "keys.toml", "\"no.such.command\" = \"x\"\n");
+        let (text, problems) = keys_listing(&paths);
+        assert_eq!(problems.len(), 1);
+        assert!(
+            problems[0].ends_with("Using the preset keys."),
+            "{problems:?}"
+        );
+        assert!(line_of(&text, "Keyboard shortcuts").starts_with("K, f1 "));
+    }
+
+    /// The line of a printed list that ends with `title`, trimmed.
+    fn line_of(text: &str, title: &str) -> String {
+        text.lines()
+            .skip(1)
+            .find(|line| line.ends_with(title))
+            .unwrap_or_else(|| panic!("{title} is not listed:\n{text}"))
+            .trim()
+            .to_owned()
     }
 
     #[test]
