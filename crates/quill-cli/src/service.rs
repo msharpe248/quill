@@ -14,7 +14,8 @@
 //! telling a mailing list to unsubscribe them (see `unsubscribe`).
 //!
 //! And it reads and writes no file itself, so a choice made in the UI that
-//! is to outlast the run is written into the config here (`remember`).
+//! is to outlast the run is written into the config here (`remember`), and
+//! the app's settings window is answered from here (`settings`).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -39,6 +40,7 @@ use crate::accounts::{imap_config, imap_password_name, parse_fingerprint, sync_a
 use crate::config_edit;
 use crate::discover::{self, Dns, Prober};
 use crate::oauth;
+use crate::settings;
 
 mod unsubscribe;
 
@@ -113,21 +115,28 @@ pub fn spawn(service: Service) -> AccountsLink {
     }
 }
 
-/// Starts a service that does one thing: remembers the choices the user
-/// makes in the UI, in the config. It is what the demo mailbox has in
-/// place of the whole service: it has no accounts to add or sign in, and
-/// still a config that says how Quill starts. Anything else asked of it
-/// goes unanswered, as it does with no service at all.
+/// Starts a service that does one thing: reads and writes the settings in
+/// the config. It remembers the choices the user makes in the UI, and
+/// answers for the app's settings window. It is what the demo mailbox has
+/// in place of the whole service: it has no accounts to add or sign in,
+/// and still a config that says how Quill starts. Anything else asked of
+/// it goes unanswered, as it does with no service at all.
 pub fn spawn_remembering(config_file: PathBuf) -> AccountsLink {
     let (requests_tx, mut requests) = unbounded_channel();
     let (events_tx, events) = unbounded_channel();
     tokio::spawn(async move {
         while let Some(request) = requests.recv().await {
-            if let AccountRequest::Remember(preference) = request {
-                let result = remember_off_thread(config_file.clone(), preference).await;
-                if events_tx.send(AccountEvent::Remembered(result)).is_err() {
-                    break;
+            let event = match request {
+                AccountRequest::Remember(preference) => AccountEvent::Remembered(
+                    remember_off_thread(config_file.clone(), preference).await,
+                ),
+                AccountRequest::Settings(change) => {
+                    settings::answer_off_thread(config_file.clone(), change).await
                 }
+                _ => continue,
+            };
+            if events_tx.send(event).is_err() {
+                break;
             }
         }
     });
@@ -251,6 +260,9 @@ impl Service {
             AccountRequest::Remember(preference) => AccountEvent::Remembered(
                 remember_off_thread(self.config_file.clone(), preference).await,
             ),
+            AccountRequest::Settings(change) => {
+                settings::answer_off_thread(self.config_file.clone(), change).await
+            }
         }
     }
 

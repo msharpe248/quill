@@ -86,6 +86,10 @@ pub enum CoreToShell {
     /// beside it.
     #[serde(rename = "reading.place")]
     ReadingPlace(ReadingPlace),
+    /// What the settings window shows: every pane with its settings as
+    /// they stand. What the user does there arrives as `settings.used`.
+    #[serde(rename = "settings.show")]
+    SettingsShow(SettingsShow),
 }
 
 /// A message the shell sends to the core.
@@ -127,6 +131,16 @@ pub enum ShellToCore {
     /// itself, whenever that changes.
     #[serde(rename = "window.resized")]
     WindowResized(WindowResized),
+    /// The settings window was opened: it wants `settings.show`.
+    #[serde(rename = "settings.opened")]
+    SettingsOpened(NoParams),
+    /// The settings window was closed.
+    #[serde(rename = "settings.closed")]
+    SettingsClosed(NoParams),
+    /// A setting was changed in the settings window, or something was
+    /// asked for from one of its lists.
+    #[serde(rename = "settings.used")]
+    SettingsUsed(SettingsUsed),
     /// The app is quitting: flush and exit cleanly.
     #[serde(rename = "app.will_quit")]
     AppWillQuit(NoParams),
@@ -990,6 +1004,14 @@ pub const MAX_FORM_ID: usize = 64;
 pub const MAX_FORM_FIELDS: usize = 32;
 /// The most buttons.
 pub const MAX_FORM_BUTTONS: usize = 6;
+/// The most rows a list in a form may have.
+pub const MAX_FORM_ROWS: usize = 200;
+/// The most places after the point a number in a form is shown with.
+pub const MAX_FORM_DECIMALS: u8 = 3;
+/// The most panes the settings window may have.
+pub const MAX_SETTINGS_PANES: usize = 12;
+/// The longest text a setting may be given, in bytes.
+pub const MAX_SETTING_TEXT: usize = 4096;
 
 /// Whether `id` can name a step, field, option or button of a form: lower
 /// case letters, digits and underscores, starting with a letter.
@@ -1035,6 +1057,10 @@ impl std::fmt::Debug for Secret {
 /// than one button for return or for esc. A secret field has no value: the
 /// core never sends one. What a code field shows is a [`Secret`], so that
 /// printing the form prints none of it.
+///
+/// A sheet asks, and waits for a button. It has none of the fields that
+/// say what the user did as they do it (a toggle, a number, a list): those
+/// are the settings window's ([`SettingsShow`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "FormShowParams", into = "FormShowParams")]
 pub struct FormShow {
@@ -1123,17 +1149,13 @@ impl TryFrom<FormShowParams> for FormShow {
             if !valid_form_id(field.id()) || !seen.insert(field.id()) {
                 return Err("each field of a form has a name of its own".to_owned());
             }
-            if let FormField::Choice { value, options, .. } = field {
-                let mut ids = std::collections::BTreeSet::new();
-                let named = options
-                    .iter()
-                    .all(|option| valid_form_id(&option.id) && ids.insert(option.id.as_str()));
-                if !named || !ids.contains(value.as_str()) {
-                    return Err(
-                        "a choice is one of its options, each with a name of its own".to_owned(),
-                    );
-                }
+            if field.reports_as_changed() {
+                return Err(
+                    "a sheet has no toggle, number or list: those are the settings window's"
+                        .to_owned(),
+                );
             }
+            field.sound()?;
         }
         if params.fields.iter().filter(|field| field.focus()).count() > 1 {
             return Err("only one field of a form has the focus".to_owned());
@@ -1231,6 +1253,47 @@ pub enum FormField {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         help: Option<String>,
     },
+    /// Something that is on or off: a checkbox. `label` stands beside it
+    /// as a field's does, and may be empty; `title` is the checkbox's own
+    /// words.
+    Toggle {
+        id: String,
+        label: String,
+        title: String,
+        value: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        help: Option<String>,
+    },
+    /// A number from `min` to `max`, shown with at most `decimals` places
+    /// after the point and stepped by `step`. With no `max` there is no
+    /// most. `unit` is said after it: "seconds".
+    Number {
+        id: String,
+        label: String,
+        value: Number,
+        min: Number,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max: Option<Number>,
+        step: Number,
+        decimals: u8,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        unit: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        help: Option<String>,
+    },
+    /// Rows to look down and pick one of, and things to do: with the row
+    /// picked, or with none. `empty` is said in the rows' place when
+    /// there are none.
+    List {
+        id: String,
+        label: String,
+        rows: Vec<FormRow>,
+        actions: Vec<FormAction>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        empty: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        help: Option<String>,
+    },
 }
 
 impl FormField {
@@ -1240,7 +1303,10 @@ impl FormField {
             | Self::Secret { id, .. }
             | Self::Choice { id, .. }
             | Self::Static { id, .. }
-            | Self::Code { id, .. } => id,
+            | Self::Code { id, .. }
+            | Self::Toggle { id, .. }
+            | Self::Number { id, .. }
+            | Self::List { id, .. } => id,
         }
     }
 
@@ -1250,8 +1316,88 @@ impl FormField {
             | Self::Secret { label, .. }
             | Self::Choice { label, .. }
             | Self::Static { label, .. }
-            | Self::Code { label, .. } => label,
+            | Self::Code { label, .. }
+            | Self::Toggle { label, .. }
+            | Self::Number { label, .. }
+            | Self::List { label, .. } => label,
         }
+    }
+
+    /// Whether the field is of a kind that says what the user did with it
+    /// as they do it, with no button to wait for: the settings window's
+    /// kinds, which a sheet has none of.
+    pub fn reports_as_changed(&self) -> bool {
+        matches!(
+            self,
+            Self::Toggle { .. } | Self::Number { .. } | Self::List { .. }
+        )
+    }
+
+    /// Whether what the field holds hangs together: a choice is one of
+    /// its options, a number is within its bounds, and the rows and
+    /// actions of a list have names of their own.
+    fn sound(&self) -> Result<(), String> {
+        match self {
+            Self::Choice { value, options, .. } => {
+                let mut ids = std::collections::BTreeSet::new();
+                let named = options
+                    .iter()
+                    .all(|option| valid_form_id(&option.id) && ids.insert(option.id.as_str()));
+                if !named || !ids.contains(value.as_str()) {
+                    return Err(
+                        "a choice is one of its options, each with a name of its own".to_owned(),
+                    );
+                }
+            }
+            Self::Toggle { title, .. } => {
+                if title.is_empty() {
+                    return Err("a toggle says what it switches".to_owned());
+                }
+            }
+            Self::Number {
+                value,
+                min,
+                max,
+                step,
+                decimals,
+                ..
+            } => {
+                let within = min.get() <= value.get()
+                    && max.is_none_or(|max| value.get() <= max.get() && min.get() <= max.get());
+                if !within || step.get() <= 0.0 || *decimals > MAX_FORM_DECIMALS {
+                    return Err(format!(
+                        "a number is within its bounds, steps by more than nothing and has at \
+                         most {MAX_FORM_DECIMALS} places"
+                    ));
+                }
+            }
+            Self::List { rows, actions, .. } => {
+                let mut named = std::collections::BTreeSet::new();
+                let actions_named = actions.len() <= MAX_FORM_BUTTONS
+                    && actions.iter().all(|action| {
+                        valid_form_id(&action.id)
+                            && !action.title.is_empty()
+                            && named.insert(action.id.as_str())
+                    });
+                let mut seen = std::collections::BTreeSet::new();
+                let rows_named = rows.len() <= MAX_FORM_ROWS
+                    && rows.iter().all(|row| {
+                        valid_form_id(&row.id)
+                            && !row.title.is_empty()
+                            && seen.insert(row.id.as_str())
+                            && row.actions.iter().all(|id| named.contains(id.as_str()))
+                    });
+                if !actions_named || !rows_named {
+                    return Err(format!(
+                        "a list has at most {MAX_FORM_ROWS} rows and {MAX_FORM_BUTTONS} actions, \
+                         each with a title and a name of its own, and a row takes only the \
+                         list's actions"
+                    ));
+                }
+            }
+            Self::Text { .. } | Self::Secret { .. } | Self::Static { .. } | Self::Code { .. } => {}
+        }
+        Ok(())
     }
 
     /// What the field holds, as the core has it. A secret has nothing to
@@ -1262,7 +1408,11 @@ impl FormField {
             Self::Text { value, .. } | Self::Choice { value, .. } | Self::Static { value, .. } => {
                 Some(value)
             }
-            Self::Secret { .. } | Self::Code { .. } => None,
+            Self::Secret { .. }
+            | Self::Code { .. }
+            | Self::Toggle { .. }
+            | Self::Number { .. }
+            | Self::List { .. } => None,
         }
     }
 
@@ -1280,7 +1430,11 @@ impl FormField {
             Self::Text { focus, .. } | Self::Secret { focus, .. } | Self::Choice { focus, .. } => {
                 *focus
             }
-            Self::Static { .. } | Self::Code { .. } => false,
+            Self::Static { .. }
+            | Self::Code { .. }
+            | Self::Toggle { .. }
+            | Self::Number { .. }
+            | Self::List { .. } => false,
         }
     }
 
@@ -1291,9 +1445,93 @@ impl FormField {
             | Self::Secret { help, .. }
             | Self::Choice { help, .. }
             | Self::Static { help, .. }
-            | Self::Code { help, .. } => help.as_deref(),
+            | Self::Code { help, .. }
+            | Self::Toggle { help, .. }
+            | Self::Number { help, .. }
+            | Self::List { help, .. } => help.as_deref(),
         }
     }
+}
+
+/// A number a form shows or takes. Never NaN and never infinite, so two
+/// of them are either equal or not, and it cannot be built or decoded
+/// holding either. A whole number is written on the bridge as one.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(try_from = "f64")]
+pub struct Number(f64);
+
+impl Eq for Number {}
+
+impl Number {
+    pub fn new(value: f64) -> Option<Self> {
+        // Adding nothing makes the two zeros one.
+        value.is_finite().then_some(Self(value + 0.0))
+    }
+
+    pub fn get(self) -> f64 {
+        self.0
+    }
+
+    /// The number to at most `decimals` places after the point.
+    pub fn rounded(self, decimals: u8) -> Self {
+        let scale = 10f64.powi(i32::from(decimals.min(MAX_FORM_DECIMALS)));
+        Self::new((self.0 * scale).round() / scale).unwrap_or(self)
+    }
+
+    /// The number as a whole one, if it is one that an `i64` holds exactly.
+    pub fn whole(self) -> Option<i64> {
+        // Every whole number below 2^53 is exactly itself as a double.
+        (self.0.fract() == 0.0 && self.0.abs() < 9_007_199_254_740_992.0).then_some(self.0 as i64)
+    }
+}
+
+impl From<u32> for Number {
+    fn from(value: u32) -> Self {
+        Self(f64::from(value))
+    }
+}
+
+impl TryFrom<f64> for Number {
+    type Error = String;
+
+    fn try_from(value: f64) -> Result<Self, Self::Error> {
+        Self::new(value).ok_or_else(|| "not a number".to_owned())
+    }
+}
+
+impl Serialize for Number {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self.whole() {
+            Some(whole) => serializer.serialize_i64(whole),
+            None => serializer.serialize_f64(self.0),
+        }
+    }
+}
+
+/// One row of a list: its name, what it is called, and what is said under
+/// that. `actions` names the list's actions that can be asked of this row.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FormRow {
+    pub id: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    pub actions: Vec<String>,
+}
+
+/// Something a list offers to do: a button under it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FormAction {
+    /// What comes back in `settings.used`.
+    pub id: String,
+    pub title: String,
+    /// Whether it is done to the row picked. One that is can be pressed
+    /// only while a row that takes it is picked.
+    pub row: bool,
+    /// Whether it can be pressed at all now.
+    pub enabled: bool,
 }
 
 /// One of the options of a choice: its name, and what the user reads.
@@ -1425,6 +1663,280 @@ impl From<FormUsed> for FormUsedParams {
             button: used.button,
             values: used.values,
             secrets: used.secrets,
+        }
+    }
+}
+
+/// What the settings window shows: its panes, each with a name, a title,
+/// the symbol on its toolbar button and its settings as they stand. The
+/// shell lays them out, shows the window with the pane the user last had,
+/// and knows nothing of what any setting means.
+///
+/// `problem` is what is wrong: with no panes, the settings cannot be
+/// shown or changed from here at all (the file has a mistake in it), and
+/// the window says so and offers the file; with panes, the last change was
+/// not made, and why.
+///
+/// It cannot be built or decoded with nothing to show, a pane or a field
+/// whose name is not one, two panes or two fields of a pane of one name, a
+/// secret or a code (settings have none), a field with the focus (the
+/// keyboard is the user's to put), or a field that does not hang together.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "SettingsShowParams", into = "SettingsShowParams")]
+pub struct SettingsShow {
+    panes: Vec<SettingsPane>,
+    problem: Option<String>,
+}
+
+/// What a [`SettingsShow`] is made from.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SettingsShowParams {
+    pub panes: Vec<SettingsPane>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub problem: Option<String>,
+}
+
+/// One pane of the settings window.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SettingsPane {
+    /// What comes back in `settings.used`.
+    pub id: String,
+    /// On the pane's toolbar button, and the window's title while the
+    /// pane is the one on show.
+    pub title: String,
+    /// The SF Symbol on the pane's toolbar button.
+    pub symbol: String,
+    /// Said above the fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    pub fields: Vec<FormField>,
+    /// Said at the foot of the pane, beside a button that opens the
+    /// settings file: what more can be set there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub more: Option<String>,
+}
+
+/// Whether `symbol` could be the name of an SF Symbol: lower case letters,
+/// digits and dots.
+fn valid_symbol(symbol: &str) -> bool {
+    !symbol.is_empty()
+        && symbol.len() <= MAX_FORM_ID
+        && symbol
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'.')
+}
+
+impl SettingsShow {
+    pub fn new(params: SettingsShowParams) -> Option<Self> {
+        Self::try_from(params).ok()
+    }
+
+    pub fn panes(&self) -> &[SettingsPane] {
+        &self.panes
+    }
+
+    pub fn problem(&self) -> Option<&str> {
+        self.problem.as_deref()
+    }
+
+    /// The field of this name in the pane of this name.
+    pub fn field(&self, pane: &str, field: &str) -> Option<&FormField> {
+        self.panes
+            .iter()
+            .find(|described| described.id == pane)?
+            .fields
+            .iter()
+            .find(|described| described.id() == field)
+    }
+}
+
+impl TryFrom<SettingsShowParams> for SettingsShow {
+    type Error = String;
+
+    fn try_from(params: SettingsShowParams) -> Result<Self, Self::Error> {
+        if params.panes.len() > MAX_SETTINGS_PANES {
+            return Err(format!(
+                "the settings have at most {MAX_SETTINGS_PANES} panes"
+            ));
+        }
+        if params.panes.is_empty() && params.problem.as_deref().is_none_or(str::is_empty) {
+            return Err("settings with no panes say what is wrong".to_owned());
+        }
+        let mut panes = std::collections::BTreeSet::new();
+        for pane in &params.panes {
+            if !valid_form_id(&pane.id) || !panes.insert(pane.id.as_str()) {
+                return Err("each pane of the settings has a name of its own".to_owned());
+            }
+            if pane.title.is_empty() || !valid_symbol(&pane.symbol) {
+                return Err("a pane of the settings has a title and a symbol".to_owned());
+            }
+            if pane.fields.len() > MAX_FORM_FIELDS {
+                return Err(format!("a pane has at most {MAX_FORM_FIELDS} fields"));
+            }
+            let mut seen = std::collections::BTreeSet::new();
+            for field in &pane.fields {
+                if !valid_form_id(field.id()) || !seen.insert(field.id()) {
+                    return Err("each field of a pane has a name of its own".to_owned());
+                }
+                if matches!(field, FormField::Secret { .. } | FormField::Code { .. }) {
+                    return Err("settings have no secret and no code".to_owned());
+                }
+                if field.focus() {
+                    return Err("no field of the settings has the focus".to_owned());
+                }
+                field.sound()?;
+            }
+        }
+        Ok(Self {
+            panes: params.panes,
+            problem: params.problem,
+        })
+    }
+}
+
+impl From<SettingsShow> for SettingsShowParams {
+    fn from(show: SettingsShow) -> Self {
+        Self {
+            panes: show.panes,
+            problem: show.problem,
+        }
+    }
+}
+
+/// What a field of the settings window was given: on or off for a toggle,
+/// a number for a number, text for a text field, and for a choice the name
+/// of the option.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum FormValue {
+    Flag(bool),
+    Number(Number),
+    Text(String),
+}
+
+/// What the user did in the settings window: gave a field another value,
+/// or asked for one of a list's actions, of the row picked if the action
+/// is done to a row.
+///
+/// It cannot be built or decoded with a pane, field, action or row whose
+/// name is not one, with both a value and an action or neither, with a row
+/// and no action, or with more text than a setting takes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "SettingsUsedParams", into = "SettingsUsedParams")]
+pub struct SettingsUsed {
+    pane: String,
+    field: String,
+    did: SettingsDid,
+}
+
+/// What was done with a field of the settings window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SettingsDid {
+    /// It was given this value.
+    Set(FormValue),
+    /// This action of a list was asked for, of this row if of any.
+    Action { action: String, row: Option<String> },
+}
+
+impl SettingsUsed {
+    /// A field given another value.
+    pub fn set(pane: &str, field: &str, value: FormValue) -> Option<Self> {
+        Self::try_from(SettingsUsedParams {
+            pane: pane.to_owned(),
+            field: field.to_owned(),
+            value: Some(value),
+            action: None,
+            row: None,
+        })
+        .ok()
+    }
+
+    /// One of a list's actions asked for.
+    pub fn action(pane: &str, field: &str, action: &str, row: Option<&str>) -> Option<Self> {
+        Self::try_from(SettingsUsedParams {
+            pane: pane.to_owned(),
+            field: field.to_owned(),
+            value: None,
+            action: Some(action.to_owned()),
+            row: row.map(str::to_owned),
+        })
+        .ok()
+    }
+
+    pub fn pane(&self) -> &str {
+        &self.pane
+    }
+
+    pub fn field(&self) -> &str {
+        &self.field
+    }
+
+    pub fn did(&self) -> &SettingsDid {
+        &self.did
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SettingsUsedParams {
+    pane: String,
+    field: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    value: Option<FormValue>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    action: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    row: Option<String>,
+}
+
+impl TryFrom<SettingsUsedParams> for SettingsUsed {
+    type Error = String;
+
+    fn try_from(params: SettingsUsedParams) -> Result<Self, Self::Error> {
+        let named = valid_form_id(&params.pane)
+            && valid_form_id(&params.field)
+            && params.action.as_deref().is_none_or(valid_form_id)
+            && params.row.as_deref().is_none_or(valid_form_id);
+        if !named {
+            return Err("a pane, field, action and row are named in lower case".to_owned());
+        }
+        let did = match (params.value, params.action) {
+            (Some(FormValue::Text(text)), None) if text.len() > MAX_SETTING_TEXT => {
+                return Err(format!(
+                    "a setting takes at most {MAX_SETTING_TEXT} bytes of text"
+                ));
+            }
+            (Some(value), None) if params.row.is_none() => SettingsDid::Set(value),
+            (None, Some(action)) => SettingsDid::Action {
+                action,
+                row: params.row,
+            },
+            _ => {
+                return Err("a field is given a value, or one action is asked of a list".to_owned());
+            }
+        };
+        Ok(Self {
+            pane: params.pane,
+            field: params.field,
+            did,
+        })
+    }
+}
+
+impl From<SettingsUsed> for SettingsUsedParams {
+    fn from(used: SettingsUsed) -> Self {
+        let (value, action, row) = match used.did {
+            SettingsDid::Set(value) => (Some(value), None, None),
+            SettingsDid::Action { action, row } => (None, Some(action), row),
+        };
+        Self {
+            pane: used.pane,
+            field: used.field,
+            value,
+            action,
+            row,
         }
     }
 }
@@ -2176,6 +2688,400 @@ mod tests {
             })
             .to_string();
             assert!(decode::<CoreToShell>(&line).is_err(), "{what}");
+        }
+    }
+
+    fn toggle(id: &str, value: bool) -> FormField {
+        FormField::Toggle {
+            id: id.to_owned(),
+            label: String::new(),
+            title: "Show a notification".to_owned(),
+            value,
+            help: None,
+        }
+    }
+
+    fn number(value: f64, min: f64, max: Option<f64>, step: f64, decimals: u8) -> FormField {
+        FormField::Number {
+            id: "seconds".to_owned(),
+            label: "Undo send:".to_owned(),
+            value: Number::new(value).unwrap(),
+            min: Number::new(min).unwrap(),
+            max: max.map(|max| Number::new(max).unwrap()),
+            step: Number::new(step).unwrap(),
+            decimals,
+            unit: None,
+            help: None,
+        }
+    }
+
+    fn list(rows: &[(&str, &[&str])], actions: &[&str]) -> FormField {
+        FormField::List {
+            id: "accounts".to_owned(),
+            label: String::new(),
+            rows: rows
+                .iter()
+                .map(|(id, takes)| FormRow {
+                    id: (*id).to_owned(),
+                    title: "Work".to_owned(),
+                    detail: None,
+                    actions: takes.iter().map(|id| (*id).to_owned()).collect(),
+                })
+                .collect(),
+            actions: actions
+                .iter()
+                .map(|id| FormAction {
+                    id: (*id).to_owned(),
+                    title: "Sign In".to_owned(),
+                    row: true,
+                    enabled: true,
+                })
+                .collect(),
+            empty: None,
+            help: None,
+        }
+    }
+
+    fn pane(id: &str, fields: Vec<FormField>) -> SettingsPane {
+        SettingsPane {
+            id: id.to_owned(),
+            title: "General".to_owned(),
+            symbol: "gearshape".to_owned(),
+            note: None,
+            fields,
+            more: None,
+        }
+    }
+
+    fn settings(panes: Vec<SettingsPane>) -> SettingsShowParams {
+        SettingsShowParams {
+            panes,
+            problem: None,
+        }
+    }
+
+    #[test]
+    fn a_sheet_has_none_of_the_fields_that_report_as_they_change() {
+        for field in [
+            toggle("on", true),
+            number(10.0, 0.0, None, 1.0, 0),
+            list(&[], &[]),
+        ] {
+            assert!(field.reports_as_changed());
+            assert!(FormShow::new(form(vec![field], Vec::new())).is_none());
+        }
+        assert!(!text_field("name", false).reports_as_changed());
+    }
+
+    #[test]
+    fn the_settings_are_only_built_whole() {
+        let fine = settings(vec![
+            pane(
+                "general",
+                vec![
+                    toggle("notifications", true),
+                    text_field("name", false),
+                    number(10.0, 0.0, Some(60.0), 1.0, 0),
+                ],
+            ),
+            pane(
+                "accounts",
+                vec![list(&[("work", &["sign_in"]), ("home", &[])], &["sign_in"])],
+            ),
+        ]);
+        let built = SettingsShow::new(fine.clone()).unwrap();
+        assert_eq!(built.panes().len(), 2);
+        assert_eq!(built.problem(), None);
+        assert!(built.field("general", "notifications").is_some());
+        assert!(built.field("accounts", "notifications").is_none());
+        assert!(built.field("storage", "notifications").is_none());
+        let sent = encode(&CoreToShell::SettingsShow(built.clone())).unwrap();
+        assert_eq!(
+            decode::<CoreToShell>(&sent).unwrap(),
+            CoreToShell::SettingsShow(built)
+        );
+        // A number at either bound, and with no most.
+        for field in [
+            number(0.0, 0.0, Some(60.0), 1.0, 0),
+            number(60.0, 0.0, Some(60.0), 1.0, 0),
+            number(1e9, 0.0, None, 0.25, 3),
+        ] {
+            assert!(SettingsShow::new(settings(vec![pane("general", vec![field])])).is_some());
+        }
+        // With nothing to show but what is wrong, it says that.
+        let broken_file = SettingsShowParams {
+            panes: Vec::new(),
+            problem: Some("config line 3: expected a value".to_owned()),
+        };
+        assert_eq!(
+            SettingsShow::new(broken_file).unwrap().problem(),
+            Some("config line 3: expected a value")
+        );
+
+        let secret = FormField::Secret {
+            id: "password".to_owned(),
+            label: "Password:".to_owned(),
+            focus: false,
+            help: None,
+        };
+        let code = FormField::Code {
+            id: "code".to_owned(),
+            label: "Code:".to_owned(),
+            value: Secret::new("HJKL-MNPQ"),
+            help: None,
+        };
+        let untitled = FormField::Toggle {
+            id: "on".to_owned(),
+            label: String::new(),
+            title: String::new(),
+            value: true,
+            help: None,
+        };
+        let one = |field: FormField| settings(vec![pane("general", vec![field])]);
+        let broken: Vec<(&str, SettingsShowParams)> = vec![
+            ("nothing at all", settings(Vec::new())),
+            (
+                "nothing, and nothing said to be wrong",
+                SettingsShowParams {
+                    panes: Vec::new(),
+                    problem: Some(String::new()),
+                },
+            ),
+            (
+                "two panes of one name",
+                settings(vec![
+                    pane("general", Vec::new()),
+                    pane("general", Vec::new()),
+                ]),
+            ),
+            (
+                "a pane that is no name",
+                settings(vec![pane("General", Vec::new())]),
+            ),
+            (
+                "a pane with no title",
+                settings(vec![SettingsPane {
+                    title: String::new(),
+                    ..pane("general", Vec::new())
+                }]),
+            ),
+            (
+                "a pane with no symbol",
+                settings(vec![SettingsPane {
+                    symbol: String::new(),
+                    ..pane("general", Vec::new())
+                }]),
+            ),
+            (
+                "a symbol that is no symbol's name",
+                settings(vec![SettingsPane {
+                    symbol: "Gear Shape".to_owned(),
+                    ..pane("general", Vec::new())
+                }]),
+            ),
+            (
+                "two fields of one name in a pane",
+                settings(vec![pane(
+                    "general",
+                    vec![toggle("on", true), toggle("on", false)],
+                )]),
+            ),
+            ("a secret", one(secret)),
+            ("a code", one(code)),
+            ("a field with the focus", one(text_field("name", true))),
+            ("a toggle that says nothing", one(untitled)),
+            (
+                "a number below its least",
+                one(number(-1.0, 0.0, None, 1.0, 0)),
+            ),
+            (
+                "a number above its most",
+                one(number(61.0, 0.0, Some(60.0), 1.0, 0)),
+            ),
+            (
+                "a most below the least",
+                one(number(5.0, 5.0, Some(1.0), 1.0, 0)),
+            ),
+            (
+                "a number that steps by nothing",
+                one(number(10.0, 0.0, None, 0.0, 0)),
+            ),
+            (
+                "a number that steps backwards",
+                one(number(10.0, 0.0, None, -1.0, 0)),
+            ),
+            (
+                "more places than are shown",
+                one(number(10.0, 0.0, None, 1.0, MAX_FORM_DECIMALS + 1)),
+            ),
+            (
+                "two rows of one name",
+                one(list(&[("work", &[]), ("work", &[])], &[])),
+            ),
+            ("a row that is no name", one(list(&[("Work", &[])], &[]))),
+            (
+                "two actions of one name",
+                one(list(&[], &["sign_in", "sign_in"])),
+            ),
+            (
+                "a row that takes an action the list has not",
+                one(list(&[("work", &["remove"])], &["sign_in"])),
+            ),
+            (
+                "too many actions",
+                one(list(&[], &["a", "b", "c", "d", "e", "f", "g"])),
+            ),
+            (
+                "too many panes",
+                settings(
+                    (0..=MAX_SETTINGS_PANES)
+                        .map(|n| pane(&format!("p{n}"), Vec::new()))
+                        .collect(),
+                ),
+            ),
+            (
+                "too many fields in a pane",
+                settings(vec![pane(
+                    "general",
+                    (0..=MAX_FORM_FIELDS)
+                        .map(|n| toggle(&format!("f{n}"), true))
+                        .collect(),
+                )]),
+            ),
+        ];
+        for (what, params) in broken {
+            assert!(SettingsShow::new(params.clone()).is_none(), "{what}");
+            // And what cannot be built cannot be decoded either.
+            let line = serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "settings.show",
+                "params": serde_json::to_value(&params).unwrap(),
+            })
+            .to_string();
+            assert!(decode::<CoreToShell>(&line).is_err(), "{what}");
+        }
+        // The same field in two panes is two fields.
+        assert!(
+            SettingsShow::new(settings(vec![
+                pane("general", vec![toggle("on", true)]),
+                pane("privacy", vec![toggle("on", true)]),
+            ]))
+            .is_some()
+        );
+    }
+
+    #[test]
+    fn a_number_is_one_and_a_whole_one_is_written_as_one() {
+        assert!(Number::new(f64::NAN).is_none());
+        assert!(Number::new(f64::INFINITY).is_none());
+        assert_eq!(Number::new(-0.0), Number::new(0.0));
+        assert_eq!(Number::from(10u32).get(), 10.0);
+        assert_eq!(Number::new(0.126).unwrap().rounded(2).get(), 0.13);
+        assert_eq!(Number::new(7.0).unwrap().rounded(0).whole(), Some(7));
+        assert_eq!(Number::new(0.5).unwrap().whole(), None);
+        let text = |value: f64| serde_json::to_string(&Number::new(value).unwrap()).unwrap();
+        assert_eq!(text(10.0), "10");
+        assert_eq!(text(4_294_967_295.0), "4294967295");
+        assert_eq!(text(0.5), "0.5");
+        assert_eq!(text(-2.0), "-2");
+        for (json, value) in [("10", 10.0), ("10.0", 10.0), ("0.25", 0.25), ("-3", -3.0)] {
+            assert_eq!(serde_json::from_str::<Number>(json).unwrap().get(), value);
+        }
+        for bad in ["\"10\"", "true", "null", "[1]"] {
+            assert!(serde_json::from_str::<Number>(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn what_was_done_in_the_settings_is_a_value_or_an_action_never_both() {
+        let line = |params: &str| {
+            format!(r#"{{"jsonrpc":"2.0","method":"settings.used","params":{params}}}"#)
+        };
+        let read = |params: &str| match decode::<ShellToCore>(&line(params)) {
+            Ok(ShellToCore::SettingsUsed(used)) => Some(used),
+            Ok(other) => panic!("{other:?}"),
+            Err(_) => None,
+        };
+        let used = read(r#"{"pane":"general","field":"notifications","value":false}"#).unwrap();
+        assert_eq!((used.pane(), used.field()), ("general", "notifications"));
+        assert_eq!(used.did(), &SettingsDid::Set(FormValue::Flag(false)));
+        assert_eq!(
+            read(r#"{"pane":"general","field":"theme","value":"light"}"#)
+                .unwrap()
+                .did(),
+            &SettingsDid::Set(FormValue::Text("light".to_owned()))
+        );
+        for (number, value) in [("15", 15.0), ("0.5", 0.5), ("2.0", 2.0)] {
+            let params = format!(r#"{{"pane":"storage","field":"cache_gb","value":{number}}}"#);
+            assert_eq!(
+                read(&params).unwrap().did(),
+                &SettingsDid::Set(FormValue::Number(Number::new(value).unwrap()))
+            );
+        }
+        assert_eq!(
+            read(r#"{"pane":"accounts","field":"accounts","action":"add"}"#)
+                .unwrap()
+                .did(),
+            &SettingsDid::Action {
+                action: "add".to_owned(),
+                row: None
+            }
+        );
+        assert_eq!(
+            read(r#"{"pane":"accounts","field":"accounts","action":"sign_in","row":"account_1"}"#)
+                .unwrap()
+                .did(),
+            &SettingsDid::Action {
+                action: "sign_in".to_owned(),
+                row: Some("account_1".to_owned())
+            }
+        );
+
+        // What is built is what is written, and what is read back.
+        let set = SettingsUsed::set("general", "threads", FormValue::Flag(true)).unwrap();
+        let sent = encode(&ShellToCore::SettingsUsed(set.clone())).unwrap();
+        assert_eq!(
+            sent,
+            line(r#"{"pane":"general","field":"threads","value":true}"#)
+        );
+        assert_eq!(
+            decode::<ShellToCore>(&sent).unwrap(),
+            ShellToCore::SettingsUsed(set)
+        );
+        let asked = SettingsUsed::action("accounts", "accounts", "sign_in", Some("row_1")).unwrap();
+        assert_eq!(
+            encode(&ShellToCore::SettingsUsed(asked)).unwrap(),
+            line(r#"{"pane":"accounts","field":"accounts","action":"sign_in","row":"row_1"}"#)
+        );
+
+        for bad in [
+            r#"{"pane":"general","field":"theme"}"#,
+            r#"{"pane":"general","field":"theme","value":"light","action":"add"}"#,
+            r#"{"pane":"general","field":"theme","value":"light","row":"row_1"}"#,
+            r#"{"pane":"general","field":"theme","row":"row_1"}"#,
+            r#"{"pane":"General","field":"theme","value":"light"}"#,
+            r#"{"pane":"general","field":"","value":"light"}"#,
+            r#"{"pane":"general","field":"theme","value":null}"#,
+            r#"{"pane":"general","field":"theme","value":["light"]}"#,
+            r#"{"pane":"general","field":"theme","value":{"is":"light"}}"#,
+            r#"{"pane":"accounts","field":"accounts","action":"Sign In"}"#,
+            r#"{"pane":"accounts","field":"accounts","action":"sign_in","row":"Work"}"#,
+            r#"{"field":"theme","value":"light"}"#,
+            r#"{"pane":"general","field":"theme","value":"light","step":"general"}"#,
+        ] {
+            assert!(read(bad).is_none(), "{bad}");
+        }
+        assert!(SettingsUsed::set("general", "theme", FormValue::Text("x".repeat(4096))).is_some());
+        assert!(SettingsUsed::set("general", "theme", FormValue::Text("x".repeat(4097))).is_none());
+        assert!(SettingsUsed::set("General", "theme", FormValue::Flag(true)).is_none());
+        assert!(SettingsUsed::action("accounts", "accounts", "add", Some("Row")).is_none());
+        // Opening and closing the window say nothing more than that.
+        for method in ["settings.opened", "settings.closed"] {
+            let fine = format!(r#"{{"jsonrpc":"2.0","method":"{method}","params":{{}}}}"#);
+            assert!(decode::<ShellToCore>(&fine).is_ok());
+            let extra =
+                format!(r#"{{"jsonrpc":"2.0","method":"{method}","params":{{"pane":"general"}}}}"#);
+            assert!(decode::<ShellToCore>(&extra).is_err());
         }
     }
 

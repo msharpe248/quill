@@ -272,8 +272,8 @@ private struct Outgoing<Params: Encodable>: Encodable {
 private func encodeLine(method: String, params: some Encodable) -> String {
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-    // These types hold only strings, integers and arrays of them, which
-    // always encode.
+    // These types hold only strings, numbers that are numbers and arrays
+    // of them, which always encode.
     let data = (try? encoder.encode(Outgoing(method: method, params: params))) ?? Data()
     return String(decoding: data, as: UTF8.self)
 }
@@ -293,6 +293,10 @@ private extension JSONValue {
 
     var array: [JSONValue]? {
         if case let .array(value) = self { value } else { nil }
+    }
+
+    var number: Double? {
+        if case let .number(value) = self { value } else { nil }
     }
 }
 
@@ -344,6 +348,38 @@ private struct FormObject {
         return items
     }
 
+    func number(_ key: String) throws -> Double {
+        guard let value = fields[key] else { throw BridgeError.malformed("\(method): missing \(key)") }
+        guard let number = value.number, number.isFinite else {
+            throw BridgeError.malformed("\(method): \(key) is not a number")
+        }
+        return number
+    }
+
+    func optionalNumber(_ key: String) throws -> Double? {
+        guard fields[key] != nil else { return nil }
+        return try number(key)
+    }
+
+    /// A whole number.
+    func whole(_ key: String) throws -> Int {
+        let number = try number(key)
+        guard number == number.rounded(), abs(number) < 1e9 else {
+            throw BridgeError.malformed("\(method): \(key) is not a whole number")
+        }
+        return Int(number)
+    }
+
+    /// A list whose every item is a string.
+    func stringList(_ key: String) throws -> [String] {
+        try array(key).map { item in
+            guard let text = item.string else {
+                throw BridgeError.malformed("\(method): \(key) holds something that is not a string")
+            }
+            return text
+        }
+    }
+
     /// An object whose every value is a string.
     func strings(_ key: String) throws -> [String: String] {
         guard let value = fields[key] else { throw BridgeError.malformed("\(method): missing \(key)") }
@@ -365,14 +401,28 @@ private extension FormField {
         case "secret": ["kind", "id", "label", "focus", "help"]
         case "choice": ["kind", "id", "label", "value", "options", "focus", "help"]
         case "static", "code": ["kind", "id", "label", "value", "help"]
+        case "toggle": ["kind", "id", "label", "title", "value", "help"]
+        case "number": FormNumber.allowedKeys
+        case "list": FormList.allowedKeys
         default: nil
         }
     }
 
-    init(json: JSONValue) throws {
-        let method = "form.show"
-        guard let name = json.object?["kind"]?.string, let allowed = Self.allowedKeys(for: name) else {
-            throw BridgeError.malformed("\(method): a field is text, secret, choice, static or code")
+    /// The kinds of field a sheet's form has, and the kinds the settings
+    /// window has: a sheet has none that report as they change, and the
+    /// settings have no secret and no code.
+    static let sheetKinds = ["text", "secret", "choice", "static", "code"]
+    static let settingsKinds = ["text", "choice", "static", "toggle", "number", "list"]
+
+    /// A field of the message called `method`, which has fields of these
+    /// `kinds`: a form's, or a settings pane's.
+    init(json: JSONValue, of method: String, kinds: [String]) throws {
+        guard let name = json.object?["kind"]?.string, kinds.contains(name),
+            let allowed = Self.allowedKeys(for: name)
+        else {
+            let last = kinds.last ?? ""
+            throw BridgeError.malformed(
+                "\(method): a field is \(kinds.dropLast().joined(separator: ", ")) or \(last)")
         }
         let object = try FormObject(json, of: method, allowing: allowed)
         let kind: Kind
@@ -389,6 +439,28 @@ private extension FormField {
             kind = try .choice(value: object.string("value"), options: options)
         case "code":
             kind = try .code(value: FormSecret(object.string("value")))
+        case "toggle":
+            kind = try .toggle(title: object.string("title"), value: object.bool("value"))
+        case "number":
+            kind = try .number(
+                FormNumber(
+                    value: object.number("value"), min: object.number("min"), max: object.optionalNumber("max"),
+                    step: object.number("step"), decimals: object.whole("decimals"),
+                    unit: object.optionalString("unit")))
+        case "list":
+            let rows = try object.array("rows").map { row in
+                let row = try FormObject(row, of: method, allowing: FormList.Row.allowedKeys)
+                return try FormList.Row(
+                    id: row.string("id"), title: row.string("title"), detail: row.optionalString("detail"),
+                    actions: row.stringList("actions"))
+            }
+            let actions = try object.array("actions").map { action in
+                let action = try FormObject(action, of: method, allowing: FormList.Action.allowedKeys)
+                return try FormList.Action(
+                    id: action.string("id"), title: action.string("title"), row: action.bool("row"),
+                    enabled: action.bool("enabled"))
+            }
+            kind = try .list(FormList(rows: rows, actions: actions, empty: object.optionalString("empty")))
         default:
             kind = try .fixed(value: object.string("value"))
         }
@@ -410,6 +482,42 @@ private extension FormField {
         case let .choice(value, options):
             object["value"] = .string(value)
             object["options"] = .array(options.map { .object(["id": .string($0.id), "title": .string($0.title)]) })
+        case let .toggle(title, value):
+            object["title"] = .string(title)
+            object["value"] = .bool(value)
+        case let .number(number):
+            object["value"] = .number(number.value)
+            object["min"] = .number(number.min)
+            object["step"] = .number(number.step)
+            object["decimals"] = .number(Double(number.decimals))
+            if let max = number.max {
+                object["max"] = .number(max)
+            }
+            if let unit = number.unit {
+                object["unit"] = .string(unit)
+            }
+        case let .list(list):
+            object["rows"] = .array(
+                list.rows.map { row in
+                    var object: [String: JSONValue] = [
+                        "id": .string(row.id), "title": .string(row.title),
+                        "actions": .array(row.actions.map { .string($0) }),
+                    ]
+                    if let detail = row.detail {
+                        object["detail"] = .string(detail)
+                    }
+                    return .object(object)
+                })
+            object["actions"] = .array(
+                list.actions.map { action in
+                    .object([
+                        "id": .string(action.id), "title": .string(action.title), "row": .bool(action.row),
+                        "enabled": .bool(action.enabled),
+                    ])
+                })
+            if let empty = list.empty {
+                object["empty"] = .string(empty)
+            }
         }
         // Left out when false, as the core leaves it out.
         if focus {
@@ -426,7 +534,9 @@ private extension FormShow {
     init(params: JSONValue) throws {
         let method = "form.show"
         let object = try FormObject(params, of: method, allowing: Self.allowedKeys)
-        let fields = try object.array("fields").map(FormField.init(json:))
+        let fields = try object.array("fields").map {
+            try FormField(json: $0, of: method, kinds: FormField.sheetKinds)
+        }
         let buttons = try object.array("buttons").map { button in
             let button = try FormObject(button, of: method, allowing: FormButton.allowedKeys)
             var role: FormRole?
@@ -502,6 +612,98 @@ private extension FormUsed {
         ]
         if let button {
             object["button"] = .string(button)
+        }
+        return .object(object)
+    }
+}
+
+private extension SettingsShow {
+    init(params: JSONValue) throws {
+        let method = "settings.show"
+        let object = try FormObject(params, of: method, allowing: Self.allowedKeys)
+        let panes = try object.array("panes").map { pane in
+            let pane = try FormObject(pane, of: method, allowing: SettingsPane.allowedKeys)
+            return try SettingsPane(
+                id: pane.string("id"), title: pane.string("title"), symbol: pane.string("symbol"),
+                note: pane.optionalString("note"),
+                fields: pane.array("fields").map {
+                    try FormField(json: $0, of: method, kinds: FormField.settingsKinds)
+                },
+                more: pane.optionalString("more"))
+        }
+        guard let settings = try SettingsShow(panes: panes, problem: object.optionalString("problem")) else {
+            throw BridgeError.malformed(
+                "\(method): there must be panes or a problem, each pane and field needs a name of its own, a "
+                    + "pane a title and a symbol, no field has the focus, a choice is one of its options, a "
+                    + "number within its bounds, and a list's rows and actions have names of their own")
+        }
+        self = settings
+    }
+
+    var json: JSONValue {
+        var object: [String: JSONValue] = [
+            "panes": .array(
+                panes.map { pane in
+                    var object: [String: JSONValue] = [
+                        "id": .string(pane.id), "title": .string(pane.title), "symbol": .string(pane.symbol),
+                        "fields": .array(pane.fields.map(\.json)),
+                    ]
+                    if let note = pane.note {
+                        object["note"] = .string(note)
+                    }
+                    if let more = pane.more {
+                        object["more"] = .string(more)
+                    }
+                    return .object(object)
+                })
+        ]
+        if let problem {
+            object["problem"] = .string(problem)
+        }
+        return .object(object)
+    }
+}
+
+private extension SettingsUsed {
+    init(params: JSONValue) throws {
+        let method = "settings.used"
+        let object = try FormObject(params, of: method, allowing: Self.allowedKeys)
+        let did: Did
+        switch (object.fields["value"], try object.optionalString("action")) {
+        case let (value?, nil):
+            guard object.fields["row"] == nil else {
+                throw BridgeError.malformed("\(method): a row goes with an action")
+            }
+            switch value {
+            case let .bool(flag): did = .set(.flag(flag))
+            case let .number(number): did = .set(.number(number))
+            case let .string(text): did = .set(.text(text))
+            case .null, .array, .object:
+                throw BridgeError.malformed("\(method): value is true or false, a number or text")
+            }
+        case let (nil, action?):
+            did = try .action(action, row: object.optionalString("row"))
+        default:
+            throw BridgeError.malformed("\(method): a field is given a value, or one action is asked of a list")
+        }
+        guard let used = try SettingsUsed(pane: object.string("pane"), field: object.string("field"), did: did)
+        else {
+            throw BridgeError.malformed("\(method): the pane, the field, the action and the row need names")
+        }
+        self = used
+    }
+
+    var json: JSONValue {
+        var object: [String: JSONValue] = ["pane": .string(pane), "field": .string(field)]
+        switch did {
+        case let .set(.flag(flag)): object["value"] = .bool(flag)
+        case let .set(.number(number)): object["value"] = .number(number)
+        case let .set(.text(text)): object["value"] = .string(text)
+        case let .action(action, row):
+            object["action"] = .string(action)
+            if let row {
+                object["row"] = .string(row)
+            }
         }
         return .object(object)
     }
@@ -688,6 +890,8 @@ public extension CoreToShell {
                 throw BridgeError.malformed("reading.place: columns must be from 1 to 65535")
             }
             self = .readingPlace(place)
+        case "settings.show":
+            self = try .settingsShow(SettingsShow(params: envelope.params))
         default:
             throw BridgeError.unknownMethod(envelope.method)
         }
@@ -739,6 +943,8 @@ public extension CoreToShell {
             encodeLine(method: "reading.close", params: NoParams())
         case let .readingPlace(place):
             encodeLine(method: "reading.place", params: place)
+        case let .settingsShow(settings):
+            encodeLine(method: "settings.show", params: settings.json)
         }
     }
 }
@@ -826,6 +1032,14 @@ public extension ShellToCore {
             self = .editorExited(exited)
         case "form.used":
             self = try .formUsed(FormUsed(params: envelope.params))
+        case "settings.opened":
+            try envelope.requireOnly([])
+            self = .settingsOpened
+        case "settings.closed":
+            try envelope.requireOnly([])
+            self = .settingsClosed
+        case "settings.used":
+            self = try .settingsUsed(SettingsUsed(params: envelope.params))
         case "app.will_quit":
             try envelope.requireOnly([])
             self = .appWillQuit
@@ -860,6 +1074,12 @@ public extension ShellToCore {
             encodeLine(method: "editor.exited", params: exited)
         case let .formUsed(used):
             encodeLine(method: "form.used", params: used.json)
+        case .settingsOpened:
+            encodeLine(method: "settings.opened", params: NoParams())
+        case .settingsClosed:
+            encodeLine(method: "settings.closed", params: NoParams())
+        case let .settingsUsed(used):
+            encodeLine(method: "settings.used", params: used.json)
         case .appWillQuit:
             encodeLine(method: "app.will_quit", params: NoParams())
         }

@@ -35,7 +35,7 @@ You need a stable Rust toolchain (1.98 or later; `rust-toolchain.toml` selects i
 cargo run --release -- tui --demo
 ```
 
-`--demo` opens an invented mailbox held in memory. It reads your config, theme and keys if you have them, and writes nothing. (In the app, the one thing it does write is the choice of reading pane, `web_reading`, when you switch it: see "Reading in a web pane".)
+`--demo` opens an invented mailbox held in memory. It reads your config, theme and keys if you have them, and writes nothing. (In the app it does write what you change yourself: the choice of reading pane, `web_reading`, when you switch it, and whatever you change in the Settings window. The demo is then a way to try the settings: see "The Settings window".)
 
 Without `--demo`, `quill tui` opens your own mail. The first time, with no accounts yet, it opens the form for adding one.
 
@@ -47,6 +47,8 @@ open target/app/Quill.app
 ```
 
 The script builds the Rust core and the Swift shell, assembles `target/app/Quill.app`, and signs it ad hoc with the App Sandbox on. The app opens your own mail, and the form for adding an account when there is none; `Quill.app/Contents/MacOS/Quill --demo` opens the demo mailbox instead. The app keeps its config and mail in its own container, apart from those of `quill` run in a terminal.
+
+Settings… in the Quill menu (`cmd-,`) opens a settings window for the settings changed most; see "The Settings window".
 
 Around the terminal the app adds a menu bar and toolbar built from the core's commands, the mailbox name and unread count in the title bar, the unread count on the Dock icon, and a second pane beside the terminal for looking at attachments and playing sound and video. `esc` closes the pane, and `cmd-]` moves focus between the panes.
 
@@ -593,7 +595,7 @@ Quill looks in `~/Library/Application Support/Quill/config/`:
 
 | File | Purpose |
 |---|---|
-| `config.toml` | Settings. See the example in the spec. |
+| `config.toml` | Settings. See the example in the spec. In the app, the Settings window changes it for you (below). |
 | `keys.toml` | Key overrides, on top of the chosen preset. |
 | `themes/NAME.toml` | Your own themes, selected with `theme = "NAME"`. |
 | `templates/NAME.md`, `templates/NAME.txt` | Text to put into messages. See "Templates". |
@@ -602,6 +604,32 @@ Quill looks in `~/Library/Application Support/Quill/config/`:
 Use `--config-dir` and `--data-dir`, or the `QUILL_CONFIG_DIR` and `QUILL_DATA_DIR` environment variables, to point elsewhere.
 
 A file Quill cannot use never stops it from starting. The problem is shown in the bottom bar and the defaults are used instead.
+
+### The Settings window
+
+In the app, Settings… in the Quill menu (`cmd-,`) opens a settings window. It changes `config.toml` for you: each change is written as you make it, there is no OK to press, and your comments and everything else in the file stay as you wrote them. In a terminal there is no window: there the file is the settings.
+
+| Pane | Settings | Key in `config.toml` | Takes effect |
+|---|---|---|---|
+| General | Theme | `theme` under `[ui]` | At once |
+| | Keys: Vim or Mutt | `keymap` under `[ui]` | At once, menus included |
+| | Show a notification when mail arrives | `notifications` under `[ui]` | At once |
+| | List the messages of a conversation together | `threads` under `[ui]` | At once |
+| | Read mail in a web pane beside the list | `web_reading` under `[ui]` | At once |
+| Accounts | The accounts in the file, with Add an Account… and Sign In… | `[[account]]` | At once |
+| Composing | Write in: Quill's own editor, Vim, nano, Pico, or your own Vim by your script | `editor` under `[compose]` | When Quill is next opened |
+| | Format: Markdown or plain text | `format` under `[compose]` | At once |
+| | Replies above or below the quoted message | `reply_position` under `[compose]` | At once |
+| | Check spelling as you type | `spell_check` under `[compose]` | At once |
+| | Undo send, in seconds | `undo_send_seconds` under `[compose]` | At once |
+| Privacy | Remote pictures: ask for each message, or never load them | `remote_images` under `[privacy]` | At once |
+| Storage | Keep up to so many GB of downloaded mail | `cache_gb` under `[storage]` | When Quill is next opened |
+
+The two that wait for the next start say so in the window, and say what Quill is going by until then.
+
+Everything else is set in the file, and the button at the foot of each pane opens it: rules, saved searches, an account's servers, name and signature, the reader's width, the font, the mouse; and beside it your keys (`keys.toml`), themes, templates and hooks. `mg` as the editor is for Quill in a terminal and is not offered in the window. There is no button to take an account away: take it out of the file, and the copy of its mail on this Mac goes when Quill is next opened. "Reveal Settings File in Finder", in the same menu, shows where the file is.
+
+The window shows what the file says. Edit the file by hand while it is open and the window catches up when you come back to it, and so does Quill, for the settings that take effect at once. If the file has a mistake in it, the window says so, offers to open the file, and changes nothing until the mistake is put right.
 
 ### Keys
 
@@ -695,7 +723,7 @@ The IMAP backend's tests run against a real server: install Dovecot (`brew insta
 
 The shell and the core talk over a bridge defined in `schema/bridge.json`. The example messages in `schema/examples` are tested from both sides; change the schema, both sets of types and the examples together.
 
-The app can be driven without a person, for checks that need the real window: `Quill --script "wait:2;menu:message.toggle_star;press:cmd-j" --dump-screen out.txt` performs the steps, then writes the terminal's text, the shell's state and a picture of the window (`out.txt.png`). Inside the sandbox the file must be in the app's container. `app/Sources/QuillApp/DebugScript.swift` lists the steps. A sheet on the window is in the dump too, whichever question it is asking (its step, what it says, and each field with what it holds; a password, and a code to sign in with, as `<secret>`), is drawn into the picture where it lies and saved by itself as `out.txt.sheet.png`; `sheetset:FIELD=VALUE` and `sheetpress:BUTTON` work it. `snap:NAME` writes the dump as it stands in the middle of a script (`out.txt.NAME`, and its picture), so one launch can check several states; the dump says whether the web reading pane is on and what it shows, and gives the widths to check its place by: the terminal's columns, the columns the window has room for, where the core says the pane goes, where the divider was left, and the width of each pane drawn in the terminal. `divider:COLUMNS` drags the divider and `divider:reset` double-clicks it. A scripted run starts at the same window size every time and keeps a dragged divider for the run only; it neither reads nor writes your saved window or divider.
+The app can be driven without a person, for checks that need the real window: `Quill --script "wait:2;menu:message.toggle_star;press:cmd-j" --dump-screen out.txt` performs the steps, then writes the terminal's text, the shell's state and a picture of the window (`out.txt.png`). Inside the sandbox the file must be in the app's container. `app/Sources/QuillApp/DebugScript.swift` lists the steps. A sheet on the window is in the dump too, whichever question it is asking (its step, what it says, and each field with what it holds; a password, and a code to sign in with, as `<secret>`), is drawn into the picture where it lies and saved by itself as `out.txt.sheet.png`; `sheetset:FIELD=VALUE` and `sheetpress:BUTTON` work it. `snap:NAME` writes the dump as it stands in the middle of a script (`out.txt.NAME`, and its picture), so one launch can check several states; the dump says whether the web reading pane is on and what it shows, and gives the widths to check its place by: the terminal's columns, the columns the window has room for, where the core says the pane goes, where the divider was left, and the width of each pane drawn in the terminal. `divider:COLUMNS` drags the divider and `divider:reset` double-clicks it. A scripted run starts at the same window size every time and keeps a dragged divider for the run only; it neither reads nor writes your saved window or divider. The settings window is worked with `settings:open`, `settingspane:PANE`, `settingsset:PANE.FIELD=VALUE`, `settingsstep:PANE.FIELD=up`, `settingspick:PANE.FIELD=TITLE`, `settingspress:PANE.FIELD.ACTION`, `settingskey:KEY` and `settings:close`; the dump says what it shows and what the core was told, its picture is `out.txt.settings.png`, and the pane it was last on is kept for the run only.
 
 The UI is covered by snapshot tests of whole screens at 80x24 and 200x60 (`crates/quill-tui/tests/snapshots.rs`). When a change to the UI is intended, regenerate them with `INSTA_UPDATE=always cargo test -p quill-tui` or review them with `cargo insta review`, and read the diff before committing.
 

@@ -51,29 +51,41 @@ impl Paths {
         self.config_dir.join("config.toml")
     }
 
-    pub fn keys_file(&self) -> PathBuf {
-        self.config_dir.join("keys.toml")
-    }
-
     /// The folder of text kept ready to put into messages: each `.md` or
     /// `.txt` file in it is a template.
     pub fn templates_dir(&self) -> PathBuf {
         self.config_dir.join("templates")
     }
 
-    /// The file of a user theme, or `None` when the name could not be a file
-    /// stem (so a theme name can never point outside `themes/`).
-    pub fn theme_file(&self, name: &str) -> Option<PathBuf> {
-        let plain = !name.is_empty()
-            && name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
-        plain.then(|| self.config_dir.join("themes").join(format!("{name}.toml")))
-    }
-
     pub fn database(&self) -> PathBuf {
         self.data_dir.join("quill.db")
     }
+}
+
+/// `keys.toml` in the config folder `config_dir`.
+pub fn keys_file_in(config_dir: &Path) -> PathBuf {
+    config_dir.join("keys.toml")
+}
+
+/// The folder of the user's own themes in the config folder `config_dir`.
+pub fn themes_dir_in(config_dir: &Path) -> PathBuf {
+    config_dir.join("themes")
+}
+
+/// Whether `name` could be the name of a theme of the user's own: the
+/// stem of a file in `themes/`, and nothing that could point outside it.
+pub fn is_theme_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// The file of the user theme called `name` in the config folder
+/// `config_dir`, or `None` when the name could not be a file stem (so a
+/// theme name can never point outside `themes/`).
+pub fn theme_file_in(config_dir: &Path, name: &str) -> Option<PathBuf> {
+    is_theme_name(name).then(|| themes_dir_in(config_dir).join(format!("{name}.toml")))
 }
 
 #[cfg(test)]
@@ -112,7 +124,10 @@ mod tests {
         assert_eq!(paths.config_dir, Path::new("/flag/config"));
         assert_eq!(paths.data_dir, Path::new("/env/data"));
         assert_eq!(paths.config_file(), Path::new("/flag/config/config.toml"));
-        assert_eq!(paths.keys_file(), Path::new("/flag/config/keys.toml"));
+        assert_eq!(
+            keys_file_in(&paths.config_dir),
+            Path::new("/flag/config/keys.toml")
+        );
     }
 
     #[test]
@@ -133,11 +148,12 @@ mod tests {
     fn theme_names_cannot_leave_the_themes_directory() {
         let paths = Paths::resolve(Some("/c".into()), Some("/d".into()), env(&[])).unwrap();
         assert_eq!(
-            paths.theme_file("solarized-dark_2"),
+            theme_file_in(&paths.config_dir, "solarized-dark_2"),
             Some(PathBuf::from("/c/themes/solarized-dark_2.toml"))
         );
         for name in ["", "../secret", "a/b", "/etc/passwd", "x.toml", "a b"] {
-            assert_eq!(paths.theme_file(name), None, "{name}");
+            assert_eq!(theme_file_in(&paths.config_dir, name), None, "{name}");
+            assert!(!is_theme_name(name), "{name}");
         }
     }
 }

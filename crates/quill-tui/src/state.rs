@@ -29,8 +29,12 @@ use crate::outgoing::{Handed, InviteAnswer, Response, SendRequest};
 use crate::palette::{self, Item, Palette, What};
 
 mod mouse;
+mod settings;
 mod sheet;
-use quill_host::bridge::FormUsed;
+use quill_host::bridge::{FormUsed, SettingsUsed};
+
+pub use self::settings::SettingsWindow;
+use crate::settings::Applied;
 
 use crate::setup::{
     AccountEvent, AccountRequest, CertificatePrompt, Outcome, Preference, Setup, SignIn,
@@ -50,8 +54,14 @@ const SEVERAL_NOTIFICATION: &str = "arrived";
 /// More new messages than this at once are announced together.
 const MOST_ANNOUNCED_SINGLY: usize = 3;
 
-/// Everything fixed for the life of the run: what `update` and the views
-/// consult but never change.
+/// What `update` and the views consult but never change: where Quill is
+/// running, and what the config says.
+///
+/// Nearly all of it is fixed for the life of the run. The exception is the
+/// settings that hold from the moment they are changed in the host's
+/// settings window: `update` decides what they come to
+/// ([`Effects::settings`]), and the run loop puts them here between one
+/// update and the next ([`crate::settings::Applied::apply`]).
 pub struct Env {
     pub registry: Registry,
     pub keymap: Keymap,
@@ -131,6 +141,11 @@ pub struct Env {
     /// Web reading is on as Quill starts: `web_reading` under `[ui]` in
     /// the config. It means nothing without [`Env::web_pane`].
     pub web_reading: bool,
+    /// The room downloaded mail was given as Quill started, in gigabytes
+    /// (`cache_gb` under `[storage]`; 0 is no limit). The sync engine was
+    /// told once, so this is what holds until Quill is started again,
+    /// whatever the config has come to say since.
+    pub cache_gb: f64,
 }
 
 impl Env {
@@ -259,6 +274,20 @@ pub enum Action {
     /// terminal would have with the window to itself. The layout goes by
     /// it while the host's reading pane has part of the window.
     WindowColumns(u16),
+    /// The user opened, closed or did something in the host's settings
+    /// window.
+    Settings(SettingsAct),
+}
+
+/// What was done with the host's settings window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SettingsAct {
+    /// It was opened, or brought forward: the settings are read afresh.
+    Opened,
+    Closed,
+    /// A setting was given another value there, or something was asked
+    /// for from one of its lists.
+    Used(SettingsUsed),
 }
 
 /// What an action asks of the world outside the state: queries and writes
@@ -271,6 +300,9 @@ pub struct Effects {
     pub sync: Vec<SyncRequest>,
     /// Work for the accounts service: discovery, sign-in, saving.
     pub accounts: Vec<AccountRequest>,
+    /// Settings that hold from now on, for the run loop to put into
+    /// [`Env`] before the next update.
+    pub settings: Option<Box<Applied>>,
 }
 
 impl Effects {
@@ -279,6 +311,7 @@ impl Effects {
             && self.host.is_empty()
             && self.sync.is_empty()
             && self.accounts.is_empty()
+            && self.settings.is_none()
     }
 }
 
@@ -1181,6 +1214,8 @@ pub struct State {
     follow: Follow,
     /// A sign-in to an account's provider, waiting on the user.
     pub sign_in: Option<SignIn>,
+    /// The host's settings window, while it is open.
+    pub settings: Option<SettingsWindow>,
     /// A time being asked for.
     pub when: Option<WhenPrompt>,
     /// When the next snoozed message is due back.
@@ -1244,6 +1279,7 @@ impl State {
             window_columns: None,
             follow: Follow::default(),
             sign_in: None,
+            settings: None,
             when: None,
             next_wake: None,
             certificates: VecDeque::new(),
@@ -1407,7 +1443,8 @@ impl State {
             }
             Action::Notify(notice) => self.notices.push_back(notice),
             Action::Sync(event) => self.on_sync(env, event, &mut out),
-            Action::Account(event) => self.on_account(event, &mut out),
+            Action::Account(event) => self.on_account(env, event, &mut out),
+            Action::Settings(act) => self.on_settings(env, act, &mut out),
             Action::Paste(text) => match self.context() {
                 Context::Setup => {
                     if let Some(setup) = &mut self.setup {
@@ -3667,7 +3704,12 @@ impl State {
         true
     }
 
-    fn on_account(&mut self, event: AccountEvent, out: &mut Effects) {
+    fn on_account(&mut self, env: &Env, event: AccountEvent, out: &mut Effects) {
+        // An account has just been written into the config: the settings
+        // window lists the accounts the config has, so it is read again.
+        if self.settings.is_some() && matches!(event, AccountEvent::Saved(Ok(_))) {
+            out.accounts.push(AccountRequest::Settings(None));
+        }
         if let AccountEvent::Trusted {
             account,
             sending,
@@ -3748,6 +3790,15 @@ impl State {
                         false,
                     ));
                 }
+                // The settings window shows what the config says, and the
+                // config has just been written to.
+                if self.settings.is_some() {
+                    out.accounts.push(AccountRequest::Settings(None));
+                }
+                return;
+            }
+            AccountEvent::Settings { read, changed } => {
+                self.on_settings_read(env, read, changed, out);
                 return;
             }
             AccountEvent::Unsubscribed { host, result } => {
@@ -4289,6 +4340,12 @@ impl State {
             .push(AccountRequest::Remember(Preference::WebReading(
                 self.web_reading,
             )));
+        self.web_reading_switched(env, out);
+    }
+
+    /// Web reading has just been switched, by its command or in the
+    /// host's settings window: what follows from it either way.
+    fn web_reading_switched(&mut self, env: &Env, out: &mut Effects) {
         let key = env
             .hint_key(CommandId::ViewWebReading)
             .map_or_else(String::new, |key| format!(" {key} switches back."));

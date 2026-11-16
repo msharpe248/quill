@@ -52,6 +52,21 @@ import WebKit
 /// - `snap:NAME`      write the dump as it stands now, to the `--dump-screen`
 ///   file with `.NAME` added to its name (and its picture beside it), and go
 ///   on: several states of one run can then be checked from one launch
+/// - `settings:open`  open the settings window, as Settings in the Quill menu
+///   does; `settings:close` closes it, as its close button does, and
+///   `settings:file` presses its button that opens the settings file
+/// - `settingspane:PANE` choose a pane of the settings window by its name, as
+///   a click on its toolbar button does
+/// - `settingsset:PANE.FIELD=VALUE` give a control of the settings window a
+///   value, as the user does: the name of an option for a pop-up, `on` or
+///   `off` for a checkbox, what is typed for a field
+/// - `settingsstep:PANE.FIELD=up` click the stepper of a number field once,
+///   up or `down`
+/// - `settingspick:PANE.FIELD=TITLE` pick the row of a list that has this
+///   title, as a click on it does; with no title, none
+/// - `settingspress:PANE.FIELD.ACTION` press a button of a list
+/// - `settingskey:KEY` a real key event to the settings window, in Quill's
+///   notation: `settingskey:esc`, `settingskey:cmd-w`
 ///
 /// The widths are in the dump, so that the place of the reading pane can be
 /// checked without a person: the terminal's columns and the width of its
@@ -78,6 +93,14 @@ import WebKit
 /// fixed marker in its place, and the picture shows bullets. Nor is a code
 /// to sign in with, or the page to type it at: the dump has the same marker
 /// for each, and only the picture shows them.
+///
+/// The settings window is the real one. The dump says whether it is open,
+/// what it is called, how large it is and whether it can be resized, its
+/// toolbar, what each control shows, what the core was told, and every pane
+/// the core described with each field and what it holds; its picture is
+/// written beside the window's, with `.settings.png` after the dump's name.
+/// Which pane was last on show is kept for the run only: a scripted run
+/// neither reads nor writes the user's own.
 ///
 /// The copy of the vimrc is kept in the scratch config folder when the run
 /// has one (`--core-env QUILL_CONFIG_DIR=...`), in its `vim` folder, and
@@ -298,6 +321,55 @@ enum DebugScript {
                 note("cannot click the divider \(argument) times")
             }
             try? await Task.sleep(for: .milliseconds(600))
+        case "settings":
+            switch argument {
+            case "open":
+                controller.showSettings(nil)
+            case "close":
+                controller.settingsWindow.close()
+            case "file":
+                if !controller.settingsWindow.pressFileButton() {
+                    note("no settings window to open the file from")
+                }
+            default:
+                note("unknown step \(step)")
+            }
+            try? await Task.sleep(for: .milliseconds(500))
+        case "settingspane":
+            if !controller.settingsWindow.choose(pane: argument) {
+                note("no settings pane \(argument)")
+            }
+            try? await Task.sleep(for: .milliseconds(400))
+        case "settingsset":
+            let (name, value) = split(argument, at: "=")
+            if !controller.settingsWindow.set(name, to: value) {
+                note("cannot set \(name) to \(value) in the settings")
+            }
+            try? await Task.sleep(for: .milliseconds(400))
+        case "settingsstep":
+            let (name, way) = split(argument, at: "=")
+            if !controller.settingsWindow.step(name, up: way != "down") {
+                note("no stepper for \(name) in the settings")
+            }
+            try? await Task.sleep(for: .milliseconds(400))
+        case "settingspick":
+            let (name, title) = split(argument, at: "=")
+            if !controller.settingsWindow.pick(name, rowTitled: title) {
+                note("no row \(title) in \(name) in the settings")
+            }
+            try? await Task.sleep(for: .milliseconds(200))
+        case "settingspress":
+            if !controller.settingsWindow.press(argument) {
+                note("no button \(argument) to press in the settings")
+            }
+            try? await Task.sleep(for: .milliseconds(400))
+        case "settingskey":
+            if let window = controller.settingsWindow.windowIfOpen {
+                press(argument, in: window)
+            } else {
+                note("no settings window to press \(argument) in")
+            }
+            try? await Task.sleep(for: .milliseconds(400))
         case "snap":
             let plain = !argument.isEmpty && argument.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" }
             if let destination, plain {
@@ -524,6 +596,11 @@ enum DebugScript {
         // sheet has been opened in this run. A secret field is
         // `[secret] = <secret>` whatever it holds.
         lines.append(contentsOf: controller.formSheet.summary)
+        // settings window: closed | open, titled "General", with its size,
+        // its toolbar, what each control shows and what the core was told;
+        // then what the core described: a line for each pane and for each
+        // field (`settings field general.theme [choice] = dark (dark|light)`).
+        lines.append(contentsOf: controller.settingsWindow.summary)
         let toolbar = (controller.window?.toolbar?.items ?? [])
             .filter { $0.itemIdentifier != .flexibleSpace }
             .map { "\($0.isEnabled ? "+" : "-")\($0.itemIdentifier.rawValue)" }
@@ -579,7 +656,9 @@ enum DebugScript {
                     .write(to: destination.appendingPathExtension("sheet.png"))
                 let origin = NSPoint(
                     x: sheet.frame.minX - window.frame.minX, y: sheet.frame.minY - window.frame.minY)
-                if let context = NSGraphicsContext(bitmapImageRep: bitmap) {
+                // Into this picture only when it is this window's sheet: one
+                // on the settings window is in that window's picture.
+                if window.attachedSheet === sheet, let context = NSGraphicsContext(bitmapImageRep: bitmap) {
                     NSGraphicsContext.saveGraphicsState()
                     NSGraphicsContext.current = context
                     sheetBitmap.draw(
@@ -590,6 +669,31 @@ enum DebugScript {
             }
             try? bitmap.representation(using: .png, properties: [:])?
                 .write(to: destination.appendingPathExtension("png"))
+        }
+        // The settings window is a window of its own, and has a picture of
+        // its own: what it drew, title bar, toolbar and all, with a sheet
+        // on it drawn where it lies. As with the main window's, the Mac's
+        // shadow and corners are not in it.
+        if let settings = controller.settingsWindow.windowIfOpen, let frame = settings.contentView?.superview,
+            let bitmap = frame.bitmapImageRepForCachingDisplay(in: frame.bounds)
+        {
+            frame.cacheDisplay(in: frame.bounds, to: bitmap)
+            if let sheet = settings.attachedSheet, let sheetFrame = sheet.contentView?.superview,
+                let sheetBitmap = sheetFrame.bitmapImageRepForCachingDisplay(in: sheetFrame.bounds),
+                let context = NSGraphicsContext(bitmapImageRep: bitmap)
+            {
+                sheetFrame.cacheDisplay(in: sheetFrame.bounds, to: sheetBitmap)
+                let origin = NSPoint(
+                    x: sheet.frame.minX - settings.frame.minX, y: sheet.frame.minY - settings.frame.minY)
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current = context
+                sheetBitmap.draw(
+                    in: NSRect(origin: origin, size: sheetFrame.bounds.size), from: .zero,
+                    operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+                NSGraphicsContext.restoreGraphicsState()
+            }
+            try? bitmap.representation(using: .png, properties: [:])?
+                .write(to: destination.appendingPathExtension("settings.png"))
         }
         do {
             try Data(lines.joined(separator: "\n").utf8).write(to: destination)

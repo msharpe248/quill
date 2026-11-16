@@ -1,0 +1,125 @@
+{
+  "jsonrpc": "2.0",
+  "method": "settings.show",
+  "params": {
+    "panes": [
+      {
+        "id": "general",
+        "title": "General",
+        "symbol": "gearshape",
+        "fields": [
+          {
+            "kind": "choice",
+            "id": "theme",
+            "label": "Theme:",
+            "value": "dark",
+            "options": [
+              {
+                "id": "dark",
+                "title": "Dark"
+              },
+              {
+                "id": "light",
+                "title": "Light"
+              }
+            ]
+          },
+          {
+            "kind": "toggle",
+            "id": "notifications",
+            "label": "New mail:",
+            "title": "Show a notification",
+            "value": true,
+            "help": "Takes effect at once."
+          },
+          {
+            "kind": "text",
+            "id": "nickname",
+            "label": "Called:",
+            "value": "Robin"
+          }
+        ],
+        "more": "Rules and saved searches are set in the settings file."
+      },
+      {
+        "id": "accounts",
+        "title": "Accounts",
+        "symbol": "at",
+        "note": "The accounts in the settings file.",
+        "fields": [
+          {
+            "kind": "list",
+            "id": "accounts",
+            "label": "",
+            "rows": [
+              {
+                "id": "account_1f0e3dad99908345",
+                "title": "Work",
+                "detail": "Microsoft 365, robin@example.com",
+                "actions": [
+                  "sign_in"
+                ]
+              },
+              {
+                "id": "account_9c1185a5c5e9fc54",
+                "title": "Personal",
+                "actions": []
+              }
+            ],
+            "actions": [
+              {
+                "id": "add",
+                "title": "Add an Account…",
+                "row": false,
+                "enabled": true
+              },
+              {
+                "id": "sign_in",
+                "title": "Sign In…",
+                "row": true,
+                "enabled": false
+              }
+            ],
+            "empty": "No accounts yet."
+          }
+        ]
+      },
+      {
+        "id": "composing",
+        "title": "Composing",
+        "symbol": "square.and.pencil",
+        "fields": [
+          {
+            "kind": "number",
+            "id": "undo_send_seconds",
+            "label": "Undo send:",
+            "value": 10,
+            "min": 0,
+            "max": 4294967295,
+            "step": 1,
+            "decimals": 0,
+            "unit": "seconds"
+          },
+          {
+            "kind": "number",
+            "id": "cache_gb",
+            "label": "Keep up to:",
+            "value": 0.5,
+            "min": 0,
+            "step": 0.25,
+            "decimals": 2,
+            "unit": "GB",
+            "help": "0 is no limit."
+          },
+          {
+            "kind": "static",
+            "id": "where",
+            "label": "Kept in:",
+            "value": "This Mac"
+          }
+        ]
+      }
+    ],
+    "problem": "That was not changed: the settings file cannot be written."
+  }
+}

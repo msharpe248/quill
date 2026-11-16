@@ -52,8 +52,11 @@ let package = Package(
         ),
         // A form the core has the shell show in a sheet: which fields are
         // on it, what each holds as the user types, and what goes back to
-        // the core when a button is pressed. Knows names, labels and
-        // values, never what the form is for, and shows nothing itself.
+        // the core when a button is pressed. And the settings window the
+        // core describes: which panes and settings it has, what each
+        // holds, and what goes back when one is changed. Knows names,
+        // labels and values, never what a form or a setting is for, and
+        // shows nothing itself.
         .target(
             name: "Forms",
             dependencies: ["Bridge"]

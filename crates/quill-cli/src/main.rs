@@ -10,6 +10,7 @@ mod password;
 mod paths;
 mod rules;
 mod service;
+mod settings;
 mod setup;
 mod signin;
 

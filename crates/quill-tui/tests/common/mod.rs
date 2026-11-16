@@ -33,6 +33,8 @@ pub struct Harness {
     pub sync_requests: Vec<quill_sync::SyncRequest>,
     /// What the UI has asked of the accounts service so far.
     pub account_requests: Vec<quill_tui::setup::AccountRequest>,
+    /// How many times settings that came to hold changed the keys.
+    pub keys_announced: usize,
     /// Folders the store worker may write files in: one for viewing, one
     /// standing in for Downloads. Both go when the harness does.
     pub files: Files,
@@ -218,6 +220,7 @@ impl Harness {
             // As in a terminal: there is no web view pane to read in.
             web_pane: false,
             web_reading: false,
+            cache_gb: 5.0,
         };
         adjust(&mut env);
         let scratch = tempfile::tempdir().unwrap();
@@ -228,6 +231,7 @@ impl Harness {
             host_requests: Vec::new(),
             sync_requests: Vec::new(),
             account_requests: Vec::new(),
+            keys_announced: 0,
             files: Files {
                 view_dir: Some(scratch.path().join("view")),
                 downloads: Some(scratch.path().join("Downloads")),
@@ -241,18 +245,32 @@ impl Harness {
 
     /// Applies one action, then answers store requests until none are left.
     pub fn act(&mut self, action: Action) {
-        let effects = self.state.update(&self.env, action);
+        let mut effects = self.state.update(&self.env, action);
+        self.take_settings(&mut effects);
         self.host_requests.extend(effects.host);
         self.sync_requests.extend(effects.sync);
         self.account_requests.extend(effects.accounts);
         self.pump(effects.data);
     }
 
+    /// Puts the settings that hold from now into the environment, as the
+    /// run loop does between one update and the next, and counts the times
+    /// the keys changed with them: the times the host would have been told
+    /// every command's keys again.
+    fn take_settings(&mut self, effects: &mut quill_tui::state::Effects) {
+        if let Some(settings) = effects.settings.take()
+            && settings.apply(&mut self.env)
+        {
+            self.keys_announced += 1;
+        }
+    }
+
     pub fn pump(&mut self, requests: Vec<DataRequest>) {
         let mut queue: VecDeque<DataRequest> = requests.into();
         while let Some(request) = queue.pop_front() {
             for event in data::handle_with(&mut self.store, &self.files, request) {
-                let effects = self.state.update(&self.env, Action::Data(event));
+                let mut effects = self.state.update(&self.env, Action::Data(event));
+                self.take_settings(&mut effects);
                 self.host_requests.extend(effects.host);
                 self.sync_requests.extend(effects.sync);
                 self.account_requests.extend(effects.accounts);

@@ -1,0 +1,29 @@
+{
+  "jsonrpc": "2.0",
+  "method": "settings.show",
+  "params": {
+    "panes": [
+      {
+        "id": "accounts",
+        "title": "Accounts",
+        "symbol": "at",
+        "fields": [
+          {
+            "kind": "list",
+            "id": "accounts",
+            "label": "",
+            "rows": [],
+            "actions": [
+              {
+                "id": "add",
+                "title": "",
+                "row": false,
+                "enabled": true
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

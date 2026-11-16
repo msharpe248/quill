@@ -30,7 +30,8 @@
         { "$ref": "#/$defs/reading.show" },
         { "$ref": "#/$defs/reading.scroll" },
         { "$ref": "#/$defs/reading.close" },
-        { "$ref": "#/$defs/reading.place" }
+        { "$ref": "#/$defs/reading.place" },
+        { "$ref": "#/$defs/settings.show" }
       ]
     },
     "shellToCore": {
@@ -46,6 +47,9 @@
         { "$ref": "#/$defs/editor.exited" },
         { "$ref": "#/$defs/form.used" },
         { "$ref": "#/$defs/window.resized" },
+        { "$ref": "#/$defs/settings.opened" },
+        { "$ref": "#/$defs/settings.closed" },
+        { "$ref": "#/$defs/settings.used" },
         { "$ref": "#/$defs/app.will_quit" }
       ]
     },
@@ -921,10 +925,19 @@
               "type": "string"
             },
             "fields": {
-              "description": "The fields, in order. Each has a name of its own, and at most one has the focus.",
+              "description": "The fields, in order. Each has a name of its own, and at most one has the focus. A sheet asks and waits for a button, so it has none of the kinds that say what the user did as they do it (toggle, number, list): those are the settings window's.",
               "type": "array",
               "maxItems": 32,
-              "items": { "$ref": "#/$defs/formField" }
+              "items": {
+                "allOf": [
+                  { "$ref": "#/$defs/formField" },
+                  {
+                    "properties": {
+                      "kind": { "enum": ["text", "secret", "choice", "static", "code"] }
+                    }
+                  }
+                ]
+              }
             },
             "buttons": {
               "description": "The buttons, from left to right. Each has a name of its own; at most one is pressed by return and at most one by esc.",
@@ -955,7 +968,7 @@
       "pattern": "^[a-z][a-z0-9_]{0,63}$"
     },
     "formField": {
-      "description": "One field of a form. `focus` says where the keyboard starts; `help` is said under the field in small print.",
+      "description": "One field of a form, or of a pane of the settings window. `focus` says where the keyboard starts; `help` is said under the field in small print. The shell knows a field by its kind and never by what it is for.",
       "oneOf": [
         {
           "description": "A line of text to type.",
@@ -1036,6 +1049,88 @@
             "value": { "type": "string" },
             "help": { "type": "string" }
           }
+        },
+        {
+          "description": "Something that is on or off: a checkbox. `label` stands beside it as any field's does and may be empty; `title` is the checkbox's own words.",
+          "type": "object",
+          "required": ["kind", "id", "label", "title", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "toggle" },
+            "id": { "$ref": "#/$defs/formId" },
+            "label": { "type": "string" },
+            "title": { "type": "string", "minLength": 1 },
+            "value": { "type": "boolean" },
+            "help": { "type": "string" }
+          }
+        },
+        {
+          "description": "A number from `min` to `max`, both included; with no `max` there is no most. `value` is within them. It is shown with at most `decimals` places after the point and stepped by `step`, which is more than nothing. `unit` is said after it.",
+          "type": "object",
+          "required": ["kind", "id", "label", "value", "min", "step", "decimals"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "number" },
+            "id": { "$ref": "#/$defs/formId" },
+            "label": { "type": "string" },
+            "value": { "type": "number" },
+            "min": { "type": "number" },
+            "max": { "type": "number" },
+            "step": { "type": "number", "exclusiveMinimum": 0 },
+            "decimals": { "type": "integer", "minimum": 0, "maximum": 3 },
+            "unit": { "type": "string" },
+            "help": { "type": "string" }
+          }
+        },
+        {
+          "description": "Rows to look down and pick one of, and things to do, as buttons under them. An action with `row` true is done to the row picked, and can be pressed only while a row that names it in its own `actions` is picked; one with `row` false needs no row. `empty` is said in the rows' place when there are none. Which row is picked is the shell's to keep.",
+          "type": "object",
+          "required": ["kind", "id", "label", "rows", "actions"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "list" },
+            "id": { "$ref": "#/$defs/formId" },
+            "label": { "type": "string" },
+            "rows": {
+              "type": "array",
+              "maxItems": 200,
+              "items": {
+                "type": "object",
+                "required": ["id", "title", "actions"],
+                "additionalProperties": false,
+                "properties": {
+                  "id": { "$ref": "#/$defs/formId" },
+                  "title": { "type": "string", "minLength": 1 },
+                  "detail": {
+                    "description": "Said under the title, in small print.",
+                    "type": "string"
+                  },
+                  "actions": {
+                    "description": "The names of the list's actions that can be asked of this row.",
+                    "type": "array",
+                    "items": { "$ref": "#/$defs/formId" }
+                  }
+                }
+              }
+            },
+            "actions": {
+              "type": "array",
+              "maxItems": 6,
+              "items": {
+                "type": "object",
+                "required": ["id", "title", "row", "enabled"],
+                "additionalProperties": false,
+                "properties": {
+                  "id": { "$ref": "#/$defs/formId" },
+                  "title": { "type": "string", "minLength": 1 },
+                  "row": { "type": "boolean" },
+                  "enabled": { "type": "boolean" }
+                }
+              }
+            },
+            "empty": { "type": "string" },
+            "help": { "type": "string" }
+          }
         }
       ]
     },
@@ -1108,6 +1203,133 @@
               "minimum": 1,
               "maximum": 65535
             }
+          }
+        }
+      }
+    },
+
+    "settings.show": {
+      "description": "Core to shell. What the settings window shows: its panes in order, each with the settings it holds as they stand now. Sent in answer to settings.opened, again after every settings.used (whether or not the change was made, so that the window always ends up showing what is so), and whenever any of it changes while the window is open. The shell lays the panes out as a settings window with a toolbar of them, keeps which pane the user last had, and knows nothing of what any setting means. With no panes the settings cannot be shown or changed from here (the settings file has a mistake in it): `problem` says what, and the window says it and offers to open the file. With panes, `problem` is why the last change was not made.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "settings.show" },
+        "params": {
+          "type": "object",
+          "required": ["panes"],
+          "additionalProperties": false,
+          "anyOf": [
+            { "properties": { "panes": { "minItems": 1 } } },
+            { "required": ["problem"], "properties": { "problem": { "minLength": 1 } } }
+          ],
+          "properties": {
+            "panes": {
+              "description": "The panes, in the order of their toolbar buttons. Each has a name of its own.",
+              "type": "array",
+              "maxItems": 12,
+              "items": {
+                "type": "object",
+                "required": ["id", "title", "symbol", "fields"],
+                "additionalProperties": false,
+                "properties": {
+                  "id": { "$ref": "#/$defs/formId" },
+                  "title": {
+                    "description": "On the pane's toolbar button, and the window's title while the pane is on show.",
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "symbol": {
+                    "description": "The name of the SF Symbol on the pane's toolbar button.",
+                    "type": "string",
+                    "pattern": "^[a-z0-9.]{1,64}$"
+                  },
+                  "note": {
+                    "description": "Said above the fields.",
+                    "type": "string"
+                  },
+                  "fields": {
+                    "description": "The settings, in order, each with a name of its own in its pane. A setting has no button to wait for: what the user does with one arrives at once as settings.used. Settings have no secret and no code, and no field has the focus: the keyboard is the user's to put.",
+                    "type": "array",
+                    "maxItems": 32,
+                    "items": {
+                      "allOf": [
+                        { "$ref": "#/$defs/formField" },
+                        {
+                          "properties": {
+                            "kind": { "enum": ["text", "choice", "static", "toggle", "number", "list"] },
+                            "focus": { "const": false }
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "more": {
+                    "description": "Said at the foot of the pane, beside a button of the shell's own that opens the settings file: what more can be set there.",
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "problem": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "settings.opened": {
+      "description": "Shell to core. The user opened the settings window, or brought it forward. The core reads the settings afresh and answers with settings.show.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "settings.opened" },
+        "params": { "type": "object", "additionalProperties": false }
+      }
+    },
+
+    "settings.closed": {
+      "description": "Shell to core. The settings window was closed: nothing more need be sent for it.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "settings.closed" },
+        "params": { "type": "object", "additionalProperties": false }
+      }
+    },
+
+    "settings.used": {
+      "description": "Shell to core. The user did something in the settings window: gave a field another value (`value`: true or false for a toggle, a number for a number, text for a text field, the name of the option for a choice), or asked for one of a list's actions (`action`, with `row` the name of the row picked when the action is done to a row). One or the other, never both. The core checks it against what it described, makes the change or does not, and answers with settings.show either way.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "settings.used" },
+        "params": {
+          "type": "object",
+          "required": ["pane", "field"],
+          "additionalProperties": false,
+          "oneOf": [
+            { "required": ["value"], "properties": { "action": false, "row": false } },
+            { "required": ["action"], "properties": { "value": false } }
+          ],
+          "properties": {
+            "pane": { "$ref": "#/$defs/formId" },
+            "field": { "$ref": "#/$defs/formId" },
+            "value": {
+              "oneOf": [
+                { "type": "boolean" },
+                { "type": "number" },
+                { "type": "string", "maxLength": 4096 }
+              ]
+            },
+            "action": { "$ref": "#/$defs/formId" },
+            "row": { "$ref": "#/$defs/formId" }
           }
         }
       }

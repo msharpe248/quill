@@ -1,0 +1,22 @@
+{
+  "jsonrpc": "2.0",
+  "method": "settings.show",
+  "params": {
+    "panes": [
+      {
+        "id": "general",
+        "title": "General",
+        "symbol": "gearshape",
+        "fields": [
+          {
+            "kind": "text",
+            "id": "nickname",
+            "label": "Called:",
+            "value": "Robin",
+            "focus": true
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -61,6 +61,9 @@ public enum CoreToShell: Equatable, Sendable {
     /// Where the reading pane stands: how many columns the terminal keeps
     /// beside it.
     case readingPlace(ReadingPlace)
+    /// What the settings window shows: every pane with its settings as they
+    /// stand. What the user does there goes back as `settingsUsed`.
+    case settingsShow(SettingsShow)
 }
 
 /// A message the shell sends to the core.
@@ -89,6 +92,14 @@ public enum ShellToCore: Equatable, Sendable {
     /// A button of the form in the sheet was pressed, or one of its choices
     /// changed.
     case formUsed(FormUsed)
+    /// The settings window was opened, or come back to: it wants
+    /// `settingsShow`.
+    case settingsOpened
+    /// The settings window was closed.
+    case settingsClosed
+    /// A setting was changed in the settings window, or something was asked
+    /// for from one of its lists.
+    case settingsUsed(SettingsUsed)
     /// The app is quitting: flush and exit cleanly.
     case appWillQuit
 }
@@ -719,6 +730,12 @@ public struct FormField: Equatable, Sendable {
         /// somewhere else: a code to sign in with, the page to type it at.
         /// It is shown large, and nothing prints it.
         case code(value: FormSecret)
+        /// Something that is on or off: a checkbox, with its own words.
+        case toggle(title: String, value: Bool)
+        /// A number within bounds.
+        case number(FormNumber)
+        /// Rows to pick one of, and things to do with it.
+        case list(FormList)
 
         /// The kind's name on the bridge.
         public var name: String {
@@ -728,6 +745,9 @@ public struct FormField: Equatable, Sendable {
             case .choice: "choice"
             case .fixed: "static"
             case .code: "code"
+            case .toggle: "toggle"
+            case .number: "number"
+            case .list: "list"
             }
         }
     }
@@ -753,17 +773,189 @@ public struct FormField: Equatable, Sendable {
     public var value: String? {
         switch kind {
         case let .text(value), let .choice(value, _), let .fixed(value): value
-        case .secret, .code: nil
+        case .secret, .code, .toggle, .number, .list: nil
         }
     }
 
     /// Whether the user can change what it holds.
     public var isEditable: Bool {
         switch kind {
-        case .text, .secret, .choice: true
-        case .fixed, .code: false
+        case .text, .secret, .choice, .toggle, .number: true
+        case .fixed, .code, .list: false
         }
     }
+
+    /// Whether the field is of a kind that says what the user did with it as
+    /// they do it, with no button to wait for: the settings window's kinds,
+    /// which a sheet has none of.
+    public var reportsAsChanged: Bool {
+        switch kind {
+        case .toggle, .number, .list: true
+        case .text, .secret, .choice, .fixed, .code: false
+        }
+    }
+
+    /// Whether what the field holds hangs together: a choice is one of its
+    /// options, a toggle says what it switches, a number is within its
+    /// bounds, and the rows and actions of a list have names of their own.
+    var isSound: Bool {
+        switch kind {
+        case let .choice(value, options):
+            let ids = options.map(\.id)
+            return ids.allSatisfy(FormID.isValid) && Set(ids).count == ids.count && ids.contains(value)
+        case let .toggle(title, _):
+            return !title.isEmpty
+        case let .number(number):
+            return number.isSound
+        case let .list(list):
+            return list.isSound
+        case .text, .secret, .fixed, .code:
+            return true
+        }
+    }
+}
+
+/// A number a form shows and takes: from `min` to `max`, both included, or
+/// with no most when there is no `max`; shown with at most `decimals` places
+/// after the point and stepped by `step`. `unit` is said after it.
+public struct FormNumber: Equatable, Sendable {
+    public let value: Double
+    public let min: Double
+    public let max: Double?
+    public let step: Double
+    public let decimals: Int
+    public let unit: String?
+
+    /// The most places after the point a number is shown with.
+    public static let mostDecimals = 3
+
+    public init(value: Double, min: Double, max: Double? = nil, step: Double, decimals: Int, unit: String? = nil) {
+        self.value = value
+        self.min = min
+        self.max = max
+        self.step = step
+        self.decimals = decimals
+        self.unit = unit
+    }
+
+    var isSound: Bool {
+        guard value.isFinite, min.isFinite, step.isFinite, max?.isFinite ?? true else { return false }
+        guard min <= value, step > 0, (0...Self.mostDecimals).contains(decimals) else { return false }
+        if let max {
+            return value <= max && min <= max
+        }
+        return true
+    }
+
+    /// `typed` as a number this field takes: brought within the bounds and
+    /// to the places the field shows.
+    public func taking(_ typed: Double) -> Double? {
+        guard typed.isFinite else { return nil }
+        let scale = pow(10, Double(decimals))
+        let rounded = (typed * scale).rounded() / scale
+        return Swift.min(Swift.max(rounded, min), max ?? .greatestFiniteMagnitude)
+    }
+
+    /// The number as the field writes it: no more places than it has, and
+    /// none that are only noughts.
+    public func written(_ number: Double) -> String {
+        let scale = pow(10, Double(decimals))
+        let rounded = (number * scale).rounded() / scale
+        if rounded == rounded.rounded(), abs(rounded) < 1e15 {
+            return String(Int64(rounded))
+        }
+        var text = String(format: "%.\(decimals)f", rounded)
+        while text.hasSuffix("0") {
+            text.removeLast()
+        }
+        return text
+    }
+
+    /// The same number with another value.
+    public func with(value: Double) -> FormNumber {
+        FormNumber(value: value, min: min, max: max, step: step, decimals: decimals, unit: unit)
+    }
+
+    static let allowedKeys: Set<String> = [
+        "kind", "id", "label", "value", "min", "max", "step", "decimals", "unit", "help",
+    ]
+}
+
+/// The rows and actions of a list in a form. `empty` is said in the rows'
+/// place when there are none.
+public struct FormList: Equatable, Sendable {
+    /// One row: its name, what it is called, and what is said under that.
+    /// `actions` names the list's actions that can be asked of this row.
+    public struct Row: Equatable, Sendable {
+        public let id: String
+        public let title: String
+        public let detail: String?
+        public let actions: [String]
+
+        public init(id: String, title: String, detail: String? = nil, actions: [String] = []) {
+            self.id = id
+            self.title = title
+            self.detail = detail
+            self.actions = actions
+        }
+
+        static let allowedKeys: Set<String> = ["id", "title", "detail", "actions"]
+    }
+
+    /// Something the list offers to do: a button under it. One with `row`
+    /// is done to the row picked, and can be pressed only while a row that
+    /// takes it is picked.
+    public struct Action: Equatable, Sendable {
+        public let id: String
+        public let title: String
+        public let row: Bool
+        public let enabled: Bool
+
+        public init(id: String, title: String, row: Bool, enabled: Bool = true) {
+            self.id = id
+            self.title = title
+            self.row = row
+            self.enabled = enabled
+        }
+
+        static let allowedKeys: Set<String> = ["id", "title", "row", "enabled"]
+    }
+
+    public let rows: [Row]
+    public let actions: [Action]
+    public let empty: String?
+
+    /// The most rows a list may have, and the most actions.
+    public static let mostRows = 200
+    public static let mostActions = 6
+
+    public init(rows: [Row], actions: [Action], empty: String? = nil) {
+        self.rows = rows
+        self.actions = actions
+        self.empty = empty
+    }
+
+    var isSound: Bool {
+        let actionIDs = actions.map(\.id)
+        guard actions.count <= Self.mostActions, actionIDs.allSatisfy(FormID.isValid),
+            Set(actionIDs).count == actionIDs.count, actions.allSatisfy({ !$0.title.isEmpty })
+        else { return false }
+        let rowIDs = rows.map(\.id)
+        guard rows.count <= Self.mostRows, rowIDs.allSatisfy(FormID.isValid), Set(rowIDs).count == rowIDs.count
+        else { return false }
+        return rows.allSatisfy { row in !row.title.isEmpty && row.actions.allSatisfy(actionIDs.contains) }
+    }
+
+    /// Whether the action of this name can be pressed with this row picked,
+    /// or with none.
+    public func canPress(_ action: String, picked row: String?) -> Bool {
+        guard let described = actions.first(where: { $0.id == action }), described.enabled else { return false }
+        guard described.row else { return true }
+        guard let row, let picked = rows.first(where: { $0.id == row }) else { return false }
+        return picked.actions.contains(action)
+    }
+
+    static let allowedKeys: Set<String> = ["kind", "id", "label", "rows", "actions", "empty", "help"]
 }
 
 /// The key that presses a button of a form.
@@ -797,6 +989,9 @@ public struct FormButton: Equatable, Sendable {
 /// A form to show in a sheet on the window: what it is called, what it says,
 /// its fields in order and its buttons from left to right. The shell lays it
 /// out and knows nothing of what it is for.
+///
+/// A sheet has no toggle, number or list: those say what the user did as
+/// they do it, with no button to wait for, and are the settings window's.
 public struct FormShow: Equatable, Sendable {
     /// Which step of the form this is. Goes back in `FormUsed`.
     public let step: String
@@ -832,11 +1027,9 @@ public struct FormShow: Equatable, Sendable {
         for field in fields {
             // Only a field that can be typed in or changed has the focus.
             if !field.isEditable, field.focus { return nil }
-            guard case let .choice(value, options) = field.kind else { continue }
-            let ids = options.map(\.id)
-            guard ids.allSatisfy(FormID.isValid), Set(ids).count == ids.count, ids.contains(value) else {
-                return nil
-            }
+            // A sheet asks and waits for a button: it has none of the
+            // kinds that report as they change.
+            if field.reportsAsChanged || !field.isSound { return nil }
         }
         guard buttons.allSatisfy({ FormID.isValid($0.id) && !$0.title.isEmpty }),
             Set(buttons.map(\.id)).count == buttons.count,
@@ -905,6 +1098,143 @@ public struct FormUsed: Equatable, Sendable {
     }
 
     static let allowedKeys: Set<String> = ["step", "button", "values", "secrets"]
+}
+
+/// One pane of the settings window.
+public struct SettingsPane: Equatable, Sendable {
+    /// What goes back in `SettingsUsed`.
+    public let id: String
+    /// On the pane's toolbar button, and the window's title while the pane
+    /// is on show.
+    public let title: String
+    /// The SF Symbol on the pane's toolbar button.
+    public let symbol: String
+    /// Said above the fields.
+    public let note: String?
+    public let fields: [FormField]
+    /// Said at the foot of the pane, beside a button that opens the
+    /// settings file: what more can be set there.
+    public let more: String?
+
+    public init(
+        id: String, title: String, symbol: String, note: String? = nil, fields: [FormField], more: String? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.symbol = symbol
+        self.note = note
+        self.fields = fields
+        self.more = more
+    }
+
+    /// Whether `symbol` could be the name of an SF Symbol: lower case
+    /// letters, digits and dots.
+    static func isSymbol(_ symbol: String) -> Bool {
+        let bytes = Array(symbol.utf8)
+        return !bytes.isEmpty && bytes.count <= FormID.longest
+            && bytes.allSatisfy { (0x61...0x7A).contains($0) || (0x30...0x39).contains($0) || $0 == 0x2E }
+    }
+
+    static let allowedKeys: Set<String> = ["id", "title", "symbol", "note", "fields", "more"]
+}
+
+/// What the settings window shows: its panes, each with its settings as they
+/// stand. The shell lays them out and knows nothing of what any setting
+/// means.
+///
+/// `problem` is what is wrong. With no panes, the settings cannot be shown or
+/// changed from here at all (the settings file has a mistake in it): the
+/// window says so and offers the file. With panes, the last change was not
+/// made, and this is why.
+public struct SettingsShow: Equatable, Sendable {
+    public let panes: [SettingsPane]
+    public let problem: String?
+
+    /// The most panes the window may have.
+    public static let mostPanes = 12
+
+    /// `nil` unless there is something to show, every pane and every field
+    /// of a pane has a name of its own, each pane has a title and a symbol,
+    /// there is no secret, no code and no field with the focus, and every
+    /// field hangs together.
+    public init?(panes: [SettingsPane], problem: String? = nil) {
+        guard panes.count <= Self.mostPanes, !panes.isEmpty || !(problem ?? "").isEmpty else { return nil }
+        guard panes.allSatisfy({ FormID.isValid($0.id) }), Set(panes.map(\.id)).count == panes.count else {
+            return nil
+        }
+        for pane in panes {
+            guard !pane.title.isEmpty, SettingsPane.isSymbol(pane.symbol),
+                pane.fields.count <= FormShow.mostFields,
+                pane.fields.allSatisfy({ FormID.isValid($0.id) }),
+                Set(pane.fields.map(\.id)).count == pane.fields.count
+            else { return nil }
+            for field in pane.fields {
+                switch field.kind {
+                case .secret, .code: return nil
+                case .text, .choice, .fixed, .toggle, .number, .list: break
+                }
+                if field.focus || !field.isSound { return nil }
+            }
+        }
+        self.panes = panes
+        self.problem = problem
+    }
+
+    /// The field of this name in the pane of this name.
+    public func field(_ field: String, in pane: String) -> FormField? {
+        panes.first { $0.id == pane }?.fields.first { $0.id == field }
+    }
+
+    static let allowedKeys: Set<String> = ["panes", "problem"]
+}
+
+/// What a field of the settings window was given: on or off for a toggle, a
+/// number for a number, text for a text field, and for a choice the name of
+/// the option.
+public enum SettingValue: Equatable, Sendable {
+    case flag(Bool)
+    case number(Double)
+    case text(String)
+}
+
+/// What the user did in the settings window: gave a field another value, or
+/// asked for one of a list's actions, of the row picked if the action is
+/// done to a row.
+public struct SettingsUsed: Equatable, Sendable {
+    public enum Did: Equatable, Sendable {
+        /// The field was given this value.
+        case set(SettingValue)
+        /// This action of a list was asked for, of this row if of any.
+        case action(String, row: String?)
+    }
+
+    public let pane: String
+    public let field: String
+    public let did: Did
+
+    /// The longest text a setting may be given, in bytes.
+    public static let longestText = 4096
+
+    /// `nil` unless the pane, the field, the action and the row have names,
+    /// a number is one, and text is no longer than a setting takes.
+    public init?(pane: String, field: String, did: Did) {
+        guard FormID.isValid(pane), FormID.isValid(field) else { return nil }
+        switch did {
+        case let .set(.number(number)):
+            guard number.isFinite else { return nil }
+        case let .set(.text(text)):
+            guard text.utf8.count <= Self.longestText else { return nil }
+        case .set(.flag):
+            break
+        case let .action(action, row):
+            guard FormID.isValid(action), row.map(FormID.isValid) ?? true else { return nil }
+        }
+        self.pane = pane
+        self.field = field
+        self.did = did
+    }
+
+    static let allowedKeys: Set<String> = ["pane", "field", "value", "action", "row"]
 }
 
 public enum BridgeError: Error, Equatable, CustomStringConvertible {

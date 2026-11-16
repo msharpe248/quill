@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "method": "settings.used",
+  "params": {
+    "pane": "accounts",
+    "field": "accounts",
+    "value": "work",
+    "row": "account_1f0e3dad99908345"
+  }
+}

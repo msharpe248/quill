@@ -220,6 +220,12 @@ pub enum AccountRequest {
     /// is how Quill starts next time. Answered with
     /// [`AccountEvent::Remembered`].
     Remember(Preference),
+    /// Read the settings from the config for the host's settings window,
+    /// having first made this change to it, if there is one. The file is
+    /// read afresh every time, so a change is always made to the file as
+    /// it stands, by whoever last wrote it. Answered with
+    /// [`AccountEvent::Settings`].
+    Settings(Option<crate::settings::Change>),
 }
 
 /// A choice made in the UI that is kept between runs, in `config.toml`.
@@ -272,6 +278,14 @@ pub enum AccountEvent {
     /// The choice is in the config, or why it could not be written there.
     /// It holds for this run either way.
     Remembered(Result<(), String>),
+    /// What the config says now, for the host's settings window: or, when
+    /// it cannot be read for what it says, why not. `changed` is the
+    /// change that was asked for with it, and whether it was made; a
+    /// change that was not made has left the file as it was.
+    Settings {
+        read: Result<Box<crate::settings::SettingsRead>, String>,
+        changed: Option<(crate::settings::Change, Result<(), String>)>,
+    },
 }
 
 /// A sign-in to an account's provider that is under way.
@@ -1060,7 +1074,8 @@ impl Setup {
             | AccountEvent::SignInCode { .. }
             | AccountEvent::SignedIn { .. }
             | AccountEvent::Unsubscribed { .. }
-            | AccountEvent::Remembered(_) => (Vec::new(), Outcome::Open),
+            | AccountEvent::Remembered(_)
+            | AccountEvent::Settings { .. } => (Vec::new(), Outcome::Open),
         }
     }
 }

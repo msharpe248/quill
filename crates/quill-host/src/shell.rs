@@ -176,6 +176,9 @@ fn read_loop(stream: UnixStream, events: UnboundedSender<HostEvent>) {
             },
             Ok(ShellToCore::FormUsed(used)) => HostEvent::FormUsed(used),
             Ok(ShellToCore::WindowResized(resized)) => HostEvent::WindowColumns(resized.columns()),
+            Ok(ShellToCore::SettingsOpened(_)) => HostEvent::SettingsOpened,
+            Ok(ShellToCore::SettingsClosed(_)) => HostEvent::SettingsClosed,
+            Ok(ShellToCore::SettingsUsed(used)) => HostEvent::SettingsUsed(used),
             Ok(ShellToCore::AppWillQuit(_)) => HostEvent::WillQuit,
             Err(err) => HostEvent::Problem(unreadable(&line, &err)),
         };
@@ -475,6 +478,54 @@ mod tests {
             used.secret("password").map(bridge::Secret::reveal),
             Some("not-a-real-password")
         );
+    }
+
+    #[tokio::test]
+    async fn the_settings_go_to_the_shell_and_what_is_done_there_comes_back() {
+        let (host, mut events, mut shell) = connect();
+        let settings = bridge::SettingsShow::new(bridge::SettingsShowParams {
+            panes: vec![bridge::SettingsPane {
+                id: "general".to_owned(),
+                title: "General".to_owned(),
+                symbol: "gearshape".to_owned(),
+                note: None,
+                fields: vec![bridge::FormField::Toggle {
+                    id: "notifications".to_owned(),
+                    label: "New mail:".to_owned(),
+                    title: "Show a notification".to_owned(),
+                    value: true,
+                    help: None,
+                }],
+                more: None,
+            }],
+            problem: None,
+        })
+        .unwrap();
+        host.show_settings(settings.clone());
+        let sent: CoreToShell = bridge::decode(&shell.lines.next().unwrap().unwrap()).unwrap();
+        assert_eq!(sent, CoreToShell::SettingsShow(settings));
+
+        shell
+            .connection
+            .write_all(
+                b"{\"jsonrpc\":\"2.0\",\"method\":\"settings.opened\",\"params\":{}}\n\
+                  {\"jsonrpc\":\"2.0\",\"method\":\"settings.used\",\"params\":{\"pane\":\"general\",\"field\":\"notifications\",\"value\":false}}\n\
+                  {\"jsonrpc\":\"2.0\",\"method\":\"settings.used\",\"params\":{\"pane\":\"general\",\"field\":\"notifications\"}}\n\
+                  {\"jsonrpc\":\"2.0\",\"method\":\"settings.closed\",\"params\":{}}\n",
+            )
+            .unwrap();
+        assert_eq!(next(&mut events).await, HostEvent::SettingsOpened);
+        let HostEvent::SettingsUsed(used) = next(&mut events).await else {
+            panic!("not a setting used");
+        };
+        assert_eq!((used.pane(), used.field()), ("general", "notifications"));
+        assert_eq!(
+            used.did(),
+            &bridge::SettingsDid::Set(bridge::FormValue::Flag(false))
+        );
+        // One that says nothing was done is not one.
+        assert!(matches!(next(&mut events).await, HostEvent::Problem(_)));
+        assert_eq!(next(&mut events).await, HostEvent::SettingsClosed);
     }
 
     #[tokio::test]

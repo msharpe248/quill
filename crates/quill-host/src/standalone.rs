@@ -105,6 +105,9 @@ impl Host for StandaloneHost {
             | CoreToShell::ReadingScroll(_)
             | CoreToShell::ReadingClose(_)
             | CoreToShell::ReadingPlace(_)
+            // Nor a settings window: in a terminal the settings are the
+            // file, and this is never sent here.
+            | CoreToShell::SettingsShow(_)
             | CoreToShell::SpellCheck(_)
             | CoreToShell::SpellSuggest(_)
             | CoreToShell::NotifyPost(_)
@@ -172,14 +175,15 @@ mod tests {
     use super::*;
 
     /// A stand-in for `open` that writes each of its arguments on a line of
-    /// `record`.
+    /// `record`, all of them in one go: whoever waits for the record must
+    /// never find it with only the first of two written.
     fn recorder(dir: &std::path::Path) -> (PathBuf, PathBuf) {
         let record = dir.join("opened.txt");
         let script = dir.join("opener.sh");
         std::fs::write(
             &script,
             format!(
-                "#!/bin/sh\nfor arg in \"$@\"; do printf '%s\\n' \"$arg\" >> '{}'; done\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$@\" >> '{}'\n",
                 record.display()
             ),
         )

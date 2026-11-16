@@ -1,0 +1,9 @@
+{
+  "jsonrpc": "2.0",
+  "method": "settings.used",
+  "params": {
+    "pane": "composing",
+    "field": "undo_send_seconds",
+    "value": 15
+  }
+}

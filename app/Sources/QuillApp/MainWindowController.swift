@@ -214,6 +214,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         self?.bridge?.send(.formUsed(used))
     }
 
+    /// Which pane of the settings window the user last had. A scripted run
+    /// keeps it for the run only, and reads and writes nothing of the
+    /// user's.
+    let settingsPaneMemory: any SettingsPaneMemory
+
+    /// The settings window. What it shows is the core's to say, and what
+    /// the user does in it goes back to the core, which decides what that
+    /// means; the one thing it has of the shell's own is the way to the
+    /// settings file.
+    private(set) lazy var settingsWindow = SettingsWindowController(
+        memory: settingsPaneMemory, keepsPlace: !options.isScripted,
+        send: { [weak self] message in self?.bridge?.send(message) },
+        openFile: { [weak self] in self?.editConfig(nil) })
+
     private(set) var coreIsRunning = false
     /// The app asked the core to stop, so its exit is not a failure.
     private var stopping = false
@@ -225,6 +239,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         surface = makeTerminalSurface()
         dividerMemory =
             options.isScripted ? TransientDividerMemory() : DefaultsDividerMemory(defaults: .standard)
+        settingsPaneMemory =
+            options.isScripted ? TransientSettingsPaneMemory() : DefaultsSettingsPaneMemory(defaults: .standard)
         let support =
             FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
@@ -436,9 +452,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         case let .paneEditor(request):
             openEditor(request)
         case let .formShow(form):
-            formSheet.show(form, on: window)
+            formSheet.show(form, on: sheetWindow)
         case .formClose:
             formSheet.close()
+        case let .settingsShow(settings):
+            settingsWindow.show(settings)
         case let .readingShow(page):
             showReading(page)
         case let .readingScroll(by):
@@ -449,6 +467,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             readingColumnsAsked = place.columns
             placeReadingDivider()
         }
+    }
+
+    /// The window a sheet of the core's goes on: the settings window when
+    /// it is the one in front, since what brought the question up was done
+    /// there (adding an account, signing in to one), and otherwise the main
+    /// window. A sheet that is up stays on the window it is on.
+    private var sheetWindow: NSWindow? {
+        guard let settings = settingsWindow.windowIfOpen else { return window }
+        let front = NSApp.orderedWindows.first { $0 === settings || $0 === window }
+        return front === settings ? settings : window
     }
 
     /// Tells the core what the user did with a notification, given the
@@ -609,8 +637,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         coreIsRunning = false
         bridge?.close()
         bridge = nil
-        // A form of the core's has nobody left to answer to.
+        // A form of the core's has nobody left to answer to, and nor has
+        // the settings window.
         formSheet.close()
+        settingsWindow.close()
         // There is nobody left to hand a draft back to. Vim is still asked
         // to save it and go, and is not left running behind the app.
         afterEditor = nil
@@ -707,6 +737,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     func windowWillClose(_: Notification) {
+        // The settings are the main window's: they go with it.
+        settingsWindow.close()
         // Nothing goes on playing, or loading, behind a closed window.
         dropIncomingReading()
         pane?.tearDown()
@@ -1145,6 +1177,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             at: configFolder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     }
 
+    /// Opens the settings window. What is in it is the core's to say, so
+    /// with no core to ask (it could not be started, or has no bridge to
+    /// answer over) the settings file is opened, which is all there is.
+    @objc func showSettings(_ sender: Any?) {
+        guard coreIsRunning, bridge != nil else {
+            editConfig(sender)
+            return
+        }
+        settingsWindow.open()
+    }
+
     /// Opens `config.toml` in the application the Mac edits text with. With
     /// no config yet there is nothing to open, so one is made: an empty
     /// config is a valid one, and says where to look for what goes in it.
@@ -1240,8 +1283,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     private func runInCoreOrFocusedView(_ command: String, _ native: Selector, _ sender: Any?) {
-        // In a sheet the text being edited is a field of the sheet's.
-        if !paneHasFocus, window?.attachedSheet == nil, commands.isEnabled(command) {
+        // In a sheet the text being edited is a field of the sheet's, and
+        // in the settings window one of that window's.
+        let inSettings = settingsWindow.windowIfOpen?.isKeyWindow ?? false
+        if !paneHasFocus, !inSettings, window?.attachedSheet == nil, commands.isEnabled(command) {
             commands.run(named: command)
         } else {
             NSApp.sendAction(native, to: nil, from: sender)

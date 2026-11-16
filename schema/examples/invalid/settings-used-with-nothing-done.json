@@ -1,0 +1,8 @@
+{
+  "jsonrpc": "2.0",
+  "method": "settings.used",
+  "params": {
+    "pane": "general",
+    "field": "theme"
+  }
+}

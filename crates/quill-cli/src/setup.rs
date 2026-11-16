@@ -9,7 +9,7 @@ use std::path::Path;
 
 use jiff::tz::TimeZone;
 use quill_core::config::Config;
-use quill_core::config::{ComposeEditor, ComposeFormat, ReplyPosition};
+use quill_core::config::{ComposeEditor, ComposeFormat, KeymapPreset, ReplyPosition};
 use quill_tui::command::Registry;
 use quill_tui::keymap::Keymap;
 use quill_tui::state::{ComposeSettings, Env, Identity, Notice};
@@ -38,24 +38,12 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
         }
     };
 
-    let theme = load_theme(paths, &config.ui.theme, &mut notices);
+    let (theme, problem) = theme_named(&paths.config_dir, &config.ui.theme);
+    notices.extend(problem.map(Notice::error));
 
     let registry = Registry::builtin();
-    let preset = Keymap::preset(config.ui.keymap);
-    let keymap = match read_optional(&paths.keys_file()) {
-        Ok(Some(text)) => preset
-            .clone()
-            .with_overrides(&text, &registry)
-            .unwrap_or_else(|err| {
-                notices.push(Notice::error(format!("{err}. Using the preset keys.")));
-                preset
-            }),
-        Ok(None) => preset,
-        Err(err) => {
-            notices.push(Notice::error(format!("{err}. Using the preset keys.")));
-            preset
-        }
-    };
+    let (keymap, problem) = keymap_for(&paths.config_dir, config.ui.keymap, &registry);
+    notices.extend(problem.map(Notice::error));
 
     let templates = templates::load(&paths.templates_dir(), &mut notices);
     let hooks = load_hooks(&paths.config_dir.join(HOOKS_FILE), &mut notices);
@@ -132,6 +120,8 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
         // says is kept for it.
         web_pane: false,
         web_reading: config.ui.web_reading,
+        // What the sync engine is told once, as it starts.
+        cache_gb: config.storage.cache_gb,
     };
     Loaded {
         config,
@@ -141,39 +131,91 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
     }
 }
 
+/// The keys of `preset` with the user's own from `keys.toml` on top, and
+/// why theirs were left out if they were: then the preset is used whole.
+pub fn keymap_for(
+    config_dir: &Path,
+    preset: KeymapPreset,
+    registry: &Registry,
+) -> (Keymap, Option<String>) {
+    let preset = Keymap::preset(preset);
+    match read_optional(&crate::paths::keys_file_in(config_dir)) {
+        Ok(Some(text)) => match preset.clone().with_overrides(&text, registry) {
+            Ok(keymap) => (keymap, None),
+            Err(err) => (preset, Some(format!("{err}. Using the preset keys."))),
+        },
+        Ok(None) => (preset, None),
+        Err(err) => (preset, Some(format!("{err}. Using the preset keys."))),
+    }
+}
+
+/// The theme called `name`, and why another stands in for it if one does.
 /// A theme file in `themes/` wins over a built-in of the same name, so the
 /// shipped themes can be customised by copying them.
-fn load_theme(paths: &crate::paths::Paths, name: &str, notices: &mut Vec<Notice>) -> Theme {
+pub fn theme_named(config_dir: &Path, name: &str) -> (Theme, Option<String>) {
     let fallback = || {
         Theme::builtin(name)
             .or_else(|| Theme::builtin("dark"))
             .unwrap_or_else(Theme::terminal)
     };
-    let Some(file) = paths.theme_file(name) else {
-        notices.push(Notice::error(format!(
-            "\"{name}\" is not a theme name. Using the dark theme."
-        )));
-        return fallback();
+    let Some(file) = crate::paths::theme_file_in(config_dir, name) else {
+        return (
+            fallback(),
+            Some(format!(
+                "\"{name}\" is not a theme name. Using the dark theme."
+            )),
+        );
     };
     match read_optional(&file) {
-        Ok(Some(text)) => Theme::parse(&text).unwrap_or_else(|err| {
-            notices.push(Notice::error(format!(
-                "themes/{name}.toml: {err}. Using a built-in theme."
-            )));
-            fallback()
-        }),
-        Ok(None) => Theme::builtin(name).unwrap_or_else(|| {
-            notices.push(Notice::error(format!(
-                "There is no theme called \"{name}\". Using the dark theme."
-            )));
-            fallback()
-        }),
-        Err(err) => {
-            notices.push(Notice::error(format!("{err}. Using a built-in theme.")));
-            fallback()
-        }
+        Ok(Some(text)) => match Theme::parse(&text) {
+            Ok(theme) => (theme, None),
+            Err(err) => (
+                fallback(),
+                Some(format!(
+                    "themes/{name}.toml: {err}. Using a built-in theme."
+                )),
+            ),
+        },
+        Ok(None) => match Theme::builtin(name) {
+            Some(theme) => (theme, None),
+            None => (
+                fallback(),
+                Some(format!(
+                    "There is no theme called \"{name}\". Using the dark theme."
+                )),
+            ),
+        },
+        Err(err) => (fallback(), Some(format!("{err}. Using a built-in theme."))),
     }
 }
+
+/// The themes there are to choose from, by name: the ones Quill comes
+/// with, then the user's own, which are the `.toml` files in `themes/`. A
+/// file of theirs with a built-in's name is that theme, and is not listed
+/// twice.
+pub fn themes_in(config_dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = Theme::builtin_names().map(str::to_owned).collect();
+    let mut own: Vec<String> = std::fs::read_dir(crate::paths::themes_dir_in(config_dir))
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "toml")
+        })
+        .filter_map(|path| Some(path.file_stem()?.to_str()?.to_owned()))
+        .filter(|name| crate::paths::is_theme_name(name) && !names.contains(name))
+        .collect();
+    own.sort();
+    // More than anyone has, and as many as a pop-up is any use for.
+    own.truncate(MOST_THEMES);
+    names.extend(own);
+    names
+}
+
+/// The most themes of the user's own that are offered to choose from.
+const MOST_THEMES: usize = 100;
 
 /// The file beside `config.toml` that lists the user's hooks.
 const HOOKS_FILE: &str = "hooks.toml";
@@ -240,7 +282,6 @@ fn read_optional(path: &Path) -> Result<Option<String>, String> {
 mod tests {
     use std::fs;
 
-    use quill_core::config::KeymapPreset;
     use quill_tui::command::CommandId;
     use quill_tui::state::NoticeKind;
     use tempfile::TempDir;

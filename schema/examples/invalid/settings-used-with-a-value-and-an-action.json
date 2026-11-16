@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "method": "settings.used",
+  "params": {
+    "pane": "accounts",
+    "field": "accounts",
+    "value": true,
+    "action": "add"
+  }
+}

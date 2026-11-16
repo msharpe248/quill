@@ -38,7 +38,7 @@ private enum Examples {
                 "notify.post.json", "pane.close.json",
                 "pane.editor.json", "pane.play.json", "pane.preview.json",
                 "reading.close.json", "reading.place.json", "reading.scroll.json", "reading.show.json",
-                "spell.check.json",
+                "settings.show.json", "spell.check.json",
                 "spell.suggest.json", "state.update.json", "thumbnail.make.json",
             ])
         for (name, text) in examples {
@@ -55,7 +55,8 @@ private enum Examples {
         #expect(
             examples.map(\.name) == [
                 "app.will_quit.json", "command.run.json", "editor.exited.json", "files.dropped.json",
-                "files.saved.json", "form.used.json", "notify.used.json", "spell.checked.json",
+                "files.saved.json", "form.used.json", "notify.used.json", "settings.closed.json",
+                "settings.opened.json", "settings.used.json", "spell.checked.json",
                 "spell.suggested.json", "thumbnail.made.json", "url.open.json", "window.resized.json",
             ])
         for (name, text) in examples {
@@ -87,6 +88,11 @@ private enum Examples {
             "form-field-of-an-unknown-kind.json", "form-used-with-a-button-that-is-no-name.json",
             "form-used-with-no-secrets.json", "reading-header-too-long.json", "reading-scroll-sideways.json",
             "relative-reading-path.json", "reading-place-with-no-columns.json", "window-wider-than-a-terminal.json",
+            "form-toggle-in-a-sheet.json", "settings-with-a-secret.json", "settings-with-nothing-to-show.json",
+            "settings-number-that-steps-by-nothing.json", "settings-pane-with-no-symbol.json",
+            "settings-list-action-with-no-title.json", "settings-field-with-the-focus.json",
+            "settings-used-with-a-value-and-an-action.json", "settings-used-with-nothing-done.json",
+            "settings-used-with-a-row-and-no-action.json", "settings-used-with-a-list-for-a-value.json",
         ] {
             #expect(examples.contains { $0.name == name }, "\(name) is missing")
         }

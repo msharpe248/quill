@@ -33,7 +33,9 @@ use crate::data::{self, DataEvent, DataHandle};
 use crate::files::Files;
 use crate::keymap::KeyChord;
 use crate::setup::{AccountEvent, AccountRequest};
-use crate::state::{Action, Effects, Env, HostRequest, HostState, Mouse, MouseKind, Notice, State};
+use crate::state::{
+    Action, Effects, Env, HostRequest, HostState, Mouse, MouseKind, Notice, SettingsAct, State,
+};
 use crate::view::{ImagePlacement, LinkPlacement};
 use crate::{hook, hyperlink, terminal, view, vim};
 
@@ -81,7 +83,7 @@ impl SyncLink {
 /// status bar at startup, for problems found while loading configuration.
 pub async fn run(
     store: Store,
-    env: Env,
+    mut env: Env,
     mut notices: Vec<Notice>,
     attached: Attached,
     sync: SyncLink,
@@ -125,6 +127,7 @@ pub async fn run(
         preview_dir: view_dir,
         last_host_state: None,
         last_form: None,
+        last_settings: None,
         last_place: None,
         images: Images::default(),
         thumbnails: std::collections::HashMap::new(),
@@ -138,7 +141,7 @@ pub async fn run(
         accounts: account_events,
         injected,
     };
-    let result = event_loop(&mut screen, &env, notices, &mut io, &mut inbound).await;
+    let result = event_loop(&mut screen, &mut env, notices, &mut io, &mut inbound).await;
     // A hook still running is stopped: nothing started here outlives Quill.
     io.closing.store(true, Ordering::SeqCst);
     io.images.forget();
@@ -162,6 +165,9 @@ struct Io<'a> {
     last_host_state: Option<HostState>,
     /// The form or question the host was last told to show in its sheet.
     last_form: Option<bridge::FormShow>,
+    /// What the host was last told its settings window shows, and the
+    /// count of answers it was owed then.
+    last_settings: Option<(u64, bridge::SettingsShow)>,
     /// The place the host was last told its reading pane has.
     last_place: Option<u16>,
     images: Images,
@@ -558,6 +564,20 @@ impl Io<'_> {
         self.last_form = current;
     }
 
+    /// Tells the host what its settings window shows, while it is open:
+    /// whenever any of it has changed, and whenever the host is owed it
+    /// again because something was done there, changed or not.
+    fn mirror_settings(&mut self, state: &State, env: &Env) {
+        let current = state.settings_shown(env);
+        if current == self.last_settings {
+            return;
+        }
+        if let Some((_, settings)) = &current {
+            self.host.show_settings(settings.clone());
+        }
+        self.last_settings = current;
+    }
+
     /// Runs one of the user's programs on a message, off the UI task, and
     /// says how it went. Never in Quill's own app, whatever asked.
     fn run_hook(&self, run: hook::HookRun) {
@@ -678,7 +698,7 @@ struct Inbound {
 
 async fn event_loop(
     terminal: &mut DefaultTerminal,
-    env: &Env,
+    env: &mut Env,
     notices: Vec<Notice>,
     io: &mut Io<'_>,
     inbound: &mut Inbound,
@@ -739,6 +759,7 @@ async fn event_loop(
         }
         io.mirror(&state, env);
         io.mirror_form(&state, env);
+        io.mirror_settings(&state, env);
         io.mirror_place(&state, env);
 
         let spelling_due = state
@@ -798,6 +819,9 @@ async fn event_loop(
                 }
                 HostEvent::FormUsed(used) => Some(Action::FormUsed(used)),
                 HostEvent::WindowColumns(columns) => Some(Action::WindowColumns(columns)),
+                HostEvent::SettingsOpened => Some(Action::Settings(SettingsAct::Opened)),
+                HostEvent::SettingsClosed => Some(Action::Settings(SettingsAct::Closed)),
+                HostEvent::SettingsUsed(used) => Some(Action::Settings(SettingsAct::Used(used))),
                 HostEvent::Thumbnail { id, ok } => {
                     io.thumbnail_made(id, ok);
                     None
@@ -823,7 +847,16 @@ async fn event_loop(
         }
         if let Some(action) = action {
             let web = state.web_reading;
-            let effects = state.update(env, action);
+            let mut effects = state.update(env, action);
+            // Settings that hold from now are put where the next update
+            // and the next frame find them. With other keys, the host is
+            // told every command's keys again, for its menus.
+            if let Some(settings) = effects.settings.take() {
+                if settings.apply(env) {
+                    io.host.commands(command_infos(env));
+                }
+                state.dirty = true;
+            }
             io.perform(effects);
             if state.web_reading != web {
                 width_due = state
@@ -1038,6 +1071,7 @@ mod tests {
             hooks_enabled: false,
             web_pane: false,
             web_reading: false,
+            cache_gb: 5.0,
         }
     }
 

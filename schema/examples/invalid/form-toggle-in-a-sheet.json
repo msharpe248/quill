@@ -1,0 +1,18 @@
+{
+  "jsonrpc": "2.0",
+  "method": "form.show",
+  "params": {
+    "step": "server",
+    "title": "Add an account: the server",
+    "fields": [
+      {
+        "kind": "toggle",
+        "id": "sending",
+        "label": "",
+        "title": "Send mail from this account",
+        "value": true
+      }
+    ],
+    "buttons": []
+  }
+}

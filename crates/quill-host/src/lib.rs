@@ -60,6 +60,14 @@ pub enum HostEvent {
     /// to itself: what there is room for, whatever stands beside the
     /// terminal now.
     WindowColumns(u16),
+    /// The user opened the host's settings window: it wants to be told
+    /// what to show ([`Host::show_settings`]).
+    SettingsOpened,
+    /// The settings window was closed.
+    SettingsClosed,
+    /// The user changed a setting in the host's settings window, or asked
+    /// for something from one of its lists.
+    SettingsUsed(bridge::SettingsUsed),
     /// The app is quitting: flush and exit cleanly.
     WillQuit,
     /// The shell has gone. There is nothing left to draw for.
@@ -222,6 +230,14 @@ pub trait Host: Send + Sync {
         if let Some(place) = bridge::ReadingPlace::new(columns) {
             self.send(CoreToShell::ReadingPlace(place));
         }
+    }
+
+    /// Tells the host what its settings window shows: every pane, with
+    /// its settings as they stand. What the user does there arrives as
+    /// [`HostEvent::SettingsUsed`]. Only a shell has such a window: in a
+    /// terminal the settings are the file.
+    fn show_settings(&self, settings: bridge::SettingsShow) {
+        self.send(CoreToShell::SettingsShow(settings));
     }
 
     /// Hands an event straight back to the core, for a host that can

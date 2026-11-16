@@ -1,12 +1,14 @@
 //! Changing `config.toml` for the user: adding an account, pinning a
-//! certificate. Everything else in the file, comments and layout included,
-//! is left exactly as they wrote it.
+//! certificate, a setting changed in the app's settings window. Everything
+//! else in the file, comments and layout included, is left exactly as they
+//! wrote it.
 
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
 
 use quill_core::config::{Config, TlsMode};
+use quill_tui::settings::{Change, Written};
 use quill_tui::setup::{AccountDraft, ServerDraft, SignInDraft};
 use toml_edit::{ArrayOfTables, DocumentMut, InlineTable, Item, Table, Value, value};
 
@@ -105,30 +107,55 @@ pub fn pin_fingerprint(
 /// starts the way they left it. A comment on the line is kept, like every
 /// other.
 pub fn set_web_reading(text: &str, on: bool) -> Result<String, String> {
+    set_value(text, "ui", "web_reading", Value::from(on))
+}
+
+/// `text` with one setting given another value: what was changed in the
+/// app's settings window. The line is changed where it stands, with the
+/// comment on it kept; a setting the file does not have yet is added to
+/// its section, and the section made if there is none.
+///
+/// A file Quill cannot read for what it says is not changed, whatever is
+/// wrong with it and wherever: the window does not edit a file it cannot
+/// show. Nor is a file left unreadable by the change.
+pub fn set(text: &str, change: &Change) -> Result<String, String> {
+    Config::parse(text).map_err(|err| format!("config.toml has a mistake to fix first: {err}"))?;
+    let setting = change.setting();
+    let written = match change.written() {
+        Written::Word(word) => Value::from(word),
+        Written::Flag(on) => Value::from(on),
+        Written::Whole(number) => Value::from(number),
+        Written::Decimal(number) => Value::from(number),
+    };
+    set_value(text, setting.section(), setting.key(), written)
+}
+
+/// `text` with `key` in `section` set to `new`.
+fn set_value(text: &str, section: &str, key: &str, new: Value) -> Result<String, String> {
     let mut document: DocumentMut = text
         .parse()
         .map_err(|err| format!("config.toml cannot be read: {err}"))?;
-    let had_ui = document.contains_key("ui");
-    let ui = document
-        .entry("ui")
+    let had_section = document.contains_key(section);
+    let table = document
+        .entry(section)
         .or_insert(Item::Table(Table::new()))
         .as_table_like_mut()
-        .ok_or("`ui` in config.toml is not a table")?;
-    match ui.get_mut("web_reading").and_then(Item::as_value_mut) {
+        .ok_or_else(|| format!("`{section}` in config.toml is not a table"))?;
+    match table.get_mut(key).and_then(Item::as_value_mut) {
         // In place, with whatever is written around it.
         Some(existing) => {
             let decor = existing.decor().clone();
-            *existing = Value::from(on);
+            *existing = new;
             *existing.decor_mut() = decor;
         }
         None => {
-            ui.insert("web_reading", value(on));
+            table.insert(key, Item::Value(new));
         }
     }
     // A section of Quill's own making is set apart from what is above it.
-    if !had_ui
+    if !had_section
         && !text.trim().is_empty()
-        && let Some(table) = document.get_mut("ui").and_then(Item::as_table_mut)
+        && let Some(table) = document.get_mut(section).and_then(Item::as_table_mut)
     {
         table.decor_mut().set_prefix("\n");
     }
@@ -302,6 +329,199 @@ mod tests {
         let config = Config::parse(&after).unwrap();
         assert!(config.ui.web_reading);
         assert_eq!(config.ui.theme, "light");
+    }
+
+    /// A config a person has written, with their comments.
+    const WRITTEN: &str = "# My settings\n\
+        [ui]\n\
+        theme = \"light\"   # easier on the eyes\n\
+        keymap = \"vim\"\n\
+        \n\
+        [compose]\n\
+        # ten is too short for me\n\
+        undo_send_seconds = 30\n\
+        \n\
+        [[account]]\n\
+        name = \"Work\"   # the office\n\
+        type = \"imap\"\n\
+        address = \"robin@work.example.com\"\n\
+        imap = { host = \"mail.work.example.com\" }\n\
+        \n\
+        [[rule]]\n\
+        match = \"from:buildbot\"   # noisy\n\
+        mark_read = true\n";
+
+    fn gigabytes(value: f64) -> Change {
+        Change::CacheGb(quill_host::bridge::Number::new(value).unwrap())
+    }
+
+    #[test]
+    fn a_setting_is_changed_where_it_stands_and_everything_else_is_left_as_it_was() {
+        use quill_core::config::{
+            ComposeEditor, ComposeFormat, KeymapPreset, RemoteImages, ReplyPosition,
+        };
+
+        // On its own line, with the comment that was on it.
+        assert_eq!(
+            set(WRITTEN, &Change::Theme("dark".to_owned())).unwrap(),
+            WRITTEN.replace("theme = \"light\"   #", "theme = \"dark\"   #")
+        );
+        assert_eq!(
+            set(WRITTEN, &Change::Keymap(KeymapPreset::Mutt)).unwrap(),
+            WRITTEN.replace("keymap = \"vim\"", "keymap = \"mutt\"")
+        );
+        assert_eq!(
+            set(WRITTEN, &Change::UndoSendSeconds(5)).unwrap(),
+            WRITTEN.replace("undo_send_seconds = 30", "undo_send_seconds = 5")
+        );
+        // One the file has not got yet goes at the end of its section.
+        assert_eq!(
+            set(WRITTEN, &Change::Notifications(false)).unwrap(),
+            WRITTEN.replace(
+                "keymap = \"vim\"\n",
+                "keymap = \"vim\"\nnotifications = false\n"
+            )
+        );
+        assert_eq!(
+            set(WRITTEN, &Change::Threads(false)).unwrap(),
+            WRITTEN.replace("keymap = \"vim\"\n", "keymap = \"vim\"\nthreads = false\n")
+        );
+        assert_eq!(
+            set(WRITTEN, &Change::WebReading(true)).unwrap(),
+            WRITTEN.replace(
+                "keymap = \"vim\"\n",
+                "keymap = \"vim\"\nweb_reading = true\n"
+            )
+        );
+        for (change, line) in [
+            (Change::Editor(ComposeEditor::Nano), "editor = \"nano\""),
+            (Change::Editor(ComposeEditor::Script), "editor = \"script\""),
+            (Change::Format(ComposeFormat::Plain), "format = \"plain\""),
+            (
+                Change::ReplyPosition(ReplyPosition::Below),
+                "reply_position = \"below\"",
+            ),
+            (Change::SpellCheck(false), "spell_check = false"),
+        ] {
+            assert_eq!(
+                set(WRITTEN, &change).unwrap(),
+                WRITTEN.replace(
+                    "undo_send_seconds = 30\n",
+                    &format!("undo_send_seconds = 30\n{line}\n")
+                ),
+                "{change:?}"
+            );
+        }
+        // And a section the file has not got is made, after what is there.
+        assert_eq!(
+            set(WRITTEN, &Change::RemoteImages(RemoteImages::Never)).unwrap(),
+            format!("{WRITTEN}\n[privacy]\nremote_images = \"never\"\n")
+        );
+        assert_eq!(
+            set(WRITTEN, &gigabytes(2.0)).unwrap(),
+            format!("{WRITTEN}\n[storage]\ncache_gb = 2\n")
+        );
+        assert_eq!(
+            set(WRITTEN, &gigabytes(0.5)).unwrap(),
+            format!("{WRITTEN}\n[storage]\ncache_gb = 0.5\n")
+        );
+        // Into no file at all, it is the whole of it.
+        assert_eq!(
+            set("", &Change::Keymap(KeymapPreset::Mutt)).unwrap(),
+            "[ui]\nkeymap = \"mutt\"\n"
+        );
+
+        // One change after another, each to what the last left: all of
+        // them hold, and the comments, the account and the rule are as
+        // they were written.
+        let mut text = WRITTEN.to_owned();
+        for change in [
+            Change::Theme("terminal".to_owned()),
+            Change::Notifications(false),
+            Change::Editor(ComposeEditor::Vim),
+            Change::UndoSendSeconds(0),
+            Change::RemoteImages(RemoteImages::Never),
+            gigabytes(12.25),
+            Change::Theme("dark".to_owned()),
+        ] {
+            text = set(&text, &change).unwrap();
+        }
+        let config = Config::parse(&text).unwrap();
+        assert_eq!(config.ui.theme, "dark");
+        assert!(!config.ui.notifications);
+        assert_eq!(config.compose.editor, ComposeEditor::Vim);
+        assert_eq!(config.compose.undo_send_seconds, 0);
+        assert_eq!(config.privacy.remote_images, RemoteImages::Never);
+        assert_eq!(config.storage.cache_gb, 12.25);
+        assert_eq!(config.accounts.len(), 1);
+        assert_eq!(config.rules.len(), 1);
+        for kept in [
+            "# My settings\n",
+            "# easier on the eyes\n",
+            "# ten is too short for me\n",
+            "name = \"Work\"   # the office\n",
+            "match = \"from:buildbot\"   # noisy\n",
+        ] {
+            assert!(text.contains(kept), "{kept:?} is gone from:\n{text}");
+        }
+        // Setting what is already so changes nothing at all.
+        assert_eq!(set(&text, &Change::Theme("dark".to_owned())).unwrap(), text);
+    }
+
+    #[test]
+    fn a_setting_is_never_written_into_a_file_with_a_mistake_in_it() {
+        let change = Change::Notifications(false);
+        for mistaken in [
+            // Not TOML.
+            "[ui\ntheme = ",
+            // TOML, and not a config: a key Quill does not know.
+            "[ui]\nthemee = \"dark\"\n",
+            // A mistake nowhere near what is being changed.
+            "[ui]\ntheme = \"dark\"\n\n[[rule]]\nmatch = \"\"\nstar = true\n",
+            "[compose]\neditor = \"emacs\"\n",
+            "[storage]\ncache_gb = -1\n",
+            // The section is not a section.
+            "ui = 3\n",
+        ] {
+            let refused = set(mistaken, &change).unwrap_err();
+            assert!(
+                refused.contains("config.toml has a mistake to fix first"),
+                "{mistaken:?}: {refused}"
+            );
+        }
+        // Even when the change would have put the mistake right: the
+        // window does not edit a file it could not show.
+        assert!(set("[storage]\ncache_gb = -1\n", &gigabytes(5.0)).is_err());
+    }
+
+    #[test]
+    fn a_value_the_file_could_not_be_read_back_with_is_not_written() {
+        // Checked before it gets here, and here again: what comes out is
+        // always a config Quill can read.
+        let refused = set(WRITTEN, &gigabytes(-2.0)).unwrap_err();
+        assert!(
+            refused.contains("the change would leave config.toml unreadable"),
+            "{refused}"
+        );
+        // Text that would end a string in TOML is written so that it does
+        // not: the file reads back as what was asked for.
+        let odd = "dark\"\n[ui]\nkeymap = \"mutt";
+        let text = set(WRITTEN, &Change::Theme(odd.to_owned())).unwrap();
+        let config = Config::parse(&text).unwrap();
+        assert_eq!(config.ui.theme, odd);
+        assert_eq!(config.ui.keymap, quill_core::config::KeymapPreset::Vim);
+    }
+
+    #[test]
+    fn a_setting_written_on_one_line_with_its_section_is_changed_there() {
+        let inline = "ui = { theme = \"light\", keymap = \"vim\" }   # all on one line\n";
+        let after = set(inline, &Change::Theme("dark".to_owned())).unwrap();
+        assert_eq!(after, inline.replace("\"light\"", "\"dark\""));
+        let after = set(inline, &Change::Threads(false)).unwrap();
+        let config = Config::parse(&after).unwrap();
+        assert!(!config.ui.threads);
+        assert_eq!(config.ui.theme, "light");
+        assert!(after.ends_with("# all on one line\n"), "{after}");
     }
 
     #[test]

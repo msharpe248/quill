@@ -15,12 +15,14 @@ enum MainMenu {
             keyEquivalent: "")
         app.addItem(.separator())
         append(commands.makeMenuItems(for: .app), to: app, thenSeparator: true)
-        // The config is a file in the app's container, which is not a
-        // place anyone finds by looking. These two get to it. They are
-        // called what a Mac calls them: Settings, on cmd-comma.
-        let editConfig = app.addItem(
-            withTitle: "Settings\u{2026}", action: #selector(MainWindowController.editConfig(_:)), keyEquivalent: ",")
-        editConfig.target = panes
+        // Settings, on cmd-comma, is a window, as on any Mac. The config
+        // behind it is a file in the app's container, which is not a place
+        // anyone finds by looking: the item after it gets to that, for
+        // what the window does not have.
+        let settings = app.addItem(
+            withTitle: "Settings\u{2026}", action: #selector(MainWindowController.showSettings(_:)),
+            keyEquivalent: ",")
+        settings.target = panes
         let revealConfig = app.addItem(
             withTitle: "Reveal Settings File in Finder", action: #selector(MainWindowController.revealConfig(_:)),
             keyEquivalent: "")

@@ -2,10 +2,12 @@ import AppKit
 import Bridge
 import Forms
 
-/// A form the core has the shell show, as a sheet on the main window: the
-/// steps of adding an account, and every other question the core asks
-/// before going on (a sign-in to wait for, a certificate, a time, a thing to
-/// confirm). Which of them it is showing is nothing this knows.
+/// A form the core has the shell show, as a sheet on a window: the steps of
+/// adding an account, and every other question the core asks before going on
+/// (a sign-in to wait for, a certificate, a time, a thing to confirm). Which
+/// of them it is showing is nothing this knows. The window is the main one,
+/// or the settings window when the question came up from there; the sheet
+/// stays on the window it opened on until it is taken down.
 ///
 /// The sheet is drawn from what the core sends and nothing else: its title,
 /// what it says, its fields in the core's order and its buttons. It is drawn
@@ -426,6 +428,9 @@ final class FormSheet: NSObject, NSTextFieldDelegate {
     var summary: [String] {
         let opened = "sheets opened: \(timesOpened)"
         guard isUp else { return model.summary + [opened] }
-        return model.summary + ["sheet keys go to: \(focusedField ?? "no field")", opened]
+        return model.summary + [
+            "sheet keys go to: \(focusedField ?? "no field")",
+            "sheet is on the window titled: \(parent?.title.debugDescription ?? "none")", opened,
+        ]
     }
 }

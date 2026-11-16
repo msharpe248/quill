@@ -111,6 +111,18 @@ pub enum KeymapPreset {
     Mutt,
 }
 
+impl KeymapPreset {
+    pub const ALL: [Self; 2] = [Self::Vim, Self::Mutt];
+
+    /// The word the config says it with.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Vim => "vim",
+            Self::Mutt => "mutt",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ComposeConfig {
@@ -163,6 +175,29 @@ pub enum ComposeEditor {
     Script,
 }
 
+impl ComposeEditor {
+    pub const ALL: [Self; 6] = [
+        Self::Builtin,
+        Self::Vim,
+        Self::Nano,
+        Self::Pico,
+        Self::Mg,
+        Self::Script,
+    ];
+
+    /// The word the config says it with.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Builtin => "builtin",
+            Self::Vim => "vim",
+            Self::Nano => "nano",
+            Self::Pico => "pico",
+            Self::Mg => "mg",
+            Self::Script => "script",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ComposeFormat {
@@ -171,12 +206,36 @@ pub enum ComposeFormat {
     Plain,
 }
 
+impl ComposeFormat {
+    pub const ALL: [Self; 2] = [Self::Markdown, Self::Plain];
+
+    /// The word the config says it with.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Markdown => "markdown",
+            Self::Plain => "plain",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ReplyPosition {
     #[default]
     Above,
     Below,
+}
+
+impl ReplyPosition {
+    pub const ALL: [Self; 2] = [Self::Above, Self::Below];
+
+    /// The word the config says it with.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Above => "above",
+            Self::Below => "below",
+        }
+    }
 }
 
 /// How much of this Mac's disk downloaded mail may take.
@@ -218,6 +277,19 @@ pub enum RemoteImages {
     Ask,
     Never,
     Allowlist,
+}
+
+impl RemoteImages {
+    pub const ALL: [Self; 3] = [Self::Ask, Self::Never, Self::Allowlist];
+
+    /// The word the config says it with.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ask => "ask",
+            Self::Never => "never",
+            Self::Allowlist => "allowlist",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -613,6 +685,35 @@ smtp = { host = "smtp.fastmail.com", port = 465, tls = "implicit" }
         assert_eq!(imap.host, "imap.fastmail.com");
         assert_eq!(imap.port, Some(993));
         assert_eq!(imap.tls, TlsMode::Implicit);
+    }
+
+    /// Whoever writes a setting into the file for the user writes these
+    /// words, so each must be the word the file is read by.
+    #[test]
+    fn every_word_a_setting_is_said_with_reads_back_as_that_setting() {
+        for preset in KeymapPreset::ALL {
+            let text = format!("[ui]\nkeymap = \"{}\"\n", preset.as_str());
+            assert_eq!(Config::parse(&text).unwrap().ui.keymap, preset);
+        }
+        for editor in ComposeEditor::ALL {
+            let text = format!("[compose]\neditor = \"{}\"\n", editor.as_str());
+            assert_eq!(Config::parse(&text).unwrap().compose.editor, editor);
+        }
+        for format in ComposeFormat::ALL {
+            let text = format!("[compose]\nformat = \"{}\"\n", format.as_str());
+            assert_eq!(Config::parse(&text).unwrap().compose.format, format);
+        }
+        for position in ReplyPosition::ALL {
+            let text = format!("[compose]\nreply_position = \"{}\"\n", position.as_str());
+            assert_eq!(
+                Config::parse(&text).unwrap().compose.reply_position,
+                position
+            );
+        }
+        for remote in RemoteImages::ALL {
+            let text = format!("[privacy]\nremote_images = \"{}\"\n", remote.as_str());
+            assert_eq!(Config::parse(&text).unwrap().privacy.remote_images, remote);
+        }
     }
 
     #[test]
