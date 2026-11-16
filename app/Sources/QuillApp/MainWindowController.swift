@@ -1,6 +1,7 @@
 import AppKit
 import Bridge
 import Editor
+import Forms
 import Notifications
 import Panes
 import Spelling
@@ -186,6 +187,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     /// answer back.
     private(set) lazy var spelling = SpellingService(checker: SystemSpellChecker()) { [weak self] answer in
         self?.bridge?.send(answer)
+    }
+
+    /// The form the core has the window show in a sheet, while it has one:
+    /// adding an account. What the user does with it goes back to the
+    /// core, which decides what that means.
+    private(set) lazy var formSheet = FormSheet { [weak self] used in
+        self?.bridge?.send(.formUsed(used))
     }
 
     private(set) var coreIsRunning = false
@@ -391,6 +399,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             spelling.suggest(suggest)
         case let .paneEditor(request):
             openEditor(request)
+        case let .formShow(form):
+            formSheet.show(form, on: window)
+        case .formClose:
+            formSheet.close()
         }
     }
 
@@ -552,6 +564,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         coreIsRunning = false
         bridge?.close()
         bridge = nil
+        // A form of the core's has nobody left to answer to.
+        formSheet.close()
         // There is nobody left to hand a draft back to. Vim is still asked
         // to save it and go, and is not left running behind the app.
         afterEditor = nil
@@ -981,7 +995,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     private func runInCoreOrFocusedView(_ command: String, _ native: Selector, _ sender: Any?) {
-        if !paneHasFocus, commands.isEnabled(command) {
+        // In a sheet the text being edited is a field of the sheet's.
+        if !paneHasFocus, window?.attachedSheet == nil, commands.isEnabled(command) {
             commands.run(named: command)
         } else {
             NSApp.sendAction(native, to: nil, from: sender)

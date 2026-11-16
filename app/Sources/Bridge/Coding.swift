@@ -269,6 +269,230 @@ private func encodeLine(method: String, params: some Encodable) -> String {
     return String(decoding: data, as: UTF8.self)
 }
 
+// The form messages are read from the JSON itself, and not through
+// `Decodable`: a field's shape depends on its kind, and every object in
+// them is checked for fields it should not have.
+
+private extension JSONValue {
+    var string: String? {
+        if case let .string(value) = self { value } else { nil }
+    }
+
+    var bool: Bool? {
+        if case let .bool(value) = self { value } else { nil }
+    }
+
+    var array: [JSONValue]? {
+        if case let .array(value) = self { value } else { nil }
+    }
+}
+
+/// One object of a form message, read a field at a time. What is wrong is
+/// said by the field's name and never by what it held: a `form.used` holds
+/// a password.
+private struct FormObject {
+    let method: String
+    let fields: [String: JSONValue]
+
+    init(_ value: JSONValue?, of method: String, allowing allowed: Set<String>) throws {
+        guard let fields = value?.object else {
+            throw BridgeError.malformed("\(method): not an object")
+        }
+        let extra = Set(fields.keys).subtracting(allowed)
+        guard extra.isEmpty else {
+            throw BridgeError.malformed("\(method): unexpected \(extra.sorted().joined(separator: ", "))")
+        }
+        self.method = method
+        self.fields = fields
+    }
+
+    func string(_ key: String) throws -> String {
+        guard let value = fields[key] else { throw BridgeError.malformed("\(method): missing \(key)") }
+        guard let text = value.string else { throw BridgeError.malformed("\(method): \(key) is not a string") }
+        return text
+    }
+
+    /// An optional field is left out, never null.
+    func optionalString(_ key: String) throws -> String? {
+        guard fields[key] != nil else { return nil }
+        return try string(key)
+    }
+
+    func bool(_ key: String) throws -> Bool {
+        guard let value = fields[key] else { throw BridgeError.malformed("\(method): missing \(key)") }
+        guard let flag = value.bool else { throw BridgeError.malformed("\(method): \(key) is not true or false") }
+        return flag
+    }
+
+    func optionalBool(_ key: String) throws -> Bool? {
+        guard fields[key] != nil else { return nil }
+        return try bool(key)
+    }
+
+    func array(_ key: String) throws -> [JSONValue] {
+        guard let value = fields[key] else { throw BridgeError.malformed("\(method): missing \(key)") }
+        guard let items = value.array else { throw BridgeError.malformed("\(method): \(key) is not a list") }
+        return items
+    }
+
+    /// An object whose every value is a string.
+    func strings(_ key: String) throws -> [String: String] {
+        guard let value = fields[key] else { throw BridgeError.malformed("\(method): missing \(key)") }
+        guard let object = value.object else { throw BridgeError.malformed("\(method): \(key) is not an object") }
+        return try object.mapValues { value in
+            guard let text = value.string else {
+                throw BridgeError.malformed("\(method): \(key) holds something that is not a string")
+            }
+            return text
+        }
+    }
+}
+
+private extension FormField {
+    /// The fields each kind may have.
+    static func allowedKeys(for kind: String) -> Set<String>? {
+        switch kind {
+        case "text": ["kind", "id", "label", "value", "focus", "help"]
+        case "secret": ["kind", "id", "label", "focus", "help"]
+        case "choice": ["kind", "id", "label", "value", "options", "focus", "help"]
+        case "static": ["kind", "id", "label", "value", "help"]
+        default: nil
+        }
+    }
+
+    init(json: JSONValue) throws {
+        let method = "form.show"
+        guard let name = json.object?["kind"]?.string, let allowed = Self.allowedKeys(for: name) else {
+            throw BridgeError.malformed("\(method): a field is text, secret, choice or static")
+        }
+        let object = try FormObject(json, of: method, allowing: allowed)
+        let kind: Kind
+        switch name {
+        case "text":
+            kind = try .text(value: object.string("value"))
+        case "secret":
+            kind = .secret
+        case "choice":
+            let options = try object.array("options").map { option in
+                let option = try FormObject(option, of: method, allowing: FormOption.allowedKeys)
+                return try FormOption(id: option.string("id"), title: option.string("title"))
+            }
+            kind = try .choice(value: object.string("value"), options: options)
+        default:
+            kind = try .fixed(value: object.string("value"))
+        }
+        try self.init(
+            id: object.string("id"), label: object.string("label"), kind: kind,
+            focus: object.optionalBool("focus") ?? false, help: object.optionalString("help"))
+    }
+
+    var json: JSONValue {
+        var object: [String: JSONValue] = ["kind": .string(kind.name), "id": .string(id), "label": .string(label)]
+        switch kind {
+        case let .text(value), let .fixed(value):
+            object["value"] = .string(value)
+        case .secret:
+            break
+        case let .choice(value, options):
+            object["value"] = .string(value)
+            object["options"] = .array(options.map { .object(["id": .string($0.id), "title": .string($0.title)]) })
+        }
+        // Left out when false, as the core leaves it out.
+        if focus {
+            object["focus"] = .bool(true)
+        }
+        if let help {
+            object["help"] = .string(help)
+        }
+        return .object(object)
+    }
+}
+
+private extension FormShow {
+    init(params: JSONValue) throws {
+        let method = "form.show"
+        let object = try FormObject(params, of: method, allowing: Self.allowedKeys)
+        let fields = try object.array("fields").map(FormField.init(json:))
+        let buttons = try object.array("buttons").map { button in
+            let button = try FormObject(button, of: method, allowing: FormButton.allowedKeys)
+            var role: FormRole?
+            if let name = try button.optionalString("role") {
+                guard let known = FormRole(rawValue: name) else {
+                    throw BridgeError.malformed("\(method): a button's role is default or cancel")
+                }
+                role = known
+            }
+            return try FormButton(
+                id: button.string("id"), title: button.string("title"), role: role, enabled: button.bool("enabled"))
+        }
+        guard
+            let form = try FormShow(
+                step: object.string("step"), title: object.string("title"), note: object.optionalString("note"),
+                error: object.optionalString("error"), busy: object.optionalString("busy"), fields: fields,
+                buttons: buttons)
+        else {
+            throw BridgeError.malformed(
+                "\(method): the step, fields and buttons need names of their own, a choice one of its options, "
+                    + "and at most one field the focus")
+        }
+        self = form
+    }
+
+    var json: JSONValue {
+        var object: [String: JSONValue] = [
+            "step": .string(step), "title": .string(title), "fields": .array(fields.map(\.json)),
+            "buttons": .array(
+                buttons.map { button in
+                    var object: [String: JSONValue] = [
+                        "id": .string(button.id), "title": .string(button.title), "enabled": .bool(button.enabled),
+                    ]
+                    if let role = button.role {
+                        object["role"] = .string(role.rawValue)
+                    }
+                    return .object(object)
+                }),
+        ]
+        if let note {
+            object["note"] = .string(note)
+        }
+        if let error {
+            object["error"] = .string(error)
+        }
+        if let busy {
+            object["busy"] = .string(busy)
+        }
+        return .object(object)
+    }
+}
+
+private extension FormUsed {
+    init(params: JSONValue) throws {
+        let method = "form.used"
+        let object = try FormObject(params, of: method, allowing: Self.allowedKeys)
+        guard
+            let used = try FormUsed(
+                step: object.string("step"), button: object.optionalString("button"),
+                values: object.strings("values"), secrets: object.strings("secrets").mapValues(FormSecret.init))
+        else {
+            throw BridgeError.malformed("\(method): the step, the button and the fields need names")
+        }
+        self = used
+    }
+
+    /// The one place a secret is written out: on its way to the core.
+    var json: JSONValue {
+        var object: [String: JSONValue] = [
+            "step": .string(step),
+            "values": .object(values.mapValues { .string($0) }),
+            "secrets": .object(secrets.mapValues { .string($0.revealed) }),
+        ]
+        if let button {
+            object["button"] = .string(button)
+        }
+        return .object(object)
+    }
+}
+
 public extension CoreToShell {
     init(line: String) throws {
         let envelope = try Envelope(line: line)
@@ -426,6 +650,11 @@ public extension CoreToShell {
                 throw BridgeError.malformed("pane.editor: the path and the dir must be absolute")
             }
             self = .paneEditor(request)
+        case "form.show":
+            self = try .formShow(FormShow(params: envelope.params))
+        case "form.close":
+            try envelope.requireOnly([])
+            self = .formClose
         default:
             throw BridgeError.unknownMethod(envelope.method)
         }
@@ -467,6 +696,10 @@ public extension CoreToShell {
             encodeLine(method: "spell.suggest", params: suggest)
         case let .paneEditor(editor):
             encodeLine(method: "pane.editor", params: editor)
+        case let .formShow(form):
+            encodeLine(method: "form.show", params: form.json)
+        case .formClose:
+            encodeLine(method: "form.close", params: NoParams())
         }
     }
 }
@@ -546,6 +779,8 @@ public extension ShellToCore {
                 throw BridgeError.malformed("editor.exited: the status must be from -255 to 255")
             }
             self = .editorExited(exited)
+        case "form.used":
+            self = try .formUsed(FormUsed(params: envelope.params))
         case "app.will_quit":
             try envelope.requireOnly([])
             self = .appWillQuit
@@ -576,6 +811,8 @@ public extension ShellToCore {
             encodeLine(method: "spell.suggested", params: suggested)
         case let .editorExited(exited):
             encodeLine(method: "editor.exited", params: exited)
+        case let .formUsed(used):
+            encodeLine(method: "form.used", params: used.json)
         case .appWillQuit:
             encodeLine(method: "app.will_quit", params: NoParams())
         }

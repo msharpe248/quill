@@ -1,0 +1,12 @@
+{
+  "jsonrpc": "2.0",
+  "method": "form.used",
+  "params": {
+    "step": "address",
+    "button": "Continue & Save",
+    "values": {
+      "address": "robin@example.com"
+    },
+    "secrets": {}
+  }
+}

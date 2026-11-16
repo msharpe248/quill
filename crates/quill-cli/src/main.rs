@@ -391,6 +391,9 @@ fn suit_host(env: &mut quill_tui::state::Env, shell: bool, vim: Option<std::ffi:
     env.thumbnails = shell;
     // And the system's spelling checker.
     env.spell_check = shell;
+    // And a sheet on its window for the form that adds an account, which
+    // a terminal has drawn over its panes.
+    env.account_sheet = shell;
     // And a Vim of its own, in a pane. In a terminal the user's own Vim
     // is run there: `vim`, or the program QUILL_VIM names. The app never
     // runs that one, whatever its environment says.
@@ -578,7 +581,7 @@ mod tests {
         let mut env = load();
         suit_host(&mut env, true, Some("/opt/homebrew/bin/nvim".into()));
         assert!(env.cmd_keys && env.file_panel && env.thumbnails && env.spell_check);
-        assert!(env.editor_pane);
+        assert!(env.editor_pane && env.account_sheet);
         assert!(!env.hooks_enabled);
         assert_eq!(env.vim_program, None);
 
@@ -586,7 +589,7 @@ mod tests {
         let mut env = load();
         suit_host(&mut env, false, Some("/opt/homebrew/bin/nvim".into()));
         assert!(!env.cmd_keys && !env.file_panel && !env.thumbnails && !env.spell_check);
-        assert!(!env.editor_pane);
+        assert!(!env.editor_pane && !env.account_sheet);
         assert!(env.hooks_enabled);
         assert_eq!(env.vim_program, Some("/opt/homebrew/bin/nvim".into()));
         suit_host(&mut env, false, Some("".into()));

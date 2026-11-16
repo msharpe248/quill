@@ -34,7 +34,8 @@ private enum Examples {
         #expect(
             examples.map(\.name) == [
                 "clipboard.write.json", "commands.list.json", "file.open.json", "files.pick.json",
-                "files.save.json", "link.open.json", "notify.clear.json", "notify.post.json", "pane.close.json",
+                "files.save.json", "form.close.json", "form.show.json", "link.open.json", "notify.clear.json",
+                "notify.post.json", "pane.close.json",
                 "pane.editor.json", "pane.play.json", "pane.preview.json", "pane.web.json", "spell.check.json",
                 "spell.suggest.json", "state.update.json", "thumbnail.make.json",
             ])
@@ -52,8 +53,8 @@ private enum Examples {
         #expect(
             examples.map(\.name) == [
                 "app.will_quit.json", "command.run.json", "editor.exited.json", "files.dropped.json",
-                "files.saved.json", "notify.used.json", "spell.checked.json", "spell.suggested.json",
-                "thumbnail.made.json", "url.open.json",
+                "files.saved.json", "form.used.json", "notify.used.json", "spell.checked.json",
+                "spell.suggested.json", "thumbnail.made.json", "url.open.json",
             ])
         for (name, text) in examples {
             let message = try ShellToCore(line: text)
@@ -79,6 +80,9 @@ private enum Examples {
         for name in [
             "notification-with-no-id.json", "too-many-notification-actions.json", "url-that-is-not-mail.json",
             "misspelt-word-with-no-length.json", "too-many-suggestions.json", "editor-on-a-relative-path.json",
+            "form-secret-sent-by-the-core.json", "form-choice-with-no-options.json",
+            "form-field-of-an-unknown-kind.json", "form-used-with-a-button-that-is-no-name.json",
+            "form-used-with-no-secrets.json",
         ] {
             #expect(examples.contains { $0.name == name }, "\(name) is missing")
         }

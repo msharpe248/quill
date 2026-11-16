@@ -21,6 +21,42 @@ use crate::input::LineInput;
 use crate::keymap::{Key, KeyChord, Mods};
 use crate::text;
 
+mod sheet;
+
+pub use sheet::{Press, Used};
+
+/// What the form says at its first step.
+pub const ADDRESS_NOTE: &str =
+    "Type the email address of the account. Quill will look for its mail server.";
+
+/// What the form says of a sending server left empty.
+pub const NO_SENDING: &str = "Empty: the account will read mail and not send it.";
+
+/// What the form says while a server is to be reached with no encryption.
+pub const NO_ENCRYPTION: &str =
+    "With no encryption, your password and mail cross the network readable by anyone on the way.";
+
+/// What the form says under the fields of a Microsoft account.
+pub const MICROSOFT_NOTE: &str = "Register Quill with Microsoft once to get the application id: see docs/oauth.md. Tenant may be left empty.";
+
+/// What is said of a certificate that could not even be read.
+pub const UNREADABLE_CERTIFICATE: &str =
+    "The certificate could not be read, so it cannot be accepted.";
+
+/// A kind of connection as the form names it.
+pub fn security_label(tls: TlsMode) -> &'static str {
+    match tls {
+        TlsMode::Implicit => "TLS",
+        TlsMode::Starttls => "STARTTLS",
+        TlsMode::None => "None",
+    }
+}
+
+/// What is said of a certificate the server at `host` presented.
+pub fn certificate_note(host: &str) -> String {
+    format!("{host} presented a certificate that was not accepted. Nothing has been sent to it.")
+}
+
 /// Text that must not be shown or logged. `Debug` prints a placeholder.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Secret(pub String);
@@ -249,6 +285,9 @@ pub enum Step {
     Certificate,
 }
 
+/// The kinds of connection the form offers, in order.
+pub const SECURITIES: [TlsMode; 3] = [TlsMode::Implicit, TlsMode::Starttls, TlsMode::None];
+
 /// The fields of the server step, in order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServerField {
@@ -362,6 +401,62 @@ impl Default for Setup {
 }
 
 impl Setup {
+    /// What the form is called at the step it is at.
+    pub fn title(&self) -> &'static str {
+        match self.step {
+            Step::Address => "Add an account",
+            Step::Server if self.kind == Kind::Microsoft => "Add an account: Microsoft",
+            Step::Server => "Add an account: the server",
+            Step::Password => "Add an account: sign in",
+            Step::Certificate => "Add an account: certificate",
+        }
+    }
+
+    /// What the form says where the password is asked for.
+    pub fn password_note(&self) -> String {
+        format!(
+            "The password for {} at {}. It is kept in your Keychain and nowhere else.",
+            self.username.text(),
+            self.host.text()
+        )
+    }
+
+    /// Whether one of the servers named is to be reached with no
+    /// encryption.
+    pub fn unencrypted(&self) -> bool {
+        self.tls == TlsMode::None || (self.smtp_tls == TlsMode::None && !self.smtp_host.is_empty())
+    }
+
+    /// Makes the account of another kind. What was said about the old
+    /// kind is taken back.
+    fn set_kind(&mut self, kind: Kind) {
+        self.kind = kind;
+        self.error = None;
+    }
+
+    /// Changes the kind of connection to the reading server, or to the
+    /// `sending` one.
+    fn set_security(&mut self, sending: bool, mode: TlsMode) {
+        let (tls, port) = if sending {
+            (&mut self.smtp_tls, &mut self.smtp_port)
+        } else {
+            (&mut self.tls, &mut self.port)
+        };
+        // The port follows the kind of connection while it is still the
+        // usual one for the old kind.
+        let usual = |mode| match (sending, mode) {
+            (false, TlsMode::Implicit) => "993",
+            (false, TlsMode::Starttls | TlsMode::None) => "143",
+            (true, TlsMode::Implicit) => "465",
+            (true, TlsMode::Starttls | TlsMode::None) => "587",
+        };
+        if port.text() == usual(*tls) {
+            port.set(usual(mode));
+        }
+        *tls = mode;
+        self.error = None;
+    }
+
     pub fn server_field(&self) -> ServerField {
         ServerField::ALL[self.field.min(ServerField::ALL.len() - 1)]
     }
@@ -470,8 +565,7 @@ impl Setup {
                 Key::Char(_) => return Some(Vec::new()),
                 _ => return None,
             };
-            self.kind = order[next];
-            self.error = None;
+            self.set_kind(order[next]);
             return Some(Vec::new());
         }
         let choosing = match self.server_field() {
@@ -482,32 +576,16 @@ impl Setup {
         if self.step == Step::Server
             && let Some(sending) = choosing
         {
-            let order = [TlsMode::Implicit, TlsMode::Starttls, TlsMode::None];
-            let (tls, port) = if sending {
-                (&mut self.smtp_tls, &mut self.smtp_port)
-            } else {
-                (&mut self.tls, &mut self.port)
-            };
-            let at = order.iter().position(|mode| mode == tls).unwrap_or(0);
+            let order = SECURITIES;
+            let tls = if sending { self.smtp_tls } else { self.tls };
+            let at = order.iter().position(|mode| *mode == tls).unwrap_or(0);
             let next = match chord.key {
                 Key::Right | Key::Char(' ') if plain => (at + 1) % order.len(),
                 Key::Left if plain => (at + order.len() - 1) % order.len(),
                 Key::Char(_) => return Some(Vec::new()),
                 _ => return None,
             };
-            // The port follows the kind of connection while it is still the
-            // usual one for the old kind.
-            let usual = |mode| match (sending, mode) {
-                (false, TlsMode::Implicit) => "993",
-                (false, TlsMode::Starttls | TlsMode::None) => "143",
-                (true, TlsMode::Implicit) => "465",
-                (true, TlsMode::Starttls | TlsMode::None) => "587",
-            };
-            if port.text() == usual(*tls) {
-                port.set(usual(order[next]));
-            }
-            *tls = order[next];
-            self.error = None;
+            self.set_security(sending, order[next]);
             return Some(Vec::new());
         }
         let input = self.focused_input_mut()?;
@@ -961,7 +1039,7 @@ pub fn grouped_fingerprint(hex: &str) -> String {
 mod tests {
     use super::*;
 
-    fn keys(setup: &mut Setup, keys: &str) -> Vec<AccountRequest> {
+    pub(super) fn keys(setup: &mut Setup, keys: &str) -> Vec<AccountRequest> {
         let mut requests = Vec::new();
         for key in keys.split_whitespace() {
             let chord: KeyChord = key.parse().unwrap();
@@ -974,7 +1052,7 @@ mod tests {
         requests
     }
 
-    fn found(address: &str) -> AccountEvent {
+    pub(super) fn found(address: &str) -> AccountEvent {
         AccountEvent::Discovered {
             address: address.to_owned(),
             found: Discovery {
@@ -1003,7 +1081,7 @@ mod tests {
 
     /// What discovery says of an address whose mail Microsoft hosts, and
     /// the application id the config already has, if it has one.
-    fn found_at_microsoft(address: &str, application: Option<&str>) -> AccountEvent {
+    pub(super) fn found_at_microsoft(address: &str, application: Option<&str>) -> AccountEvent {
         let AccountEvent::Discovered { address, mut found } = found(address) else {
             unreachable!()
         };
@@ -1020,7 +1098,7 @@ mod tests {
     }
 
     /// The form at the server step, for an address Microsoft hosts.
-    fn at_microsoft(application: Option<&str>) -> Setup {
+    pub(super) fn at_microsoft(application: Option<&str>) -> Setup {
         let mut setup = Setup::default();
         setup.address.set("robin@example.com");
         setup.advance();
@@ -1029,7 +1107,7 @@ mod tests {
         setup
     }
 
-    fn problem() -> Box<CertificateProblem> {
+    pub(super) fn problem() -> Box<CertificateProblem> {
         Box::new(CertificateProblem {
             host: "imap.example.com".to_owned(),
             reason: "UnknownIssuer".to_owned(),
@@ -1039,7 +1117,7 @@ mod tests {
         })
     }
 
-    fn at_password() -> Setup {
+    pub(super) fn at_password() -> Setup {
         let mut setup = Setup::default();
         setup.address.set("robin@example.com");
         setup.advance();

@@ -185,7 +185,8 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
             links_height,
         ));
     }
-    if state.setup.is_some()
+    // The form is not drawn here when the host shows it, in a sheet.
+    if (state.setup.is_some() && !state.form_hosted)
         || !state.certificates.is_empty()
         || state.sign_in.is_some()
         || state.when.is_some()

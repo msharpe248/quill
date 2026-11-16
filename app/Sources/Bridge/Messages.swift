@@ -47,6 +47,11 @@ public enum CoreToShell: Equatable, Sendable {
     /// Run Vim on a draft file, in a terminal pane of its own. Answered by `editorExited` when Vim ends, or at once if
     /// it could not be started.
     case paneEditor(PaneEditor)
+    /// Show a form in a sheet on the window, in place of whatever form the
+    /// sheet shows now. What the user does with it goes back as `formUsed`.
+    case formShow(FormShow)
+    /// Take the sheet down: the form is over.
+    case formClose
 }
 
 /// A message the shell sends to the core.
@@ -69,6 +74,9 @@ public enum ShellToCore: Equatable, Sendable {
     case spellSuggested(SpellSuggested)
     /// The answer to `paneEditor`.
     case editorExited(EditorExited)
+    /// A button of the form in the sheet was pressed, or one of its choices
+    /// changed.
+    case formUsed(FormUsed)
     /// The app is quitting: flush and exit cleanly.
     case appWillQuit
 }
@@ -591,6 +599,228 @@ public struct EditorExited: Equatable, Sendable, Codable {
     }
 
     static let allowedKeys: Set<String> = ["ran", "status"]
+}
+
+/// The names in a form: of its step, its fields, a choice's options and its
+/// buttons.
+public enum FormID {
+    /// The longest a name may be, in bytes.
+    public static let longest = 64
+
+    /// Lower case letters, digits and underscores, starting with a letter.
+    public static func isValid(_ id: String) -> Bool {
+        let bytes = Array(id.utf8)
+        guard let first = bytes.first, bytes.count <= longest, (0x61...0x7A).contains(first) else { return false }
+        return bytes.allSatisfy { (0x61...0x7A).contains($0) || (0x30...0x39).contains($0) || $0 == 0x5F }
+    }
+}
+
+/// One of the options of a choice: its name, and what the user reads.
+public struct FormOption: Equatable, Sendable {
+    public let id: String
+    public let title: String
+
+    public init(id: String, title: String) {
+        self.id = id
+        self.title = title
+    }
+
+    static let allowedKeys: Set<String> = ["id", "title"]
+}
+
+/// One field of a form.
+public struct FormField: Equatable, Sendable {
+    /// What a field is, and what it holds as the core has it.
+    public enum Kind: Equatable, Sendable {
+        /// A line of text to type.
+        case text(value: String)
+        /// A line of text that is not shown as it is typed: a password.
+        /// The core says nothing of what it holds.
+        case secret
+        /// One of a few options, by its name.
+        case choice(value: String, options: [FormOption])
+        /// Text that is only shown.
+        case fixed(value: String)
+
+        /// The kind's name on the bridge.
+        public var name: String {
+            switch self {
+            case .text: "text"
+            case .secret: "secret"
+            case .choice: "choice"
+            case .fixed: "static"
+            }
+        }
+    }
+
+    public let id: String
+    public let label: String
+    public let kind: Kind
+    /// The keyboard starts in this field.
+    public let focus: Bool
+    /// Said under the field, in small print.
+    public let help: String?
+
+    public init(id: String, label: String, kind: Kind, focus: Bool = false, help: String? = nil) {
+        self.id = id
+        self.label = label
+        self.kind = kind
+        self.focus = focus
+        self.help = help
+    }
+
+    /// What the field holds, as the core has it. A secret has nothing to
+    /// say.
+    public var value: String? {
+        switch kind {
+        case let .text(value), let .choice(value, _), let .fixed(value): value
+        case .secret: nil
+        }
+    }
+
+    /// Whether the user can change what it holds.
+    public var isEditable: Bool {
+        if case .fixed = kind { false } else { true }
+    }
+}
+
+/// The key that presses a button of a form.
+public enum FormRole: String, Equatable, Sendable {
+    /// Return.
+    case confirm = "default"
+    /// Esc.
+    case cancel
+}
+
+/// A button of a form.
+public struct FormButton: Equatable, Sendable {
+    /// What goes back in `FormUsed`.
+    public let id: String
+    public let title: String
+    /// Which key presses it, if one does.
+    public let role: FormRole?
+    /// Whether it can be pressed now.
+    public let enabled: Bool
+
+    public init(id: String, title: String, role: FormRole? = nil, enabled: Bool = true) {
+        self.id = id
+        self.title = title
+        self.role = role
+        self.enabled = enabled
+    }
+
+    static let allowedKeys: Set<String> = ["id", "title", "role", "enabled"]
+}
+
+/// A form to show in a sheet on the window: what it is called, what it says,
+/// its fields in order and its buttons from left to right. The shell lays it
+/// out and knows nothing of what it is for.
+public struct FormShow: Equatable, Sendable {
+    /// Which step of the form this is. Goes back in `FormUsed`.
+    public let step: String
+    public let title: String
+    /// Said above the fields.
+    public let note: String?
+    /// What is wrong, said below the fields.
+    public let error: String?
+    /// What the core is waiting for, in words. While it is there the
+    /// fields take no typing.
+    public let busy: String?
+    public let fields: [FormField]
+    public let buttons: [FormButton]
+
+    /// The most fields a form may have, and the most buttons.
+    public static let mostFields = 32
+    public static let mostButtons = 6
+
+    /// `nil` unless the step, the fields, the options and the buttons each
+    /// have a name, no two fields or buttons share one, each choice is one
+    /// of its options, at most one field has the focus, and at most one
+    /// button is pressed by return and one by esc.
+    public init?(
+        step: String, title: String, note: String? = nil, error: String? = nil, busy: String? = nil,
+        fields: [FormField], buttons: [FormButton]
+    ) {
+        guard FormID.isValid(step), !title.isEmpty, fields.count <= Self.mostFields,
+            buttons.count <= Self.mostButtons
+        else { return nil }
+        guard fields.allSatisfy({ FormID.isValid($0.id) }), Set(fields.map(\.id)).count == fields.count,
+            fields.filter(\.focus).count <= 1
+        else { return nil }
+        for field in fields {
+            // Only a field that can be typed in or changed has the focus.
+            if case .fixed = field.kind, field.focus { return nil }
+            guard case let .choice(value, options) = field.kind else { continue }
+            let ids = options.map(\.id)
+            guard ids.allSatisfy(FormID.isValid), Set(ids).count == ids.count, ids.contains(value) else {
+                return nil
+            }
+        }
+        guard buttons.allSatisfy({ FormID.isValid($0.id) && !$0.title.isEmpty }),
+            Set(buttons.map(\.id)).count == buttons.count,
+            buttons.filter({ $0.role == .confirm }).count <= 1,
+            buttons.filter({ $0.role == .cancel }).count <= 1
+        else { return nil }
+        self.step = step
+        self.title = title
+        self.note = note
+        self.error = error
+        self.busy = busy
+        self.fields = fields
+        self.buttons = buttons
+    }
+
+    static let allowedKeys: Set<String> = ["step", "title", "note", "error", "busy", "fields", "buttons"]
+}
+
+/// What was typed into a secret field of a form: a password. It is written
+/// on the bridge and nowhere else. However it is printed, by itself or
+/// inside whatever holds it, a placeholder is printed in its place.
+public struct FormSecret: Equatable, Sendable, CustomStringConvertible, CustomDebugStringConvertible,
+    CustomReflectable
+{
+    private let text: String
+
+    public init(_ text: String) {
+        self.text = text
+    }
+
+    /// The text itself, for the one place that writes it on the bridge.
+    public var revealed: String { text }
+
+    public var description: String { "<secret>" }
+    public var debugDescription: String { "<secret>" }
+    public var customMirror: Mirror { Mirror(self, children: [], displayStyle: .struct) }
+}
+
+/// What the user did with the form in the sheet: the button pressed, if one
+/// was, and what the fields held at that moment. What the secret fields
+/// held is apart from the rest, as `FormSecret`s, so that nothing prints it.
+public struct FormUsed: Equatable, Sendable {
+    /// The step the form was at, as `FormShow` named it.
+    public let step: String
+    /// The name of the button pressed; `nil` when a choice was changed and
+    /// no button pressed.
+    public let button: String?
+    /// What the text fields and choices held, by field name.
+    public let values: [String: String]
+    /// What the secret fields held, by field name.
+    public let secrets: [String: FormSecret]
+
+    /// `nil` unless the step, the button and every field have a name, and
+    /// there are no more fields than a form can have.
+    public init?(step: String, button: String?, values: [String: String], secrets: [String: FormSecret] = [:]) {
+        guard FormID.isValid(step), button.map(FormID.isValid) ?? true,
+            values.keys.allSatisfy(FormID.isValid), secrets.keys.allSatisfy(FormID.isValid),
+            values.count + secrets.count <= FormShow.mostFields
+        else { return nil }
+        self.step = step
+        self.button = button
+        self.values = values
+        self.secrets = secrets
+    }
+
+    static let allowedKeys: Set<String> = ["step", "button", "values", "secrets"]
 }
 
 public enum BridgeError: Error, Equatable, CustomStringConvertible {

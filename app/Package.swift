@@ -50,9 +50,17 @@ let package = Package(
             name: "Editor",
             dependencies: ["Bridge"]
         ),
+        // A form the core has the shell show in a sheet: which fields are
+        // on it, what each holds as the user types, and what goes back to
+        // the core when a button is pressed. Knows names, labels and
+        // values, never what the form is for, and shows nothing itself.
+        .target(
+            name: "Forms",
+            dependencies: ["Bridge"]
+        ),
         .executableTarget(
             name: "QuillApp",
-            dependencies: ["TerminalKit", "Bridge", "Panes", "Notifications", "Spelling", "Editor"]
+            dependencies: ["TerminalKit", "Bridge", "Panes", "Notifications", "Spelling", "Editor", "Forms"]
         ),
         .testTarget(
             name: "BridgeTests",
@@ -73,6 +81,10 @@ let package = Package(
         .testTarget(
             name: "EditorTests",
             dependencies: ["Editor"]
+        ),
+        .testTarget(
+            name: "FormsTests",
+            dependencies: ["Forms"]
         ),
     ],
     swiftLanguageModes: [.v6]

@@ -1,0 +1,15 @@
+{
+  "jsonrpc": "2.0",
+  "method": "form.used",
+  "params": {
+    "step": "password",
+    "button": "continue",
+    "values": {
+      "name": "Example",
+      "security": "tls"
+    },
+    "secrets": {
+      "password": "not-a-real-password"
+    }
+  }
+}

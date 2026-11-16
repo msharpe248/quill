@@ -25,7 +25,9 @@
         { "$ref": "#/$defs/notify.clear" },
         { "$ref": "#/$defs/spell.check" },
         { "$ref": "#/$defs/spell.suggest" },
-        { "$ref": "#/$defs/pane.editor" }
+        { "$ref": "#/$defs/pane.editor" },
+        { "$ref": "#/$defs/form.show" },
+        { "$ref": "#/$defs/form.close" }
       ]
     },
     "shellToCore": {
@@ -39,6 +41,7 @@
         { "$ref": "#/$defs/spell.checked" },
         { "$ref": "#/$defs/spell.suggested" },
         { "$ref": "#/$defs/editor.exited" },
+        { "$ref": "#/$defs/form.used" },
         { "$ref": "#/$defs/app.will_quit" }
       ]
     },
@@ -821,6 +824,193 @@
           "properties": {
             "ran": { "type": "boolean" },
             "status": { "type": "integer", "minimum": -255, "maximum": 255 }
+          }
+        }
+      }
+    },
+
+    "form.show": {
+      "description": "Core to shell. Show a form in a sheet on the main window, in place of whatever form the sheet shows now: the sheet is opened if it is not up. The core sends the whole form again whenever any of it changes, and the shell shows exactly the fields it names, in order. The shell lays the form out and knows nothing of what it is for; it keeps what the user has typed in a field unless the step is another one or the core's value for the field has changed. A secret field never has a value: the core does not send one back. What the user does arrives as form.used.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "form.show" },
+        "params": {
+          "type": "object",
+          "required": ["step", "title", "fields", "buttons"],
+          "additionalProperties": false,
+          "properties": {
+            "step": {
+              "description": "Which step of the form this is. Sent back in form.used.",
+              "$ref": "#/$defs/formId"
+            },
+            "title": { "type": "string", "minLength": 1 },
+            "note": {
+              "description": "Said above the fields.",
+              "type": "string"
+            },
+            "error": {
+              "description": "What is wrong, said below the fields.",
+              "type": "string"
+            },
+            "busy": {
+              "description": "What the core is waiting for, in words. While it is there the fields take no typing.",
+              "type": "string"
+            },
+            "fields": {
+              "description": "The fields, in order. Each has a name of its own, and at most one has the focus.",
+              "type": "array",
+              "maxItems": 32,
+              "items": { "$ref": "#/$defs/formField" }
+            },
+            "buttons": {
+              "description": "The buttons, from left to right. Each has a name of its own; at most one is pressed by return and at most one by esc.",
+              "type": "array",
+              "maxItems": 6,
+              "items": {
+                "type": "object",
+                "required": ["id", "title", "enabled"],
+                "additionalProperties": false,
+                "properties": {
+                  "id": { "$ref": "#/$defs/formId" },
+                  "title": { "type": "string", "minLength": 1 },
+                  "role": {
+                    "description": "The key that presses it: return for `default`, esc for `cancel`. Left out for a button no key presses.",
+                    "enum": ["default", "cancel"]
+                  },
+                  "enabled": { "type": "boolean" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "formId": {
+      "description": "The name of a step, field, option or button of a form.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{0,63}$"
+    },
+    "formField": {
+      "description": "One field of a form. `focus` says where the keyboard starts; `help` is said under the field in small print.",
+      "oneOf": [
+        {
+          "description": "A line of text to type.",
+          "type": "object",
+          "required": ["kind", "id", "label", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "text" },
+            "id": { "$ref": "#/$defs/formId" },
+            "label": { "type": "string" },
+            "value": { "type": "string" },
+            "focus": { "type": "boolean" },
+            "help": { "type": "string" }
+          }
+        },
+        {
+          "description": "A line of text that is not shown as it is typed: a password. It has no value: the core never sends one.",
+          "type": "object",
+          "required": ["kind", "id", "label"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "secret" },
+            "id": { "$ref": "#/$defs/formId" },
+            "label": { "type": "string" },
+            "focus": { "type": "boolean" },
+            "help": { "type": "string" }
+          }
+        },
+        {
+          "description": "One of a few options. `value` is the name of the one chosen, and is one of them.",
+          "type": "object",
+          "required": ["kind", "id", "label", "value", "options"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "choice" },
+            "id": { "$ref": "#/$defs/formId" },
+            "label": { "type": "string" },
+            "value": { "$ref": "#/$defs/formId" },
+            "options": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["id", "title"],
+                "additionalProperties": false,
+                "properties": {
+                  "id": { "$ref": "#/$defs/formId" },
+                  "title": { "type": "string" }
+                }
+              }
+            },
+            "focus": { "type": "boolean" },
+            "help": { "type": "string" }
+          }
+        },
+        {
+          "description": "Text that is only shown.",
+          "type": "object",
+          "required": ["kind", "id", "label", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "static" },
+            "id": { "$ref": "#/$defs/formId" },
+            "label": { "type": "string" },
+            "value": { "type": "string" },
+            "help": { "type": "string" }
+          }
+        }
+      ]
+    },
+
+    "form.close": {
+      "description": "Core to shell. Take the sheet down: the form is over. Nothing the user typed in it is kept. With no sheet up it does nothing.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "form.close" },
+        "params": { "type": "object", "additionalProperties": false }
+      }
+    },
+
+    "form.used": {
+      "description": "Shell to core. The user pressed a button of the form in the sheet, or changed one of its choices. `values` is what its text fields and choices held at that moment, by field name (a choice by the name of its option); `secrets` is the same for its secret fields, kept apart so that neither side ever prints them. The button esc presses (role `cancel`) sends neither: both objects are empty. A changed choice sends the values and no secrets. The shell does not keep a secret once it has sent it, and neither side writes one to a log or a dump. The shell does not close the sheet itself: the core answers with form.show or form.close.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "form.used" },
+        "params": {
+          "type": "object",
+          "required": ["step", "values", "secrets"],
+          "additionalProperties": false,
+          "properties": {
+            "step": {
+              "description": "The step the form was at, as form.show named it. The core drops an answer about a step the form has left.",
+              "$ref": "#/$defs/formId"
+            },
+            "button": {
+              "description": "The name of the button pressed. Left out when a choice was changed and no button pressed: the values are sent so that the form can change with it.",
+              "$ref": "#/$defs/formId"
+            },
+            "values": {
+              "type": "object",
+              "maxProperties": 32,
+              "propertyNames": { "$ref": "#/$defs/formId" },
+              "additionalProperties": { "type": "string" }
+            },
+            "secrets": {
+              "type": "object",
+              "maxProperties": 32,
+              "propertyNames": { "$ref": "#/$defs/formId" },
+              "additionalProperties": { "type": "string" }
+            }
           }
         }
       }

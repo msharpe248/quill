@@ -94,8 +94,11 @@ impl Host for StandaloneHost {
             // Nor a spelling checker: these are never sent here, since
             // this host says it has none.
             // Nor an editor pane: in a terminal the editor is run in the
-            // terminal.
+            // terminal. Nor a sheet for a form: the form is drawn in the
+            // terminal, and these are never sent here.
             CoreToShell::PaneEditor(_)
+            | CoreToShell::FormShow(_)
+            | CoreToShell::FormClose(_)
             | CoreToShell::SpellCheck(_)
             | CoreToShell::SpellSuggest(_)
             | CoreToShell::NotifyPost(_)

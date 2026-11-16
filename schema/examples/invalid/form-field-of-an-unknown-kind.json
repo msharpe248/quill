@@ -1,0 +1,17 @@
+{
+  "jsonrpc": "2.0",
+  "method": "form.show",
+  "params": {
+    "step": "address",
+    "title": "Add an account",
+    "fields": [
+      {
+        "kind": "html",
+        "id": "address",
+        "label": "Address:",
+        "value": "<b>robin@example.com</b>"
+      }
+    ],
+    "buttons": []
+  }
+}

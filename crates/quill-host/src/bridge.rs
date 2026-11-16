@@ -67,6 +67,13 @@ pub enum CoreToShell {
     /// `editor.exited`.
     #[serde(rename = "pane.editor")]
     PaneEditor(PaneEditor),
+    /// Show a form in a sheet on the window, in place of whatever form the
+    /// sheet shows now. What the user does with it arrives as `form.used`.
+    #[serde(rename = "form.show")]
+    FormShow(FormShow),
+    /// Take the sheet down: the form is over.
+    #[serde(rename = "form.close")]
+    FormClose(NoParams),
 }
 
 /// A message the shell sends to the core.
@@ -100,6 +107,10 @@ pub enum ShellToCore {
     /// The answer to `pane.editor`.
     #[serde(rename = "editor.exited")]
     EditorExited(EditorExited),
+    /// A button of the form in the sheet was pressed, or one of its
+    /// choices changed.
+    #[serde(rename = "form.used")]
+    FormUsed(FormUsed),
     /// The app is quitting: flush and exit cleanly.
     #[serde(rename = "app.will_quit")]
     AppWillQuit(NoParams),
@@ -783,6 +794,426 @@ impl From<EditorExited> for EditorExitedParams {
     }
 }
 
+/// The longest name a form's step, field, option or button may have.
+pub const MAX_FORM_ID: usize = 64;
+/// The most fields a form may have.
+pub const MAX_FORM_FIELDS: usize = 32;
+/// The most buttons.
+pub const MAX_FORM_BUTTONS: usize = 6;
+
+/// Whether `id` can name a step, field, option or button of a form: lower
+/// case letters, digits and underscores, starting with a letter.
+pub fn valid_form_id(id: &str) -> bool {
+    let mut bytes = id.bytes();
+    id.len() <= MAX_FORM_ID
+        && bytes.next().is_some_and(|first| first.is_ascii_lowercase())
+        && bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+}
+
+/// Text that must not be shown or logged: what was typed into a secret
+/// field of a form. `Debug` prints a placeholder, and there is no
+/// `Display`.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct Secret(String);
+
+impl Secret {
+    pub fn new(text: impl Into<String>) -> Self {
+        Self(text.into())
+    }
+
+    /// The text itself, for the one place that uses it.
+    pub fn reveal(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Secret(…)")
+    }
+}
+
+/// A form for the shell to show in a sheet on its window: what it is
+/// called, what it says, its fields in order and its buttons from left to
+/// right. The shell lays it out and knows nothing of what it is for.
+///
+/// It cannot be built or decoded with a step, field or button whose name
+/// is not one, two fields or two buttons of one name, a choice whose value
+/// is not one of its options, more than one field with the focus, or more
+/// than one button for return or for esc. A secret field has no value: the
+/// core never sends one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "FormShowParams", into = "FormShowParams")]
+pub struct FormShow {
+    step: String,
+    title: String,
+    note: Option<String>,
+    error: Option<String>,
+    busy: Option<String>,
+    fields: Vec<FormField>,
+    buttons: Vec<FormButton>,
+}
+
+/// What a [`FormShow`] is made from.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FormShowParams {
+    /// Which step of the form this is. The shell starts its fields afresh
+    /// when the step changes, and sends the name back in `form.used`.
+    pub step: String,
+    pub title: String,
+    /// Said above the fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    /// What is wrong, said below the fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// What the core is waiting for, in words. While it is there the
+    /// fields take no typing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub busy: Option<String>,
+    pub fields: Vec<FormField>,
+    pub buttons: Vec<FormButton>,
+}
+
+impl FormShow {
+    pub fn new(params: FormShowParams) -> Option<Self> {
+        Self::try_from(params).ok()
+    }
+
+    pub fn step(&self) -> &str {
+        &self.step
+    }
+
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    pub fn note(&self) -> Option<&str> {
+        self.note.as_deref()
+    }
+
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
+    }
+
+    pub fn busy(&self) -> Option<&str> {
+        self.busy.as_deref()
+    }
+
+    pub fn fields(&self) -> &[FormField] {
+        &self.fields
+    }
+
+    pub fn buttons(&self) -> &[FormButton] {
+        &self.buttons
+    }
+}
+
+impl TryFrom<FormShowParams> for FormShow {
+    type Error = String;
+
+    fn try_from(params: FormShowParams) -> Result<Self, Self::Error> {
+        if !valid_form_id(&params.step) {
+            return Err("a form's step is a name in lower case".to_owned());
+        }
+        if params.title.is_empty() {
+            return Err("a form needs a title".to_owned());
+        }
+        if params.fields.len() > MAX_FORM_FIELDS || params.buttons.len() > MAX_FORM_BUTTONS {
+            return Err(format!(
+                "a form has at most {MAX_FORM_FIELDS} fields and {MAX_FORM_BUTTONS} buttons"
+            ));
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for field in &params.fields {
+            if !valid_form_id(field.id()) || !seen.insert(field.id()) {
+                return Err("each field of a form has a name of its own".to_owned());
+            }
+            if let FormField::Choice { value, options, .. } = field {
+                let mut ids = std::collections::BTreeSet::new();
+                let named = options
+                    .iter()
+                    .all(|option| valid_form_id(&option.id) && ids.insert(option.id.as_str()));
+                if !named || !ids.contains(value.as_str()) {
+                    return Err(
+                        "a choice is one of its options, each with a name of its own".to_owned(),
+                    );
+                }
+            }
+        }
+        if params.fields.iter().filter(|field| field.focus()).count() > 1 {
+            return Err("only one field of a form has the focus".to_owned());
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        if !params.buttons.iter().all(|button| {
+            valid_form_id(&button.id) && !button.title.is_empty() && seen.insert(&button.id)
+        }) {
+            return Err("each button of a form has a title and a name of its own".to_owned());
+        }
+        for role in [FormRole::Default, FormRole::Cancel] {
+            let with = |button: &&FormButton| button.role == Some(role);
+            if params.buttons.iter().filter(with).count() > 1 {
+                return Err("a form has one button for return and one for esc".to_owned());
+            }
+        }
+        Ok(Self {
+            step: params.step,
+            title: params.title,
+            note: params.note,
+            error: params.error,
+            busy: params.busy,
+            fields: params.fields,
+            buttons: params.buttons,
+        })
+    }
+}
+
+impl From<FormShow> for FormShowParams {
+    fn from(form: FormShow) -> Self {
+        Self {
+            step: form.step,
+            title: form.title,
+            note: form.note,
+            error: form.error,
+            busy: form.busy,
+            fields: form.fields,
+            buttons: form.buttons,
+        }
+    }
+}
+
+/// One field of a form. The kinds differ in what they hold: a secret has
+/// no value to show, and only a choice has options.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+pub enum FormField {
+    /// A line of text to type.
+    Text {
+        id: String,
+        label: String,
+        value: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        focus: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        help: Option<String>,
+    },
+    /// A line of text that is not shown as it is typed: a password. The
+    /// core says nothing of what it holds.
+    Secret {
+        id: String,
+        label: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        focus: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        help: Option<String>,
+    },
+    /// One of a few options, by its name.
+    Choice {
+        id: String,
+        label: String,
+        value: String,
+        options: Vec<FormOption>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        focus: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        help: Option<String>,
+    },
+    /// Text that is only shown.
+    Static {
+        id: String,
+        label: String,
+        value: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        help: Option<String>,
+    },
+}
+
+impl FormField {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Text { id, .. }
+            | Self::Secret { id, .. }
+            | Self::Choice { id, .. }
+            | Self::Static { id, .. } => id,
+        }
+    }
+
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Text { label, .. }
+            | Self::Secret { label, .. }
+            | Self::Choice { label, .. }
+            | Self::Static { label, .. } => label,
+        }
+    }
+
+    /// What the field holds, as the core has it. A secret has nothing to
+    /// say.
+    pub fn value(&self) -> Option<&str> {
+        match self {
+            Self::Text { value, .. } | Self::Choice { value, .. } | Self::Static { value, .. } => {
+                Some(value)
+            }
+            Self::Secret { .. } => None,
+        }
+    }
+
+    /// Whether the keyboard starts in this field.
+    pub fn focus(&self) -> bool {
+        match self {
+            Self::Text { focus, .. } | Self::Secret { focus, .. } | Self::Choice { focus, .. } => {
+                *focus
+            }
+            Self::Static { .. } => false,
+        }
+    }
+
+    /// Said under the field, in small print.
+    pub fn help(&self) -> Option<&str> {
+        match self {
+            Self::Text { help, .. }
+            | Self::Secret { help, .. }
+            | Self::Choice { help, .. }
+            | Self::Static { help, .. } => help.as_deref(),
+        }
+    }
+}
+
+/// One of the options of a choice: its name, and what the user reads.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FormOption {
+    pub id: String,
+    pub title: String,
+}
+
+/// A button of a form.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FormButton {
+    /// What comes back in `form.used`.
+    pub id: String,
+    pub title: String,
+    /// Which key presses it, if one does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub role: Option<FormRole>,
+    /// Whether it can be pressed now.
+    pub enabled: bool,
+}
+
+/// The key that presses a button: return, or esc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FormRole {
+    Default,
+    Cancel,
+}
+
+/// What the user did with the form in the sheet: the button pressed, if
+/// one was, and what the fields held at that moment. The values of secret
+/// fields are apart from the rest, as [`Secret`]s, so that nothing prints
+/// them.
+///
+/// It cannot be built or decoded with a step, button or field whose name
+/// is not one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "FormUsedParams", into = "FormUsedParams")]
+pub struct FormUsed {
+    step: String,
+    button: Option<String>,
+    values: std::collections::BTreeMap<String, String>,
+    secrets: std::collections::BTreeMap<String, Secret>,
+}
+
+impl FormUsed {
+    pub fn new(
+        step: &str,
+        button: Option<&str>,
+        values: &[(&str, &str)],
+        secrets: &[(&str, &str)],
+    ) -> Option<Self> {
+        Self::try_from(FormUsedParams {
+            step: step.to_owned(),
+            button: button.map(str::to_owned),
+            values: values
+                .iter()
+                .map(|(id, value)| ((*id).to_owned(), (*value).to_owned()))
+                .collect(),
+            secrets: secrets
+                .iter()
+                .map(|(id, value)| ((*id).to_owned(), Secret::new(*value)))
+                .collect(),
+        })
+        .ok()
+    }
+
+    /// The step the form was at when it was used.
+    pub fn step(&self) -> &str {
+        &self.step
+    }
+
+    /// The button pressed. `None`: a choice was changed, and the values
+    /// are sent so that the form can change with it.
+    pub fn button(&self) -> Option<&str> {
+        self.button.as_deref()
+    }
+
+    /// What a text field or a choice held.
+    pub fn value(&self, id: &str) -> Option<&str> {
+        self.values.get(id).map(String::as_str)
+    }
+
+    /// What a secret field held.
+    pub fn secret(&self, id: &str) -> Option<&Secret> {
+        self.secrets.get(id)
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FormUsedParams {
+    step: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    button: Option<String>,
+    values: std::collections::BTreeMap<String, String>,
+    secrets: std::collections::BTreeMap<String, Secret>,
+}
+
+impl TryFrom<FormUsedParams> for FormUsed {
+    type Error = String;
+
+    fn try_from(params: FormUsedParams) -> Result<Self, Self::Error> {
+        let named = valid_form_id(&params.step)
+            && params.button.as_deref().is_none_or(valid_form_id)
+            && params.values.keys().all(|id| valid_form_id(id))
+            && params.secrets.keys().all(|id| valid_form_id(id));
+        if !named || params.values.len() + params.secrets.len() > MAX_FORM_FIELDS {
+            return Err(format!(
+                "a form's step, button and at most {MAX_FORM_FIELDS} fields are named in lower case"
+            ));
+        }
+        Ok(Self {
+            step: params.step,
+            button: params.button,
+            values: params.values,
+            secrets: params.secrets,
+        })
+    }
+}
+
+impl From<FormUsed> for FormUsedParams {
+    fn from(used: FormUsed) -> Self {
+        Self {
+            step: used.step,
+            button: used.button,
+            values: used.values,
+            secrets: used.secrets,
+        }
+    }
+}
+
 /// The most text one spelling check takes, in bytes.
 pub const MAX_SPELL_TEXT: usize = 100_000;
 /// The longest word suggestions are asked for, in bytes.
@@ -1287,6 +1718,265 @@ mod tests {
             decode::<CoreToShell>("not json"),
             Err(BridgeError::Malformed(_))
         ));
+    }
+
+    fn text_field(id: &str, focus: bool) -> FormField {
+        FormField::Text {
+            id: id.to_owned(),
+            label: "Name:".to_owned(),
+            value: String::new(),
+            focus,
+            help: None,
+        }
+    }
+
+    fn button(id: &str, role: Option<FormRole>) -> FormButton {
+        FormButton {
+            id: id.to_owned(),
+            title: "Continue".to_owned(),
+            role,
+            enabled: true,
+        }
+    }
+
+    fn form(fields: Vec<FormField>, buttons: Vec<FormButton>) -> FormShowParams {
+        FormShowParams {
+            step: "server".to_owned(),
+            title: "Add an account".to_owned(),
+            fields,
+            buttons,
+            ..FormShowParams::default()
+        }
+    }
+
+    #[test]
+    fn a_form_is_only_built_whole() {
+        let choice = |value: &str, options: &[&str]| FormField::Choice {
+            id: "type".to_owned(),
+            label: "Type:".to_owned(),
+            value: value.to_owned(),
+            options: options
+                .iter()
+                .map(|id| FormOption {
+                    id: (*id).to_owned(),
+                    title: (*id).to_uppercase(),
+                })
+                .collect(),
+            focus: false,
+            help: None,
+        };
+        let fine = form(
+            vec![
+                choice("imap", &["imap", "microsoft"]),
+                text_field("name", true),
+            ],
+            vec![
+                button("cancel", Some(FormRole::Cancel)),
+                button("back", None),
+                button("continue", Some(FormRole::Default)),
+            ],
+        );
+        let built = FormShow::new(fine.clone()).unwrap();
+        assert_eq!(built.step(), "server");
+        assert_eq!(built.fields()[1].id(), "name");
+        assert!(built.fields()[1].focus() && !built.fields()[0].focus());
+        assert_eq!(built.fields()[0].value(), Some("imap"));
+        assert_eq!(built.buttons().len(), 3);
+        // No fields and no buttons is a form too: one that only says
+        // something.
+        assert!(FormShow::new(form(Vec::new(), Vec::new())).is_some());
+
+        let broken: Vec<(&str, FormShowParams)> = vec![
+            (
+                "a step that is no name",
+                FormShowParams {
+                    step: "The Server".to_owned(),
+                    ..fine.clone()
+                },
+            ),
+            (
+                "no title",
+                FormShowParams {
+                    title: String::new(),
+                    ..fine.clone()
+                },
+            ),
+            (
+                "two fields of one name",
+                form(
+                    vec![text_field("name", false), text_field("name", false)],
+                    Vec::new(),
+                ),
+            ),
+            (
+                "a field with no name",
+                form(vec![text_field("", false)], Vec::new()),
+            ),
+            (
+                "two fields with the focus",
+                form(
+                    vec![text_field("name", true), text_field("host", true)],
+                    Vec::new(),
+                ),
+            ),
+            (
+                "a choice that is none of its options",
+                form(vec![choice("pop3", &["imap", "microsoft"])], Vec::new()),
+            ),
+            (
+                "a choice with no options",
+                form(vec![choice("imap", &[])], Vec::new()),
+            ),
+            (
+                "a choice with one option twice",
+                form(vec![choice("imap", &["imap", "imap"])], Vec::new()),
+            ),
+            (
+                "two buttons of one name",
+                form(
+                    Vec::new(),
+                    vec![button("continue", None), button("continue", None)],
+                ),
+            ),
+            (
+                "two buttons for return",
+                form(
+                    Vec::new(),
+                    vec![
+                        button("continue", Some(FormRole::Default)),
+                        button("save", Some(FormRole::Default)),
+                    ],
+                ),
+            ),
+            (
+                "two buttons for esc",
+                form(
+                    Vec::new(),
+                    vec![
+                        button("cancel", Some(FormRole::Cancel)),
+                        button("reject", Some(FormRole::Cancel)),
+                    ],
+                ),
+            ),
+            (
+                "a button with no title",
+                form(
+                    Vec::new(),
+                    vec![FormButton {
+                        title: String::new(),
+                        ..button("continue", None)
+                    }],
+                ),
+            ),
+            (
+                "too many fields",
+                form(
+                    (0..=MAX_FORM_FIELDS)
+                        .map(|n| text_field(&format!("f{n}"), false))
+                        .collect(),
+                    Vec::new(),
+                ),
+            ),
+        ];
+        for (what, params) in broken {
+            assert!(FormShow::new(params.clone()).is_none(), "{what}");
+            // And what cannot be built cannot be decoded either.
+            let line = serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "form.show",
+                "params": serde_json::to_value(&params).unwrap(),
+            })
+            .to_string();
+            assert!(decode::<CoreToShell>(&line).is_err(), "{what}");
+        }
+    }
+
+    #[test]
+    fn the_names_in_a_form_are_plain_ones() {
+        for id in ["a", "smtp_host", "sha256", "trust_once"] {
+            assert!(valid_form_id(id), "{id}");
+        }
+        let long = "a".repeat(MAX_FORM_ID + 1);
+        for id in [
+            "",
+            "Name",
+            "9lives",
+            "_x",
+            "a b",
+            "a-b",
+            "a.b",
+            "é",
+            long.as_str(),
+        ] {
+            assert!(!valid_form_id(id), "{id}");
+        }
+        assert!(valid_form_id(&"a".repeat(MAX_FORM_ID)));
+    }
+
+    #[test]
+    fn a_secret_is_sent_and_read_but_never_printed() {
+        let used = FormUsed::new(
+            "password",
+            Some("continue"),
+            &[("name", "Example")],
+            &[("password", "not-a-real-password")],
+        )
+        .unwrap();
+        // It is there for the one place that uses it.
+        assert_eq!(
+            used.secret("password").map(Secret::reveal),
+            Some("not-a-real-password")
+        );
+        assert_eq!(used.value("name"), Some("Example"));
+        assert_eq!(used.value("password"), None);
+        assert_eq!(used.secret("name"), None);
+        assert_eq!((used.step(), used.button()), ("password", Some("continue")));
+        // On the wire it is a string like any other, and comes back whole.
+        let message = ShellToCore::FormUsed(used.clone());
+        let line = encode(&message).unwrap();
+        assert!(line.contains(r#""secrets":{"password":"not-a-real-password"}"#));
+        assert_eq!(decode::<ShellToCore>(&line).unwrap(), message);
+
+        // Printed any way there is, it is not there: by itself, in its
+        // message, pretty or not.
+        let secret = used.secret("password").unwrap();
+        for printed in [
+            format!("{secret:?}"),
+            format!("{secret:#?}"),
+            format!("{used:?}"),
+            format!("{used:#?}"),
+            format!("{message:?}"),
+            format!("{message:#?}"),
+        ] {
+            assert!(!printed.contains("not-a-real-password"), "{printed}");
+            assert!(printed.contains("Secret(…)"), "{printed}");
+        }
+        // What is not secret still prints, to be of use.
+        assert!(format!("{used:?}").contains("Example"));
+    }
+
+    #[test]
+    fn what_was_done_with_a_form_names_a_step_and_its_fields() {
+        // A choice changed: no button.
+        let changed = FormUsed::new("server", None, &[("type", "microsoft")], &[]).unwrap();
+        assert_eq!(changed.button(), None);
+        let line = encode(&ShellToCore::FormUsed(changed)).unwrap();
+        assert!(!line.contains("button"), "{line}");
+        assert!(line.contains(r#""secrets":{}"#), "{line}");
+
+        assert!(FormUsed::new("The Server", None, &[], &[]).is_none());
+        assert!(FormUsed::new("server", Some("Continue"), &[], &[]).is_none());
+        assert!(FormUsed::new("server", Some(""), &[], &[]).is_none());
+        assert!(FormUsed::new("server", None, &[("Name", "x")], &[]).is_none());
+        assert!(FormUsed::new("server", None, &[], &[("pass word", "x")]).is_none());
+        for line in [
+            r#"{"jsonrpc":"2.0","method":"form.used","params":{"step":"server","values":{"Name":"x"},"secrets":{}}}"#,
+            r#"{"jsonrpc":"2.0","method":"form.used","params":{"step":"server","button":null,"values":{},"secrets":{"a b":"x"}}}"#,
+            r#"{"jsonrpc":"2.0","method":"form.used","params":{"step":"server","values":{}}}"#,
+            r#"{"jsonrpc":"2.0","method":"form.used","params":{"step":"server","values":{},"secrets":{},"password":"x"}}"#,
+        ] {
+            assert!(decode::<ShellToCore>(line).is_err(), "{line}");
+        }
     }
 
     #[test]

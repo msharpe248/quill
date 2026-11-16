@@ -10,13 +10,30 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::keymap::{Key, KeyChord};
 use crate::text;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct LineInput {
     text: String,
     /// A byte offset into `text`, always on a grapheme boundary.
     cursor: usize,
     /// Draw every character as a bullet: a password.
     pub masked: bool,
+}
+
+/// A masked field holds a password, which is not printed here either: the
+/// form it is part of prints whole.
+impl std::fmt::Debug for LineInput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut shown = f.debug_struct("LineInput");
+        if self.masked {
+            shown.field("text", &"…");
+        } else {
+            shown.field("text", &self.text);
+        }
+        shown
+            .field("cursor", &self.cursor)
+            .field("masked", &self.masked)
+            .finish()
+    }
 }
 
 impl LineInput {
@@ -314,5 +331,9 @@ mod tests {
         press(&mut input, "s 3 c r é t");
         assert_eq!(input.text(), "s3crét");
         assert_eq!(input.view(20), ("••••••".to_owned(), 6));
+        // Nor is it printed with whatever holds the field.
+        assert!(!format!("{input:?}").contains("s3crét"));
+        assert!(!format!("{input:#?}").contains("s3crét"));
+        assert!(format!("{:?}", LineInput::new("robin@example.com")).contains("robin@example.com"));
     }
 }

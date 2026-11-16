@@ -124,6 +124,7 @@ pub async fn run(
         injected: injected_tx,
         preview_dir: view_dir,
         last_host_state: None,
+        last_form: None,
         images: Images::default(),
         thumbnails: std::collections::HashMap::new(),
         editor_wanted: None,
@@ -158,6 +159,8 @@ struct Io<'a> {
     /// A private directory for files handed to the host for viewing.
     preview_dir: PathBuf,
     last_host_state: Option<HostState>,
+    /// The add-an-account form as the host was last told to show it.
+    last_form: Option<bridge::FormShow>,
     images: Images,
     /// Pictures the host has been asked to make, by the id asked under,
     /// and where each will be written.
@@ -452,6 +455,8 @@ impl Io<'_> {
                 // A list to choose from over the reader, as the links are.
                 // The shell has no use yet for telling the two apart.
                 Context::Attachments => bridge::Context::Links,
+                // The same whether the form is drawn here or shown by the
+                // host in a sheet: it is what has the keyboard.
                 Context::Setup => bridge::Context::Setup,
                 Context::Certificate => bridge::Context::Certificate,
                 // A question about an account, as far as the shell cares.
@@ -482,6 +487,21 @@ impl Io<'_> {
             title: current.title.clone(),
         });
         self.last_host_state = Some(current);
+    }
+
+    /// Has the host show the add-an-account form as it now is, where the
+    /// host is the one that shows it: the whole form whenever any of it
+    /// has changed, and word to put it away when it is over.
+    fn mirror_form(&mut self, state: &State, env: &Env) {
+        let current = state.account_form(env);
+        if current == self.last_form {
+            return;
+        }
+        match &current {
+            Some(form) => self.host.show_form(form.clone()),
+            None => self.host.close_form(),
+        }
+        self.last_form = current;
     }
 
     /// Runs one of the user's programs on a message, off the UI task, and
@@ -645,6 +665,7 @@ async fn event_loop(
             state.dirty = false;
         }
         io.mirror(&state, env);
+        io.mirror_form(&state, env);
 
         let spelling_due = state
             .spell_check_due(env)
@@ -696,6 +717,7 @@ async fn event_loop(
                 HostEvent::NotificationUsed { id, action } => {
                     Some(Action::Notification { id, action })
                 }
+                HostEvent::FormUsed(used) => Some(Action::FormUsed(used)),
                 HostEvent::Thumbnail { id, ok } => {
                     io.thumbnail_made(id, ok);
                     None
@@ -904,6 +926,7 @@ mod tests {
             searches: Vec::new(),
             templates: Vec::new(),
             spell_check: false,
+            account_sheet: false,
             editor_pane: false,
             external: vim::ExternalEditor::Vim,
             vim_program: None,

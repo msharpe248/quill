@@ -93,6 +93,20 @@ impl Harness {
         )
     }
 
+    /// A first run in Quill's own app, where the form that adds an account
+    /// is the host's to show, in a sheet.
+    pub fn first_run_in_the_app(width: u16, height: u16) -> Self {
+        Self::over_with(
+            Store::open_in_memory().unwrap(),
+            width,
+            height,
+            Keymap::preset(KeymapPreset::Vim),
+            ColorMode::TrueColor,
+            true,
+            |env| env.account_sheet = true,
+        )
+    }
+
     pub fn build(width: u16, height: u16, keymap: Keymap, mode: ColorMode) -> Self {
         let mut store = Store::open_in_memory().unwrap();
         tokio::runtime::Builder::new_current_thread()
@@ -148,6 +162,8 @@ impl Harness {
             // Tests that check spelling say so: most have no checker, as
             // a terminal has none.
             spell_check: false,
+            // As in a terminal: the form to add an account is drawn here.
+            account_sheet: false,
             // As in a terminal: Vim is the user's own, and programs run.
             editor_pane: false,
             external: quill_tui::vim::ExternalEditor::Vim,

@@ -36,6 +36,17 @@ import Notifications
 ///   the menu item itself is answered as if the user had cancelled
 /// - `typeeditor:TEXT` type text into the editor pane, as keys and not as a
 ///   paste, while Vim is running there
+/// - `sheetset:FIELD=VALUE` put a value in a field of the form in the sheet,
+///   by the field's name, as typing it does; for a pop-up the value is the
+///   option's name, and choosing it tells the core, as choosing it by hand
+///   does
+/// - `sheetpress:BUTTON` press a button of the form in the sheet, by its name
+///
+/// The sheet is the real one, on the window; `press:` reaches it while it is
+/// up, so `press:enter` is its default button and `press:esc` its cancel.
+/// The dump says whether it is up, its step, what it says, and each field
+/// with what it holds. What a secret field holds is never written: the dump
+/// has a fixed marker in its place, and the picture shows bullets.
 ///
 /// The copy of the vimrc is kept in the scratch config folder when the run
 /// has one (`--core-env QUILL_CONFIG_DIR=...`), in its `vim` folder, and
@@ -207,6 +218,19 @@ enum DebugScript {
                 note("no editor to type \(argument) into")
             }
             try? await Task.sleep(for: .milliseconds(150))
+        case "sheetset":
+            // The name first: a value may have an equals sign in it. The
+            // value is not noted when it cannot be set: it may be a secret.
+            let (field, value) = split(argument, at: "=")
+            if !controller.formSheet.set(field, to: value) {
+                note("no field \(field) in the sheet to set")
+            }
+            try? await Task.sleep(for: .milliseconds(300))
+        case "sheetpress":
+            if !controller.formSheet.press(argument) {
+                note("no button \(argument) in the sheet to press")
+            }
+            try? await Task.sleep(for: .milliseconds(300))
         default:
             note("unknown step \(step)")
         }
@@ -274,7 +298,8 @@ enum DebugScript {
     ]
 
     private static func press(_ notation: String, in window: NSWindow?) {
-        guard let window, let chord = KeyNotation(notation)?.chords.first,
+        // A key goes to the sheet while one is up, as it does for a person.
+        guard let window = window?.attachedSheet ?? window, let chord = KeyNotation(notation)?.chords.first,
             let keyCode = keyCodes[chord.key.lowercased()]
         else {
             note("cannot press \(notation)")
@@ -353,6 +378,13 @@ enum DebugScript {
         lines.append("vimrc: \(controller.vimrc.size.map { "imported, \($0) bytes" } ?? "none")")
         lines.append("vimrc imports: \(controller.vimrcResults.joined(separator: "; "))")
         lines.append("vimrc panels asked for: \(vimrcPanelsAsked)")
+        // sheet: none
+        // sheet: up, then its step, title, note, error and busy, a line for
+        // each field (`sheet field name [text] = "Work" (focus)`), and its
+        // buttons, which field of it has the keyboard, and how many times a
+        // sheet has been opened in this run. A secret field is
+        // `[secret] = <secret>` whatever it holds.
+        lines.append(contentsOf: controller.formSheet.summary)
         let toolbar = (controller.window?.toolbar?.items ?? [])
             .filter { $0.itemIdentifier != .flexibleSpace }
             .map { "\($0.isEnabled ? "+" : "-")\($0.itemIdentifier.rawValue)" }
@@ -384,6 +416,29 @@ enum DebugScript {
             let bitmap = frame.bitmapImageRepForCachingDisplay(in: frame.bounds)
         {
             frame.cacheDisplay(in: frame.bounds, to: bitmap)
+            // A sheet is a window of its own: it is drawn into the picture
+            // where it lies over the window, and saved by itself as well,
+            // to be looked at closely. The picture is what each window
+            // drew, put together here: the shadow, the rounded corners and
+            // the dimming the Mac gives a sheet are not in it.
+            if let window = controller.window, let sheet = controller.formSheet.window,
+                let sheetFrame = sheet.contentView?.superview,
+                let sheetBitmap = sheetFrame.bitmapImageRepForCachingDisplay(in: sheetFrame.bounds)
+            {
+                sheetFrame.cacheDisplay(in: sheetFrame.bounds, to: sheetBitmap)
+                try? sheetBitmap.representation(using: .png, properties: [:])?
+                    .write(to: destination.appendingPathExtension("sheet.png"))
+                let origin = NSPoint(
+                    x: sheet.frame.minX - window.frame.minX, y: sheet.frame.minY - window.frame.minY)
+                if let context = NSGraphicsContext(bitmapImageRep: bitmap) {
+                    NSGraphicsContext.saveGraphicsState()
+                    NSGraphicsContext.current = context
+                    sheetBitmap.draw(
+                        in: NSRect(origin: origin, size: sheetFrame.bounds.size), from: .zero,
+                        operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+                    NSGraphicsContext.restoreGraphicsState()
+                }
+            }
             try? bitmap.representation(using: .png, properties: [:])?
                 .write(to: destination.appendingPathExtension("png"))
         }

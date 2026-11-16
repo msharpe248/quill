@@ -174,14 +174,28 @@ fn read_loop(stream: UnixStream, events: UnboundedSender<HostEvent>) {
                 ran: exited.ran(),
                 status: exited.status(),
             },
+            Ok(ShellToCore::FormUsed(used)) => HostEvent::FormUsed(used),
             Ok(ShellToCore::AppWillQuit(_)) => HostEvent::WillQuit,
-            Err(err) => HostEvent::Problem(format!("bridge: {err}")),
+            Err(err) => HostEvent::Problem(unreadable(&line, &err)),
         };
         if events.send(event).is_err() {
             return;
         }
     }
     let _ = events.send(HostEvent::Disconnected);
+}
+
+/// What to say of a line from the shell that is not a message.
+///
+/// A `form.used` may carry a password. Why one could not be read is not
+/// said in the parser's words, which can quote what it was reading: the
+/// problem is shown to the user, on screen.
+fn unreadable(line: &str, err: &bridge::BridgeError) -> String {
+    if line.contains("form.used") {
+        "bridge: a form.used message could not be read".to_owned()
+    } else {
+        format!("bridge: {err}")
+    }
 }
 
 #[cfg(test)]
@@ -381,6 +395,76 @@ mod tests {
         // Nothing else was sent to the shell.
         host.close_pane();
         assert!(matches!(sent(&mut shell), CoreToShell::PaneClose(_)));
+    }
+
+    #[tokio::test]
+    async fn a_form_goes_to_the_shell_and_what_is_done_with_it_comes_back() {
+        let (host, mut events, mut shell) = connect();
+        let form = bridge::FormShow::new(bridge::FormShowParams {
+            step: "password".to_owned(),
+            title: "Add an account: sign in".to_owned(),
+            fields: vec![bridge::FormField::Secret {
+                id: "password".to_owned(),
+                label: "Password:".to_owned(),
+                focus: true,
+                help: None,
+            }],
+            buttons: Vec::new(),
+            ..bridge::FormShowParams::default()
+        })
+        .unwrap();
+        host.show_form(form.clone());
+        host.close_form();
+        let first: CoreToShell = bridge::decode(&shell.lines.next().unwrap().unwrap()).unwrap();
+        assert_eq!(first, CoreToShell::FormShow(form));
+        assert_eq!(
+            shell.lines.next().unwrap().unwrap(),
+            r#"{"jsonrpc":"2.0","method":"form.close","params":{}}"#
+        );
+
+        shell
+            .connection
+            .write_all(
+                b"{\"jsonrpc\":\"2.0\",\"method\":\"form.used\",\"params\":{\"step\":\"password\",\"button\":\"continue\",\"values\":{},\"secrets\":{\"password\":\"not-a-real-password\"}}}\n",
+            )
+            .unwrap();
+        let event = next(&mut events).await;
+        // The event prints without what it carries.
+        assert!(!format!("{event:?}").contains("not-a-real-password"));
+        let HostEvent::FormUsed(used) = event else {
+            panic!("{event:?}");
+        };
+        assert_eq!(
+            used.secret("password").map(bridge::Secret::reveal),
+            Some("not-a-real-password")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_form_message_that_cannot_be_read_is_not_quoted() {
+        let (_host, mut events, mut shell) = connect();
+        // Each is wrong in a way the parser would describe by quoting
+        // what it found: a secret where a name or a number belongs.
+        shell
+            .connection
+            .write_all(
+                b"{\"jsonrpc\":\"2.0\",\"method\":\"form.used\",\"params\":{\"step\":\"password\",\"values\":{},\"secrets\":\"not-a-real-password\"}}\n\
+                  {\"jsonrpc\":\"2.0\",\"method\":\"form.used\",\"params\":{\"step\":\"password\",\"values\":{},\"secrets\":{},\"not-a-real-password\":1}}\n\
+                  {\"jsonrpc\":\"2.0\",\"method\":\"form.used\",\"params\":{\"step\":\"password\",\"values\":{},\"secrets\":{\"password\":\"not-a-real-password\"\n",
+            )
+            .unwrap();
+        for _ in 0..3 {
+            let event = next(&mut events).await;
+            assert_eq!(
+                event,
+                HostEvent::Problem("bridge: a form.used message could not be read".to_owned())
+            );
+        }
+        // Any other line is still described in full.
+        shell.connection.write_all(b"not json\n").unwrap();
+        assert!(
+            matches!(next(&mut events).await, HostEvent::Problem(text) if text.contains("not a bridge message"))
+        );
     }
 
     #[tokio::test]

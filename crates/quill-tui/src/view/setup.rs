@@ -1,7 +1,6 @@
 //! The add-an-account form and the certificate question.
 
 use quill_core::CertificateProblem;
-use quill_core::config::TlsMode;
 use ratatui::Frame;
 use ratatui::layout::{Position, Rect};
 use ratatui::style::Modifier;
@@ -11,7 +10,9 @@ use ratatui::widgets::{Block, BorderType, Padding};
 use crate::command::CommandId;
 use crate::input::LineInput;
 use crate::setup::{
-    Kind, ServerField, Setup, SignInStage, Step, certificate_reason, grouped_fingerprint,
+    ADDRESS_NOTE, Kind, MICROSOFT_NOTE, NO_ENCRYPTION, NO_SENDING, ServerField, Setup, SignInStage,
+    Step, UNREADABLE_CERTIFICATE, certificate_note, certificate_reason, grouped_fingerprint,
+    security_label,
 };
 use crate::state::{Env, State, UnsubscribeHow, WhenFor};
 use crate::text;
@@ -174,22 +175,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
     let Some(setup) = &state.setup else {
         return;
     };
-    let title = match setup.step {
-        Step::Address => " Add an account ",
-        Step::Server if setup.kind == Kind::Microsoft => " Add an account: Microsoft ",
-        Step::Server => " Add an account: the server ",
-        Step::Password => " Add an account: sign in ",
-        Step::Certificate => " Add an account: certificate ",
-    };
-    let inner = dialog(frame, area, title, env);
+    let inner = dialog(frame, area, &format!(" {} ", setup.title()), env);
     let mut rows = Rows::new(frame, inner, env);
     // While Quill is waiting for an answer there is nowhere to type.
     let typing = setup.busy.is_none();
     match setup.step {
         Step::Address => {
-            rows.text(
-                "Type the email address of the account. Quill will look for its mail server.",
-            );
+            rows.text(ADDRESS_NOTE);
             rows.blank();
             rows.field("Address:", &setup.address, typing);
         }
@@ -216,11 +208,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
             rows.field("Port:", &setup.port, typing && at == ServerField::Port);
             rows.choice(
                 "Security:",
-                match setup.tls {
-                    TlsMode::Implicit => "TLS",
-                    TlsMode::Starttls => "STARTTLS",
-                    TlsMode::None => "None",
-                },
+                security_label(setup.tls),
                 typing && at == ServerField::Security,
             );
             rows.field(
@@ -229,18 +217,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
                 typing && at == ServerField::Username,
             );
             rows.blank();
-            let security = |tls| match tls {
-                TlsMode::Implicit => "TLS",
-                TlsMode::Starttls => "STARTTLS",
-                TlsMode::None => "None",
-            };
             rows.field(
                 "Send via:",
                 &setup.smtp_host,
                 typing && at == ServerField::SmtpHost,
             );
             if setup.smtp_host.is_empty() {
-                rows.dim("           Empty: the account will read mail and not send it.");
+                rows.dim(&format!("           {NO_SENDING}"));
             } else {
                 rows.field(
                     "Port:",
@@ -249,24 +232,16 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
                 );
                 rows.choice(
                     "Security:",
-                    security(setup.smtp_tls),
+                    security_label(setup.smtp_tls),
                     typing && at == ServerField::SmtpSecurity,
                 );
             }
-            if setup.tls == TlsMode::None
-                || (setup.smtp_tls == TlsMode::None && !setup.smtp_host.is_empty())
-            {
-                rows.warning_below(
-                    "With no encryption, your password and mail cross the network readable by anyone on the way.",
-                );
+            if setup.unencrypted() {
+                rows.warning_below(NO_ENCRYPTION);
             }
         }
         Step::Password => {
-            rows.text(&format!(
-                "The password for {} at {}. It is kept in your Keychain and nowhere else.",
-                setup.username.text(),
-                setup.host.text()
-            ));
+            rows.text(&setup.password_note());
             rows.blank();
             rows.field("Password:", &setup.password, typing);
         }
@@ -302,9 +277,7 @@ fn microsoft(rows: &mut Rows<'_, '_>, setup: &Setup, typing: bool) {
         typing && at == ServerField::Tenant,
     );
     rows.blank();
-    rows.dim(
-        "Register Quill with Microsoft once to get the application id: see docs/oauth.md. Tenant may be left empty.",
-    );
+    rows.dim(MICROSOFT_NOTE);
 }
 
 fn status(rows: &mut Rows<'_, '_>, setup: &Setup) {
@@ -334,10 +307,7 @@ fn dialog(frame: &mut Frame, area: Rect, title: &str, env: &Env) -> Rect {
 /// The certificate the server presented, in its own words, and the three
 /// things that can be done about it.
 fn certificate(rows: &mut Rows<'_, '_>, problem: &CertificateProblem, busy: bool) {
-    rows.text(&format!(
-        "{} presented a certificate that was not accepted. Nothing has been sent to it.",
-        problem.host
-    ));
+    rows.text(&certificate_note(&problem.host));
     rows.warning(&certificate_reason(&problem.reason));
     rows.blank();
     if let Some(details) = &problem.details {
@@ -375,7 +345,7 @@ fn certificate(rows: &mut Rows<'_, '_>, problem: &CertificateProblem, busy: bool
         }
         None => {
             rows.blank();
-            rows.dim("The certificate could not be read, so it cannot be accepted.");
+            rows.dim(UNREADABLE_CERTIFICATE);
             rows.keys(&[("r", "reject")]);
         }
     }

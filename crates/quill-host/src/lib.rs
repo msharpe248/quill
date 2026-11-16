@@ -53,6 +53,9 @@ pub enum HostEvent {
     /// The answer to [`Host::edit_draft`]: the editor ended with this
     /// status, or (`ran` false) could not be started.
     EditorExited { ran: bool, status: i32 },
+    /// The user pressed a button of the form the host is showing
+    /// ([`Host::show_form`]), or changed one of its choices.
+    FormUsed(bridge::FormUsed),
     /// The app is quitting: flush and exit cleanly.
     WillQuit,
     /// The shell has gone. There is nothing left to draw for.
@@ -183,6 +186,19 @@ pub trait Host: Send + Sync {
     ) -> bool {
         let _ = (path, dir, title, editor, body_line);
         false
+    }
+
+    /// Shows a form in a sheet of the host's own, in place of whatever
+    /// form it shows now. What the user does with it arrives as
+    /// [`HostEvent::FormUsed`]. Only a shell has a sheet: a caller asks
+    /// this of a host that said it was one.
+    fn show_form(&self, form: bridge::FormShow) {
+        self.send(CoreToShell::FormShow(form));
+    }
+
+    /// Takes the host's form down.
+    fn close_form(&self) {
+        self.send(CoreToShell::FormClose(NoParams {}));
     }
 
     /// Hands an event straight back to the core, for a host that can

@@ -1,0 +1,104 @@
+{
+  "jsonrpc": "2.0",
+  "method": "form.show",
+  "params": {
+    "step": "server",
+    "title": "Add an account: the server",
+    "note": "Found in the DNS records of example.com.",
+    "error": "The port is a number from 1 to 65535.",
+    "fields": [
+      {
+        "kind": "choice",
+        "id": "type",
+        "label": "Type:",
+        "value": "imap",
+        "options": [
+          {
+            "id": "imap",
+            "title": "IMAP (password)"
+          },
+          {
+            "id": "microsoft",
+            "title": "Microsoft (sign in)"
+          }
+        ]
+      },
+      {
+        "kind": "text",
+        "id": "name",
+        "label": "Name:",
+        "value": "Example"
+      },
+      {
+        "kind": "static",
+        "id": "address",
+        "label": "Address:",
+        "value": "robin@example.com"
+      },
+      {
+        "kind": "text",
+        "id": "host",
+        "label": "Server:",
+        "value": "imap.example.com"
+      },
+      {
+        "kind": "text",
+        "id": "port",
+        "label": "Port:",
+        "value": "99x",
+        "focus": true
+      },
+      {
+        "kind": "choice",
+        "id": "security",
+        "label": "Security:",
+        "value": "tls",
+        "options": [
+          {
+            "id": "tls",
+            "title": "TLS"
+          },
+          {
+            "id": "starttls",
+            "title": "STARTTLS"
+          },
+          {
+            "id": "none",
+            "title": "None"
+          }
+        ]
+      },
+      {
+        "kind": "text",
+        "id": "smtp_host",
+        "label": "Send via:",
+        "value": "smtp.example.com",
+        "help": "Empty: the account will read mail and not send it."
+      },
+      {
+        "kind": "secret",
+        "id": "password",
+        "label": "Password:"
+      }
+    ],
+    "buttons": [
+      {
+        "id": "cancel",
+        "title": "Cancel",
+        "role": "cancel",
+        "enabled": true
+      },
+      {
+        "id": "back",
+        "title": "Back",
+        "enabled": true
+      },
+      {
+        "id": "continue",
+        "title": "Continue",
+        "role": "default",
+        "enabled": true
+      }
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "jsonrpc": "2.0",
+  "method": "form.show",
+  "params": {
+    "step": "server",
+    "title": "Add an account: the server",
+    "fields": [
+      {
+        "kind": "choice",
+        "id": "type",
+        "label": "Type:",
+        "value": "imap",
+        "options": []
+      }
+    ],
+    "buttons": []
+  }
+}

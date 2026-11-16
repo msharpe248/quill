@@ -29,8 +29,10 @@ use crate::outgoing::{Handed, InviteAnswer, Response, SendRequest};
 use crate::palette::{self, Item, Palette, What};
 
 mod mouse;
+use quill_host::bridge::{FormShow, FormUsed};
+
 use crate::setup::{
-    AccountEvent, AccountRequest, CertificatePrompt, Outcome, Setup, SignIn, SignInStage,
+    AccountEvent, AccountRequest, CertificatePrompt, Outcome, Setup, SignIn, SignInStage, Used,
 };
 use crate::template::{self, Template};
 use crate::theme::Styles;
@@ -94,6 +96,12 @@ pub struct Env {
     /// Whether the host has a spelling checker to ask. A terminal has
     /// none.
     pub spell_check: bool,
+    /// Whether the host shows the add-an-account form itself, in a sheet
+    /// on its window, as Quill's app does. The form is then not drawn
+    /// here: it is described to the host ([`State::account_form`]), and
+    /// what the user does with it comes back as [`Action::FormUsed`]. In
+    /// a terminal the form is drawn over the panes.
+    pub account_sheet: bool,
     /// Whether the host runs Vim itself, in a pane of its own, as
     /// Quill's app does. In a terminal Quill runs the user's own Vim
     /// there, and gives it a copy of the plugin.
@@ -229,6 +237,10 @@ pub enum Action {
         name: String,
         outcome: HookOutcome,
     },
+    /// The user pressed a button of the add-an-account form the host is
+    /// showing, or changed one of its choices: what its fields held, and
+    /// which button.
+    FormUsed(FormUsed),
 }
 
 /// What an action asks of the world outside the state: queries and writes
@@ -940,6 +952,9 @@ pub struct State {
     pub flash: Option<(String, bool)>,
     /// The add-an-account flow, while it is open.
     pub setup: Option<Setup>,
+    /// The host shows that form, in a sheet of its own
+    /// ([`Env::account_sheet`]), so it is not drawn over the panes.
+    pub form_hosted: bool,
     /// A sign-in to an account's provider, waiting on the user.
     pub sign_in: Option<SignIn>,
     /// A time being asked for.
@@ -999,6 +1014,7 @@ impl State {
             announced: BTreeSet::new(),
             flash: None,
             setup: None,
+            form_hosted: false,
             sign_in: None,
             when: None,
             next_wake: None,
@@ -1081,6 +1097,9 @@ impl State {
     pub fn update(&mut self, env: &Env, action: Action) -> Effects {
         let mut out = Effects::default();
         let mut changed = true;
+        // Where the form is shown is the host's to say, and the layout
+        // goes by it.
+        self.form_hosted = env.account_sheet;
         match action {
             Action::Key(chord) => self.on_key(env, chord, &mut out),
             Action::Command(id) => self.run(env, id, &mut out),
@@ -1113,6 +1132,7 @@ impl State {
             Action::EditorExited { ran, status } => {
                 self.on_editor_exited(env, ran, status, &mut out);
             }
+            Action::FormUsed(used) => self.on_form(&used, &mut out),
             Action::HookDone { name, outcome } => {
                 self.hook_running = None;
                 let said = outcome.said(&name);
@@ -1860,6 +1880,23 @@ impl State {
             .registry
             .get(id)
             .is_some_and(|spec| spec.applies_in(context))
+        {
+            return false;
+        }
+        // The form is in a sheet of the host's, and is worked there. The
+        // commands that work it in a terminal would act on what the core
+        // holds, which is not what the sheet's fields hold until a button
+        // sends it: going on from here would be going on blind.
+        if env.account_sheet
+            && context == Context::Setup
+            && matches!(
+                id,
+                CommandId::NavOpen
+                    | CommandId::NavNext
+                    | CommandId::NavPrev
+                    | CommandId::FocusNext
+                    | CommandId::FocusPrev
+            )
         {
             return false;
         }
@@ -3307,6 +3344,43 @@ impl State {
         true
     }
 
+    /// The add-an-account form as the host is to show it, when the host
+    /// is the one showing it ([`Env::account_sheet`]) and the form is what
+    /// a terminal would have in front. `None`: the host shows no form.
+    ///
+    /// A question that comes before the form (a certificate of an account
+    /// already there, the help) is drawn in the terminal as ever, and the
+    /// host's form is put away until it is answered.
+    pub fn account_form(&self, env: &Env) -> Option<FormShow> {
+        if !env.account_sheet || self.context() != Context::Setup {
+            return None;
+        }
+        self.setup.as_ref()?.form(&env.tz)
+    }
+
+    /// Whether the add-an-account form is open and is the host's to show,
+    /// in a sheet, and not drawn here.
+    pub fn form_in_sheet(&self) -> bool {
+        self.form_hosted && self.context() == Context::Setup
+    }
+
+    /// The user did something with the form the host is showing.
+    fn on_form(&mut self, used: &FormUsed, out: &mut Effects) {
+        // Only while the form is what is in front: an answer given to a
+        // form the host has since been told to put away is dropped.
+        if self.context() != Context::Setup {
+            return;
+        }
+        let Some(setup) = &mut self.setup else {
+            return;
+        };
+        let Used { requests, close } = setup.used(used);
+        out.accounts.extend(requests);
+        if close {
+            self.setup = None;
+        }
+    }
+
     fn on_account(&mut self, event: AccountEvent, out: &mut Effects) {
         if let AccountEvent::Trusted {
             account,
@@ -3391,6 +3465,16 @@ impl State {
             _ => {}
         }
         let Some(setup) = &mut self.setup else {
+            // The form was put away while an account was being saved, and
+            // it was saved all the same. It is not added unseen.
+            if let AccountEvent::Saved(Ok(name)) = event {
+                self.notices.push_back(Notice::info(format!(
+                    "Added {}: it was already being saved when the form was closed.",
+                    text::sanitize_line(&name)
+                )));
+                out.data.push(DataRequest::LoadSidebar);
+                out.data.push(DataRequest::LoadMessages(self.mailbox));
+            }
             return;
         };
         let (requests, outcome) = setup.on_event(event);

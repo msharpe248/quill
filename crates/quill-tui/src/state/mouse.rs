@@ -61,7 +61,9 @@ impl State {
         }
         // A form or a question about a certificate is answered with keys:
         // a stray click must not answer it, or dismiss it.
-        if areas.dialog.is_some() {
+        // The same while the form is in a sheet of the host's: nothing
+        // behind it moves.
+        if areas.dialog.is_some() || self.setup.is_some() {
             return;
         }
         if let Some(rect) = areas.links {
