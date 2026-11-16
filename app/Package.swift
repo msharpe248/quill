@@ -42,9 +42,9 @@ let package = Package(
             name: "Spelling",
             dependencies: ["Bridge"]
         ),
-        // The Vim option: where the Vim that ships in the app is, how it is
-        // started, what the core is told when it ends, and the user's
-        // imported vimrc. Knows a draft file and its folder, never mail, and
+        // The Vim option: which Vim is run (the Mac's own, or the user's by
+        // their script), how it is started, what the core is told when it
+        // ends, and the user's imported vimrc. Knows a draft file and its folder, never mail, and
         // starts nothing itself.
         .target(
             name: "Editor",

@@ -2,10 +2,11 @@ import Bridge
 import Darwin
 import Foundation
 
-/// The Vim that comes with macOS, for a user who has asked for it
-/// (`vim = "system"` under `[compose]`).
+/// The Vim that comes with macOS: what the app writes a message in unless
+/// the user has asked for their own (`vim = "system"` under `[compose]`,
+/// which is also what it is when nothing is said).
 ///
-/// It is the one program outside the app's bundle that the shell ever
+/// It is the one program outside the app's bundle that the shell itself
 /// starts, and it is named here, by a constant: never by the core, the
 /// config, the environment or the `PATH`. The App Sandbox lets an app run
 /// what macOS itself ships in `/usr/bin`, and the Vim so started is inside
@@ -53,12 +54,8 @@ public struct SystemVim: Equatable, Sendable {
     /// As above, with the program and the folder it must be in named, for
     /// tests: nothing else calls this.
     init(inBundle bundle: URL, binary path: String, within systemRoot: String) throws {
-        guard let root = ShippedVim.realPath(bundle.path) else {
-            throw ShippedVim.Problem.missing(ShippedVim.pluginPath)
-        }
         binary = URL(fileURLWithPath: path)
-        plugin = bundle.appendingPathComponent(ShippedVim.pluginPath)
-        guard let system = ShippedVim.realPath(systemRoot), let real = ShippedVim.realPath(path) else {
+        guard let system = BundledFile.realPath(systemRoot), let real = BundledFile.realPath(path) else {
             throw Problem.missing(path)
         }
         guard real.hasPrefix(system.hasSuffix("/") ? system : system + "/") else {
@@ -68,15 +65,13 @@ public struct SystemVim: Equatable, Sendable {
         guard stat(real, &status) == 0, status.st_mode & S_IFMT == S_IFREG, access(real, X_OK) == 0 else {
             throw Problem.unusable(path)
         }
-        try ShippedVim.check(plugin, ShippedVim.pluginPath, inside: root, isFolder: false)
+        plugin = try BundledFile.find(BundledFile.pluginPath, inBundle: bundle)
     }
 }
 
 /// The Vim a draft is to be edited in.
 public enum VimToRun: Equatable, Sendable {
-    /// The one built into the app, with its own runtime files.
-    case shipped(ShippedVim)
-    /// The one that comes with macOS, which finds its own runtime files.
+    /// The one that comes with macOS, inside the sandbox.
     case system(SystemVim)
     /// Whichever one the user's own script starts, outside the sandbox.
     case script(UserEditorScript)
@@ -85,7 +80,6 @@ public enum VimToRun: Equatable, Sendable {
     /// `scriptsFolder` is where the user's own script would be.
     public init(_ asked: EditorVim, inBundle bundle: URL, scriptsFolder: URL?) throws {
         switch asked {
-        case .bundled: self = .shipped(try ShippedVim(inBundle: bundle))
         case .system: self = .system(try SystemVim(inBundle: bundle))
         case .script:
             guard let scriptsFolder else {

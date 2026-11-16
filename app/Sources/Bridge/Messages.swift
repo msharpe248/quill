@@ -44,8 +44,7 @@ public enum CoreToShell: Equatable, Sendable {
     /// Ask what a misspelt word might have been meant to be. Answered by
     /// `spellSuggested`.
     case spellSuggest(SpellSuggest)
-    /// Run the Vim that ships in the app on a draft file, in a terminal pane
-    /// of its own. Answered by `editorExited` when Vim ends, or at once if
+    /// Run Vim on a draft file, in a terminal pane of its own. Answered by `editorExited` when Vim ends, or at once if
     /// it could not be started.
     case paneEditor(PaneEditor)
 }
@@ -518,10 +517,8 @@ public struct SpellSuggested: Equatable, Sendable, Codable {
 /// Which Vim the shell is to run. The core says which of the two; it never
 /// names a program by its path.
 public enum EditorVim: String, Equatable, Sendable, Codable {
-    /// The one built into the app.
-    case bundled
-    /// The one that comes with macOS, which the user has asked for in
-    /// their config.
+    /// The one that comes with macOS. The app has none of its own inside
+    /// it.
     case system
     /// The user's own, by way of the script they keep in the app's scripts
     /// folder, which they have asked for in their config.
@@ -540,7 +537,7 @@ public struct PaneEditor: Equatable, Sendable, Codable {
     public let vim: EditorVim
 
     /// `nil` unless both paths are absolute.
-    public init?(path: String, dir: String, title: String, vim: EditorVim = .bundled) {
+    public init?(path: String, dir: String, title: String, vim: EditorVim = .system) {
         guard path.hasPrefix("/"), dir.hasPrefix("/") else { return nil }
         self.path = path
         self.dir = dir
@@ -553,8 +550,8 @@ public struct PaneEditor: Equatable, Sendable, Codable {
 
 /// How the editor ended.
 public struct EditorExited: Equatable, Sendable, Codable {
-    /// False when Vim could not be started: this build has none in it, or
-    /// it would not start. `status` is then 0.
+    /// False when Vim could not be started: the one asked for is not
+    /// there, or it would not start. `status` is then 0.
     public let ran: Bool
     /// What Vim exited with: 0 for a normal exit, anything else for `:cq`
     /// or a crash. A Vim ended by a signal is reported as the signal's

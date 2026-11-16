@@ -46,7 +46,6 @@ public struct UserEditorScript: Equatable, Sendable {
     /// script is a file that may be run and the helper is inside the bundle.
     public init(inScriptsFolder folder: URL, bundle: URL) throws {
         script = folder.appendingPathComponent(Self.name)
-        helper = bundle.appendingPathComponent(Self.helperPath)
         var status = stat()
         guard stat(script.path, &status) == 0 else {
             throw Problem.missing(script.path)
@@ -54,9 +53,6 @@ public struct UserEditorScript: Equatable, Sendable {
         guard status.st_mode & S_IFMT == S_IFREG, access(script.path, X_OK) == 0 else {
             throw Problem.unusable(script.path)
         }
-        guard let root = ShippedVim.realPath(bundle.path) else {
-            throw ShippedVim.Problem.missing(Self.helperPath)
-        }
-        try ShippedVim.check(helper, Self.helperPath, inside: root, isFolder: false)
+        helper = try BundledFile.find(Self.helperPath, inBundle: bundle)
     }
 }

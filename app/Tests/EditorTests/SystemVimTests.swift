@@ -9,10 +9,10 @@ import Testing
 struct SystemVimTests {
     private static let container = "/Users/robin/Library/Containers/dev.quill.Quill/Data"
 
-    /// A bundle with the plugin in it and no Vim, as `build-app.sh` makes
-    /// when `build-vim.sh` has not been run.
+    /// A bundle with the plugin in it, as `build-app.sh` makes. There is no
+    /// Vim in one.
     private func bundleWithoutVim(_ scratch: Scratch) throws -> URL {
-        try scratch.write("\" plugin\n", to: "Quill.app/\(ShippedVim.pluginPath)")
+        try scratch.write("\" plugin\n", to: "Quill.app/\(BundledFile.pluginPath)")
         return scratch.file("Quill.app")
     }
 
@@ -28,9 +28,6 @@ struct SystemVimTests {
         let vim = try SystemVim(inBundle: bundle, binary: program.path, within: scratch.file("usr").path)
         #expect(vim.binary.path == program.path)
         #expect(vim.plugin.path == bundle.path + "/Contents/Resources/vim/quill.vim")
-        // The bundle has no Vim of its own, and that is still so.
-        #expect(throws: ShippedVim.Problem.missing("Contents/Helpers/vim")) { try ShippedVim(inBundle: bundle) }
-        #expect(throws: ShippedVim.Problem.self) { try VimToRun(.bundled, inBundle: bundle, scriptsFolder: nil) }
     }
 
     @Test func nothingThereAFolderOrAFileThatMayNotBeRunIsRefused() throws {
@@ -82,18 +79,18 @@ struct SystemVimTests {
         let program = try scratch.write("#!/bin/sh\n", to: "usr/bin/vim", permissions: 0o755)
         let root = scratch.file("usr").path
         try scratch.folder("Quill.app/Contents")
-        #expect(throws: ShippedVim.Problem.missing("Contents/Resources/vim/quill.vim")) {
+        #expect(throws: BundledFile.Problem.missing("Contents/Resources/vim/quill.vim")) {
             try SystemVim(inBundle: scratch.file("Quill.app"), binary: program.path, within: root)
         }
         // Nor with a plugin that is a link to a file somewhere else.
         let elsewhere = try scratch.write("\" not ours\n", to: "elsewhere/quill.vim")
-        try scratch.link("Quill.app/\(ShippedVim.pluginPath)", to: elsewhere)
-        #expect(throws: ShippedVim.Problem.outsideBundle("Contents/Resources/vim/quill.vim")) {
+        try scratch.link("Quill.app/\(BundledFile.pluginPath)", to: elsewhere)
+        #expect(throws: BundledFile.Problem.outsideBundle("Contents/Resources/vim/quill.vim")) {
             try SystemVim(inBundle: scratch.file("Quill.app"), binary: program.path, within: root)
         }
     }
 
-    @Test func itIsStartedAsTheShippedOneIsButFindsItsOwnFiles() throws {
+    @Test func itIsStartedInsideTheSandboxAndFindsItsOwnFiles() throws {
         let scratch = try Scratch()
         let bundle = try bundleWithoutVim(scratch)
         let program = try scratch.write("#!/bin/sh\n", to: "usr/bin/vim", permissions: 0o755)

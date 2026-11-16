@@ -47,14 +47,23 @@ final class Scratch {
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: destination)
     }
 
-    /// Something shaped like an app bundle, called `name`, with a Vim in
-    /// it: a file that may be run where the program goes (it is never run),
-    /// a runtime folder and the plugin.
-    func bundleWithVim(_ name: String = "Quill.app") throws -> URL {
-        try write("#!/bin/sh\n", to: "\(name)/\(ShippedVim.binaryPath)", permissions: 0o755)
-        try folder("\(name)/\(ShippedVim.runtimePath)")
-        try write("\" plugin\n", to: "\(name)/\(ShippedVim.pluginPath)")
+    /// Something shaped like an app bundle, called `name`, with what Quill
+    /// puts in one for Vim: the plugin, and the helper a script is handed.
+    func bundleWithPlugin(_ name: String = "Quill.app") throws -> URL {
+        try write("\" plugin\n", to: "\(name)/\(BundledFile.pluginPath)")
+        try write("#!/bin/sh\n", to: "\(name)/\(UserEditorScript.helperPath)", permissions: 0o755)
         return file(name)
+    }
+
+    /// Where the stand-in for the Mac's own Vim is: a file that may be run
+    /// (it never is), in a folder standing in for `/usr`.
+    var systemVimPath: String { file("usr/bin/vim").path }
+
+    /// The Mac's own Vim, as far as a test has one, with the plugin from
+    /// `bundle`.
+    func systemVim(inBundle bundle: URL) throws -> SystemVim {
+        try write("#!/bin/sh\n", to: "usr/bin/vim", permissions: 0o755)
+        return try SystemVim(inBundle: bundle, binary: systemVimPath, within: file("usr").path)
     }
 
     func permissions(of file: URL) throws -> Int {

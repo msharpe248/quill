@@ -114,7 +114,6 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
         // Asked for in the config, and meant only where there is a pane:
         // a terminal runs the user's own Vim whatever this says.
         app_vim: match config.compose.vim {
-            ComposeVim::Bundled => EditorVim::Bundled,
             ComposeVim::System => EditorVim::System,
             ComposeVim::Script => EditorVim::Script,
         },
@@ -401,7 +400,8 @@ mod tests {
     #[test]
     fn the_config_says_which_vim_the_app_runs() {
         let dir = TempDir::new().unwrap();
-        assert_eq!(load_from(&dir).env.app_vim, EditorVim::Bundled);
+        // With nothing said it is the one every Mac has.
+        assert_eq!(load_from(&dir).env.app_vim, EditorVim::System);
         write(&dir, "config.toml", "[compose]\nvim = \"system\"\n");
         let loaded = load_from(&dir);
         assert!(loaded.notices.is_empty(), "{:?}", loaded.notices);
@@ -412,17 +412,20 @@ mod tests {
         let loaded = load_from(&dir);
         assert!(loaded.notices.is_empty(), "{:?}", loaded.notices);
         assert_eq!(loaded.env.app_vim, EditorVim::Script);
-        write(&dir, "config.toml", "[compose]\nvim = \"bundled\"\n");
-        assert_eq!(load_from(&dir).env.app_vim, EditorVim::Bundled);
         // It is one of two words, never a program: a path is a mistake in
-        // the config, said as one, and not a Vim to run.
+        // the config, said as one, and not a Vim to run. So is the Vim
+        // that used to be built into the app, which no longer is.
+        write(&dir, "config.toml", "[compose]\nvim = \"bundled\"\n");
+        let loaded = load_from(&dir);
+        assert_eq!(loaded.env.app_vim, EditorVim::System);
+        assert!(!loaded.notices.is_empty());
         write(
             &dir,
             "config.toml",
             "[compose]\nvim = \"/opt/homebrew/bin/nvim\"\n",
         );
         let loaded = load_from(&dir);
-        assert_eq!(loaded.env.app_vim, EditorVim::Bundled);
+        assert_eq!(loaded.env.app_vim, EditorVim::System);
         assert!(!loaded.notices.is_empty());
     }
 

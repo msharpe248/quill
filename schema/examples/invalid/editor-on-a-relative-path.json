@@ -5,6 +5,6 @@
     "path": "message.quill",
     "dir": "/tmp/quill-edit-1",
     "title": "x",
-    "vim": "bundled"
+    "vim": "system"
   }
 }

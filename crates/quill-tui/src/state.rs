@@ -99,9 +99,8 @@ pub struct Env {
     /// Quill's app does. In a terminal Quill runs the user's own Vim
     /// there, and gives it a copy of the plugin.
     pub editor_pane: bool,
-    /// Which Vim that pane is to run: the one built into the app, the one
-    /// that comes with macOS, or the user's own by their script (`vim`
-    /// under `[compose]`).
+    /// Which Vim that pane is to run: the one that comes with macOS, or
+    /// the user's own by their script (`vim` under `[compose]`).
     pub app_vim: EditorVim,
     /// The program a terminal runs as Vim, when it is not to be `vim`.
     pub vim_program: Option<std::ffi::OsString>,
@@ -2539,9 +2538,9 @@ impl State {
         out.data.push(DataRequest::EditOut {
             account: compose.account,
             content: Box::new(content.clone()),
-            // A Vim the app starts itself is told where the plugin is in
-            // the app; the user's own, in a terminal or by their script,
-            // is given a copy beside the draft.
+            // The Vim the app starts itself is told where the plugin is
+            // in the app; the user's own, in a terminal or by their
+            // script, is given a copy beside the draft.
             plugin: !env.editor_pane || env.app_vim == EditorVim::Script,
         });
         self.vim = Some(VimEdit {
@@ -2605,12 +2604,9 @@ impl State {
                     "Quill found no editor-command.sh it can run, so the message stays \
                      here. \"Show Editor Script Folder\" in the Quill menu shows where \
                      it goes."
-                } else if env.editor_pane && env.app_vim == EditorVim::System {
+                } else if env.editor_pane {
                     "The Vim that comes with macOS could not be started, so the message \
                      stays here."
-                } else if env.editor_pane {
-                    "This copy of Quill has no Vim inside it, so the message stays here. \
-                     `vim = \"system\"` under [compose] uses the one that comes with macOS."
                 } else {
                     "Vim could not be started, so the message stays here. Quill runs \
                      the `vim` on your PATH."

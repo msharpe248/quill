@@ -5,7 +5,8 @@
 //! The editor knows nothing about ratatui. [`BuiltinEditor::view`] returns
 //! rows of plain spans and a cursor position, and a view function elsewhere
 //! turns them into cells. Compose logic talks to the [`Editor`] trait, so a
-//! second implementation (a bundled Vim, later) can stand in.
+//! second implementation can stand in. (Vim is not one: nothing of it
+//! lives in this process. See `vim.rs`.)
 //!
 //! How it is put together:
 //!
@@ -34,8 +35,8 @@ use crate::text;
 /// How far `tab` indents: to the next multiple of this many cells.
 const TAB_STOP: usize = 4;
 
-/// What compose logic needs from an editor, so a second implementation (a
-/// bundled Vim, later) can stand in.
+/// What compose logic needs from an editor, so a second implementation can
+/// stand in.
 pub trait Editor {
     /// The whole text, lines joined by `\n`.
     fn text(&self) -> String;

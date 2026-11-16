@@ -41,9 +41,9 @@ import Notifications
 /// has one (`--core-env QUILL_CONFIG_DIR=...`), in its `vim` folder, and
 /// only otherwise in the user's own.
 ///
-/// The editor pane is the real one when the build has a Vim in it, and it
-/// reaches nothing outside the window. In a build without one, the dump
-/// says the editor is not available. One case does reach outside: a config
+/// The editor pane is the real one, running the Vim that comes with macOS
+/// inside the sandbox, and it reaches nothing outside the window. One case
+/// does reach outside: a config
 /// that says `vim = "script"` has the user's own `editor-command.sh` run,
 /// outside the sandbox, as it would be for them. A scripted run only does
 /// that when the config it is pointed at asks for it.

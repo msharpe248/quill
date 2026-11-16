@@ -8,7 +8,7 @@ import TerminalKit
 
 /// The main window: the terminal surface running the core, a toolbar built
 /// from the core's commands, and a second pane for native viewers or for
-/// the Vim that ships in the app.
+/// Vim.
 ///
 /// Nothing here knows about mail. What the window shows around the terminal
 /// comes over the bridge as command names, a title and a count.
@@ -755,15 +755,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     // MARK: - The editor pane
 
     /// Runs Vim on a draft, in a terminal pane of its own: the one that
-    /// ships in the app, or the one that comes with macOS when the user has
+    /// comes with macOS, or the user's own by their script when they have
     /// asked for that. The core is always answered: now, when nothing is
     /// started, and otherwise when Vim ends.
     private func openEditor(_ request: PaneEditor) {
         var vim: VimToRun?
         if !editorSlot.isRunning {
             do {
-                // In the app's own bundle, or the one place macOS keeps
-                // its own, and nowhere else.
+                // The one place macOS keeps its own, or the one script in
+                // the one folder that is the user's to fill, and nowhere
+                // else.
                 vim = try VimToRun(
                     request.vim, inBundle: Bundle.main.bundleURL, scriptsFolder: editorScriptFolder)
             } catch {

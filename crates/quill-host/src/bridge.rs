@@ -63,8 +63,7 @@ pub enum CoreToShell {
     /// `spell.suggested`.
     #[serde(rename = "spell.suggest")]
     SpellSuggest(SpellSuggest),
-    /// Run the Vim that ships in the app on a draft file. Answered by
-    /// `editor.exited`.
+    /// Run Vim on a draft file, in a pane. Answered by `editor.exited`.
     #[serde(rename = "pane.editor")]
     PaneEditor(PaneEditor),
 }
@@ -680,15 +679,13 @@ pub struct PaneEditor {
     pub vim: EditorVim,
 }
 
-/// Which Vim the shell runs: the one built into the app, the one that
-/// comes with macOS, or the user's own by way of the script they keep in
-/// the app's scripts folder. It is one of these words: the shell is never
-/// given a path to a program.
+/// Which Vim the shell runs: the one that comes with macOS, or the user's
+/// own by way of the script they keep in the app's scripts folder. It is
+/// one of these words: the shell is never given a path to a program.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EditorVim {
     #[default]
-    Bundled,
     System,
     Script,
 }

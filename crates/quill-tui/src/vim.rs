@@ -35,7 +35,8 @@ const CONTACTS_FILE: &str = "contacts";
 /// What every draft's folder is called, before its number.
 const FOLDER_PREFIX: &str = "edit-";
 
-/// The plugin, as shipped in the app. A terminal's Vim is given a copy.
+/// The plugin, as it is in the app. A Vim of the user's own is given a
+/// copy.
 const PLUGIN: &str = include_str!("../../../app/Resources/vim/quill.vim");
 
 /// The most people written out for Vim to complete addresses from.

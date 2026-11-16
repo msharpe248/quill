@@ -10,7 +10,7 @@ struct UserEditorScriptTests {
     /// A bundle with the helper in it, as `build-app.sh` makes.
     private func bundle(_ scratch: Scratch) throws -> URL {
         try scratch.write("#!/bin/sh\n", to: "Quill.app/\(UserEditorScript.helperPath)", permissions: 0o755)
-        try scratch.write("\" plugin\n", to: "Quill.app/\(ShippedVim.pluginPath)")
+        try scratch.write("\" plugin\n", to: "Quill.app/\(BundledFile.pluginPath)")
         return scratch.file("Quill.app")
     }
 
@@ -82,12 +82,12 @@ struct UserEditorScriptTests {
         let folder = try scratch.folder("scripts")
         try scratch.write("#!/bin/sh\n", to: "scripts/editor-command.sh", permissions: 0o755)
         try scratch.folder("Quill.app/Contents")
-        #expect(throws: ShippedVim.Problem.missing("Contents/Resources/vim/on-terminal")) {
+        #expect(throws: BundledFile.Problem.missing("Contents/Resources/vim/on-terminal")) {
             try UserEditorScript(inScriptsFolder: folder, bundle: scratch.file("Quill.app"))
         }
         let elsewhere = try scratch.write("#!/bin/sh\n", to: "elsewhere/on-terminal", permissions: 0o755)
         try scratch.link("Quill.app/\(UserEditorScript.helperPath)", to: elsewhere)
-        #expect(throws: ShippedVim.Problem.outsideBundle("Contents/Resources/vim/on-terminal")) {
+        #expect(throws: BundledFile.Problem.outsideBundle("Contents/Resources/vim/on-terminal")) {
             try UserEditorScript(inScriptsFolder: folder, bundle: scratch.file("Quill.app"))
         }
     }
@@ -128,12 +128,11 @@ struct UserEditorScriptTests {
         }
         // macOS decides the environment of a script it runs.
         #expect(launch.environment.isEmpty)
-        // The other two are not run that way.
-        let shipped = try scratch.bundleWithVim("Other.app")
+        // The Mac's own Vim is not run that way.
+        let system = try scratch.systemVim(inBundle: bundle)
         #expect(
             !VimLaunch(
-                vim: try ShippedVim(inBundle: shipped),
-                draft: try #require(PaneEditor(path: "/d/m", dir: "/d", title: "")),
+                vim: .system(system), draft: try #require(PaneEditor(path: "/d/m", dir: "/d", title: "")),
                 vimrc: nil, term: "x", home: "/h", temporaryDirectory: "/t", base: [:]
             ).userScript)
     }

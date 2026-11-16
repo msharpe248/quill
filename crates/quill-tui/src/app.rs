@@ -361,8 +361,8 @@ impl Io<'_> {
                         });
                     }
                 }
-                // Quill's own app runs the Vim inside it, in a pane, and
-                // answers when it has gone. The app is sandboxed: when it
+                // Quill's own app runs Vim itself, in a pane, and answers
+                // when it has gone. The app is sandboxed: when it
                 // will not, nothing here runs a Vim in its place.
                 HostRequest::EditDraft {
                     path,
@@ -894,7 +894,7 @@ mod tests {
             templates: Vec::new(),
             spell_check: false,
             editor_pane: false,
-            app_vim: quill_host::bridge::EditorVim::Bundled,
+            app_vim: quill_host::bridge::EditorVim::System,
             vim_program: None,
             hooks: Vec::new(),
             hooks_enabled: false,

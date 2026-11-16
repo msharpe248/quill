@@ -42,7 +42,7 @@ public struct EditorSlot: Equatable, Sendable {
         case running(title: String)
         /// The last Vim ended, and this was reported.
         case exited(status: Int)
-        /// The last request found no Vim in this build.
+        /// The last request found no Vim to run.
         case notAvailable
         /// The last Vim could not be started.
         case failedToStart
@@ -67,7 +67,8 @@ public struct EditorSlot: Equatable, Sendable {
     }
 
     /// The core asked for an editor on the draft called `title`. `available`
-    /// says whether this build has a Vim to run.
+    /// says whether there is a Vim to run: the Mac's own, or the user's
+    /// script, whichever was asked for.
     public mutating func request(title: String, available: Bool) -> Answer {
         requests += 1
         if isRunning {

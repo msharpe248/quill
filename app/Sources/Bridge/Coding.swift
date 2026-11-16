@@ -413,7 +413,7 @@ public extension CoreToShell {
         case "pane.editor":
             let params = try envelope.decode(PaneEditorParams.self, allowing: PaneEditor.allowedKeys)
             guard let vim = EditorVim(rawValue: params.vim) else {
-                throw BridgeError.malformed("pane.editor: vim is bundled, system or script, never a program")
+                throw BridgeError.malformed("pane.editor: vim is system or script, never a program")
             }
             guard let editor = PaneEditor(path: params.path, dir: params.dir, title: params.title, vim: vim) else {
                 throw BridgeError.malformed("pane.editor: the path and the dir must be absolute")

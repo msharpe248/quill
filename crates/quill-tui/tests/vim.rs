@@ -106,7 +106,7 @@ fn the_message_goes_out_as_a_draft_file_and_vim_is_asked_to_run_on_it() {
             path: path.clone(),
             dir: dir.clone(),
             title: "Lunch".to_owned(),
-            vim: EditorVim::Bundled,
+            vim: EditorVim::System,
         }]
     );
     assert_eq!(path, dir.join("message.quill"));
@@ -164,7 +164,7 @@ fn quills_own_app_has_the_plugin_already() {
 
 #[test]
 fn quills_own_app_is_asked_for_the_vim_the_config_names() {
-    for vim in [EditorVim::Bundled, EditorVim::System, EditorVim::Script] {
+    for vim in [EditorVim::System, EditorVim::Script] {
         let mut harness = wide();
         harness.env.editor_pane = true;
         harness.env.app_vim = vim;
@@ -183,7 +183,7 @@ fn quills_own_app_is_asked_for_the_vim_the_config_names() {
                 vim,
             }]
         );
-        // A Vim the app starts itself finds the plugin in the app. The
+        // The Vim the app starts itself finds the plugin in the app. The
         // user's own, run by their script, is given a copy beside the
         // draft, as in a terminal.
         assert_eq!(dir.join("quill.vim").exists(), vim == EditorVim::Script);
@@ -197,10 +197,6 @@ fn quills_own_app_is_asked_for_the_vim_the_config_names() {
         assert!(!dir.exists());
         let screen = harness.screen();
         match vim {
-            EditorVim::Bundled => {
-                assert!(screen.contains("has no Vim inside it"), "{screen}");
-                assert!(screen.contains("vim = \"system\""), "{screen}");
-            }
             EditorVim::System => assert!(
                 screen.contains("The Vim that comes with macOS could not be started"),
                 "{screen}"

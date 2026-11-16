@@ -448,7 +448,7 @@ private enum Examples {
         #expect(
             try CoreToShell(line: examples["pane.editor.json"]!)
                 == .paneEditor(
-                    PaneEditor(path: folder + "/message.quill", dir: folder, title: "Re: Q4 roadmap", vim: .bundled)!))
+                    PaneEditor(path: folder + "/message.quill", dir: folder, title: "Re: Q4 roadmap", vim: .system)!))
 
         let answers = try Dictionary(uniqueKeysWithValues: Examples.load("shell-to-core").map { ($0.name, $0.text) })
         #expect(
@@ -477,7 +477,7 @@ private enum Examples {
         // No title is a title.
         #expect(
             CoreToShell.paneEditor(PaneEditor(path: "/d/m", dir: "/d", title: "")!).line
-                == #"{"jsonrpc":"2.0","method":"pane.editor","params":{"dir":"/d","path":"/d/m","title":"","vim":"bundled"}}"#
+                == #"{"jsonrpc":"2.0","method":"pane.editor","params":{"dir":"/d","path":"/d/m","title":"","vim":"system"}}"#
         )
         // The Vim that comes with macOS is asked for by that word.
         let systems = CoreToShell.paneEditor(PaneEditor(path: "/d/m", dir: "/d", title: "", vim: .system)!)
@@ -521,7 +521,7 @@ private enum Examples {
         #expect(throws: BridgeError.malformed("pane.editor: the path and the dir must be absolute")) {
             try CoreToShell(
                 line:
-                    #"{"jsonrpc":"2.0","method":"pane.editor","params":{"path":"m.quill","dir":"/d","title":"x","vim":"bundled"}}"#
+                    #"{"jsonrpc":"2.0","method":"pane.editor","params":{"path":"m.quill","dir":"/d","title":"x","vim":"system"}}"#
             )
         }
         #expect(throws: BridgeError.malformed("pane.editor: the path and the dir must be absolute")) {
@@ -532,8 +532,8 @@ private enum Examples {
         }
         // Which Vim is one of two words. A program's path is not one, and
         // neither is leaving it out.
-        for vim in ["/usr/bin/vim", "/opt/homebrew/bin/nvim", "vim", "System", "editor-command.sh", ""] {
-            #expect(throws: BridgeError.malformed("pane.editor: vim is bundled, system or script, never a program")) {
+        for vim in ["/usr/bin/vim", "/opt/homebrew/bin/nvim", "vim", "System", "editor-command.sh", "bundled", ""] {
+            #expect(throws: BridgeError.malformed("pane.editor: vim is system or script, never a program")) {
                 try CoreToShell(
                     line:
                         #"{"jsonrpc":"2.0","method":"pane.editor","params":{"path":"/d/m","dir":"/d","title":"x","vim":"\#(vim)"}}"#
