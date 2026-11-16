@@ -370,7 +370,7 @@ mod tests {
         }
         host.play(pdf, "a film");
         assert!(matches!(sent(&mut shell), CoreToShell::PanePlay(file) if file.title == "a film"));
-        host.reading_show(png, "a message", false, vec!["From: Ana".to_owned()]);
+        host.reading_show(png, "a message", false, vec!["From: Ana".to_owned()], None);
         assert!(matches!(
             sent(&mut shell),
             CoreToShell::ReadingShow(show)
@@ -394,7 +394,7 @@ mod tests {
         let mut header = vec!["line\u{7}".to_owned(); 9];
         header.insert(0, String::new());
         header.insert(1, "é".repeat(1500));
-        host.reading_show(png, "a message", false, header);
+        host.reading_show(png, "a message", false, header, None);
         match sent(&mut shell) {
             CoreToShell::ReadingShow(show) => {
                 assert_eq!(show.header().len(), 8);
@@ -404,7 +404,7 @@ mod tests {
             other => panic!("{other:?}"),
         }
         // A page that is not at an absolute path is not.
-        host.reading_show(Path::new("relative.html"), "", false, Vec::new());
+        host.reading_show(Path::new("relative.html"), "", false, Vec::new(), None);
         host.open_file(pdf);
         assert!(matches!(sent(&mut shell), CoreToShell::FileOpen(_)));
         // The shell has a save panel, and is asked.

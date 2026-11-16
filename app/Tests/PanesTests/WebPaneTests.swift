@@ -1,4 +1,5 @@
 import AppKit
+import Bridge
 import Foundation
 import Testing
 import WebKit
@@ -311,6 +312,49 @@ struct WebPaneTests {
         let plain = self.pane(file, remote: false)
         defer { plain.tearDown() }
         #expect(!plain.isClosable && plain.headerLines.isEmpty)
+    }
+
+    @Test func aNoticeIsABarAboveThePageWhoseButtonsReportTheirNames() throws {
+        let scratch = try Scratch()
+        let file = try scratch.write("<p>Hello</p>", to: "message.html")
+        let load = try #require(ReadingAction(command: "message.load_remote", title: "Load Pictures"))
+        let always = try #require(ReadingAction(command: "sender.always_remote", title: "Always from This Sender"))
+        let notice = try #require(ReadingNotice(text: "2 remote pictures were left out.", actions: [load, always]))
+        let pane = WebPane(
+            file: file, title: "A subject", allowsRemoteContent: false, header: ["From: Ana"], notice: notice
+        ) { _ in }
+        defer { pane.tearDown() }
+        var used: [String] = []
+        pane.onNoticeButton = { used.append($0) }
+
+        // The words and a button for each action, in the pane and outside
+        // the web view, where the page cannot reach.
+        let labels = allSubviews(of: pane).compactMap { $0 as? NSTextField }.map(\.stringValue)
+        #expect(labels.contains("2 remote pictures were left out."))
+        let buttons = allSubviews(of: pane).compactMap { $0 as? NSButton }.filter { !$0.isHidden }
+        #expect(buttons.map(\.title) == ["Load Pictures", "Always from This Sender"])
+        #expect(allSubviews(of: pane.webView).compactMap { $0 as? NSButton }.isEmpty)
+        // A click leaves the keyboard where it was.
+        #expect(buttons.allSatisfy { $0.refusesFirstResponder })
+
+        buttons[0].performClick(nil)
+        #expect(used == ["message.load_remote"])
+        #expect(pane.pressNoticeButton("sender.always_remote"))
+        #expect(used == ["message.load_remote", "sender.always_remote"])
+        // Only a button that is there can be used.
+        #expect(!pane.pressNoticeButton("message.delete"))
+        #expect(used.count == 2)
+        #expect(
+            pane.summary.contains(
+                #"notice "2 remote pictures were left out." [Load Pictures] [Always from This Sender]"#))
+
+        // A pane with nothing to say has no bar and no button to use.
+        let plain = readingPane(file, header: ["From: Ana"])
+        defer { plain.tearDown() }
+        #expect(plain.notice == nil)
+        #expect(allSubviews(of: plain).compactMap { $0 as? NSButton }.filter { !$0.isHidden }.isEmpty)
+        #expect(!plain.pressNoticeButton("message.load_remote"))
+        #expect(!plain.summary.contains("notice"))
     }
 
     @Test func aReadingPaneWithNothingToSayAboveItsPageSaysNothing() throws {

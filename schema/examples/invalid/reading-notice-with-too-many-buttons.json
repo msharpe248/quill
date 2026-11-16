@@ -1,0 +1,19 @@
+{
+  "jsonrpc": "2.0",
+  "method": "reading.show",
+  "params": {
+    "path": "/Users/robin/Library/Containers/dev.quill.Quill/Data/tmp/quill-view-412/m88/page/message.html",
+    "title": "Hello",
+    "remote": false,
+    "header": [],
+    "notice": {
+      "text": "2 remote pictures were left out.",
+      "actions": [
+        { "command": "message.load_remote", "title": "One" },
+        { "command": "message.load_remote", "title": "Two" },
+        { "command": "message.load_remote", "title": "Three" },
+        { "command": "message.load_remote", "title": "Four" }
+      ]
+    }
+  }
+}

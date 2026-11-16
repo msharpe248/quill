@@ -358,7 +358,24 @@ impl Io<'_> {
                     title,
                     remote,
                     header,
-                } => self.host.reading_show(&path, &title, remote, header),
+                    notice,
+                } => {
+                    // A notice that cannot be said is not; the page is
+                    // shown all the same.
+                    let notice = notice.and_then(|notice| {
+                        let actions = notice
+                            .actions
+                            .into_iter()
+                            .map(|(command, title)| bridge::ReadingAction {
+                                command: command.to_owned(),
+                                title: title.to_owned(),
+                            })
+                            .collect();
+                        bridge::ReadingNotice::new(&notice.text, actions)
+                    });
+                    self.host
+                        .reading_show(&path, &title, remote, header, notice);
+                }
                 HostRequest::ScrollReading { down } => self.host.reading_scroll(if down {
                     bridge::ScrollBy::PageDown
                 } else {

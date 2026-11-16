@@ -946,13 +946,27 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     private static let longestWaitForAPage = 0.4
 
     private func makeReadingPane(_ page: ReadingShow) -> WebPane {
-        WebPane(
+        let pane = WebPane(
             file: URL(fileURLWithPath: page.path), title: page.title, allowsRemoteContent: page.remote,
-            header: page.header
+            header: page.header, notice: page.notice
         ) { [weak self] address in
             // The same door every other link goes through.
             self?.openLink(address.absoluteString)
         }
+        // A button of the notice runs its command, as a menu item does.
+        // What the command is, and whether it still applies, is the
+        // core's to say.
+        pane.onNoticeButton = { [weak self] command in
+            self?.commands.run(named: command)
+        }
+        return pane
+    }
+
+    /// Uses a button of the notice above the page in the reading pane, by
+    /// the name of its command, as a click on it does. False when there
+    /// is no such button on show.
+    func pressReadingNotice(_ command: String) -> Bool {
+        readingPane?.pressNoticeButton(command) ?? false
     }
 
     /// Shows a page in the reading pane, in place of the page it showed.

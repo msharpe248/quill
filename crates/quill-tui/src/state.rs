@@ -337,6 +337,15 @@ impl Effects {
     }
 }
 
+/// What the web reading pane says about its page in a bar above it, and
+/// the buttons beside the words: each a command, by name, and what the
+/// button says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PageNotice {
+    pub text: String,
+    pub actions: Vec<(&'static str, &'static str)>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostRequest {
     /// Open a web or mail address in the user's browser or mail program.
@@ -372,12 +381,14 @@ pub enum HostRequest {
     },
     /// Show a sanitized page in the web reading pane, in place of what
     /// it showed, with `header` as lines of plain text above it. `remote`:
-    /// it may load remote content.
+    /// it may load remote content. `notice`: what to tell the user about
+    /// the page, in a bar above it.
     Reading {
         path: PathBuf,
         title: String,
         remote: bool,
         header: Vec<String>,
+        notice: Option<PageNotice>,
     },
     /// Scroll what the web reading pane shows by a page: down, or up.
     ScrollReading { down: bool },
@@ -4580,6 +4591,22 @@ impl State {
             .collect()
     }
 
+    /// The buttons beside the words that say remote pictures were left
+    /// out of a page: load them for this message, or always for its
+    /// sender. None where the user has said never to load them.
+    fn remote_actions(env: &Env) -> Vec<(&'static str, &'static str)> {
+        if env.remote_never {
+            return Vec::new();
+        }
+        [
+            (CommandId::MessageLoadRemote, "Load Pictures"),
+            (CommandId::SenderAlwaysRemote, "Always from This Sender"),
+        ]
+        .into_iter()
+        .filter_map(|(id, title)| Some((env.registry.get(id)?.name, title)))
+        .collect()
+    }
+
     /// Puts the page of the message under the cursor in the web reading
     /// pane. A message the user went to is read once it is shown.
     fn show_in_reading_pane(
@@ -4587,6 +4614,7 @@ impl State {
         env: &Env,
         message: LocalMessageId,
         page: crate::files::WebPage,
+        notice: Option<PageNotice>,
         out: &mut Effects,
     ) {
         out.host.push(HostRequest::Reading {
@@ -4594,6 +4622,7 @@ impl State {
             title: text::sanitize_line(&page.title),
             remote: page.remote,
             header: self.reading_header(env),
+            notice,
         });
         // Opened, as far as being read goes: the same rule as `enter` in
         // the list with the reader drawn here.
@@ -5247,27 +5276,41 @@ impl State {
                 {
                     return;
                 }
-                if page.blocked > 0 && !page.remote {
-                    let pictures = if page.blocked == 1 {
+                // Remote pictures were left out: say so, and how to have
+                // them. The reading pane says it in a bar above the page,
+                // with buttons; a page for the browser has only the
+                // status line to say it in.
+                let left_out = (page.blocked > 0 && !page.remote).then(|| {
+                    if page.blocked == 1 {
                         "1 remote picture was left out".to_owned()
                     } else {
                         format!("{} remote pictures were left out", page.blocked)
-                    };
-                    let how = match (
-                        env.remote_never,
-                        env.hint_key(CommandId::MessageLoadRemote),
-                        env.hint_key(CommandId::SenderAlwaysRemote),
-                    ) {
-                        (false, Some(once), Some(always)) => {
-                            format!(". {once} loads them, {always} always for this sender")
-                        }
-                        _ => String::new(),
-                    };
-                    self.flash = Some((format!("{pictures}{how}."), false));
-                }
+                    }
+                });
                 match then {
-                    PageUse::Browser => out.host.push(HostRequest::OpenFile(page.path)),
-                    PageUse::Reading => self.show_in_reading_pane(env, message, page, out),
+                    PageUse::Browser => {
+                        if let Some(pictures) = left_out {
+                            let how = match (
+                                env.remote_never,
+                                env.hint_key(CommandId::MessageLoadRemote),
+                                env.hint_key(CommandId::SenderAlwaysRemote),
+                            ) {
+                                (false, Some(once), Some(always)) => {
+                                    format!(". {once} loads them, {always} always for this sender")
+                                }
+                                _ => String::new(),
+                            };
+                            self.flash = Some((format!("{pictures}{how}."), false));
+                        }
+                        out.host.push(HostRequest::OpenFile(page.path));
+                    }
+                    PageUse::Reading => {
+                        let notice = left_out.map(|pictures| PageNotice {
+                            text: format!("{pictures}."),
+                            actions: Self::remote_actions(env),
+                        });
+                        self.show_in_reading_pane(env, message, page, notice, out);
+                    }
                 }
             }
             DataEvent::PageFailed { message, problem } => {
@@ -5289,6 +5332,7 @@ impl State {
                         title: String::new(),
                         remote: false,
                         header: Vec::new(),
+                        notice: None,
                     });
                 }
             }

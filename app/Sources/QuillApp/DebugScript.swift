@@ -18,6 +18,8 @@ import WebKit
 /// - `menu:COMMAND`   choose the menu item of a core command, by its name
 /// - `resize:WxH`     resize the window, in points
 /// - `toolbar:COMMAND` click the toolbar button of a core command
+/// - `notice:COMMAND` click the button of a core command in the notice above
+///   the page in the reading pane
 /// - `item:TITLE`     choose one of the shell's own menu items, by its title
 /// - `choose:PATH,PATH` what the open panel answers when the core next asks
 ///   for files; no panel is ever shown to a script
@@ -265,6 +267,11 @@ enum DebugScript {
                 _ = NSApp.sendAction(item.action!, to: item.target, from: item)
             } else {
                 note("no enabled toolbar item for \(argument)")
+            }
+            try? await Task.sleep(for: .milliseconds(150))
+        case "notice":
+            if !controller.pressReadingNotice(argument) {
+                note("no notice button for \(argument)")
             }
             try? await Task.sleep(for: .milliseconds(150))
         case "item":

@@ -89,6 +89,8 @@ private enum Examples {
             "form-code-with-the-focus.json", "form-code-with-nothing-to-show.json",
             "form-field-of-an-unknown-kind.json", "form-used-with-a-button-that-is-no-name.json",
             "form-used-with-no-secrets.json", "reading-header-too-long.json", "reading-scroll-sideways.json",
+            "reading-notice-with-a-button-that-runs-nothing.json", "reading-notice-with-nothing-to-say.json",
+            "reading-notice-with-too-many-buttons.json",
             "relative-reading-path.json", "reading-place-with-no-columns.json", "window-wider-than-a-terminal.json",
             "form-toggle-in-a-sheet.json", "settings-with-a-secret.json", "settings-with-nothing-to-show.json",
             "settings-number-that-steps-by-nothing.json", "settings-pane-with-no-symbol.json",
@@ -231,11 +233,42 @@ private enum Examples {
                 "From: The Round-up <news@example.com>", "To: Robin Example <robin@example.com>",
                 "Saturday 14 November 2026, 09:12",
             ])
+        #expect(show.notice?.text == "2 remote pictures were left out.")
+        #expect(show.notice?.actions.map(\.command) == ["message.load_remote", "sender.always_remote"])
+        #expect(show.notice?.actions.map(\.title) == ["Load Pictures", "Always from This Sender"])
+        // What is sent is what was read, and a page with nothing to say
+        // about it says nothing of a notice.
+        #expect(try CoreToShell(line: CoreToShell.readingShow(show).line) == .readingShow(show))
+        let plain = try #require(ReadingShow(path: "/a", title: "", remote: false))
+        #expect(!CoreToShell.readingShow(plain).line.contains("notice"))
+        for bad in [
+            #"null"#, #"{"text":"x"}"#, #"{"text":"","actions":[]}"#, #"{"text":"x","actions":[],"more":1}"#,
+            #"{"text":"x","actions":[{"command":"Load","title":"Load"}]}"#,
+            #"{"text":"x","actions":[{"command":"a.b","title":""}]}"#,
+            #"{"text":"x","actions":[{"command":"a.b","title":"B","key":"i"}]}"#,
+        ] {
+            let line =
+                #"{"jsonrpc":"2.0","method":"reading.show","params":{"path":"/a","title":"","remote":false,"header":[],"notice":"#
+                + bad + "}}"
+            #expect(throws: BridgeError.self, "\(bad)") { try CoreToShell(line: line) }
+        }
         #expect(try CoreToShell(line: examples["reading.scroll.json"]!) == .readingScroll(.pageDown))
         #expect(try CoreToShell(line: examples["reading.close.json"]!) == .readingClose)
         #expect(CoreToShell.readingScroll(.pageUp).line.contains("\"by\":\"page_up\""))
 
         // It cannot be built holding what the core would not send.
+        #expect(ReadingNotice(text: "Left out.") != nil)
+        #expect(ReadingNotice(text: "") == nil)
+        #expect(ReadingNotice(text: "two\nlines") == nil)
+        let load = try #require(ReadingAction(command: "message.load_remote", title: "Load Pictures"))
+        #expect(ReadingNotice(text: "Left out.", actions: Array(repeating: load, count: 3)) != nil)
+        #expect(ReadingNotice(text: "Left out.", actions: Array(repeating: load, count: 4)) == nil)
+        for name in ["", "load", "Message.load", "message.", ".load", "message.load-remote", "a b.c"] {
+            #expect(ReadingAction(command: name, title: "Load") == nil, "\(name)")
+        }
+        #expect(ReadingAction(command: "a.b", title: "") == nil)
+        #expect(ReadingAction(command: "a.b", title: String(repeating: "x", count: 64)) != nil)
+        #expect(ReadingAction(command: "a.b", title: String(repeating: "x", count: 65)) == nil)
         #expect(ReadingShow(path: "message.html", title: "", remote: false) == nil)
         #expect(ReadingShow(path: "/a", title: "", remote: false) != nil)
         #expect(ReadingShow(path: "/a", title: "", remote: false, header: Array(repeating: "x", count: 8)) != nil)

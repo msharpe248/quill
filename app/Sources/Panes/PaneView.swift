@@ -41,6 +41,32 @@ public enum PaneKey: Equatable, Sendable, CaseIterable {
     }
 }
 
+/// Something a pane says about what it shows, in a bar of its own between
+/// its header and the viewer, with a button for each thing that can be done
+/// about it. The pane gives the words and the buttons no meaning: a button
+/// has a name, and using it reports the name.
+public struct PaneNotice: Equatable, Sendable {
+    public struct Button: Equatable, Sendable {
+        /// What `onNoticeButton` is given when the button is used.
+        public var name: String
+        /// What the button says.
+        public var title: String
+
+        public init(name: String, title: String) {
+            self.name = name
+            self.title = title
+        }
+    }
+
+    public var text: String
+    public var buttons: [Button]
+
+    public init(text: String, buttons: [Button] = []) {
+        self.text = text
+        self.buttons = buttons
+    }
+}
+
 /// The second pane: a header with a title and a close button, over one
 /// native viewer. `PreviewPane`, `PlayerPane` and `WebPane` are the viewers;
 /// `EditorPane` holds a terminal instead.
@@ -59,6 +85,11 @@ public class PaneView: NSView {
     /// reading pane says who a message is from and to there, outside the
     /// page, where the page cannot reach.
     public let headerLines: [String]
+    /// What the pane says about what it shows, in a bar under the header,
+    /// in a pane that has something to say.
+    public let notice: PaneNotice?
+    /// A button of the notice was used: its name.
+    public var onNoticeButton: ((String) -> Void)?
     /// Whether the pane has a close button. The reading pane has none: it
     /// goes when the core says so.
     public let isClosable: Bool
@@ -79,12 +110,13 @@ public class PaneView: NSView {
     /// false leaves the close button out.
     init(
         kind: PaneKind, title: String, content: NSView, closeHint: String = "Close Pane (esc)",
-        headerLines: [String]? = nil, closable: Bool = true
+        headerLines: [String]? = nil, notice: PaneNotice? = nil, closable: Bool = true
     ) {
         self.kind = kind
         self.title = title
         self.content = content
         self.headerLines = headerLines ?? []
+        self.notice = notice
         isClosable = closable
         super.init(frame: .zero)
 
@@ -159,11 +191,13 @@ public class PaneView: NSView {
             body.addSubview(view)
         }
 
-        let stack = NSStackView(views: [header, body])
+        let bar = notice.map { makeNoticeBar($0, leading: insets.left, trailing: insets.right) }
+        let stack = NSStackView(views: [header] + (bar.map { [$0] } ?? []) + [body])
         stack.orientation = .vertical
         stack.spacing = 0
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
+        bar?.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         NSLayoutConstraint.activate([
             stack.topAnchor.constraint(equalTo: topAnchor),
             stack.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -188,6 +222,84 @@ public class PaneView: NSView {
     @available(*, unavailable)
     required init?(coder _: NSCoder) {
         fatalError("init(coder:) is not used")
+    }
+
+    /// The bar the notice is said in: the words at the left, cut short
+    /// before a button is, and the buttons at the right. It is a shade
+    /// apart from the header above it and the viewer below, in a light
+    /// window and in a dark one.
+    private func makeNoticeBar(_ notice: PaneNotice, leading: CGFloat, trailing: CGFloat) -> NSView {
+        let label = NSTextField(labelWithString: notice.text)
+        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        label.textColor = .labelColor
+        label.lineBreakMode = .byTruncatingTail
+        label.maximumNumberOfLines = 1
+        label.toolTip = notice.text
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        label.setAccessibilityIdentifier("pane.notice.text")
+
+        let buttons = notice.buttons.map { button in
+            let control = NSButton(title: button.title, target: self, action: #selector(useNoticeButton(_:)))
+            control.bezelStyle = .rounded
+            control.controlSize = .small
+            control.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+            control.identifier = NSUserInterfaceItemIdentifier(button.name)
+            // A button is never cut short, and never takes the keyboard
+            // from the list: it is clicked, and the keys stay where they
+            // were.
+            control.refusesFirstResponder = true
+            control.setContentCompressionResistancePriority(.required, for: .horizontal)
+            control.setContentHuggingPriority(.required, for: .horizontal)
+            control.setAccessibilityIdentifier("pane.notice.\(button.name)")
+            return control
+        }
+
+        let row = NSStackView(views: [label, NSView()] + buttons)
+        row.orientation = .horizontal
+        row.spacing = 8
+        row.edgeInsets = NSEdgeInsets(top: 5, left: leading, bottom: 5, right: trailing)
+        row.translatesAutoresizingMaskIntoConstraints = false
+
+        let bar = NSBox()
+        bar.boxType = .custom
+        bar.titlePosition = .noTitle
+        bar.borderWidth = 0
+        bar.cornerRadius = 0
+        bar.contentViewMargins = .zero
+        bar.fillColor = .unemphasizedSelectedContentBackgroundColor
+        bar.addSubview(row)
+        NSLayoutConstraint.activate([
+            row.topAnchor.constraint(equalTo: bar.topAnchor),
+            row.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
+            row.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
+            row.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
+        ])
+        bar.setContentHuggingPriority(.required, for: .vertical)
+        bar.setAccessibilityIdentifier("pane.notice")
+        return bar
+    }
+
+    @objc private func useNoticeButton(_ sender: NSButton) {
+        if let name = sender.identifier?.rawValue {
+            pressNoticeButton(name)
+        }
+    }
+
+    /// Uses the notice's button of this name, as a click on it does. False
+    /// when the pane has no such button.
+    @discardableResult
+    public func pressNoticeButton(_ name: String) -> Bool {
+        guard notice?.buttons.contains(where: { $0.name == name }) == true else { return false }
+        onNoticeButton?(name)
+        return true
+    }
+
+    /// The notice in a few words, for a scripted run's dump.
+    var noticeSummary: String? {
+        notice.map { notice in
+            (["notice \(notice.text.debugDescription)"] + notice.buttons.map { "[\($0.title)]" })
+                .joined(separator: " ")
+        }
     }
 
     /// The pane itself takes the keyboard when its viewer cannot, so that

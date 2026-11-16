@@ -284,6 +284,44 @@
               "type": "array",
               "maxItems": 8,
               "items": { "type": "string", "minLength": 1, "maxLength": 2000 }
+            },
+            "notice": {
+              "description": "Something to tell the user about the page, shown in a bar of its own between the header and the page, where the page cannot reach: that remote pictures were left out of it, say. Left out when there is nothing to say. Each action is a button beside the words; using one sends command.run with its command, as a menu item would. The shell shows the words and the buttons and gives them no meaning.",
+              "type": "object",
+              "required": ["text", "actions"],
+              "additionalProperties": false,
+              "properties": {
+                "text": {
+                  "description": "One line, with no control characters, of at most 2000 bytes.",
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000,
+                  "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+                },
+                "actions": {
+                  "type": "array",
+                  "maxItems": 3,
+                  "items": {
+                    "type": "object",
+                    "required": ["command", "title"],
+                    "additionalProperties": false,
+                    "properties": {
+                      "command": {
+                        "description": "The name of a command from commands.list.",
+                        "type": "string",
+                        "pattern": "^[a-z]+(\\.[a-z_]+)+$"
+                      },
+                      "title": {
+                        "description": "What the button says: one line of at most 64 bytes.",
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64,
+                        "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+                      }
+                    }
+                  }
+                }
+              }
             }
           }
         }

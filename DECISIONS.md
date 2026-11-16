@@ -897,3 +897,13 @@ Asked for by the owner on 2026-11-16: themes for colours, importing the ones mad
   - **The editor pane's sixteen colours are not the theme's.** The app's terminals are given the theme's background and text, as before; the colours a program names (`red`, `bright-black`) are still libghostty's own dark or light set, chosen by the background's brightness. An imported Ghostty theme has those sixteen, and passing them on would make Vim's colours the theme's; it needs `state.update` to carry a palette and `TerminalKit` to write one, and was left.
   - Named colours in a theme file; the cursor's colours, which Quill has no use for.
   - With 256 colours a theme's colours become the nearest of the 256, and the bars were measured on the colours as written.
+
+## Remote pictures in the web reading pane (2026-11-16)
+
+The owner saw mail with no pictures in the web pane and asked whether a button was needed. Pictures from the web are left out on purpose until asked for (`i`, `I`, the Message menu), and the only sign of it was a line in the status bar.
+
+- **A bar above the page.** While remote pictures are left out, the reading pane has a bar between its header and the page: "2 remote pictures were left out." with **Load Pictures** and **Always from This Sender**, as Mail has. The status line no longer says it for the pane; it still does for a page handed to the browser (`B`), which has nowhere else to say it.
+- **The core's words, the shell's bar.** `reading.show` gained an optional `notice`: one line and up to three actions, each a command's name and a title. A button sends `command.run`, as a menu item does, so the core still decides what the command does and whether it applies. With `remote_images = "never"` the notice has the words and no buttons.
+- **A click leaves the keyboard with the list.** The buttons refuse the keyboard focus.
+- **Seen in the app** on the demo mailbox: the bar over the newsletter, and Load Pictures putting the page back with remote content allowed and no bar (`notice:COMMAND` in a script).
+- **Not done:** a setting to always load remote pictures from everyone. `remote_images` has `ask` and `never`, and the list of senders `I` adds to.

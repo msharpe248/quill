@@ -320,6 +320,67 @@ public struct PanePreview: Equatable, Sendable, Codable {
     static let allowedKeys: Set<String> = ["items", "index"]
 }
 
+/// A button in a notice above a page: the command it runs, and what the
+/// button says.
+public struct ReadingAction: Equatable, Sendable, Codable {
+    /// A command's name, as `commands.list` gives it.
+    public var command: String
+    public var title: String
+
+    /// The longest title, in bytes.
+    public static let longestTitle = 64
+
+    /// A command's name: lowercase words joined by dots, as
+    /// `message.load_remote`.
+    static func isCommand(_ name: String) -> Bool {
+        let parts = name.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count >= 2, let first = parts.first, !first.isEmpty else { return false }
+        let lowercase: (Unicode.Scalar) -> Bool = { ("a"..."z").contains($0) }
+        return first.unicodeScalars.allSatisfy(lowercase)
+            && parts.dropFirst().allSatisfy { part in
+                !part.isEmpty && part.unicodeScalars.allSatisfy { lowercase($0) || $0 == "_" }
+            }
+    }
+
+    /// `nil` unless the command is a command's name and the title one
+    /// line of 1 to 64 bytes.
+    public init?(command: String, title: String) {
+        guard Self.isCommand(command), ReadingNotice.isOneLine(title, atMost: Self.longestTitle) else { return nil }
+        self.command = command
+        self.title = title
+    }
+
+    static let allowedKeys: Set<String> = ["command", "title"]
+}
+
+/// Something to tell the user about the page in the reading pane, in a bar
+/// of its own between the header and the page, with buttons that run
+/// commands. The shell shows the words and the buttons and gives them no
+/// meaning.
+public struct ReadingNotice: Equatable, Sendable, Codable {
+    public var text: String
+    public var actions: [ReadingAction]
+
+    /// The most buttons a notice may carry.
+    public static let mostActions = 3
+
+    static func isOneLine(_ text: String, atMost longest: Int) -> Bool {
+        (1...longest).contains(text.utf8.count)
+            && !text.unicodeScalars.contains { $0.properties.generalCategory == .control }
+    }
+
+    /// `nil` unless the words are one line of 1 to 2000 bytes and there
+    /// are at most three buttons.
+    public init?(text: String, actions: [ReadingAction] = []) {
+        guard Self.isOneLine(text, atMost: ReadingShow.longestHeaderLine), actions.count <= Self.mostActions
+        else { return nil }
+        self.text = text
+        self.actions = actions
+    }
+
+    static let allowedKeys: Set<String> = ["text", "actions"]
+}
+
 /// A page for the reading pane, and what to say above it. The shell shows
 /// the page under the web view's rules and the lines as plain text. It
 /// knows nothing else about them.
@@ -332,6 +393,8 @@ public struct ReadingShow: Equatable, Sendable, Codable {
     /// Lines of plain text shown above the page, outside it, where the
     /// page cannot reach.
     public var header: [String]
+    /// What to tell the user about the page, in a bar above it.
+    public var notice: ReadingNotice?
 
     /// The most lines the header may have.
     public static let mostHeaderLines = 8
@@ -345,16 +408,17 @@ public struct ReadingShow: Equatable, Sendable, Codable {
 
     /// `nil` unless the path is absolute and the header is at most eight
     /// lines, each one line of 1 to 2000 bytes.
-    public init?(path: String, title: String, remote: Bool, header: [String] = []) {
+    public init?(path: String, title: String, remote: Bool, header: [String] = [], notice: ReadingNotice? = nil) {
         guard path.hasPrefix("/"), header.count <= Self.mostHeaderLines, header.allSatisfy(Self.isHeaderLine)
         else { return nil }
         self.path = path
         self.title = title
         self.remote = remote
         self.header = header
+        self.notice = notice
     }
 
-    static let allowedKeys: Set<String> = ["path", "title", "remote", "header"]
+    static let allowedKeys: Set<String> = ["path", "title", "remote", "header", "notice"]
 }
 
 /// The reading pane's place in the window, said in the terminal's own

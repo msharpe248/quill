@@ -89,7 +89,7 @@ let package = Package(
         ),
         .testTarget(
             name: "PanesTests",
-            dependencies: ["Panes"]
+            dependencies: ["Panes", "Bridge"]
         ),
         .testTarget(
             name: "NotificationsTests",

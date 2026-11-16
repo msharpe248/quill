@@ -161,16 +161,25 @@ public final class WebPane: PaneView, WKNavigationDelegate, WKUIDelegate {
 
     /// - Parameters:
     ///   - header: Lines of plain text above the page, outside it.
+    ///   - notice: What to say about the page in a bar above it, with a
+    ///     button for each command that can be run about it.
     ///   - openLink: Given a web or mail address the user clicked.
     public init(
         file: URL, title: String, allowsRemoteContent: Bool, header: [String] = [],
-        openLink: @escaping (URL) -> Void
+        notice: ReadingNotice? = nil, openLink: @escaping (URL) -> Void
     ) {
         policy = WebNavigationPolicy(document: file)
         self.allowsRemoteContent = allowsRemoteContent
         self.openLink = openLink
         webView = MessageWebView(frame: .zero, configuration: Self.configuration())
-        super.init(kind: .web, title: title, content: webView, headerLines: header, closable: false)
+        super.init(
+            kind: .web, title: title, content: webView, headerLines: header,
+            notice: notice.map { notice in
+                PaneNotice(
+                    text: notice.text,
+                    buttons: notice.actions.map { PaneNotice.Button(name: $0.command, title: $0.title) })
+            },
+            closable: false)
 
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -264,6 +273,9 @@ public final class WebPane: PaneView, WKNavigationDelegate, WKUIDelegate {
         }
         if !refused.isEmpty {
             words.append("refused \(refused.count)")
+        }
+        if let noticeSummary {
+            words.append(noticeSummary)
         }
         if message != nil {
             words.append(super.summary)

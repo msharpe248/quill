@@ -9,6 +9,13 @@
       "From: The Round-up <news@example.com>",
       "To: Robin Example <robin@example.com>",
       "Saturday 14 November 2026, 09:12"
-    ]
+    ],
+    "notice": {
+      "text": "2 remote pictures were left out.",
+      "actions": [
+        { "command": "message.load_remote", "title": "Load Pictures" },
+        { "command": "sender.always_remote", "title": "Always from This Sender" }
+      ]
+    }
   }
 }

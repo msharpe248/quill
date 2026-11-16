@@ -212,11 +212,20 @@ pub trait Host: Send + Sync {
     /// as lines of plain text above it. Only a shell has one: a caller
     /// asks this of a host that said it was one. Nothing is shown for a
     /// path that is not absolute or a header the pane has no room for.
-    fn reading_show(&self, path: &Path, title: &str, remote: bool, header: Vec<String>) {
+    /// `notice` is what to tell the user about the page, in a bar above
+    /// it, with buttons that run commands.
+    fn reading_show(
+        &self,
+        path: &Path,
+        title: &str,
+        remote: bool,
+        header: Vec<String>,
+        notice: Option<bridge::ReadingNotice>,
+    ) {
         if let Some(show) = AbsolutePath::new(path)
             .and_then(|path| bridge::ReadingShow::new(path, title, remote, reading_header(header)))
         {
-            self.send(CoreToShell::ReadingShow(show));
+            self.send(CoreToShell::ReadingShow(show.with_notice(notice)));
         }
     }
 

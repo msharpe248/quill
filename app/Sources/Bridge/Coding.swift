@@ -154,6 +154,46 @@ private struct ReadingShowParams: Codable {
     var title: String
     var remote: Bool
     var header: [String]
+    var notice: ReadingNoticeParams?
+}
+
+private struct ReadingNoticeParams: Codable {
+    var text: String
+    var actions: [ReadingActionParams]
+}
+
+private struct ReadingActionParams: Codable {
+    var command: String
+    var title: String
+}
+
+/// The notice of a `reading.show`, checked as strictly as the message
+/// itself: nothing in it that is not known, every button a command and a
+/// title. `raw` is the notice as it came, to look for what is not known.
+private func readingNotice(_ params: ReadingNoticeParams?, as raw: JSONValue?) throws -> ReadingNotice? {
+    guard let params else { return nil }
+    var keys = [(Set((raw?.object ?? [:]).keys), ReadingNotice.allowedKeys)]
+    if case let .array(actions)? = raw?.object?["actions"] {
+        keys += actions.map { (Set(($0.object ?? [:]).keys), ReadingAction.allowedKeys) }
+    }
+    for (found, allowed) in keys {
+        let extra = found.subtracting(allowed)
+        guard extra.isEmpty else {
+            throw BridgeError.malformed("reading.show: unexpected \(extra.sorted().joined(separator: ", "))")
+        }
+    }
+    let actions = try params.actions.map { action in
+        guard let action = ReadingAction(command: action.command, title: action.title) else {
+            throw BridgeError.malformed(
+                "reading.show: a notice's action needs a command's name and a title of 1 to 64 bytes")
+        }
+        return action
+    }
+    guard let notice = ReadingNotice(text: params.text, actions: actions) else {
+        throw BridgeError.malformed(
+            "reading.show: a notice is one line of 1 to 2000 bytes with at most 3 actions")
+    }
+    return notice
 }
 
 private struct ReadingScrollParams: Codable {
@@ -889,9 +929,12 @@ public extension CoreToShell {
             self = .formClose
         case "reading.show":
             let params = try envelope.decode(ReadingShowParams.self, allowing: ReadingShow.allowedKeys)
+            try envelope.requireNotNull("notice")
+            let notice = try readingNotice(params.notice, as: envelope.params.object?["notice"])
             guard
                 let show = ReadingShow(
-                    path: params.path, title: params.title, remote: params.remote, header: params.header)
+                    path: params.path, title: params.title, remote: params.remote, header: params.header,
+                    notice: notice)
             else {
                 throw BridgeError.malformed(
                     "reading.show: the path must be absolute and the header at most 8 lines of 1 to 2000 bytes")

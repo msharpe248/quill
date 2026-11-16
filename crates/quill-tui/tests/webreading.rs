@@ -15,7 +15,7 @@ use quill_tui::command::{CommandId, Context};
 use quill_tui::data::{DataEvent, DataRequest, PageUse};
 use quill_tui::files::RemoteContent;
 use quill_tui::setup::{AccountEvent, AccountRequest, Preference};
-use quill_tui::state::{Action, HostRequest, Mouse, MouseKind, Pane, Shown};
+use quill_tui::state::{Action, HostRequest, Mouse, MouseKind, PageNotice, Pane, Shown};
 
 const SIZES: [(u16, u16); 2] = [(80, 24), (200, 60)];
 
@@ -31,6 +31,7 @@ struct Page {
     path: PathBuf,
     remote: bool,
     header: Vec<String>,
+    notice: Option<PageNotice>,
 }
 
 /// Every page put in the reading pane so far, in order.
@@ -44,11 +45,13 @@ fn pages(harness: &Harness) -> Vec<Page> {
                 title,
                 remote,
                 header,
+                notice,
             } => Some(Page {
                 title: title.clone(),
                 path: path.clone(),
                 remote: *remote,
                 header: header.clone(),
+                notice: notice.clone(),
             }),
             _ => None,
         })
@@ -463,9 +466,20 @@ fn the_keys_for_the_message_work_from_the_list() {
     assert!(!text.contains("open.gif"), "{text}");
     assert!(text.contains("Content-Security-Policy"), "{text}");
     assert!(!text.to_lowercase().contains("<script"));
+    // The pane says what was left out, in a bar above the page, with a
+    // button for each way of having it. The status line is left alone.
+    assert_eq!(
+        page.notice,
+        Some(PageNotice {
+            text: "1 remote picture was left out.".to_owned(),
+            actions: vec![
+                ("message.load_remote", "Load Pictures"),
+                ("sender.always_remote", "Always from This Sender"),
+            ],
+        })
+    );
     assert!(
-        status(&harness)
-            .contains("1 remote picture was left out. i loads them, I always for this sender."),
+        !status(&harness).contains("left out"),
         "{}",
         status(&harness)
     );
@@ -489,6 +503,7 @@ fn the_keys_for_the_message_work_from_the_list() {
     harness.keys("i");
     let page = showing(&harness);
     assert!(page.remote);
+    assert_eq!(page.notice, None);
     assert!(html(&page).contains("https://example.com/open.gif"));
     assert_eq!(page.title, "Issue 88: Parsing email is still hard");
 
@@ -586,6 +601,27 @@ fn the_keys_for_the_message_work_from_the_list() {
     harness.settle();
     assert_eq!(showing(&harness).title, next);
     assert!(is_read(&harness, &next));
+}
+
+#[test]
+fn with_remote_pictures_set_to_never_the_pane_says_so_and_offers_nothing() {
+    let mut harness = reading();
+    harness.env.remote_never = true;
+    harness.keys("G k k");
+    harness.settle();
+    let page = showing(&harness);
+    assert_eq!(page.title, "Issue 88: Parsing email is still hard");
+    assert_eq!(
+        page.notice,
+        Some(PageNotice {
+            text: "1 remote picture was left out.".to_owned(),
+            actions: Vec::new(),
+        })
+    );
+    // A message with nothing left out of it has nothing said above it.
+    harness.keys("g g");
+    harness.settle();
+    assert_eq!(showing(&harness).notice, None);
 }
 
 #[test]

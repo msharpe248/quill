@@ -491,6 +491,103 @@ pub const MAX_READING_HEADER_LINES: usize = 8;
 /// The longest any one of them may be, in bytes.
 pub const MAX_READING_HEADER_BYTES: usize = 2000;
 
+/// The most buttons a notice above a page may carry.
+pub const MAX_READING_ACTIONS: usize = 3;
+/// The longest a button's title may be, in bytes.
+pub const MAX_READING_ACTION_TITLE: usize = 64;
+
+/// Something to tell the user about the page in the reading pane, in a bar
+/// of its own between the header and the page: that remote pictures were
+/// left out of it, say. Each action is a button that runs a command, as a
+/// menu item would. It cannot be built or decoded with words that are
+/// empty, too long or more than one line, with more buttons than the bar
+/// has room for, or with a button that names no command or says nothing.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "ReadingNoticeParams", into = "ReadingNoticeParams")]
+pub struct ReadingNotice {
+    text: String,
+    actions: Vec<ReadingAction>,
+}
+
+/// A button in a notice: the command it runs, by the name `command.run`
+/// carries, and what the button says.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReadingAction {
+    pub command: String,
+    pub title: String,
+}
+
+/// One line of 1 to `most` bytes.
+fn one_line(text: &str, most: usize) -> bool {
+    !text.is_empty() && text.len() <= most && !text.chars().any(char::is_control)
+}
+
+/// A command's name as `commands.list` gives it: `message.load_remote`.
+fn command_name(name: &str) -> bool {
+    let mut parts = name.split('.');
+    let first = parts.next().unwrap_or_default();
+    let mut rest = parts.peekable();
+    !first.is_empty()
+        && first.bytes().all(|b| b.is_ascii_lowercase())
+        && rest.peek().is_some()
+        && rest.all(|part| {
+            !part.is_empty() && part.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+        })
+}
+
+impl ReadingNotice {
+    pub fn new(text: &str, actions: Vec<ReadingAction>) -> Option<Self> {
+        let fits = one_line(text, MAX_READING_HEADER_BYTES)
+            && actions.len() <= MAX_READING_ACTIONS
+            && actions.iter().all(|action| {
+                command_name(&action.command) && one_line(&action.title, MAX_READING_ACTION_TITLE)
+            });
+        fits.then(|| Self {
+            text: text.to_owned(),
+            actions,
+        })
+    }
+
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    pub fn actions(&self) -> &[ReadingAction] {
+        &self.actions
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReadingNoticeParams {
+    text: String,
+    actions: Vec<ReadingAction>,
+}
+
+impl TryFrom<ReadingNoticeParams> for ReadingNotice {
+    type Error = String;
+
+    fn try_from(params: ReadingNoticeParams) -> Result<Self, Self::Error> {
+        Self::new(&params.text, params.actions).ok_or_else(|| {
+            format!(
+                "a notice is one line of 1 to {MAX_READING_HEADER_BYTES} bytes with at most \
+                 {MAX_READING_ACTIONS} actions, each a command and a title of 1 to \
+                 {MAX_READING_ACTION_TITLE} bytes"
+            )
+        })
+    }
+}
+
+impl From<ReadingNotice> for ReadingNoticeParams {
+    fn from(notice: ReadingNotice) -> Self {
+        Self {
+            text: notice.text,
+            actions: notice.actions,
+        }
+    }
+}
+
 /// A page for the reading pane, and what to say above it. It cannot be
 /// built or decoded with more header lines than the pane has room for, or
 /// with a line that is empty, too long or more than one line.
@@ -501,6 +598,7 @@ pub struct ReadingShow {
     title: String,
     remote: bool,
     header: Vec<String>,
+    notice: Option<ReadingNotice>,
 }
 
 impl ReadingShow {
@@ -516,7 +614,20 @@ impl ReadingShow {
             title: title.to_owned(),
             remote,
             header,
+            notice: None,
         })
+    }
+
+    /// The same page with `notice` in a bar above it, or with none.
+    #[must_use]
+    pub fn with_notice(mut self, notice: Option<ReadingNotice>) -> Self {
+        self.notice = notice;
+        self
+    }
+
+    /// What to tell the user about the page, with buttons to act on it.
+    pub fn notice(&self) -> Option<&ReadingNotice> {
+        self.notice.as_ref()
     }
 
     /// The sanitized HTML. Files beside it in its folder may be loaded.
@@ -547,18 +658,22 @@ struct ReadingShowParams {
     title: String,
     remote: bool,
     header: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    notice: Option<ReadingNotice>,
 }
 
 impl TryFrom<ReadingShowParams> for ReadingShow {
     type Error = String;
 
     fn try_from(params: ReadingShowParams) -> Result<Self, Self::Error> {
-        Self::new(params.path, &params.title, params.remote, params.header).ok_or_else(|| {
-            format!(
-                "header must be at most {MAX_READING_HEADER_LINES} lines, each one line of 1 to \
-                 {MAX_READING_HEADER_BYTES} bytes"
-            )
-        })
+        Self::new(params.path, &params.title, params.remote, params.header)
+            .map(|show| show.with_notice(params.notice))
+            .ok_or_else(|| {
+                format!(
+                    "header must be at most {MAX_READING_HEADER_LINES} lines, each one line of 1 \
+                     to {MAX_READING_HEADER_BYTES} bytes"
+                )
+            })
     }
 }
 
@@ -569,6 +684,7 @@ impl From<ReadingShow> for ReadingShowParams {
             title: show.title,
             remote: show.remote,
             header: show.header,
+            notice: show.notice,
         }
     }
 }
@@ -2716,6 +2832,12 @@ mod tests {
             r#"{"path":"a","title":"","remote":false,"header":[]}"#,
             r#"{"path":"/a","title":"","remote":false,"header":["a\nb"]}"#,
             r#"{"path":"/a","title":"","remote":false,"header":[],"focus":true}"#,
+            r#"{"path":"/a","title":"","remote":false,"header":[],"notice":{"text":"x"}}"#,
+            r#"{"path":"/a","title":"","remote":false,"header":[],"notice":{"text":"","actions":[]}}"#,
+            r#"{"path":"/a","title":"","remote":false,"header":[],"notice":{"text":"x","actions":[],"more":1}}"#,
+            r#"{"path":"/a","title":"","remote":false,"header":[],"notice":{"text":"x","actions":[{"command":"Load","title":"Load"}]}}"#,
+            r#"{"path":"/a","title":"","remote":false,"header":[],"notice":{"text":"x","actions":[{"command":"a.b","title":""}]}}"#,
+            r#"{"path":"/a","title":"","remote":false,"header":[],"notice":{"text":"x","actions":[{"command":"a.b","title":"B","key":"i"}]}}"#,
         ] {
             let line = format!(r#"{{"jsonrpc":"2.0","method":"reading.show","params":{bad}}}"#);
             assert!(decode::<CoreToShell>(&line).is_err(), "{bad}");
@@ -2725,6 +2847,59 @@ mod tests {
                 r#"{"jsonrpc":"2.0","method":"reading.scroll","params":{"by":"line_down"}}"#
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn a_notice_above_a_page_is_one_line_with_buttons_that_run_commands() {
+        let action = |command: &str, title: &str| ReadingAction {
+            command: command.to_owned(),
+            title: title.to_owned(),
+        };
+        let load = || action("message.load_remote", "Load Pictures");
+        assert!(ReadingNotice::new("2 remote pictures were left out.", Vec::new()).is_some());
+        assert!(ReadingNotice::new("Left out.", vec![load(); MAX_READING_ACTIONS]).is_some());
+        assert!(ReadingNotice::new("Left out.", vec![load(); MAX_READING_ACTIONS + 1]).is_none());
+        assert!(ReadingNotice::new("", vec![load()]).is_none());
+        assert!(ReadingNotice::new("two\nlines", vec![load()]).is_none());
+        for name in [
+            "",
+            "load",
+            "Message.load",
+            "message.",
+            ".load",
+            "message.load-remote",
+            "a b.c",
+        ] {
+            assert!(
+                ReadingNotice::new("Left out.", vec![action(name, "Load")]).is_none(),
+                "{name}"
+            );
+        }
+        assert!(ReadingNotice::new("Left out.", vec![action("a.b", "")]).is_none());
+        assert!(ReadingNotice::new("Left out.", vec![action("a.b", "an escape \u{1b}")]).is_none());
+        let long = "x".repeat(MAX_READING_ACTION_TITLE);
+        assert!(ReadingNotice::new("Left out.", vec![action("a.b", &long)]).is_some());
+        assert!(
+            ReadingNotice::new("Left out.", vec![action("a.b", &format!("{long}x"))]).is_none()
+        );
+
+        // It goes with the page, and comes back as it went. A page with
+        // none says nothing of one.
+        let path = || AbsolutePath::new(Path::new("/tmp/quill-view/m1/page/message.html")).unwrap();
+        let plain = ReadingShow::new(path(), "A subject", false, Vec::new()).unwrap();
+        assert!(
+            !encode(&CoreToShell::ReadingShow(plain.clone()))
+                .unwrap()
+                .contains("notice")
+        );
+        let notice = ReadingNotice::new("1 remote picture was left out.", vec![load()]).unwrap();
+        let with = plain.with_notice(Some(notice.clone()));
+        assert_eq!(with.notice(), Some(&notice));
+        let sent = encode(&CoreToShell::ReadingShow(with.clone())).unwrap();
+        assert_eq!(
+            decode::<CoreToShell>(&sent).unwrap(),
+            CoreToShell::ReadingShow(with)
         );
     }
 
