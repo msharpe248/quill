@@ -24,8 +24,6 @@ use crate::vim::{self, Verdict};
 /// What a message's page is wanted for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PageUse {
-    /// The web view pane beside the terminal.
-    Pane,
     /// The user's browser.
     Browser,
     /// The web reading pane, which stands in the reader's place and

@@ -1,8 +1,8 @@
 //! HTML made safe for a web view or a browser.
 //!
 //! The reader's own rendering ([`crate::html`]) is text and can do no harm.
-//! This is for the faithful view: the message's HTML itself, in a web view
-//! beside the reader or in the user's browser. Mail is whatever a stranger
+//! This is for the faithful view: the message's HTML itself, in the app's
+//! web reading pane or in the user's browser. Mail is whatever a stranger
 //! sent, so what comes out of here can run nothing, submit nothing, and
 //! load nothing from the network unless the user said it may.
 //!

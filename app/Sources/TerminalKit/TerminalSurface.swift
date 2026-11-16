@@ -68,6 +68,23 @@ public enum TerminalExit: Sendable, Equatable {
     case failedToStart(reason: String)
 }
 
+/// A terminal's grid: how many cells it has, and how wide one of them is.
+public struct TerminalGrid: Equatable, Sendable {
+    public var columns: Int
+    public var rows: Int
+    /// The width of one cell, in the screen's own pixels: a whole number.
+    public var cellWidthPixels: Int
+    /// How many of those pixels there are to a point.
+    public var scale: CGFloat
+
+    public init(columns: Int, rows: Int, cellWidthPixels: Int, scale: CGFloat) {
+        self.columns = columns
+        self.rows = rows
+        self.cellWidthPixels = cellWidthPixels
+        self.scale = scale
+    }
+}
+
 /// One terminal on screen running one program.
 ///
 /// This protocol is the whole of what the rest of the app knows about the
@@ -76,6 +93,13 @@ public enum TerminalExit: Sendable, Equatable {
 public protocol TerminalSurface: AnyObject {
     /// The view to put in a window. The terminal's grid follows its size.
     var view: NSView { get }
+
+    /// The terminal's grid as it is now, once the view has been measured.
+    var grid: TerminalGrid? { get }
+
+    /// Called on the main actor when the grid changes: the view was
+    /// resized, or its cells were (another font size, another screen).
+    var onGridChange: ((TerminalGrid) -> Void)? { get set }
 
     /// Called once, on the main actor, when the program ends.
     var onExit: ((TerminalExit) -> Void)? { get set }

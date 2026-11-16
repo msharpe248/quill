@@ -19,6 +19,11 @@ struct LaunchOptions: Equatable {
     /// recording permission.
     var dumpScreenTo: URL?
 
+    /// Whether the app is being driven by a script or asked for a dump: a
+    /// run that must leave nothing of the user's as it did not find it,
+    /// their saved window and divider included.
+    var isScripted: Bool { script != nil || dumpScreenTo != nil }
+
     init(arguments: [String]) {
         var rest = arguments.dropFirst().makeIterator()
         while let argument = rest.next() {

@@ -1,9 +1,0 @@
-{
-  "jsonrpc": "2.0",
-  "method": "pane.web",
-  "params": {
-    "path": "/Users/robin/Library/Containers/dev.quill.Quill/Data/tmp/quill-view-412/message.html",
-    "title": "Issue 88: the autumn round-up",
-    "remote": false
-  }
-}

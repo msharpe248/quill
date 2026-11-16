@@ -56,6 +56,10 @@ pub enum HostEvent {
     /// The user pressed a button of the form the host is showing
     /// ([`Host::show_form`]), or changed one of its choices.
     FormUsed(bridge::FormUsed),
+    /// How many columns the terminal would have with the host's window
+    /// to itself: what there is room for, whatever stands beside the
+    /// terminal now.
+    WindowColumns(u16),
     /// The app is quitting: flush and exit cleanly.
     WillQuit,
     /// The shell has gone. There is nothing left to draw for.
@@ -98,18 +102,6 @@ pub trait Host: Send + Sync {
     fn play(&self, path: &Path, title: &str) {
         if let Some(file) = pane_file(path, title) {
             self.send(CoreToShell::PanePlay(file));
-        }
-    }
-
-    /// Shows an HTML file that has already been sanitized. `remote`: the
-    /// user has allowed it to load remote content.
-    fn web(&self, path: &Path, title: &str, remote: bool) {
-        if let Some(path) = AbsolutePath::new(path) {
-            self.send(CoreToShell::PaneWeb(bridge::PaneWeb {
-                path,
-                title: title.to_owned(),
-                remote,
-            }));
         }
     }
 
@@ -222,6 +214,14 @@ pub trait Host: Send + Sync {
     /// Takes the reading pane away.
     fn reading_close(&self) {
         self.send(CoreToShell::ReadingClose(NoParams {}));
+    }
+
+    /// Says where the reading pane stands: the terminal keeps `columns`
+    /// columns, and the pane has the rest of the window.
+    fn reading_place(&self, columns: u16) {
+        if let Some(place) = bridge::ReadingPlace::new(columns) {
+            self.send(CoreToShell::ReadingPlace(place));
+        }
     }
 
     /// Hands an event straight back to the core, for a host that can

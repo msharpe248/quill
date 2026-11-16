@@ -1,9 +1,10 @@
 {
   "jsonrpc": "2.0",
-  "method": "pane.web",
+  "method": "reading.show",
   "params": {
     "path": "message.html",
     "title": "Hello",
-    "remote": false
+    "remote": false,
+    "header": []
   }
 }

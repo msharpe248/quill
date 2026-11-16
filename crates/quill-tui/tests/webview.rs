@@ -1,5 +1,5 @@
-//! A message as a web page: sanitized, with remote content blocked until
-//! the user says otherwise, in the pane or the browser.
+//! A message as a web page in the browser: sanitized, with remote content
+//! blocked until the user says otherwise.
 
 // Test helpers outside `#[test]` functions may unwrap too.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -27,11 +27,13 @@ fn newsletter() -> Harness {
     harness
 }
 
-/// The page last handed to the pane: where it is and whether it may load
-/// remote content.
+/// The page last handed to the browser: where it is and whether it may
+/// load remote content. One that may is written to a folder of its own.
 fn page(harness: &Harness) -> (PathBuf, bool) {
     match harness.host_requests.last() {
-        Some(HostRequest::Web { path, remote, .. }) => (path.clone(), *remote),
+        Some(HostRequest::OpenFile(path)) => {
+            (path.clone(), path.to_string_lossy().contains("page-remote"))
+        }
         other => panic!("no page was shown: {other:?}"),
     }
 }
@@ -95,7 +97,7 @@ fn reading_raw(raw: &str, subject: &str) -> Harness {
 #[test]
 fn the_page_is_shown_with_remote_content_left_out_and_says_so() {
     let mut harness = newsletter();
-    harness.keys("v");
+    harness.keys("B");
     let (path, remote) = page(&harness);
     assert!(!remote);
     let html = std::fs::read_to_string(&path).unwrap();
@@ -125,7 +127,7 @@ fn the_page_is_shown_with_remote_content_left_out_and_says_so() {
 #[test]
 fn remote_content_is_loaded_for_this_message_when_asked() {
     let mut harness = newsletter();
-    harness.keys("v i");
+    harness.keys("B i");
     let (path, remote) = page(&harness);
     assert!(remote);
     let html = std::fs::read_to_string(&path).unwrap();
@@ -140,8 +142,8 @@ fn remote_content_is_loaded_for_this_message_when_asked() {
         .email
         .clone();
     assert!(!harness.store.allows_remote_content(&sender).unwrap());
-    harness.keys("esc k enter v");
-    harness.keys("esc j enter v");
+    harness.keys("esc k enter B");
+    harness.keys("esc j enter B");
     assert!(!page(&harness).1);
 }
 
@@ -162,7 +164,7 @@ fn a_sender_can_be_trusted_with_remote_content_from_now_on() {
         status(&harness)
     );
     // Coming back to the message later, it loads without being asked.
-    harness.keys("esc k enter esc j enter v");
+    harness.keys("esc k enter esc j enter B");
     assert!(page(&harness).1);
 }
 
@@ -170,7 +172,7 @@ fn a_sender_can_be_trusted_with_remote_content_from_now_on() {
 fn with_remote_content_set_to_never_nothing_loads_it() {
     let mut harness = newsletter();
     harness.env.remote_never = true;
-    harness.keys("v");
+    harness.keys("B");
     assert!(!page(&harness).1);
     let said = status(&harness);
     assert!(said.contains("1 remote picture was left out."), "{said}");
@@ -193,7 +195,7 @@ fn the_browser_gets_the_same_safe_page() {
     };
     let html = std::fs::read_to_string(path).unwrap();
     assert!(!html.contains("open.gif") && html.contains("Content-Security-Policy"));
-    // Loading the remote content shows it where it was last shown.
+    // Loading the remote content shows the page there again, with it.
     harness.keys("i");
     assert!(matches!(
         harness.host_requests.last(),
@@ -227,7 +229,7 @@ iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAA
 #[test]
 fn pictures_the_message_carries_are_written_beside_the_page_under_safe_names() {
     let mut harness = reading_raw(WITH_PICTURES, "The chart");
-    harness.keys("v");
+    harness.keys("B");
     let (path, remote) = page(&harness);
     assert!(!remote);
     let folder = path.parent().unwrap();
@@ -258,7 +260,7 @@ fn a_message_with_no_html_is_a_page_of_its_text() {
         "From: Ana Ruiz <ana.ruiz@example.com>\r\nSubject: Plain\r\n\r\nOne < two & three.\r\n",
         "Plain",
     );
-    harness.keys("v");
+    harness.keys("B");
     let html = std::fs::read_to_string(page(&harness).0).unwrap();
     assert!(html.contains("One &lt; two &amp; three."), "{html}");
     assert!(!status(&harness).contains("left out"));
@@ -268,6 +270,44 @@ fn a_message_with_no_html_is_a_page_of_its_text() {
 fn a_page_is_for_the_message_being_read() {
     let mut harness = Harness::demo(200, 60);
     // From the sidebar there is no message to make a page of.
-    harness.keys("1 v B i I");
+    harness.keys("1 B i I");
     assert!(harness.host_requests.is_empty());
+}
+
+#[test]
+fn remote_content_asked_for_from_the_reader_is_shown_in_the_browser() {
+    // The reader fetches nothing, so there is nowhere here to show it.
+    let mut harness = newsletter();
+    harness.keys("i");
+    let (path, remote) = page(&harness);
+    assert!(remote);
+    let html = std::fs::read_to_string(&path).unwrap();
+    assert!(html.contains("https://example.com/open.gif"), "{html}");
+}
+
+#[test]
+fn there_is_one_command_for_the_browser_and_none_for_a_page_beside_the_reader() {
+    use quill_core::config::KeymapPreset;
+    use quill_tui::command::Registry;
+    use quill_tui::keymap::Keymap;
+
+    let registry = Registry::builtin();
+    assert!(registry.by_name("message.view_html").is_none());
+    assert!(registry.by_name("message.open_in_browser").is_some());
+    // The keys it had are nobody's, in either set.
+    for (preset, key) in [(KeymapPreset::Vim, "v"), (KeymapPreset::Mutt, "H")] {
+        let keymap = Keymap::preset(preset);
+        let bound = registry.specs().iter().any(|spec| {
+            keymap
+                .keys_for(spec.id)
+                .iter()
+                .any(|sequence| sequence.to_string() == key)
+        });
+        assert!(!bound, "{key} is still bound in {preset:?}");
+    }
+    // And pressing it where it used to work does nothing.
+    let mut harness = newsletter();
+    harness.keys("v");
+    assert!(harness.host_requests.is_empty());
+    assert!(!harness.state.web_reading);
 }

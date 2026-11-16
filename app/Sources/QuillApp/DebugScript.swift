@@ -43,9 +43,25 @@ import WebKit
 ///   option's name, and choosing it tells the core, as choosing it by hand
 ///   does
 /// - `sheetpress:BUTTON` press a button of the form in the sheet, by its name
+/// - `divider:COLUMNS` put the divider between the terminal and the pane
+///   where the terminal has this many columns, as a drag that ended there
+///   does; `divider:reset` puts it back, as a double-click does
+/// - `dragdivider:COLUMNS` the same drag, done with mouse events sent to the
+///   window: press on the divider, move, let go. `clickdivider:2`
+///   double-clicks the divider the same way. Neither moves the pointer
 /// - `snap:NAME`      write the dump as it stands now, to the `--dump-screen`
 ///   file with `.NAME` added to its name (and its picture beside it), and go
 ///   on: several states of one run can then be checked from one launch
+///
+/// The widths are in the dump, so that the place of the reading pane can be
+/// checked without a person: the terminal's columns and the width of its
+/// cells, how many columns the window has room for and what the core was
+/// told, where the core says the reading pane goes and where the user left
+/// the divider, and the width in columns of each box on the terminal's
+/// first row (the panes the core has drawn). A scripted run remembers a
+/// dragged divider for the run only: it starts with none, at the same
+/// window size every time, and neither reads nor writes the user's own
+/// defaults.
 ///
 /// The reading pane is in the dump: whether web reading is on, the page the
 /// core last asked it to show (its title, the last of its path, whether it
@@ -244,6 +260,40 @@ enum DebugScript {
                 note("no button \(argument) in the sheet to press")
             }
             try? await Task.sleep(for: .milliseconds(300))
+        case "divider":
+            if argument == "reset" {
+                controller.doubleClickDivider()
+            } else if let columns = Int(argument), controller.dragDivider(toColumns: columns) {
+                // Dragged, as far as the window is concerned.
+            } else {
+                note("cannot drag the divider to \(argument)")
+            }
+            try? await Task.sleep(for: .milliseconds(300))
+        case "dragdivider":
+            if let columns = Int(argument), let window = controller.window,
+                let (from, to) = controller.dividerDrag(toColumns: columns)
+            {
+                let halfway = NSPoint(x: (from.x + to.x) / 2, y: from.y)
+                postMouse(.leftMouseDown, at: from, clicks: 1, in: window)
+                postMouse(.leftMouseDragged, at: halfway, clicks: 1, in: window)
+                postMouse(.leftMouseDragged, at: to, clicks: 1, in: window)
+                postMouse(.leftMouseUp, at: to, clicks: 1, in: window)
+            } else {
+                note("cannot drag the divider to \(argument)")
+            }
+            try? await Task.sleep(for: .milliseconds(600))
+        case "clickdivider":
+            if let clicks = Int(argument), clicks > 0, let window = controller.window,
+                let (at, _) = controller.dividerDrag(toColumns: 1)
+            {
+                for click in 1...clicks {
+                    postMouse(.leftMouseDown, at: at, clicks: click, in: window)
+                    postMouse(.leftMouseUp, at: at, clicks: click, in: window)
+                }
+            } else {
+                note("cannot click the divider \(argument) times")
+            }
+            try? await Task.sleep(for: .milliseconds(600))
         case "snap":
             let plain = !argument.isEmpty && argument.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" }
             if let destination, plain {
@@ -351,7 +401,43 @@ enum DebugScript {
         }
     }
 
+    private static var mouseEvents = 0
+
+    /// Queues a mouse event for the window, at a place in it. The pointer
+    /// itself is not moved, and no other application sees it.
+    private static func postMouse(_ type: NSEvent.EventType, at point: NSPoint, clicks: Int, in window: NSWindow) {
+        mouseEvents += 1
+        guard
+            let event = NSEvent.mouseEvent(
+                with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, eventNumber: mouseEvents, clickCount: clicks,
+                pressure: type == .leftMouseUp ? 0 : 1)
+        else {
+            note("no mouse event could be made")
+            return
+        }
+        window.postEvent(event, atStart: false)
+    }
+
     // MARK: - The dump
+
+    /// The width, in characters, of each box drawn on the terminal's first
+    /// row: from a top-left corner to the next top-right one. Nothing in
+    /// the titles the core draws there is wider than a cell.
+    static func boxWidths(in text: String) -> [Int] {
+        guard let row = text.split(separator: "\n", omittingEmptySubsequences: false).first else { return [] }
+        var widths: [Int] = []
+        var start: Int?
+        for (index, character) in row.enumerated() {
+            if "\u{250C}\u{250F}\u{256D}\u{2554}".contains(character) {
+                start = index
+            } else if "\u{2510}\u{2513}\u{256E}\u{2557}".contains(character), let from = start {
+                widths.append(index - from + 1)
+                start = nil
+            }
+        }
+        return widths
+    }
 
     /// The dump, with the page of a web view on show drawn into the
     /// picture: a web view draws in a process of its own, and is asked for
@@ -379,6 +465,18 @@ enum DebugScript {
         } else {
             lines.append("pane: none")
         }
+        // terminal: 147 columns, 45 rows, cells 16 px at 2.0x, view 1180.0 pt of 1180.0
+        lines.append("terminal: \(controller.gridSummary)")
+        // window columns: 147 (core told 147)
+        let room = controller.windowColumns.map(String.init) ?? "unknown"
+        let told = controller.windowColumnsSent.map(String.init) ?? "nothing"
+        lines.append("window columns: \(room) (core told \(told))")
+        // reading place: core says 85 columns, divider left at none
+        let asked = controller.readingColumnsAsked.map { "\($0) columns" } ?? "nothing"
+        let left = controller.dividerMemory.columns.map { "\($0) columns" } ?? "none"
+        lines.append("reading place: core says \(asked), divider left at \(left)")
+        // boxes: 24 61 62
+        lines.append("boxes: \(boxWidths(in: controller.terminalText).map(String.init).joined(separator: " "))")
         // reading: off
         // reading: on, "Subject", m12/page/message.html, remote content blocked, loaded, header: From: ... | To: ...
         lines.append("reading: \(controller.readingSummary)")

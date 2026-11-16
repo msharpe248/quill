@@ -62,11 +62,126 @@ pub struct Areas {
     pub dialog: Option<Rect>,
 }
 
+/// The fewest columns the list or the reader is given beside the other.
+const MIN_PANE: u16 = 20;
+
+/// The accounts pane's columns where the window is wide enough for all
+/// three panes.
+fn wide_sidebar(width: u16) -> u16 {
+    (width / 6).clamp(MEDIUM_SIDEBAR, 28)
+}
+
+/// How `width` columns, at least [`WIDE_COLUMNS`] of them, are divided
+/// among the accounts, the list and the reader.
+fn wide_split(width: u16, reader_width: f32) -> (u16, u16, u16) {
+    let sidebar = wide_sidebar(width);
+    let rest = width - sidebar;
+    let reader = (f32::from(rest) * reader_width).round() as u16;
+    let reader = reader.clamp(MIN_PANE, rest.saturating_sub(MIN_PANE).max(MIN_PANE));
+    (sidebar, rest.saturating_sub(reader), reader)
+}
+
+/// How many columns the terminal keeps while the host's reading pane
+/// stands beside it, in a window with room for `window` columns: the
+/// accounts' and the list's, so that the pane has exactly the reader's
+/// place and neither of the others moves when it comes or goes.
+///
+/// A window too narrow for three panes has no reader beside its list. The
+/// pane is given the reader's share of the whole window there, and the
+/// terminal draws in what is left.
+pub fn beside_reading(window: u16, reader_width: f32) -> u16 {
+    if window >= WIDE_COLUMNS {
+        let (sidebar, list, _) = wide_split(window, reader_width);
+        sidebar + list
+    } else {
+        let reader = (f32::from(window) * reader_width).round() as u16;
+        window
+            .saturating_sub(reader)
+            .max(MIN_SIZE.0)
+            .min(window)
+            .max(1)
+    }
+}
+
+/// Where the accounts and the list go while the message is in the host's
+/// reading pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct WebColumns {
+    /// The columns they are drawn in, from the left.
+    drawn: u16,
+    /// The accounts' columns, when they are beside the list.
+    sidebar: Option<u16>,
+}
+
+impl WebColumns {
+    /// `window`: the columns the host's whole window has room for, once
+    /// it has said. `width`: the terminal's own.
+    ///
+    /// The widths are the window's, not the terminal's: the terminal is
+    /// narrower by the reader's columns, and its own width would give
+    /// another split. A terminal that still has the whole window, because
+    /// the pane is not up yet, is drawn in as it will be once it is, so
+    /// that nothing moves when the pane arrives. One of any other width
+    /// (the user has moved the divider) gives the difference to the list.
+    fn of(window: Option<u16>, width: u16, reader_width: f32) -> Self {
+        let Some(window) = window else {
+            // A host that has not said: by the terminal's own width.
+            let sidebar = match LayoutMode::for_width(width) {
+                LayoutMode::Wide => Some(wide_sidebar(width)),
+                LayoutMode::Medium => Some(MEDIUM_SIDEBAR),
+                LayoutMode::Narrow => None,
+            };
+            return Self {
+                drawn: width,
+                sidebar,
+            };
+        };
+        let drawn = if width >= window {
+            beside_reading(window, reader_width).min(width)
+        } else {
+            width
+        };
+        let sidebar = if window >= WIDE_COLUMNS {
+            Some(wide_sidebar(window)).filter(|sidebar| drawn >= sidebar + MIN_PANE)
+        } else {
+            None
+        };
+        Self {
+            drawn,
+            sidebar: sidebar.or_else(|| (drawn >= NARROW_COLUMNS).then_some(MEDIUM_SIDEBAR)),
+        }
+    }
+
+    fn mode(self) -> LayoutMode {
+        match self.sidebar {
+            Some(_) if self.drawn >= WIDE_COLUMNS => LayoutMode::Wide,
+            Some(_) => LayoutMode::Medium,
+            None => LayoutMode::Narrow,
+        }
+    }
+}
+
+/// How the panes are arranged in a terminal of `width` columns: what
+/// [`compute`] goes by.
+pub fn mode(state: &State, width: u16, reader_width: f32) -> LayoutMode {
+    if state.web_reading {
+        WebColumns::of(state.window_columns, width, reader_width).mode()
+    } else {
+        LayoutMode::for_width(width)
+    }
+}
+
 pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
     let (width, height) = size;
     let body_height = height.saturating_sub(1);
     let body = Rect::new(0, 0, width, body_height);
-    let mode = LayoutMode::for_width(width);
+    // With web reading on the message is in the host's pane, not here:
+    // the accounts and the list are what is drawn, at any width, and only
+    // a message being written takes the list's place.
+    let web = state
+        .web_reading
+        .then(|| WebColumns::of(state.window_columns, width, reader_width));
+    let mode = web.map_or_else(|| LayoutMode::for_width(width), WebColumns::mode);
     let mut areas = Areas {
         mode,
         sidebar: None,
@@ -79,11 +194,7 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
         dialog: None,
     };
 
-    // With web reading on the message is in the host's pane, not here:
-    // the accounts and the list are what is drawn, at any width, and only
-    // a message being written takes the list's place.
-    let web = state.web_reading;
-    let main_pane = if web && state.compose.is_none() {
+    let main_pane = if web.is_some() && state.compose.is_none() {
         MainPane::List
     } else {
         state.main_pane
@@ -99,22 +210,28 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
             Pane::List => areas.list = Some(body),
             Pane::Reader => areas.reader = Some(body),
         }
-    } else {
-        match mode {
-            LayoutMode::Wide if web => {
-                let sidebar = (width / 6).clamp(MEDIUM_SIDEBAR, 28);
+    } else if let Some(web) = web {
+        match web.sidebar {
+            Some(sidebar) => {
                 areas.sidebar = Some(Rect::new(0, 0, sidebar, body_height));
                 show_main(
                     &mut areas,
-                    Rect::new(sidebar, 0, width - sidebar, body_height),
+                    Rect::new(sidebar, 0, web.drawn - sidebar, body_height),
                 );
             }
+            None => {
+                show_main(&mut areas, Rect::new(0, 0, web.drawn, body_height));
+                if state.focus == Pane::Sidebar {
+                    areas.sidebar =
+                        Some(Rect::new(0, 0, web.drawn.min(OVERLAY_SIDEBAR), body_height));
+                    areas.sidebar_overlay = true;
+                }
+            }
+        }
+    } else {
+        match mode {
             LayoutMode::Wide => {
-                let sidebar = (width / 6).clamp(MEDIUM_SIDEBAR, 28);
-                let rest = width - sidebar;
-                let reader = (f32::from(rest) * reader_width).round() as u16;
-                let reader = reader.clamp(20, rest.saturating_sub(20).max(20));
-                let list = rest.saturating_sub(reader);
+                let (sidebar, list, reader) = wide_split(width, reader_width);
                 areas.sidebar = Some(Rect::new(0, 0, sidebar, body_height));
                 areas.list = Some(Rect::new(sidebar, 0, list, body_height));
                 areas.reader = Some(Rect::new(sidebar + list, 0, reader, body_height));
@@ -394,6 +511,164 @@ mod tests {
         let (list, reader) = split(0.25);
         assert!(reader < list);
         assert_eq!(list + reader, 172);
+    }
+
+    /// A state with web reading on in a window with room for `window`
+    /// columns.
+    fn reading_in(window: u16) -> State {
+        let mut state = state(Pane::List, MainPane::List);
+        state.web_reading = true;
+        state.window_columns = Some(window);
+        state
+    }
+
+    const SHARES: [f32; 6] = [0.2, 0.33, 0.5, 0.58, 0.62, 0.8];
+
+    #[test]
+    fn the_reading_pane_has_the_readers_place_to_the_column() {
+        // At every width with three panes and every share the config
+        // allows: with the pane beside it the terminal draws the accounts
+        // and the list exactly where they are with the reader drawn.
+        for share in SHARES {
+            for window in WIDE_COLUMNS..=420 {
+                let off = compute(&state(Pane::List, MainPane::List), (window, 40), share);
+                let (sidebar, list, reader) =
+                    (off.sidebar.unwrap(), off.list.unwrap(), off.reader.unwrap());
+                let kept = beside_reading(window, share);
+                assert_eq!(kept, sidebar.width + list.width, "{window} {share}");
+                assert_eq!(kept + reader.width, window, "{window} {share}");
+
+                let on = compute(&reading_in(window), (kept, 40), share);
+                assert_eq!(on.sidebar, Some(sidebar), "{window} {share}");
+                assert_eq!(on.list, Some(list), "{window} {share}");
+                assert_eq!(on.reader, None);
+                assert!(!on.sidebar_overlay);
+            }
+        }
+    }
+
+    #[test]
+    fn the_place_is_the_same_however_often_it_is_asked_for_and_whatever_came_before() {
+        // Nothing is remembered: the place is worked out from the window
+        // alone, so switching back and forth, or resizing in between,
+        // cannot make it creep.
+        let widths = [147_u16, 100, 233, 147, 99, 147, 180, 147];
+        let first = beside_reading(147, 0.5);
+        for (index, window) in widths.into_iter().enumerate() {
+            let kept = beside_reading(window, 0.5);
+            if window == 147 {
+                assert_eq!(kept, first, "at step {index}");
+            }
+            // The terminal narrowed to it is still told the same.
+            let on = compute(&reading_in(window), (kept, 40), 0.5);
+            let again = compute(&reading_in(window), (kept, 40), 0.5);
+            assert_eq!(on, again);
+            assert_eq!(
+                on.list.map(|list| list.x + list.width),
+                Some(kept),
+                "{window}"
+            );
+        }
+    }
+
+    #[test]
+    fn before_the_reading_pane_is_up_the_panes_are_already_where_they_will_be() {
+        // The terminal still has the whole window: the columns the pane
+        // is about to cover are left empty, and nothing moves when it
+        // comes.
+        for window in [100_u16, 147, 200, 317] {
+            let kept = beside_reading(window, 0.5);
+            let waiting = compute(&reading_in(window), (window, 40), 0.5);
+            let beside = compute(&reading_in(window), (kept, 40), 0.5);
+            assert_eq!(waiting.sidebar, beside.sidebar, "{window}");
+            assert_eq!(waiting.list, beside.list, "{window}");
+            assert_eq!(waiting.reader, None);
+            // The status line still runs the width of the terminal.
+            assert_eq!(waiting.status, Rect::new(0, 39, window, 1));
+        }
+    }
+
+    #[test]
+    fn a_divider_the_user_moved_gives_the_difference_to_the_list() {
+        let window = 147;
+        let sidebar = compute(&state(Pane::List, MainPane::List), (window, 40), 0.5)
+            .sidebar
+            .unwrap();
+        for width in [sidebar.width + MIN_PANE, 60, 85, 99, 100, 130, 146] {
+            let areas = compute(&reading_in(window), (width, 40), 0.5);
+            assert_eq!(areas.sidebar, Some(sidebar), "{width}");
+            assert_eq!(
+                areas.list,
+                Some(Rect::new(sidebar.width, 0, width - sidebar.width, 39)),
+                "{width}"
+            );
+            assert_ne!(mode(&reading_in(window), width, 0.5), LayoutMode::Narrow);
+        }
+        // With no room for a list beside the accounts, the list alone,
+        // and the accounts over it when they are wanted.
+        let width = sidebar.width + MIN_PANE - 1;
+        let areas = compute(&reading_in(window), (width, 40), 0.5);
+        assert_eq!(areas.list, Some(Rect::new(0, 0, width, 39)));
+        assert_eq!(areas.sidebar, None);
+        assert_eq!(mode(&reading_in(window), width, 0.5), LayoutMode::Narrow);
+        let mut state = reading_in(window);
+        state.focus = Pane::Sidebar;
+        let areas = compute(&state, (width, 40), 0.5);
+        assert!(areas.sidebar_overlay);
+        assert_eq!(areas.sidebar, Some(Rect::new(0, 0, OVERLAY_SIDEBAR, 39)));
+    }
+
+    #[test]
+    fn a_window_too_narrow_for_three_panes_gives_the_pane_the_readers_share() {
+        for share in SHARES {
+            for window in 1..WIDE_COLUMNS {
+                let kept = beside_reading(window, share);
+                assert!(kept >= 1 && kept <= window, "{window} {share}: {kept}");
+                // The terminal is never asked to be too narrow to draw
+                // in while the window has the room.
+                assert!(kept >= MIN_SIZE.0.min(window), "{window} {share}: {kept}");
+                let areas = compute(&reading_in(window), (kept, 40), share);
+                let list = areas.list.unwrap();
+                assert_eq!(list.x + list.width, kept, "{window} {share}");
+                assert_eq!(areas.reader, None);
+                // Beside the accounts where there is room for them, as
+                // in a terminal of that width.
+                assert_eq!(
+                    areas.sidebar.map(|sidebar| sidebar.width),
+                    (kept >= NARROW_COLUMNS).then_some(MEDIUM_SIDEBAR),
+                    "{window} {share}"
+                );
+            }
+        }
+        // Half of eighty columns each, by default.
+        assert_eq!(beside_reading(80, 0.5), 40);
+        assert_eq!(beside_reading(99, 0.5), 49);
+    }
+
+    #[test]
+    fn the_mode_says_whether_the_accounts_are_beside_the_list() {
+        for window in [40_u16, 80, 100, 147, 250] {
+            for width in 1..=window {
+                let mut state = reading_in(window);
+                let beside = compute(&state, (width, 40), 0.5).sidebar.is_some();
+                assert_eq!(
+                    mode(&state, width, 0.5) != LayoutMode::Narrow,
+                    beside,
+                    "{window} {width}"
+                );
+                state.focus = Pane::Sidebar;
+                assert_eq!(
+                    compute(&state, (width, 40), 0.5).sidebar_overlay,
+                    !beside,
+                    "{window} {width}"
+                );
+            }
+        }
+        // With the reader drawn here it is the terminal's width alone.
+        let off = state(Pane::List, MainPane::List);
+        assert_eq!(mode(&off, 59, 0.5), LayoutMode::Narrow);
+        assert_eq!(mode(&off, 99, 0.5), LayoutMode::Medium);
+        assert_eq!(mode(&off, 100, 0.5), LayoutMode::Wide);
     }
 
     #[test]

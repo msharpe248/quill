@@ -36,8 +36,9 @@ private enum Examples {
                 "clipboard.write.json", "commands.list.json", "file.open.json", "files.pick.json",
                 "files.save.json", "form.close.json", "form.show.json", "link.open.json", "notify.clear.json",
                 "notify.post.json", "pane.close.json",
-                "pane.editor.json", "pane.play.json", "pane.preview.json", "pane.web.json",
-                "reading.close.json", "reading.scroll.json", "reading.show.json", "spell.check.json",
+                "pane.editor.json", "pane.play.json", "pane.preview.json",
+                "reading.close.json", "reading.place.json", "reading.scroll.json", "reading.show.json",
+                "spell.check.json",
                 "spell.suggest.json", "state.update.json", "thumbnail.make.json",
             ])
         for (name, text) in examples {
@@ -55,7 +56,7 @@ private enum Examples {
             examples.map(\.name) == [
                 "app.will_quit.json", "command.run.json", "editor.exited.json", "files.dropped.json",
                 "files.saved.json", "form.used.json", "notify.used.json", "spell.checked.json",
-                "spell.suggested.json", "thumbnail.made.json", "url.open.json",
+                "spell.suggested.json", "thumbnail.made.json", "url.open.json", "window.resized.json",
             ])
         for (name, text) in examples {
             let message = try ShellToCore(line: text)
@@ -84,6 +85,7 @@ private enum Examples {
             "form-secret-sent-by-the-core.json", "form-choice-with-no-options.json",
             "form-field-of-an-unknown-kind.json", "form-used-with-a-button-that-is-no-name.json",
             "form-used-with-no-secrets.json", "reading-header-too-long.json", "reading-scroll-sideways.json",
+            "relative-reading-path.json", "reading-place-with-no-columns.json", "window-wider-than-a-terminal.json",
         ] {
             #expect(examples.contains { $0.name == name }, "\(name) is missing")
         }
@@ -138,12 +140,6 @@ private enum Examples {
         #expect(
             try CoreToShell(line: examples["pane.play.json"]!)
                 == .panePlay(PaneFile(path: folder + "/demo.mov", title: "demo.mov")!))
-        guard case let .paneWeb(web) = try CoreToShell(line: examples["pane.web.json"]!) else {
-            Issue.record("not a pane.web")
-            return
-        }
-        #expect(!web.remote)
-        #expect(web.path.hasSuffix("/message.html"))
         #expect(
             try CoreToShell(line: examples["thumbnail.make.json"]!)
                 == .thumbnailMake(
@@ -156,7 +152,6 @@ private enum Examples {
         // None of them can be built holding what the core would not send.
         #expect(PaneFile(path: "demo.mov", title: "demo") == nil)
         #expect(PanePreview(items: [], index: 0) == nil)
-        #expect(PaneWeb(path: "message.html", title: "", remote: true) == nil)
         #expect(ThumbnailMake(id: 1, path: "/a", out: "/b", size: 8) == nil)
         #expect(ThumbnailMake(id: -1, path: "/a", out: "/b", size: 64) == nil)
         #expect(FilesSave(path: "/a", name: "") == nil)
@@ -205,6 +200,33 @@ private enum Examples {
         #expect(throws: BridgeError.self) { try CoreToShell(line: extra) }
         let closing = #"{"jsonrpc":"2.0","method":"reading.close","params":{"now":true}}"#
         #expect(throws: BridgeError.self) { try CoreToShell(line: closing) }
+    }
+
+    @Test func thePlaceOfTheReadingPaneIsAWholeNumberOfColumnsBothWays() throws {
+        let examples = try Dictionary(uniqueKeysWithValues: Examples.load("core-to-shell").map { ($0.name, $0.text) })
+        #expect(
+            try CoreToShell(line: examples["reading.place.json"]!) == .readingPlace(ReadingPlace(columns: 78)!))
+        let answers = try Dictionary(uniqueKeysWithValues: Examples.load("shell-to-core").map { ($0.name, $0.text) })
+        #expect(
+            try ShellToCore(line: answers["window.resized.json"]!)
+                == .windowResized(WindowResized(columns: 147)!))
+        #expect(
+            ShellToCore.windowResized(WindowResized(columns: 147)!).line
+                == #"{"jsonrpc":"2.0","method":"window.resized","params":{"columns":147}}"#)
+
+        // Neither can be built holding what the other side would refuse.
+        #expect(ReadingPlace(columns: 0) == nil && ReadingPlace(columns: -3) == nil)
+        #expect(ReadingPlace(columns: 65535) != nil && ReadingPlace(columns: 65536) == nil)
+        #expect(WindowResized(columns: 0) == nil && WindowResized(columns: 65536) == nil)
+        #expect(WindowResized(columns: 1) != nil)
+        for bad in [
+            #"{"columns":0}"#, #"{"columns":78.5}"#, #"{"columns":"78"}"#, #"{}"#, #"{"columns":78,"points":624}"#,
+        ] {
+            let place = #"{"jsonrpc":"2.0","method":"reading.place","params":\#(bad)}"#
+            #expect(throws: BridgeError.self, "\(bad)") { try CoreToShell(line: place) }
+            let resized = #"{"jsonrpc":"2.0","method":"window.resized","params":\#(bad)}"#
+            #expect(throws: BridgeError.self, "\(bad)") { try ShellToCore(line: resized) }
+        }
     }
 
     @Test func droppedFilesAreAbsolutePathsAndAtLeastOne() throws {

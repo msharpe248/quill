@@ -26,6 +26,8 @@ final class GhosttySurface: TerminalSurface {
     private var started = false
 
     var onExit: ((TerminalExit) -> Void)?
+    private(set) var grid: TerminalGrid?
+    var onGridChange: ((TerminalGrid) -> Void)?
     var onTitleChange: ((String) -> Void)? {
         get { delegateProxy.onTitleChange }
         set { delegateProxy.onTitleChange = newValue }
@@ -73,6 +75,22 @@ final class GhosttySurface: TerminalSurface {
         link.onFirstViewport = { [weak self] in
             Task { @MainActor in self?.startPendingCommand() }
         }
+        delegateProxy.onMetrics = { [weak self] metrics in
+            self?.measured(metrics)
+        }
+    }
+
+    /// libghostty has measured the view: what the rest of the app may know
+    /// of it is the grid, in cells, and the width of a cell.
+    private func measured(_ metrics: TerminalGridMetrics) {
+        guard metrics.columns > 0, metrics.rows > 0, metrics.cellWidthPixels > 0 else { return }
+        let scale = terminalView.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+        let measured = TerminalGrid(
+            columns: Int(metrics.columns), rows: Int(metrics.rows),
+            cellWidthPixels: Int(metrics.cellWidthPixels), scale: scale)
+        guard measured != grid else { return }
+        grid = measured
+        onGridChange?(measured)
     }
 
     func start(_ command: TerminalCommand) {
@@ -241,9 +259,18 @@ private final class Link: @unchecked Sendable {
 }
 
 @MainActor
-private final class DelegateProxy: TerminalSurfaceTitleDelegate, TerminalSurfaceOpenURLHandlingDelegate {
+private final class DelegateProxy: TerminalSurfaceTitleDelegate, TerminalSurfaceOpenURLHandlingDelegate,
+    TerminalSurfaceGridResizeDelegate
+{
     var onTitleChange: ((String) -> Void)?
     var onOpenLink: ((String) -> Void)?
+    var onMetrics: ((TerminalGridMetrics) -> Void)?
+
+    /// On the main actor, as soon as the view has a new size: before the
+    /// program inside has been told of it.
+    func terminalDidResize(_ size: TerminalGridMetrics) {
+        onMetrics?(size)
+    }
 
     func terminalDidChangeTitle(_ title: String) {
         onTitleChange?(title)

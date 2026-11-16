@@ -23,9 +23,6 @@ pub enum CoreToShell {
     /// Play a video or audio file in a player pane.
     #[serde(rename = "pane.play")]
     PanePlay(PaneFile),
-    /// Show sanitized HTML in a web view pane.
-    #[serde(rename = "pane.web")]
-    PaneWeb(PaneWeb),
     /// Make a PNG thumbnail of a file. Answered by `thumbnail.made`.
     #[serde(rename = "thumbnail.make")]
     ThumbnailMake(ThumbnailMake),
@@ -85,6 +82,10 @@ pub enum CoreToShell {
     /// Take the reading pane away: web reading is off.
     #[serde(rename = "reading.close")]
     ReadingClose(NoParams),
+    /// Where the reading pane stands: how many columns the terminal keeps
+    /// beside it.
+    #[serde(rename = "reading.place")]
+    ReadingPlace(ReadingPlace),
 }
 
 /// A message the shell sends to the core.
@@ -122,6 +123,10 @@ pub enum ShellToCore {
     /// choices changed.
     #[serde(rename = "form.used")]
     FormUsed(FormUsed),
+    /// How many columns the terminal would have with the window to
+    /// itself, whenever that changes.
+    #[serde(rename = "window.resized")]
+    WindowResized(WindowResized),
     /// The app is quitting: flush and exit cleanly.
     #[serde(rename = "app.will_quit")]
     AppWillQuit(NoParams),
@@ -331,16 +336,6 @@ impl From<PanePreview> for PanePreviewParams {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PaneWeb {
-    /// The sanitized HTML. Files beside it in its folder may be loaded.
-    pub path: AbsolutePath,
-    pub title: String,
-    /// The user has allowed this message to load remote content.
-    pub remote: bool,
-}
-
 /// The most lines the reading pane's header may be given.
 pub const MAX_READING_HEADER_LINES: usize = 8;
 /// The longest any one of them may be, in bytes.
@@ -432,6 +427,86 @@ impl From<ReadingShow> for ReadingShowParams {
 #[serde(deny_unknown_fields)]
 pub struct ReadingScroll {
     pub by: ScrollBy,
+}
+
+/// The reading pane's place in the window, said in the terminal's own
+/// measure: the terminal keeps `columns` columns, and the reading pane has
+/// the rest of the window. The core works this out from the columns the
+/// whole window has room for (`window.resized`), so that the panes it
+/// draws are as wide beside the reading pane as they are beside its own
+/// reader.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "ColumnsParams", into = "ColumnsParams")]
+pub struct ReadingPlace {
+    columns: u16,
+}
+
+impl ReadingPlace {
+    /// `None` for no columns at all: a terminal is never that narrow.
+    pub fn new(columns: u16) -> Option<Self> {
+        (columns > 0).then_some(Self { columns })
+    }
+
+    pub fn columns(self) -> u16 {
+        self.columns
+    }
+}
+
+/// How many columns the terminal would have if it had the whole window:
+/// what the window has room for, whatever stands beside the terminal now.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "ColumnsParams", into = "ColumnsParams")]
+pub struct WindowResized {
+    columns: u16,
+}
+
+impl WindowResized {
+    /// `None` for no columns at all.
+    pub fn new(columns: u16) -> Option<Self> {
+        (columns > 0).then_some(Self { columns })
+    }
+
+    pub fn columns(self) -> u16 {
+        self.columns
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ColumnsParams {
+    columns: u16,
+}
+
+impl TryFrom<ColumnsParams> for ReadingPlace {
+    type Error = String;
+
+    fn try_from(params: ColumnsParams) -> Result<Self, Self::Error> {
+        Self::new(params.columns).ok_or_else(|| "columns must be at least 1".to_owned())
+    }
+}
+
+impl From<ReadingPlace> for ColumnsParams {
+    fn from(place: ReadingPlace) -> Self {
+        Self {
+            columns: place.columns,
+        }
+    }
+}
+
+impl TryFrom<ColumnsParams> for WindowResized {
+    type Error = String;
+
+    fn try_from(params: ColumnsParams) -> Result<Self, Self::Error> {
+        Self::new(params.columns).ok_or_else(|| "columns must be at least 1".to_owned())
+    }
+}
+
+impl From<WindowResized> for ColumnsParams {
+    fn from(resized: WindowResized) -> Self {
+        Self {
+            columns: resized.columns,
+        }
+    }
 }
 
 /// How far to scroll the reading pane, and which way.
@@ -1833,6 +1908,41 @@ mod tests {
             decode::<CoreToShell>("not json"),
             Err(BridgeError::Malformed(_))
         ));
+    }
+
+    #[test]
+    fn the_place_of_the_reading_pane_is_a_whole_number_of_columns_both_ways() {
+        assert!(ReadingPlace::new(0).is_none() && WindowResized::new(0).is_none());
+        let place = ReadingPlace::new(78).unwrap();
+        assert_eq!(place.columns(), 78);
+        let line = encode(&CoreToShell::ReadingPlace(place)).unwrap();
+        assert_eq!(
+            line,
+            r#"{"jsonrpc":"2.0","method":"reading.place","params":{"columns":78}}"#
+        );
+        assert_eq!(
+            decode::<CoreToShell>(&line).unwrap(),
+            CoreToShell::ReadingPlace(place)
+        );
+        let resized = decode::<ShellToCore>(
+            r#"{"jsonrpc":"2.0","method":"window.resized","params":{"columns":147}}"#,
+        )
+        .unwrap();
+        assert!(matches!(resized, ShellToCore::WindowResized(resized) if resized.columns() == 147));
+        for bad in [
+            r#"{"columns":0}"#,
+            r#"{"columns":-1}"#,
+            r#"{"columns":78.5}"#,
+            r#"{"columns":"78"}"#,
+            r#"{"columns":65536}"#,
+            r#"{}"#,
+            r#"{"columns":78,"points":624}"#,
+        ] {
+            let line = format!(r#"{{"jsonrpc":"2.0","method":"reading.place","params":{bad}}}"#);
+            assert!(decode::<CoreToShell>(&line).is_err(), "{bad}");
+            let line = format!(r#"{{"jsonrpc":"2.0","method":"window.resized","params":{bad}}}"#);
+            assert!(decode::<ShellToCore>(&line).is_err(), "{bad}");
+        }
     }
 
     #[test]

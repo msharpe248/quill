@@ -175,6 +175,7 @@ fn read_loop(stream: UnixStream, events: UnboundedSender<HostEvent>) {
                 status: exited.status(),
             },
             Ok(ShellToCore::FormUsed(used)) => HostEvent::FormUsed(used),
+            Ok(ShellToCore::WindowResized(resized)) => HostEvent::WindowColumns(resized.columns()),
             Ok(ShellToCore::AppWillQuit(_)) => HostEvent::WillQuit,
             Err(err) => HostEvent::Problem(unreadable(&line, &err)),
         };
@@ -287,6 +288,7 @@ mod tests {
             .connection
             .write_all(
                 b"{\"jsonrpc\":\"2.0\",\"method\":\"command.run\",\"params\":{\"name\":\"view.zoom\"}}\n\n\
+                  {\"jsonrpc\":\"2.0\",\"method\":\"window.resized\",\"params\":{\"columns\":147}}\n\
                   {\"jsonrpc\":\"2.0\",\"method\":\"app.will_quit\",\"params\":{}}\n",
             )
             .unwrap();
@@ -294,6 +296,7 @@ mod tests {
             next(&mut events).await,
             HostEvent::RunCommand("view.zoom".to_owned())
         );
+        assert_eq!(next(&mut events).await, HostEvent::WindowColumns(147));
         assert_eq!(next(&mut events).await, HostEvent::WillQuit);
     }
 
@@ -342,8 +345,6 @@ mod tests {
         }
         host.play(pdf, "a film");
         assert!(matches!(sent(&mut shell), CoreToShell::PanePlay(file) if file.title == "a film"));
-        host.web(png, "a message", true);
-        assert!(matches!(sent(&mut shell), CoreToShell::PaneWeb(web) if web.remote));
         host.reading_show(png, "a message", false, vec!["From: Ana".to_owned()]);
         assert!(matches!(
             sent(&mut shell),
@@ -357,6 +358,13 @@ mod tests {
         ));
         host.reading_close();
         assert!(matches!(sent(&mut shell), CoreToShell::ReadingClose(_)));
+        host.reading_place(78);
+        assert!(matches!(
+            sent(&mut shell),
+            CoreToShell::ReadingPlace(place) if place.columns() == 78
+        ));
+        // No columns is no place, and is not said.
+        host.reading_place(0);
         // What is said above the page is made to fit; the page is shown.
         let mut header = vec!["line\u{7}".to_owned(); 9];
         header.insert(0, String::new());

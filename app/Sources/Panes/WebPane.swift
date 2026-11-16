@@ -112,7 +112,9 @@ public enum ContentRules {
     }
 }
 
-/// HTML in the second pane.
+/// The reading pane: HTML in the second pane, standing in the reader's
+/// place, with lines of its own above the page. It is not closed by the
+/// user: it goes when the core says web reading is off.
 ///
 /// The core has already sanitized the file. This pane is the second line of
 /// defence, and assumes the first one failed: no script runs, nothing is
@@ -142,9 +144,6 @@ public final class WebPane: PaneView, WKNavigationDelegate, WKUIDelegate {
             }
         }
     }
-    /// Whether this is the reading pane: the page stands in the reader's
-    /// place, has lines of its own above it, and is not closed by the user.
-    public let isReading: Bool
     /// The page has loaded, or will not: there is nothing more to wait
     /// for before putting the pane on show. Not called for a pane that had
     /// already failed when it was made.
@@ -161,22 +160,17 @@ public final class WebPane: PaneView, WKNavigationDelegate, WKUIDelegate {
     private var closed = false
 
     /// - Parameters:
-    ///   - readingHeader: Given, even empty, this is the reading pane, with
-    ///     these lines above the page. The page is held to the same rules
-    ///     either way.
+    ///   - header: Lines of plain text above the page, outside it.
     ///   - openLink: Given a web or mail address the user clicked.
     public init(
-        file: URL, title: String, allowsRemoteContent: Bool, readingHeader: [String]? = nil,
+        file: URL, title: String, allowsRemoteContent: Bool, header: [String] = [],
         openLink: @escaping (URL) -> Void
     ) {
         policy = WebNavigationPolicy(document: file)
         self.allowsRemoteContent = allowsRemoteContent
         self.openLink = openLink
-        isReading = readingHeader != nil
         webView = MessageWebView(frame: .zero, configuration: Self.configuration())
-        super.init(
-            kind: .web, title: title, content: webView, headerLines: readingHeader,
-            closable: readingHeader == nil)
+        super.init(kind: .web, title: title, content: webView, headerLines: header, closable: false)
 
         webView.navigationDelegate = self
         webView.uiDelegate = self

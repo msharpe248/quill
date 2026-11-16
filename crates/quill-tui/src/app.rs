@@ -125,6 +125,7 @@ pub async fn run(
         preview_dir: view_dir,
         last_host_state: None,
         last_form: None,
+        last_place: None,
         images: Images::default(),
         thumbnails: std::collections::HashMap::new(),
         editor_wanted: None,
@@ -161,6 +162,8 @@ struct Io<'a> {
     last_host_state: Option<HostState>,
     /// The add-an-account form as the host was last told to show it.
     last_form: Option<bridge::FormShow>,
+    /// The place the host was last told its reading pane has.
+    last_place: Option<u16>,
     images: Images,
     /// Pictures the host has been asked to make, by the id asked under,
     /// and where each will be written.
@@ -317,11 +320,6 @@ impl Io<'_> {
                 }
                 HostRequest::Play { path, title } => self.host.play(&path, &title),
                 HostRequest::OpenFile(path) => self.host.open_file(&path),
-                HostRequest::Web {
-                    path,
-                    title,
-                    remote,
-                } => self.host.web(&path, &title, remote),
                 // Only ever asked for where the host has the pane.
                 HostRequest::Reading {
                     path,
@@ -508,6 +506,19 @@ impl Io<'_> {
         self.last_host_state = Some(current);
     }
 
+    /// Tells the host where its reading pane stands, when that has
+    /// changed: how many columns the terminal keeps beside it.
+    fn mirror_place(&mut self, state: &State, env: &Env) {
+        let current = state.reading_place(env);
+        if current == self.last_place {
+            return;
+        }
+        if let Some(columns) = current {
+            self.host.reading_place(columns);
+        }
+        self.last_place = current;
+    }
+
     /// Has the host show the add-an-account form as it now is, where the
     /// host is the one that shows it: the whole form whenever any of it
     /// has changed, and word to put it away when it is over.
@@ -673,9 +684,22 @@ async fn event_loop(
     // out, and when it was made. A page is asked for once the cursor has
     // rested, never for each message passed on the way.
     let mut resting: Option<(u64, tokio::time::Instant)> = None;
+    // Until when nothing is drawn, because the host is about to give the
+    // terminal another width: the reading pane is coming or going beside
+    // it. Drawing at the old width in the arrangement meant for the new
+    // one would show the list at a width it has neither before nor after.
+    // As Quill starts with web reading on, the wait is for the host to
+    // say how wide its window is.
+    let mut width_due = state
+        .web_reading
+        .then(|| tokio::time::Instant::now() + WIDTH_WAIT);
     loop {
-        // Redraw only on change, and never over Vim.
-        if state.dirty && away.is_none() {
+        if width_due.is_some_and(|due| tokio::time::Instant::now() >= due) {
+            width_due = None;
+        }
+        // Redraw only on change, never over Vim, and not at a width that
+        // is about to change.
+        if state.dirty && away.is_none() && width_due.is_none() {
             let mut overlays = view::Overlays::default();
             let frame = step(
                 "cannot draw",
@@ -691,6 +715,7 @@ async fn event_loop(
         }
         io.mirror(&state, env);
         io.mirror_form(&state, env);
+        io.mirror_place(&state, env);
 
         let spelling_due = state
             .spell_check_due(env)
@@ -748,6 +773,7 @@ async fn event_loop(
                     Some(Action::Notification { id, action })
                 }
                 HostEvent::FormUsed(used) => Some(Action::FormUsed(used)),
+                HostEvent::WindowColumns(columns) => Some(Action::WindowColumns(columns)),
                 HostEvent::Thumbnail { id, ok } => {
                     io.thumbnail_made(id, ok);
                     None
@@ -762,13 +788,24 @@ async fn event_loop(
             _ = clock.tick() => Some(Action::ClockTick(now())),
             () = quiet_until(spelling_due) => Some(Action::TypingPaused),
             () = quiet_until(settle_due) => Some(Action::SelectionSettled),
+            // The new width did not come: draw at the one there is.
+            () = quiet_until(width_due) => None,
         };
+        if matches!(action, Some(Action::Resize(..) | Action::WindowColumns(_))) {
+            width_due = None;
+        }
         if matches!(action, Some(Action::Key(_) | Action::Paste(_))) {
             last_typed = tokio::time::Instant::now();
         }
         if let Some(action) = action {
+            let web = state.web_reading;
             let effects = state.update(env, action);
             io.perform(effects);
+            if state.web_reading != web {
+                width_due = state
+                    .resize_expected()
+                    .then(|| tokio::time::Instant::now() + WIDTH_WAIT);
+            }
         }
         if let Some((path, dir, editor, body_line)) = io.editor_wanted.take() {
             let draft = (editor, path.as_path(), dir.as_path(), body_line);
@@ -886,6 +923,12 @@ const TYPING_PAUSE: Duration = Duration::from_millis(400);
 /// so that holding `j` renders nothing on the way, and short enough that a
 /// single press still feels answered at once.
 const SETTLE_PAUSE: Duration = Duration::from_millis(150);
+
+/// How long the host is given to change the terminal's width, once web
+/// reading has been switched, before the panes are drawn at the width
+/// there is. The host does it in a few milliseconds; a page that is slow
+/// to make is not waited for.
+const WIDTH_WAIT: Duration = Duration::from_millis(200);
 
 /// Waits until `at`, or for ever when there is nothing to wait for.
 async fn quiet_until(at: Option<tokio::time::Instant>) {

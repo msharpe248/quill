@@ -252,6 +252,10 @@ pub enum Action {
     /// The list's cursor has rested on a message for a moment: the time
     /// to show it in the web reading pane. See [`State::settle_due`].
     SelectionSettled,
+    /// The host's window has room for this many columns: what the
+    /// terminal would have with the window to itself. The layout goes by
+    /// it while the host's reading pane has part of the window.
+    WindowColumns(u16),
 }
 
 /// What an action asks of the world outside the state: queries and writes
@@ -295,13 +299,6 @@ pub enum HostRequest {
     /// Open a file in the application the Mac opens its kind with. Only
     /// ever on the user's own key press.
     OpenFile(PathBuf),
-    /// Show a message's sanitized page beside the terminal. `remote`: it
-    /// may load remote content.
-    Web {
-        path: PathBuf,
-        title: String,
-        remote: bool,
-    },
     /// Tell the user about new mail. `actions` are a name, a title and
     /// whether using it should bring Quill forward; the name of the one
     /// chosen comes back in [`Action::Notification`].
@@ -912,9 +909,6 @@ pub struct Reader {
     pub picture: Option<Picture>,
     /// The user asked for this message's remote content.
     pub remote: bool,
-    /// Where this message's page was last shown, so that loading its
-    /// remote content shows it there again.
-    pub page: Option<PageUse>,
     /// The card for the invitation the message carries, when it carries
     /// one: drawn between the headers and the text.
     pub card: Vec<CardRow>,
@@ -1104,6 +1098,10 @@ pub struct State {
     /// The user has switched web reading the other way from what the
     /// config says, in this run.
     web_flipped: bool,
+    /// How many columns the host's window has room for, once it has said:
+    /// the terminal's own while it has the window to itself, and more
+    /// than that while a pane of the host's stands beside it.
+    pub window_columns: Option<u16>,
     follow: Follow,
     /// A sign-in to an account's provider, waiting on the user.
     pub sign_in: Option<SignIn>,
@@ -1167,6 +1165,7 @@ impl State {
             form_hosted: false,
             web_reading: false,
             web_flipped: false,
+            window_columns: None,
             follow: Follow::default(),
             sign_in: None,
             when: None,
@@ -1292,6 +1291,10 @@ impl State {
                 // Nothing drawn here changes: the page is the host's.
                 changed = false;
                 self.follow.settled = true;
+            }
+            Action::WindowColumns(columns) => {
+                changed = self.window_columns != Some(columns);
+                self.window_columns = Some(columns);
             }
             Action::HookDone { name, outcome } => {
                 self.hook_running = None;
@@ -1933,7 +1936,7 @@ impl State {
                 });
             }
             CommandId::NavOpen => self.open(out),
-            CommandId::NavBack => self.back(out),
+            CommandId::NavBack => self.back(env, out),
             CommandId::AppQuit => self.should_quit = true,
             CommandId::FocusSidebar => self.set_focus(Pane::Sidebar),
             CommandId::FocusList => self.set_focus(Pane::List),
@@ -2012,7 +2015,6 @@ impl State {
             CommandId::MessageAttachments => {
                 self.attachments = Some(AttachmentPicker::default());
             }
-            CommandId::MessageViewHtml => self.show_page(env, PageUse::Pane, out),
             CommandId::MessageOpenInBrowser => self.show_page(env, PageUse::Browser, out),
             CommandId::MessageLoadRemote => {
                 self.reader.remote = true;
@@ -2240,8 +2242,6 @@ impl State {
             CommandId::AttachmentOpen | CommandId::AttachmentSave => {
                 self.chosen_attachment().is_some()
             }
-            // The page is on show already, in the reading pane.
-            CommandId::MessageViewHtml => !self.web_reading && self.page_message(context).is_some(),
             CommandId::MessageOpenInBrowser => self.page_message(context).is_some(),
             CommandId::MessageLoadRemote | CommandId::SenderAlwaysRemote => {
                 !env.remote_never && self.page_message(context).is_some()
@@ -2266,7 +2266,7 @@ impl State {
                     || self.focus == Pane::Reader
                     || self.list.has_marks()
                     || (self.focus == Pane::Sidebar
-                        && LayoutMode::for_width(self.size.0) == LayoutMode::Narrow)
+                        && layout::mode(self, self.size.0, env.reader_width) == LayoutMode::Narrow)
             }
             CommandId::MessageToggleUnread | CommandId::MessageToggleStar => self
                 .target_row()
@@ -2530,7 +2530,7 @@ impl State {
         }
     }
 
-    fn back(&mut self, out: &mut Effects) {
+    fn back(&mut self, env: &Env, out: &mut Effects) {
         if self.help.is_some() {
             self.help = None;
         } else if self.palette.is_some() {
@@ -2592,7 +2592,9 @@ impl State {
         } else {
             match self.focus {
                 Pane::Reader => self.set_focus(Pane::List),
-                Pane::Sidebar if LayoutMode::for_width(self.size.0) == LayoutMode::Narrow => {
+                Pane::Sidebar
+                    if layout::mode(self, self.size.0, env.reader_width) == LayoutMode::Narrow =>
+                {
                     // Close the overlay and return to whatever was under it.
                     self.focus = match self.main_pane {
                         MainPane::List => Pane::List,
@@ -4189,9 +4191,9 @@ impl State {
         (on_it && matches!(self.reader.body, Body::Loaded(_))).then_some(row.id)
     }
 
-    /// Asks for the message's page, to show in the pane or the browser.
-    /// Whether it may load remote content is decided here, from what the
-    /// user has said, and written into the page.
+    /// Asks for the message's page, to show in the web reading pane or the
+    /// browser. Whether it may load remote content is decided here, from
+    /// what the user has said, and written into the page.
     fn show_page(&mut self, env: &Env, then: PageUse, out: &mut Effects) {
         let Some(message) = self.page_message(self.context()) else {
             return;
@@ -4215,13 +4217,15 @@ impl State {
         }
     }
 
-    /// Where a message's page is shown again once it may load its remote
-    /// content: where it is on show.
+    /// Where a message's page is shown once it may load its remote
+    /// content: in the web reading pane while that is where mail is read,
+    /// and otherwise in the browser. The reader drawn here fetches
+    /// nothing, so it has nothing more to show.
     fn page_again(&self) -> PageUse {
         if self.web_reading {
             PageUse::Reading
         } else {
-            self.reader.page.unwrap_or(PageUse::Pane)
+            PageUse::Browser
         }
     }
 
@@ -4261,12 +4265,31 @@ impl State {
         } else {
             self.follow = Follow::default();
             out.host.push(HostRequest::CloseReading);
-            // The page was the reading pane's: nothing of it is on show.
-            self.reader.page = None;
             // Laid out again, for the reader that is drawn here now.
             self.reader.wrap_width = None;
             self.flash = Some((format!("Messages are shown as text.{key}"), false));
         }
+    }
+
+    /// How many columns the terminal keeps beside the host's reading
+    /// pane, for the host to put the pane by: the accounts' and the
+    /// list's, so that the pane has the reader's place exactly. `None`
+    /// while web reading is off or the host has not said how wide its
+    /// window is.
+    pub fn reading_place(&self, env: &Env) -> Option<u16> {
+        let window = self.window_columns.filter(|_| self.web_reading)?;
+        Some(layout::beside_reading(window, env.reader_width))
+    }
+
+    /// Whether the terminal is about to be given a different width by the
+    /// host: web reading is on and the terminal still has the whole
+    /// window, or is off and the terminal is still short of it. The run
+    /// loop waits a moment for the new width before it draws, so that
+    /// nothing is drawn at the old one in an arrangement meant for the
+    /// new.
+    pub fn resize_expected(&self) -> bool {
+        self.window_columns
+            .is_some_and(|window| self.web_reading == (self.size.0 >= window))
     }
 
     /// The count of the cursor's moves, while the web reading pane is
@@ -5078,7 +5101,6 @@ impl State {
                 {
                     return;
                 }
-                self.reader.page = Some(then);
                 if page.blocked > 0 && !page.remote {
                     let pictures = if page.blocked == 1 {
                         "1 remote picture was left out".to_owned()
@@ -5098,11 +5120,6 @@ impl State {
                     self.flash = Some((format!("{pictures}{how}."), false));
                 }
                 match then {
-                    PageUse::Pane => out.host.push(HostRequest::Web {
-                        path: page.path,
-                        title: text::sanitize_line(&page.title),
-                        remote: page.remote,
-                    }),
                     PageUse::Browser => out.host.push(HostRequest::OpenFile(page.path)),
                     PageUse::Reading => self.show_in_reading_pane(env, message, page, out),
                 }

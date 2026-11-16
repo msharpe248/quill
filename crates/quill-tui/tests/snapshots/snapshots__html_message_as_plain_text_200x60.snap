@@ -61,4 +61,4 @@ expression: harness.screen()
 │                          ││                                                                                    │┃                                                                                    ┃
 │                          ││                                                                                    │┃                                                                                    ┃
 └──────────────────────────┘└────────────────────────────────────────────────────────────────────────────────────┘┗ plain text ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
- j/k scroll  space page  esc back  r reply  e archive  d delete  a files  o links  t html/text  v web page  u unread  s star  z zoom  ? help  q quit
+ j/k scroll  space page  esc back  r reply  e archive  d delete  a files  o links  t html/text  B browser  u unread  s star  z zoom  ? help  q quit

@@ -54,7 +54,7 @@ impl State {
                     }
                 }
                 // A click beside it puts it away.
-                (None, MouseKind::Press) if !over(areas.help) => self.back(out),
+                (None, MouseKind::Press) if !over(areas.help) => self.back(env, out),
                 _ => {}
             }
             return;
@@ -81,7 +81,7 @@ impl State {
         } else if areas.sidebar_overlay {
             // A click beside the overlay closes it, as esc does.
             if mouse.kind == MouseKind::Press {
-                self.back(out);
+                self.back(env, out);
             }
         } else if over(areas.list) {
             self.mouse_in_message_list(env, areas.list, mouse, wheel, out);
@@ -108,7 +108,7 @@ impl State {
             return;
         }
         if !rect.contains(Position::new(mouse.column, mouse.row)) {
-            self.back(out);
+            self.back(env, out);
             return;
         }
         // Folders, templates and the palette have a line to type on above

@@ -22,7 +22,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     private let surface: any TerminalSurface
     private let options: LaunchOptions
-    private let splitView = NSSplitView()
+    private let splitView = DividerSplitView()
     private var bridge: BridgeServer?
     /// The second pane, while one is showing. There is never more than one:
     /// showing another replaces it.
@@ -37,6 +37,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     private var incomingReading: WebPane?
     /// How many pages the reading pane has been asked to show.
     private(set) var readingRequests = 0
+    /// How many columns the core says the terminal keeps beside the
+    /// reading pane, once it has said.
+    private(set) var readingColumnsAsked: Int?
+    /// Where the user left the divider between the terminal and the
+    /// reading pane. A scripted run keeps it for the run only, and reads
+    /// and writes nothing of the user's.
+    let dividerMemory: any DividerMemory
+    /// The columns the core was last told the window has room for.
+    private(set) var windowColumnsSent: Int?
 
     /// The Vim in the editor pane, while one is running.
     private var editor: RunningEditor?
@@ -214,6 +223,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     init(options: LaunchOptions) {
         self.options = options
         surface = makeTerminalSurface()
+        dividerMemory =
+            options.isScripted ? TransientDividerMemory() : DefaultsDividerMemory(defaults: .standard)
         let support =
             FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
@@ -240,7 +251,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         )
         window.title = "Quill"
         window.minSize = NSSize(width: 480, height: 320)
-        window.setFrameAutosaveName("QuillMainWindow")
+        // A scripted run starts at the size above every time, and leaves
+        // the size the user's own window was last at as it was.
+        if !options.isScripted {
+            window.setFrameAutosaveName("QuillMainWindow")
+        }
         window.center()
         super.init(window: window)
         window.delegate = self
@@ -262,6 +277,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         surface.onExit = { [weak self] exit in
             self?.coreDidExit(exit)
         }
+        // The terminal has another size, or its cells have: the core is
+        // told how many columns the window has room for, and the reading
+        // pane's divider is put where that many columns end.
+        surface.onGridChange = { [weak self] _ in
+            self?.reportWindowColumns()
+            self?.placeReadingDivider()
+        }
+        splitView.onDividerMoved = { [weak self] in self?.dividerMoved() }
+        splitView.onDividerDoubleClicked = { [weak self] in self?.dividerReset() }
         // A link clicked in the terminal.
         surface.onOpenLink = { [weak self] address in
             self?.openLink(address)
@@ -338,6 +362,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             )
             self.bridge = bridge
             environment["QUILL_SHELL_SOCKET"] = bridge.socketPath
+            // If the terminal has been measured already. It waits in the
+            // bridge until the core has connected.
+            reportWindowColumns()
         } catch {
             // The core runs without menus rather than not at all, and says so.
             NSLog("Quill: no bridge: %@", String(describing: error))
@@ -381,13 +408,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             }
         case let .panePlay(file):
             show(PlayerPane(file: URL(fileURLWithPath: file.path), title: file.title))
-        case let .paneWeb(page):
-            show(
-                WebPane(file: URL(fileURLWithPath: page.path), title: page.title, allowsRemoteContent: page.remote) {
-                    [weak self] address in
-                    // The same door every other link goes through.
-                    self?.openLink(address.absoluteString)
-                })
         case let .thumbnailMake(make):
             makeThumbnail(make)
         case let .fileOpen(path):
@@ -425,6 +445,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             readingPane?.scroll(by)
         case .readingClose:
             closeReading()
+        case let .readingPlace(place):
+            readingColumnsAsked = place.columns
+            placeReadingDivider()
         }
     }
 
@@ -673,6 +696,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         NSApp.terminate(nil)
     }
 
+    func windowDidResize(_: Notification) {
+        reportWindowColumns()
+        placeReadingDivider()
+    }
+
+    func windowDidChangeBackingProperties(_: Notification) {
+        reportWindowColumns()
+        placeReadingDivider()
+    }
+
     func windowWillClose(_: Notification) {
         // Nothing goes on playing, or loading, behind a closed window.
         dropIncomingReading()
@@ -734,9 +767,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         }
         pane = newPane
         splitView.addArrangedSubview(newPane)
+        holdTheTerminal()
         splitView.layoutSubtreeIfNeeded()
         splitView.setPosition(divider, ofDividerAt: 0)
         focus(newPane)
+    }
+
+    /// As the window is resized the pane takes up the difference and the
+    /// terminal keeps its width, and so its columns: what is drawn in it
+    /// does not shift about on the way.
+    private func holdTheTerminal() {
+        guard splitView.arrangedSubviews.count == 2 else { return }
+        splitView.setHoldingPriority(.defaultLow + 10, forSubviewAt: 0)
+        splitView.setHoldingPriority(.defaultLow - 10, forSubviewAt: 1)
     }
 
     /// Closes the pane, whoever asks: its close button, the menu, `esc` in
@@ -758,24 +801,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     private func removePane() {
         guard let old = pane else { return }
-        let divider = surface.view.frame.width
         pane = nil
         old.tearDown()
         old.removeFromSuperview()
         surface.focus()
-        // The place is empty: the reading pane has it back, where the pane
-        // that has gone was, on the page the core last asked for.
+        // The place is empty: the reading pane has it back, on the page
+        // the core last asked for, and where the reading pane goes,
+        // wherever the divider of the pane that has gone was left.
         if case let .show(page) = readingSlot.vacated() {
-            place(makeReadingPane(page), dividerAt: divider)
+            place(makeReadingPane(page))
         }
     }
 
     // MARK: - The reading pane
 
     /// The reading pane, while it is the pane on show.
-    private var readingPane: WebPane? {
-        (pane as? WebPane).flatMap { $0.isReading ? $0 : nil }
-    }
+    private var readingPane: WebPane? { pane as? WebPane }
 
     private var isReadingPane: Bool { readingPane != nil }
 
@@ -786,10 +827,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         return isReadingPane ? .reading : .other
     }
 
-    /// The terminal's share of the window beside the reading pane: the
-    /// accounts and the list need less room than the three panes did.
-    private static let terminalShareBesideReading = 0.5
-
     /// How long a page is given to load out of sight before it is put on
     /// show anyway, still loading.
     private static let longestWaitForAPage = 0.4
@@ -797,7 +834,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     private func makeReadingPane(_ page: ReadingShow) -> WebPane {
         WebPane(
             file: URL(fileURLWithPath: page.path), title: page.title, allowsRemoteContent: page.remote,
-            readingHeader: page.header
+            header: page.header
         ) { [weak self] address in
             // The same door every other link goes through.
             self?.openLink(address.absoluteString)
@@ -810,7 +847,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         readingRequests += 1
         switch readingSlot.show(page, over: occupant) {
         case let .show(page):
-            place(makeReadingPane(page), dividerAt: splitView.bounds.width * Self.terminalShareBesideReading)
+            place(makeReadingPane(page))
         case let .replace(page):
             dropIncomingReading()
             let incoming = makeReadingPane(page)
@@ -836,11 +873,77 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     /// Puts a reading pane beside the terminal, in an empty place, without
     /// giving it the keyboard.
-    private func place(_ newPane: WebPane, dividerAt divider: CGFloat) {
+    private func place(_ newPane: WebPane) {
         pane = newPane
         splitView.addArrangedSubview(newPane)
+        holdTheTerminal()
         splitView.layoutSubtreeIfNeeded()
-        splitView.setPosition(divider, ofDividerAt: 0)
+        splitView.setPosition(readingTerminalWidth, ofDividerAt: 0)
+    }
+
+    // MARK: - The reading pane's divider
+
+    /// The terminal's cells, once it has been measured.
+    private var cells: CellMeasure? {
+        surface.grid.flatMap { CellMeasure(cellWidthPixels: $0.cellWidthPixels, scale: $0.scale) }
+    }
+
+    /// How many columns the terminal would have with the window to itself.
+    var windowColumns: Int? {
+        cells?.columns(inWidth: splitView.bounds.width)
+    }
+
+    /// Tells the core how many columns the window has room for, when that
+    /// has changed. The core lays out by it while the reading pane has
+    /// part of the window, and says where the pane goes.
+    private func reportWindowColumns() {
+        guard let bridge, let columns = windowColumns, columns != windowColumnsSent,
+            let resized = WindowResized(columns: columns)
+        else { return }
+        windowColumnsSent = columns
+        bridge.send(.windowResized(resized))
+    }
+
+    /// The width the terminal has beside the reading pane: that of the
+    /// columns the user left it, or else of those the core says. Half the
+    /// window until the terminal has been measured.
+    private var readingTerminalWidth: CGFloat {
+        guard let cells else { return (splitView.bounds.width / 2).rounded() }
+        return ReadingDivider.terminalWidth(
+            remembered: dividerMemory.columns, asked: readingColumnsAsked, width: splitView.bounds.width,
+            divider: splitView.dividerThickness, cells: cells)
+    }
+
+    /// Puts the divider where the reading pane's goes, if the reading pane
+    /// is the pane on show and it is not there already. Not while the user
+    /// has hold of it: the terminal's columns change under a drag, and
+    /// putting the divider back at each would take it out of their hand.
+    private func placeReadingDivider() {
+        guard isReadingPane, !splitView.isDividerHeld else { return }
+        let width = readingTerminalWidth
+        if abs(surface.view.frame.width - width) >= 0.5 {
+            splitView.setPosition(width, ofDividerAt: 0)
+        }
+    }
+
+    /// The user dragged the divider and let go. Beside the reading pane,
+    /// that is where it stays, in this run and the next: on the nearest
+    /// whole column. Beside any other pane it is that pane's for as long
+    /// as it is open, and nothing is remembered.
+    private func dividerMoved() {
+        guard isReadingPane, let cells else { return }
+        dividerMemory.columns = ReadingDivider.columns(
+            draggedTo: surface.view.frame.width, width: splitView.bounds.width,
+            divider: splitView.dividerThickness, cells: cells)
+        placeReadingDivider()
+    }
+
+    /// The user double-clicked the divider: it goes back to where the core
+    /// says, the reader's place exactly, and nothing is remembered.
+    private func dividerReset() {
+        guard isReadingPane else { return }
+        dividerMemory.columns = nil
+        placeReadingDivider()
     }
 
     /// Puts a reading pane that has loaded its page where the reading pane
@@ -851,10 +954,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         incomingReading = nil
         incoming.onSettled = nil
         let hadFocus = paneHasFocus
-        let divider = surface.view.frame.width
         old.tearDown()
         old.removeFromSuperview()
-        place(incoming, dividerAt: divider)
+        place(incoming)
         if hadFocus {
             surface.focus()
         }
@@ -1188,6 +1290,39 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     /// The reading pane's web view, for the picture in the dump.
     var readingPaneForPicture: WebPane? { readingPane }
 
+    /// The terminal's grid in a line, for the dump, and whether the sum
+    /// that says how many columns the window has room for agrees with it.
+    var gridSummary: String {
+        guard let grid = surface.grid else { return "not measured" }
+        let width = surface.view.frame.width
+        return "\(grid.columns) columns, \(grid.rows) rows, cells \(grid.cellWidthPixels) px at \(grid.scale)x, "
+            + "view \(width) pt of \(splitView.bounds.width)"
+    }
+
+    /// As if the user had dragged the divider until the terminal had this
+    /// many columns, and let go. False when there is no pane or no measure.
+    func dragDivider(toColumns columns: Int) -> Bool {
+        guard pane != nil, let cells else { return false }
+        splitView.drag(to: cells.width(forColumns: columns))
+        return true
+    }
+
+    /// As if the user had double-clicked the divider.
+    func doubleClickDivider() {
+        dividerReset()
+    }
+
+    /// Where the divider is in the window, and where the mouse would have
+    /// to take it for the terminal to have this many columns: for a
+    /// scripted run that drags it with mouse events of its own.
+    func dividerDrag(toColumns columns: Int) -> (from: NSPoint, to: NSPoint)? {
+        guard pane != nil, let cells else { return nil }
+        let terminal = surface.view.frame
+        let from = splitView.convert(
+            NSPoint(x: terminal.maxX + splitView.dividerThickness / 2, y: splitView.bounds.midY), to: nil)
+        return (from, NSPoint(x: from.x + cells.width(forColumns: columns) - terminal.width, y: from.y))
+    }
+
     /// The editor pane's screen as text, while Vim is running.
     var editorText: String? { editor?.surface.visibleText() }
 
@@ -1216,11 +1351,65 @@ extension MainWindowController: NSMenuItemValidation {
             pane != nil
         case #selector(closePane(_:)):
             // The reading pane is switched off, not closed.
-            pane != nil && (pane as? WebPane)?.isReading != true
+            pane != nil && !(pane is WebPane)
         case #selector(removeImportedVimrc(_:)):
             vimrc.current != nil
         default:
             true
+        }
+    }
+}
+
+/// The split between the terminal and the second pane, which says when
+/// the user has moved its divider themselves, or double-clicked it.
+///
+/// Its subviews fill it, so a click that reaches the split view itself is
+/// one on the divider. AppKit follows a drag of the divider from inside
+/// `mouseDown`, and returns when the button is let go.
+@MainActor
+final class DividerSplitView: NSSplitView {
+    /// The divider was dragged somewhere else and let go.
+    var onDividerMoved: (() -> Void)?
+    var onDividerDoubleClicked: (() -> Void)?
+
+    private var widthWhenPressed: CGFloat?
+
+    /// The user has hold of the divider: from the press to the letting go.
+    var isDividerHeld: Bool { widthWhenPressed != nil }
+
+    /// The divider taken hold of, moved to `position` and let go, as a
+    /// drag does it, for a scripted run.
+    func drag(to position: CGFloat) {
+        widthWhenPressed = arrangedSubviews.first?.frame.width
+        setPosition(position, ofDividerAt: 0)
+        layoutSubtreeIfNeeded()
+        letGo()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 {
+            onDividerDoubleClicked?()
+            return
+        }
+        widthWhenPressed = arrangedSubviews.first?.frame.width
+        super.mouseDown(with: event)
+        // AppKit has followed the drag to its end by now. Were it ever to
+        // return with the button still down, the letting go is `mouseUp`.
+        if NSEvent.pressedMouseButtons & 1 == 0 {
+            letGo()
+        }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        super.mouseUp(with: event)
+        letGo()
+    }
+
+    private func letGo() {
+        guard let before = widthWhenPressed else { return }
+        widthWhenPressed = nil
+        if let now = arrangedSubviews.first?.frame.width, abs(now - before) >= 0.5 {
+            onDividerMoved?()
         }
     }
 }

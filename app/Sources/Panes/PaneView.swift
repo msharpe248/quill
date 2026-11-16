@@ -7,7 +7,7 @@ public enum PaneKind: String, Sendable, CaseIterable {
     /// A video or a sound, in AVKit's player.
     case player
     /// Sanitized HTML, in a web view that runs no script and loads nothing
-    /// from the network unless it was told it may.
+    /// from the network unless it was told it may: the reading pane.
     case web
     /// A terminal of its own, running the Vim that ships in the app on a
     /// message being written.

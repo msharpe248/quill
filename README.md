@@ -48,7 +48,7 @@ open target/app/Quill.app
 
 The script builds the Rust core and the Swift shell, assembles `target/app/Quill.app`, and signs it ad hoc with the App Sandbox on. The app opens your own mail, and the form for adding an account when there is none; `Quill.app/Contents/MacOS/Quill --demo` opens the demo mailbox instead. The app keeps its config and mail in its own container, apart from those of `quill` run in a terminal.
 
-Around the terminal the app adds a menu bar and toolbar built from the core's commands, the mailbox name and unread count in the title bar, the unread count on the Dock icon, and a second pane beside the terminal for looking at attachments, playing sound and video, and showing a message's HTML. `esc` closes the pane, and `cmd-]` moves focus between the panes.
+Around the terminal the app adds a menu bar and toolbar built from the core's commands, the mailbox name and unread count in the title bar, the unread count on the Dock icon, and a second pane beside the terminal for looking at attachments and playing sound and video. `esc` closes the pane, and `cmd-]` moves focus between the panes.
 
 `w` (View > Web Reading Pane, or its toolbar button) turns that second pane into the place mail is read: a web view that shows the message under the list's cursor, as a mail program's reading pane does, with the accounts and the list beside it. See "Reading in a web pane".
 
@@ -191,12 +191,12 @@ Press `?` at any time for the keys that apply where you are. The bottom bar show
 | `S` | Sign in to an account (Microsoft, Google) | `T` | Group or ungroup conversations |
 | `b` | Snooze until a time | `ctrl-r` | Check for new mail now: every account, or the one chosen in the accounts pane |
 | `/` | Search | `a` | List a message's attachments |
-| `v` | View the message as a web page | `B` | Open that page in the browser |
+| `B` | Open the message as a web page in the browser | `w` | Read in a web pane, or in the text reader (in the app) |
 | `i` | Load remote pictures for this message | `I` | Always load them from this sender |
 | `x` | Select or unselect, and move on | `V` | Start or end a range |
 | `X` | Unsubscribe from a mailing list | `\|` | Give the message to one of your own programs (in a terminal) |
 | `y` / `n` | Accept, decline an invitation | `M` | Answer an invitation with maybe |
-| `w` | Read in a web pane, or in the text reader (in the app) | `l` / `h` | In the accounts pane: show, hide an account's folders |
+| `l` / `h` | In the accounts pane: show, hide an account's folders | | |
 
 Arrow keys, `home`, `end`, `pageup` and `pagedown` work too; in the accounts pane `→` shows an account's folders and `←` hides them. `ctrl-d` also pages down and `ctrl-c` also quits.
 
@@ -222,11 +222,11 @@ To act on several messages at once, select them first: `x` on each, or `V`, move
 
 ## HTML mail, and what it is allowed to do
 
-The reader shows a message's HTML as styled text, and fetches nothing. For the message as its sender laid it out, `v` opens it as a web page in a pane beside the reader (in a terminal, in your browser; `B` does that from the app too).
+The reader shows a message's HTML as styled text, and fetches nothing. For the message as its sender laid it out, `B` opens it as a web page in your browser; in the app, `w` puts a web pane in the reader's place instead (see "Reading in a web pane").
 
 That page is never the message's own HTML. Quill writes a copy with scripts, forms, frames and anything that would fetch taken out, and tells the page it may load nothing from the web. Pictures the message carries with it are shown. Pictures it only points at are not: loading one tells the sender that you opened the message, when, and from where. Where one would be, the page shows its description, and the status line says how many were left out.
 
-`i` loads them for the message in front of you. `I` says mail from that sender may always load them. In the config:
+`i` loads them for the message in front of you. `I` says mail from that sender may always load them. Either shows the page with them: in the web pane when that is where you are reading, and otherwise in the browser, since the text reader fetches nothing. In the config:
 
 ```toml
 [privacy]
@@ -237,11 +237,11 @@ A link whose text names one site and whose target is another is flagged in the r
 
 ### Reading in a web pane
 
-In the app, `w` switches between two ways of reading. Off, which is how Quill starts, is everything above: the reader is text, and `v` shows one message as a page. On, the web pane takes the reader's place and follows the list: move through the messages and each is shown as its page, a moment after the cursor comes to rest on it. The terminal then draws only the accounts and the list. Who the message is from and to, its date and its files are above the page, outside it. A message with no HTML is a page of its text, so nothing jumps about between one kind of message and another.
+In the app, `w` switches between two ways of reading. Off, which is how Quill starts, is everything above: the reader is text. On, the web pane takes the reader's place and follows the list: move through the messages and each is shown as its page, a moment after the cursor comes to rest on it. The terminal then draws only the accounts and the list. Who the message is from and to, its date and its files are above the page, outside it. A message with no HTML is a page of its text, so nothing jumps about between one kind of message and another.
 
 The keyboard stays with the list. `j` and `k` move; `space` and `ctrl-u` (the keys that page down and up) page the message, not the list; `enter` shows the message under the cursor at once. Everything that acts on a message works from there as it does in the reader: reply, forward, archive, delete, move, star, unread, `o` for its links, `a` for its files, `i` and `I` for its remote pictures, `B` for the browser, unsubscribing, answering an invitation. A message being written takes the list's place, with the one being answered still on show beside it. Clicking in the page puts the keyboard there, for selecting and copying; `esc` gives it back to the list.
 
-The page is the same cleaned copy `v` shows, held to the same rules: no script runs, nothing is fetched, and remote pictures stay out until `i` or `I`. A link clicked in it opens in your browser, if it is a web or mail address, and never in the pane.
+The page is the same cleaned copy `B` hands the browser, held to the same rules: no script runs, nothing is fetched, and remote pictures stay out until `i` or `I`. A link clicked in it opens in your browser, if it is a web or mail address, and never in the pane.
 
 A message becomes read when you go to it and it has been shown: by moving to it, clicking it or pressing `enter`. The message the cursor merely starts on when a mailbox opens, or when a search finds something, is shown without being marked; so is one the wheel scrolls past, and so is any message while several are selected.
 
@@ -252,7 +252,11 @@ The choice is kept. Switching writes it into `config.toml`, leaving the rest of 
 web_reading = true        # false, or left out: the text reader
 ```
 
-A terminal has no web view, so there `w` does nothing, the setting is ignored, and `v` still opens the browser.
+The pane has the reader's place exactly: the accounts and the list are as wide with it as with the text reader, to the column, so nothing in them moves as you switch, and that stays so as the window is resized. (In a window too narrow for three panes there is no reader beside the list to stand in for; the pane then has the reader's share of the window, `reader_width`, and the list is drawn in the rest.) Drag the divider between the list and the pane to give either more room. It comes to rest on a whole column, stays there as the window is resized, and is remembered from one run to the next, in the app's own preferences and not in `config.toml`. Double-click the divider to put it back in the reader's place. A file being looked at, or a message being written in Vim, borrows the pane's place and gives it back as it was: dragging the divider meanwhile changes nothing about where the reading pane goes.
+
+`space` pages the message and stops at its end; it does not go on to the next message, as it does in Mail. A web view that runs no script cannot be asked how far it has scrolled, and this one runs none.
+
+There is one command for each way of seeing a message as a page: `w` for the pane, and `B` for the browser. (`v`, which used to show one message in a pane beside the text reader, is gone, with its mutt key `H`.) A terminal has no web view, so there `w` does nothing and the setting is ignored, and `B` opens the browser as it does in the app.
 
 ## Unsubscribing from a mailing list
 
@@ -635,7 +639,7 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `sidebar.open`, `sidebar.close` | In the accounts pane, show or hide an account's folders |
 | `palette.open` | The command palette |
 | `message.attachments` | List the message's attachments |
-| `message.view_html`, `message.open_in_browser` | Show the message as a web page, beside the reader or in the browser |
+| `message.open_in_browser` | Open the message as a web page in the browser |
 | `message.load_remote`, `sender.always_remote` | Let this message, or this sender's mail, load remote pictures |
 | `message.unsubscribe` | Unsubscribe from the list that sent the message, after asking |
 | `message.hook` | List your hooks, to give the message to one of them |
@@ -683,7 +687,7 @@ The IMAP backend's tests run against a real server: install Dovecot (`brew insta
 
 The shell and the core talk over a bridge defined in `schema/bridge.json`. The example messages in `schema/examples` are tested from both sides; change the schema, both sets of types and the examples together.
 
-The app can be driven without a person, for checks that need the real window: `Quill --script "wait:2;menu:message.toggle_star;press:cmd-j" --dump-screen out.txt` performs the steps, then writes the terminal's text, the shell's state and a picture of the window (`out.txt.png`). Inside the sandbox the file must be in the app's container. `app/Sources/QuillApp/DebugScript.swift` lists the steps. A sheet on the window is in the dump too (its step, what it says, and each field with what it holds, a password as `<secret>`), is drawn into the picture where it lies and saved by itself as `out.txt.sheet.png`; `sheetset:FIELD=VALUE` and `sheetpress:BUTTON` work it. `snap:NAME` writes the dump as it stands in the middle of a script (`out.txt.NAME`, and its picture), so one launch can check several states; the dump says whether the web reading pane is on and what it shows.
+The app can be driven without a person, for checks that need the real window: `Quill --script "wait:2;menu:message.toggle_star;press:cmd-j" --dump-screen out.txt` performs the steps, then writes the terminal's text, the shell's state and a picture of the window (`out.txt.png`). Inside the sandbox the file must be in the app's container. `app/Sources/QuillApp/DebugScript.swift` lists the steps. A sheet on the window is in the dump too (its step, what it says, and each field with what it holds, a password as `<secret>`), is drawn into the picture where it lies and saved by itself as `out.txt.sheet.png`; `sheetset:FIELD=VALUE` and `sheetpress:BUTTON` work it. `snap:NAME` writes the dump as it stands in the middle of a script (`out.txt.NAME`, and its picture), so one launch can check several states; the dump says whether the web reading pane is on and what it shows, and gives the widths to check its place by: the terminal's columns, the columns the window has room for, where the core says the pane goes, where the divider was left, and the width of each pane drawn in the terminal. `divider:COLUMNS` drags the divider and `divider:reset` double-clicks it. A scripted run starts at the same window size every time and keeps a dragged divider for the run only; it neither reads nor writes your saved window or divider.
 
 The UI is covered by snapshot tests of whole screens at 80x24 and 200x60 (`crates/quill-tui/tests/snapshots.rs`). When a change to the UI is intended, regenerate them with `INSTA_UPDATE=always cargo test -p quill-tui` or review them with `cargo insta review`, and read the diff before committing.
 

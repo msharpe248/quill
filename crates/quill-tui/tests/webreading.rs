@@ -510,17 +510,12 @@ fn the_keys_for_the_message_work_from_the_list() {
     ));
     assert_eq!(harness.state.context(), Context::List);
 
-    // The page is on show already, and there are no versions to switch
-    // between or reader to go to.
-    for id in [
-        CommandId::MessageViewHtml,
-        CommandId::MessageToggleHtml,
-        CommandId::FocusReader,
-    ] {
+    // There are no versions to switch between or reader to go to.
+    for id in [CommandId::MessageToggleHtml, CommandId::FocusReader] {
         assert!(!harness.state.is_enabled(&harness.env, id), "{id:?}");
     }
     let before = harness.host_requests.len();
-    harness.keys("v t 3");
+    harness.keys("t 3");
     assert_eq!(harness.host_requests.len(), before);
     assert_eq!(harness.state.focus, Pane::List);
 
@@ -728,6 +723,219 @@ fn switching_on_from_the_reader_leaves_the_keys_with_the_list() {
     assert!(!harness.screen().contains("[1] Accounts"));
     harness.keys("z");
     assert!(harness.screen().contains("[1] Accounts"));
+}
+
+/// How wide the accounts pane and the list are drawn, and whether a
+/// reader is drawn beside them.
+fn widths(harness: &Harness) -> (u16, u16, bool) {
+    let areas =
+        quill_tui::layout::compute(&harness.state, harness.state.size, harness.env.reader_width);
+    (
+        areas.sidebar.map_or(0, |rect| rect.width),
+        areas.list.map_or(0, |rect| rect.width),
+        areas.reader.is_some(),
+    )
+}
+
+/// The rows of the panes, without the bottom bar: the cells of each from
+/// column `from` up to `to`, trailing spaces trimmed.
+fn cells(harness: &Harness, from: u16, to: u16) -> Vec<String> {
+    let buffer = harness.buffer();
+    let width = usize::from(buffer.area.width);
+    let mut rows: Vec<String> = buffer
+        .content
+        .chunks(width.max(1))
+        .map(|row| {
+            row.iter()
+                .take(usize::from(to))
+                .skip(usize::from(from))
+                .map(ratatui::buffer::Cell::symbol)
+                .collect::<String>()
+                .trim_end()
+                .to_owned()
+        })
+        .collect();
+    rows.pop();
+    rows
+}
+
+/// What is drawn in the first `columns` columns of the panes.
+fn panes(harness: &Harness, columns: u16) -> Vec<String> {
+    cells(harness, 0, columns)
+}
+
+#[test]
+fn the_reading_pane_takes_the_readers_place_and_the_list_keeps_its_width() {
+    for window in [100_u16, 120, 147, 200, 233] {
+        // The app says how wide its window is; with the reader drawn
+        // here that changes nothing, and there is no place to tell.
+        let mut harness = Harness::in_the_app(window, 40, false);
+        harness.keys("j j");
+        let before = harness.screen();
+        harness.act(Action::WindowColumns(window));
+        assert_eq!(harness.screen(), before);
+        assert_eq!(harness.state.reading_place(&harness.env), None);
+        assert!(!harness.state.resize_expected());
+        let (accounts, list, reader) = widths(&harness);
+        assert!(reader, "{window}");
+        let kept = accounts + list;
+        let drawn = panes(&harness, kept);
+
+        // Switched on and off, over and over: the place is the same
+        // every time, and the accounts and the list do not move by a
+        // cell, at any moment.
+        for round in 0..6 {
+            harness.keys("w");
+            harness.settle();
+            assert_eq!(
+                harness.state.reading_place(&harness.env),
+                Some(kept),
+                "{window}, round {round}"
+            );
+            // The terminal still has the whole window: the pane is not
+            // up yet. What it will cover is already empty.
+            assert!(harness.state.resize_expected());
+            assert_eq!(widths(&harness), (accounts, list, false));
+            assert_eq!(panes(&harness, kept), drawn, "{window}, round {round}");
+            assert!(
+                cells(&harness, kept, window).iter().all(String::is_empty),
+                "{window}: something is drawn where the pane goes"
+            );
+
+            // The app puts the pane up, and the terminal is narrower.
+            harness.resize(kept, 40);
+            assert!(!harness.state.resize_expected());
+            assert_eq!(widths(&harness), (accounts, list, false));
+            assert_eq!(panes(&harness, kept), drawn, "{window}, round {round}");
+
+            // Off: the pane goes, and until the terminal has the window
+            // back a width is expected.
+            harness.keys("w");
+            assert_eq!(harness.state.reading_place(&harness.env), None);
+            assert!(harness.state.resize_expected());
+            harness.resize(window, 40);
+            assert!(!harness.state.resize_expected());
+            assert_eq!(widths(&harness), (accounts, list, true));
+            assert_eq!(panes(&harness, kept), drawn, "{window}, round {round}");
+        }
+    }
+}
+
+#[test]
+fn the_place_follows_the_window_as_it_is_resized_with_web_reading_on() {
+    let mut harness = Harness::in_the_app(147, 40, true);
+    harness.act(Action::WindowColumns(147));
+    harness.settle();
+    let place = |harness: &Harness| harness.state.reading_place(&harness.env).unwrap();
+    let kept = place(&harness);
+    harness.resize(kept, 40);
+
+    for window in [180_u16, 233, 120, 100, 147] {
+        // What the text reader's layout would be in a window that wide.
+        let mut text = Harness::in_the_app(window, 40, false);
+        text.keys("j");
+        let (accounts, list, _) = widths(&text);
+
+        // The window is resized: the app says so, is told the new
+        // place, and puts the terminal there.
+        harness.act(Action::WindowColumns(window));
+        let kept = place(&harness);
+        assert_eq!(kept, accounts + list, "{window}");
+        harness.resize(kept, 40);
+        assert_eq!(widths(&harness), (accounts, list, false), "{window}");
+    }
+    // Back at the first width, the first place: nothing has crept.
+    assert_eq!(place(&harness), kept);
+
+    // The same number again is nothing new, and draws nothing.
+    harness.state.dirty = false;
+    harness.act(Action::WindowColumns(147));
+    assert!(!harness.state.dirty);
+}
+
+#[test]
+fn in_a_narrow_window_the_reading_pane_has_the_readers_share() {
+    // Too narrow for a reader beside the list: there is no place of the
+    // reader's to take, so the pane has its share of the window and the
+    // list is drawn in what is left.
+    let mut harness = Harness::in_the_app(80, 24, true);
+    harness.act(Action::WindowColumns(80));
+    harness.settle();
+    assert_eq!(harness.state.reading_place(&harness.env), Some(40));
+    harness.resize(40, 24);
+    assert_eq!(widths(&harness), (0, 40, false));
+    // The accounts come over the list when they are gone to, and esc
+    // puts them away again, as in any narrow terminal.
+    harness.keys("1");
+    assert!(harness.screen().contains("[1] Accounts"));
+    harness.keys("esc");
+    assert!(!harness.screen().contains("[1] Accounts"));
+    assert_eq!(harness.state.focus, Pane::List);
+}
+
+#[test]
+fn a_host_that_has_not_said_how_wide_its_window_is_gets_no_place() {
+    let mut harness = Harness::in_the_app(200, 60, true);
+    harness.settle();
+    assert_eq!(harness.state.reading_place(&harness.env), None);
+    assert!(!harness.state.resize_expected());
+    // Drawn by the terminal's own width, as before.
+    assert_eq!(widths(&harness), (28, 172, false));
+}
+
+#[test]
+fn the_app_has_one_command_for_the_web_pane_and_no_page_beside_the_reader() {
+    let mut harness = Harness::in_the_app(200, 60, false);
+    // The key the page beside the reader had does nothing here.
+    harness.keys("enter v");
+    assert!(!harness.state.web_reading);
+    assert!(harness.host_requests.is_empty());
+    assert!(harness.screen().contains("[3] Reader"));
+
+    // What the app builds its menus and toolbar from names every command
+    // once, and none of them twice under another name.
+    let announced = quill_tui::app::command_infos(&harness.env);
+    for (index, command) in announced.iter().enumerate() {
+        assert_ne!(command.name, "message.view_html");
+        for other in &announced[index + 1..] {
+            assert_ne!(command.name, other.name);
+            assert_ne!(command.title, other.title);
+        }
+    }
+    let web: Vec<_> = announced
+        .iter()
+        .filter(|command| command.title.to_lowercase().contains("web"))
+        .collect();
+    assert_eq!(web.len(), 1, "{web:?}");
+    assert_eq!(web[0].name, "view.web_reading");
+    assert_eq!(web[0].keys, ["w"]);
+
+    // And the help lists each thing once, with w for the web pane and B
+    // for the browser.
+    for context in [Context::List, Context::Reader] {
+        let lines = quill_tui::view::help::lines(&harness.env, context);
+        let entries: Vec<(&str, &str)> = lines
+            .iter()
+            .filter_map(|line| match line {
+                quill_tui::view::help::HelpLine::Entry { keys, title } => {
+                    Some((keys.as_str(), *title))
+                }
+                _ => None,
+            })
+            .collect();
+        for (index, (keys, title)) in entries.iter().enumerate() {
+            assert_ne!(*keys, "v", "{title}");
+            assert!(
+                entries[index + 1..].iter().all(|(_, other)| other != title),
+                "{title} is listed twice"
+            );
+        }
+        assert!(entries.contains(&("w", "Web reading pane")), "{entries:?}");
+        assert!(
+            entries.contains(&("B", "Open in the browser")),
+            "{entries:?}"
+        );
+    }
 }
 
 #[test]

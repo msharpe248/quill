@@ -273,7 +273,7 @@ struct WebPaneTests {
     // MARK: - The reading pane
 
     private func readingPane(_ file: URL, title: String = "A subject", header: [String]) -> WebPane {
-        WebPane(file: file, title: title, allowsRemoteContent: false, readingHeader: header) { _ in }
+        WebPane(file: file, title: title, allowsRemoteContent: false, header: header) { _ in }
     }
 
     @Test func theReadingPaneHasItsLinesAboveThePageAndNoCloseButton() async throws {
@@ -282,7 +282,7 @@ struct WebPaneTests {
         let lines = ["From: Ana Ruiz <ana.ruiz@example.com>", "To: Robin Vale <robin@example.com>"]
         let pane = readingPane(file, header: lines)
         defer { pane.tearDown() }
-        #expect(pane.isReading && !pane.isClosable)
+        #expect(!pane.isClosable)
         #expect(pane.headerLines == lines)
         #expect(pane.kind == .web)
         // The lines are labels in the pane, outside the web view.
@@ -306,10 +306,11 @@ struct WebPaneTests {
         #expect(!pane.allowsRemoteContent)
         #expect(pane.summary == "remote content blocked, loaded")
 
-        // The pane asked for by itself is as it was: closable, no lines.
+        // There is no other kind of web pane: one made with nothing to say
+        // above its page is not closable either.
         let plain = self.pane(file, remote: false)
         defer { plain.tearDown() }
-        #expect(!plain.isReading && plain.isClosable && plain.headerLines.isEmpty)
+        #expect(!plain.isClosable && plain.headerLines.isEmpty)
     }
 
     @Test func aReadingPaneWithNothingToSayAboveItsPageSaysNothing() throws {
@@ -317,7 +318,7 @@ struct WebPaneTests {
         let file = try scratch.write("<p>No message selected</p>", to: "message.html")
         let pane = readingPane(file, title: "", header: [])
         defer { pane.tearDown() }
-        #expect(pane.isReading && !pane.isClosable)
+        #expect(!pane.isClosable)
         let labels = allSubviews(of: pane).compactMap { $0 as? NSTextField }
         // Whatever labels there are, none is on show.
         #expect(labels.allSatisfy { $0.stringValue.isEmpty || $0.isHiddenOrHasHiddenAncestor })

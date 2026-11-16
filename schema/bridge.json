@@ -17,7 +17,6 @@
         { "$ref": "#/$defs/files.pick" },
         { "$ref": "#/$defs/clipboard.write" },
         { "$ref": "#/$defs/pane.play" },
-        { "$ref": "#/$defs/pane.web" },
         { "$ref": "#/$defs/thumbnail.make" },
         { "$ref": "#/$defs/file.open" },
         { "$ref": "#/$defs/files.save" },
@@ -30,7 +29,8 @@
         { "$ref": "#/$defs/form.close" },
         { "$ref": "#/$defs/reading.show" },
         { "$ref": "#/$defs/reading.scroll" },
-        { "$ref": "#/$defs/reading.close" }
+        { "$ref": "#/$defs/reading.close" },
+        { "$ref": "#/$defs/reading.place" }
       ]
     },
     "shellToCore": {
@@ -45,6 +45,7 @@
         { "$ref": "#/$defs/spell.suggested" },
         { "$ref": "#/$defs/editor.exited" },
         { "$ref": "#/$defs/form.used" },
+        { "$ref": "#/$defs/window.resized" },
         { "$ref": "#/$defs/app.will_quit" }
       ]
     },
@@ -232,50 +233,8 @@
       }
     },
 
-    "pane.web": {
-      "description": "Core to shell. Show an HTML file the core has already sanitized in a web view pane beside the terminal. Scripts never run. Nothing is loaded over the network unless `remote` is true; links open in the user's browser, never in the pane.",
-      "type": "object",
-      "required": [
-        "jsonrpc",
-        "method",
-        "params"
-      ],
-      "additionalProperties": false,
-      "properties": {
-        "jsonrpc": {
-          "const": "2.0"
-        },
-        "method": {
-          "const": "pane.web"
-        },
-        "params": {
-          "type": "object",
-          "required": [
-            "path",
-            "title",
-            "remote"
-          ],
-          "additionalProperties": false,
-          "properties": {
-            "path": {
-              "description": "Absolute path of the HTML file. Files beside it in the same folder may be loaded by it.",
-              "type": "string",
-              "pattern": "^/"
-            },
-            "title": {
-              "type": "string"
-            },
-            "remote": {
-              "description": "The user has allowed this message to load remote content.",
-              "type": "boolean"
-            }
-          }
-        }
-      }
-    },
-
     "reading.show": {
-      "description": "Core to shell. Show an HTML file the core has already sanitized in the reading pane: the web view that stands in the reader's place beside the terminal while web reading is on. It takes the place of whatever the reading pane showed, stays until reading.close, and never takes the keyboard by itself. The same rules as pane.web: scripts never run, nothing is loaded over the network unless `remote` is true, and links open in the user's browser, never in the pane.",
+      "description": "Core to shell. Show an HTML file the core has already sanitized in the reading pane: the web view that stands in the reader's place beside the terminal while web reading is on. It takes the place of whatever the reading pane showed, stays until reading.close, and never takes the keyboard by itself. Scripts never run, nothing is loaded over the network unless `remote` is true, and links open in the user's browser, never in the pane.",
       "type": "object",
       "required": ["jsonrpc", "method", "params"],
       "additionalProperties": false,
@@ -341,6 +300,30 @@
         "jsonrpc": { "const": "2.0" },
         "method": { "const": "reading.close" },
         "params": { "type": "object", "additionalProperties": false }
+      }
+    },
+
+    "reading.place": {
+      "description": "Core to shell. Where the reading pane stands, said in the terminal's own measure: while the reading pane is beside the terminal, the terminal keeps `columns` columns and the reading pane has the rest of the window. The core works it out from window.resized, so that what it draws is as wide beside the reading pane as beside its own reader, and sends it whenever web reading is on and the number changes. The shell turns columns into points with the width of a terminal cell, and may put the divider elsewhere when the user has dragged it. It says nothing about any other pane.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "reading.place" },
+        "params": {
+          "type": "object",
+          "required": ["columns"],
+          "additionalProperties": false,
+          "properties": {
+            "columns": {
+              "description": "How many columns the terminal keeps.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            }
+          }
+        }
       }
     },
 
@@ -1088,6 +1071,29 @@
               "maxProperties": 32,
               "propertyNames": { "$ref": "#/$defs/formId" },
               "additionalProperties": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "window.resized": {
+      "description": "Shell to core. How many columns the terminal would have if it had the whole window to itself: what the window has room for, whatever stands beside the terminal now. Sent once the terminal's cell size is known and whenever the number changes. The core lays out by it while a pane of the shell's stands in the reader's place, and answers with reading.place.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "window.resized" },
+        "params": {
+          "type": "object",
+          "required": ["columns"],
+          "additionalProperties": false,
+          "properties": {
+            "columns": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
             }
           }
         }

@@ -99,11 +99,12 @@ impl Host for StandaloneHost {
             CoreToShell::PaneEditor(_)
             | CoreToShell::FormShow(_)
             | CoreToShell::FormClose(_)
-            // There is no reading pane to show a page in, scroll or close:
-            // web reading is not on offer here.
+            // There is no reading pane to show a page in, scroll, place
+            // or close: web reading is not on offer here.
             | CoreToShell::ReadingShow(_)
             | CoreToShell::ReadingScroll(_)
             | CoreToShell::ReadingClose(_)
+            | CoreToShell::ReadingPlace(_)
             | CoreToShell::SpellCheck(_)
             | CoreToShell::SpellSuggest(_)
             | CoreToShell::NotifyPost(_)
@@ -132,17 +133,12 @@ impl Host for StandaloneHost {
                     );
                 }
             }
-            // With no pane to play or show in, the program the user's Mac
-            // has for the file does it.
+            // With no pane to play in, the program the user's Mac has for
+            // the file does it.
             CoreToShell::PanePlay(file) => self.run(
                 self.opener.clone(),
                 vec![file.path.as_str().to_owned()],
                 "play that file",
-            ),
-            CoreToShell::PaneWeb(web) => self.run(
-                self.opener.clone(),
-                vec![web.path.as_str().to_owned()],
-                "open that message in the browser",
             ),
             CoreToShell::FileOpen(open) => self.run(
                 self.opener.clone(),
@@ -279,13 +275,10 @@ mod tests {
         assert_eq!(wait_for(&record), format!("-p\n{}\n", png.display()));
         std::fs::remove_file(&record).unwrap();
 
-        // Playing, showing a message's HTML and opening a file all fall to
-        // whatever the Mac opens that kind of file with.
+        // Playing and opening a file, a message's page among them, both
+        // fall to whatever the Mac opens that kind of file with.
         host.play(&pdf, "a film");
         assert_eq!(wait_for(&record), format!("{}\n", pdf.display()));
-        std::fs::remove_file(&record).unwrap();
-        host.web(&png, "a message", false);
-        assert_eq!(wait_for(&record), format!("{}\n", png.display()));
         std::fs::remove_file(&record).unwrap();
         host.open_file(&pdf);
         assert_eq!(wait_for(&record), format!("{}\n", pdf.display()));

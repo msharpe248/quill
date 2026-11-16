@@ -16,8 +16,6 @@ public enum CoreToShell: Equatable, Sendable {
     case panePreview(PanePreview)
     /// Play a video or audio file in a player pane.
     case panePlay(PaneFile)
-    /// Show sanitized HTML in a web view pane.
-    case paneWeb(PaneWeb)
     /// Make a PNG thumbnail of a file. Answered by `thumbnailMade`.
     case thumbnailMake(ThumbnailMake)
     /// Open a file in the application the Mac opens its kind with.
@@ -60,6 +58,9 @@ public enum CoreToShell: Equatable, Sendable {
     case readingScroll(ScrollBy)
     /// Take the reading pane away: web reading is off.
     case readingClose
+    /// Where the reading pane stands: how many columns the terminal keeps
+    /// beside it.
+    case readingPlace(ReadingPlace)
 }
 
 /// A message the shell sends to the core.
@@ -76,6 +77,9 @@ public enum ShellToCore: Equatable, Sendable {
     case notifyUsed(NotifyUsed)
     /// The Mac asked Quill to open a mail address.
     case urlOpen(UrlOpen)
+    /// How many columns the terminal would have with the window to itself,
+    /// whenever that changes.
+    case windowResized(WindowResized)
     /// The answer to `spellCheck`.
     case spellChecked(SpellChecked)
     /// The answer to `spellSuggest`.
@@ -222,24 +226,6 @@ public struct PanePreview: Equatable, Sendable, Codable {
     static let allowedKeys: Set<String> = ["items", "index"]
 }
 
-public struct PaneWeb: Equatable, Sendable, Codable {
-    /// The sanitized HTML. Files beside it in its folder may be loaded.
-    public var path: String
-    public var title: String
-    /// The user has allowed this message to load remote content.
-    public var remote: Bool
-
-    /// `nil` unless the path is absolute.
-    public init?(path: String, title: String, remote: Bool) {
-        guard path.hasPrefix("/") else { return nil }
-        self.path = path
-        self.title = title
-        self.remote = remote
-    }
-
-    static let allowedKeys: Set<String> = ["path", "title", "remote"]
-}
-
 /// A page for the reading pane, and what to say above it. The shell shows
 /// the page under the web view's rules and the lines as plain text. It
 /// knows nothing else about them.
@@ -275,6 +261,39 @@ public struct ReadingShow: Equatable, Sendable, Codable {
     }
 
     static let allowedKeys: Set<String> = ["path", "title", "remote", "header"]
+}
+
+/// The reading pane's place in the window, said in the terminal's own
+/// measure: the terminal keeps `columns` columns and the reading pane has
+/// the rest. The shell turns columns into points; why it is this many is
+/// the core's business.
+public struct ReadingPlace: Equatable, Sendable, Codable {
+    public var columns: Int
+
+    /// How many columns a terminal can have.
+    public static let range = 1...65535
+
+    /// `nil` unless it is a number of columns a terminal can have.
+    public init?(columns: Int) {
+        guard Self.range.contains(columns) else { return nil }
+        self.columns = columns
+    }
+
+    static let allowedKeys: Set<String> = ["columns"]
+}
+
+/// How many columns the terminal would have if it had the whole window:
+/// what the window has room for, whatever stands beside the terminal now.
+public struct WindowResized: Equatable, Sendable, Codable {
+    public var columns: Int
+
+    /// `nil` unless it is a number of columns a terminal can have.
+    public init?(columns: Int) {
+        guard ReadingPlace.range.contains(columns) else { return nil }
+        self.columns = columns
+    }
+
+    static let allowedKeys: Set<String> = ["columns"]
 }
 
 /// How far to scroll the reading pane, and which way.

@@ -36,7 +36,6 @@ expression: harness.screen()
 │                          │┃                                       ┃   V                        Select a range                    ┃                                                                   │
 │                          │┃                                       ┃   ctrl-a                   Select every message listed       ┃                                                                   │
 │                          │┃                                       ┃   a                        List the attachments              ┃                                                                   │
-│                          │┃                                       ┃   v                        View as a web page                ┃                                                                   │
 │                          │┃                                       ┃   B                        Open in the browser               ┃                                                                   │
 │                          │┃                                       ┃   i                        Load remote pictures for this me… ┃                                                                   │
 │                          │┃                                       ┃   I                        Always load remote pictures from… ┃                                                                   │
@@ -59,6 +58,7 @@ expression: harness.screen()
 │                          │┃                                       ┃   A                        Add an account                    ┃                                                                   │
 │                          │┃                                       ┃   S                        Sign in to an account             ┃                                                                   │
 │                          │┃                                       ┃   ?                        Help for this context             ┃                                                                   │
+│                          │┃                                       ┃                                                              ┃                                                                   │
 │                          │┃                                       ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛                                                                   │
 └──────────────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛└────────────────────────────────────────────────────────────────────────────────────┘
  j/k scroll  esc close

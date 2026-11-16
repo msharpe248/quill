@@ -149,12 +149,6 @@ private struct PanePreviewParams: Codable {
     var index: Int
 }
 
-private struct PaneWebParams: Codable {
-    var path: String
-    var title: String
-    var remote: Bool
-}
-
 private struct ReadingShowParams: Codable {
     var path: String
     var title: String
@@ -164,6 +158,10 @@ private struct ReadingShowParams: Codable {
 
 private struct ReadingScrollParams: Codable {
     var by: String
+}
+
+private struct ColumnsParams: Codable {
+    var columns: Int
 }
 
 private struct ThumbnailMakeParams: Codable {
@@ -555,12 +553,6 @@ public extension CoreToShell {
                 throw BridgeError.malformed("pane.play: path is not absolute")
             }
             self = .panePlay(file)
-        case "pane.web":
-            let params = try envelope.decode(PaneWebParams.self, allowing: PaneWeb.allowedKeys)
-            guard let web = PaneWeb(path: params.path, title: params.title, remote: params.remote) else {
-                throw BridgeError.malformed("pane.web: path is not absolute")
-            }
-            self = .paneWeb(web)
         case "thumbnail.make":
             let params = try envelope.decode(ThumbnailMakeParams.self, allowing: ThumbnailMake.allowedKeys)
             guard
@@ -685,6 +677,12 @@ public extension CoreToShell {
         case "reading.close":
             try envelope.requireOnly([])
             self = .readingClose
+        case "reading.place":
+            let params = try envelope.decode(ColumnsParams.self, allowing: ReadingPlace.allowedKeys)
+            guard let place = ReadingPlace(columns: params.columns) else {
+                throw BridgeError.malformed("reading.place: columns must be from 1 to 65535")
+            }
+            self = .readingPlace(place)
         default:
             throw BridgeError.unknownMethod(envelope.method)
         }
@@ -700,8 +698,6 @@ public extension CoreToShell {
             encodeLine(method: "pane.preview", params: preview)
         case let .panePlay(file):
             encodeLine(method: "pane.play", params: file)
-        case let .paneWeb(web):
-            encodeLine(method: "pane.web", params: web)
         case let .thumbnailMake(make):
             encodeLine(method: "thumbnail.make", params: make)
         case let .fileOpen(path):
@@ -736,6 +732,8 @@ public extension CoreToShell {
             encodeLine(method: "reading.scroll", params: ReadingScrollParams(by: by.rawValue))
         case .readingClose:
             encodeLine(method: "reading.close", params: NoParams())
+        case let .readingPlace(place):
+            encodeLine(method: "reading.place", params: place)
         }
     }
 }
@@ -779,6 +777,12 @@ public extension ShellToCore {
                 throw BridgeError.malformed("url.open: not a mailto address of at most 8192 bytes")
             }
             self = .urlOpen(open)
+        case "window.resized":
+            let params = try envelope.decode(ColumnsParams.self, allowing: WindowResized.allowedKeys)
+            guard let resized = WindowResized(columns: params.columns) else {
+                throw BridgeError.malformed("window.resized: columns must be from 1 to 65535")
+            }
+            self = .windowResized(resized)
         case "spell.checked":
             let params = try envelope.decode(SpellCheckedParams.self, allowing: SpellChecked.allowedKeys)
             // Each word is checked as strictly as the message itself.
@@ -841,6 +845,8 @@ public extension ShellToCore {
             encodeLine(method: "notify.used", params: used)
         case let .urlOpen(open):
             encodeLine(method: "url.open", params: open)
+        case let .windowResized(resized):
+            encodeLine(method: "window.resized", params: resized)
         case let .spellChecked(checked):
             encodeLine(method: "spell.checked", params: checked)
         case let .spellSuggested(suggested):
