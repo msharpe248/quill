@@ -1,0 +1,28 @@
+---
+source: crates/quill-tui/tests/setup.rs
+expression: harness.screen()
+---
+┌ [1] Accounts ──┐┏ [2] Inbox (unified) - 12 unread ━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+│> Unified    12 │┃> * @ W Ana Ruiz        Q4 roadmap                     09:14┃
+│ ┏ Add an account: the server ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓1┃
+│ ┃ Mail for example.com is hosted by Microsoft. Microsoft takes no password ┃5┃
+│ ┃ from a mail program. Its accounts sign in with Microsoft.                ┃0┃
+│ ┃                                                                          ┃i┃
+│ ┃ Type:      ‹ IMAP (password) ›  ←/→ to change                            ┃i┃
+│ ┃ Name:      Example                                                       ┃i┃
+│ ┃ Server:    outlook.office365.com                                         ┃u┃
+│ ┃ Port:      993                                                           ┃u┃
+│ ┃ Security:  TLS                                                           ┃d┃
+│ ┃ Sign in:   robin@example.com                                             ┃e┃
+│ ┃                                                                          ┃n┃
+│ ┃ Send via:  smtp.office365.com                                            ┃n┃
+│ ┃ Port:      587                                                           ┃6┃
+│ ┃ Security:  STARTTLS                                                      ┃2┃
+│ ┃                                                                          ┃5┃
+│ ┃ Microsoft takes no password. Change Type to Microsoft.                   ┃5┃
+│ ┃                                                                          ┃ ┃
+│ ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+└────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+ enter continue  tab next field  esc back

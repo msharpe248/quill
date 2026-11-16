@@ -2,7 +2,7 @@
 
 Microsoft 365 and Gmail do not take a password from a mail program. You sign in to the provider in your browser, and the provider hands Quill a sign-in it can use from then on. Quill never sees your password, and keeps the sign-in in the macOS Keychain.
 
-For this the provider has to know which application is asking. Quill does not ship with an application id of its own: you register one, once, and put its id in `config.toml`. It takes about ten minutes for each provider and costs nothing.
+For this the provider has to know which application is asking. Quill does not ship with an application id of its own: you register one, once, and give Quill its id. It takes about ten minutes for each provider and costs nothing.
 
 Nothing here has been checked against the real services yet. The steps follow the providers' documentation as it stood when this was written; if a screen has moved, the names of the settings are what to look for.
 
@@ -23,7 +23,13 @@ Quill reads and sends this mail through Microsoft Graph.
 
 Do not create a client secret. A desktop application cannot keep one, and Microsoft does not ask a public client for one.
 
-### The account in config.toml
+### Add the account in Quill
+
+Press `A` and type the address. At the next step "Type" should read "Microsoft (sign in)": Quill chooses that for an address it knows to be Microsoft's, and `←`/`→` changes it when it does not. Put the Application (client) ID in "Application id". Leave "Tenant" empty unless you chose a single organisation in step 4; then it is that organisation's id or one of its domain names.
+
+`enter` saves the account and takes you straight to the sign-in described below. A second Microsoft account needs no second registration: Quill fills in the id the first one has.
+
+### Or write the account in config.toml
 
 ```toml
 [[account]]
@@ -41,7 +47,7 @@ oauth_tenant = "example.com"
 
 ### Sign in
 
-Start Quill. The account is listed, with a note that nobody has signed in to it yet. Press `S` (or choose "Sign in to an account" from the palette or the File menu). Your browser opens at Microsoft's sign-in page; sign in there and agree to what Quill asks for, and come back to Quill. The mail starts to arrive.
+An account added in Quill goes to this by itself. For one written by hand, start Quill. The account is listed, with a note that nobody has signed in to it yet. Press `S` (or choose "Sign in to an account" from the palette or the File menu). Your browser opens at Microsoft's sign-in page; sign in there and agree to what Quill asks for, and come back to Quill. The mail starts to arrive.
 
 From a terminal the same thing is `quill account sign-in Work`.
 

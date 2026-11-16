@@ -7,7 +7,7 @@ use std::io::{self, Write};
 use std::path::Path;
 
 use quill_core::config::{Config, TlsMode};
-use quill_tui::setup::{AccountDraft, ServerDraft};
+use quill_tui::setup::{AccountDraft, ServerDraft, SignInDraft};
 use toml_edit::{ArrayOfTables, DocumentMut, InlineTable, Item, Table, Value, value};
 
 /// `text` with one more `[[account]]`. `fingerprint`, when given, pins the
@@ -17,15 +17,6 @@ pub fn add_account(
     draft: &AccountDraft,
     fingerprint: Option<&str>,
 ) -> Result<String, String> {
-    let mut document: DocumentMut = text
-        .parse()
-        .map_err(|err| format!("config.toml cannot be read: {err}"))?;
-    let accounts = document
-        .entry("account")
-        .or_insert(Item::ArrayOfTables(ArrayOfTables::new()))
-        .as_array_of_tables_mut()
-        .ok_or("`account` in config.toml is not a list of accounts")?;
-
     let mut account = Table::new();
     account["name"] = value(&draft.name);
     account["type"] = value("imap");
@@ -38,7 +29,35 @@ pub fn add_account(
     if let Some(smtp) = &draft.smtp {
         account["smtp"] = Item::Value(Value::InlineTable(server(smtp, &draft.address, None)));
     }
-    accounts.push(account);
+    with_account(text, account)
+}
+
+/// `text` with one more `[[account]]` that signs in with Microsoft: a
+/// `graph` account, with the application it signs in as. `oauth_tenant` is
+/// written only when the draft names one.
+pub fn add_sign_in_account(text: &str, draft: &SignInDraft) -> Result<String, String> {
+    let mut account = Table::new();
+    account["name"] = value(&draft.name);
+    account["type"] = value("graph");
+    account["address"] = value(&draft.address);
+    account["oauth_client_id"] = value(&draft.application_id);
+    if let Some(tenant) = &draft.tenant {
+        account["oauth_tenant"] = value(tenant);
+    }
+    with_account(text, account)
+}
+
+/// `text` with `account` after the accounts it already has.
+fn with_account(text: &str, account: Table) -> Result<String, String> {
+    let mut document: DocumentMut = text
+        .parse()
+        .map_err(|err| format!("config.toml cannot be read: {err}"))?;
+    document
+        .entry("account")
+        .or_insert(Item::ArrayOfTables(ArrayOfTables::new()))
+        .as_array_of_tables_mut()
+        .ok_or("`account` in config.toml is not a list of accounts")?
+        .push(account);
     checked(document.to_string())
 }
 
@@ -196,6 +215,59 @@ mod tests {
     fn a_config_that_cannot_be_read_is_not_touched() {
         assert!(add_account("[ui\ntheme = ", &draft(), None).is_err());
         assert!(add_account("account = 3\n", &draft(), None).is_err());
+        assert!(add_sign_in_account("[ui\ntheme = ", &microsoft(None)).is_err());
+        assert!(add_sign_in_account("account = 3\n", &microsoft(None)).is_err());
+    }
+
+    fn microsoft(tenant: Option<&str>) -> SignInDraft {
+        SignInDraft {
+            name: "Work".to_owned(),
+            address: "robin@example.com".to_owned(),
+            application_id: "app-1".to_owned(),
+            tenant: tenant.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn an_account_that_signs_in_with_microsoft_is_a_graph_account_with_its_application() {
+        // What docs/oauth.md has the user write by hand, key for key.
+        let text = add_sign_in_account("", &microsoft(None)).unwrap();
+        assert_eq!(
+            text,
+            "[[account]]\nname = \"Work\"\ntype = \"graph\"\naddress = \"robin@example.com\"\noauth_client_id = \"app-1\"\n"
+        );
+        let account = &Config::parse(&text).unwrap().accounts[0];
+        assert_eq!(account.kind, quill_core::config::AccountType::Graph);
+        assert_eq!(account.oauth_client_id.as_deref(), Some("app-1"));
+        // No tenant named, none written: any organisation's accounts.
+        assert_eq!(account.oauth_tenant, None);
+        // It has no servers and no password to keep.
+        assert!(account.imap.is_none() && account.smtp.is_none());
+
+        // After what the user wrote, which stays as it was.
+        let before = "# Mine\n[[account]]\nname = \"Home\"   # the old one\ntype = \"imap\"\n\
+                      address = \"robin@example.org\"\nimap = { host = \"mail.example.org\" }\n";
+        let after = add_sign_in_account(before, &microsoft(Some("example.com"))).unwrap();
+        assert!(after.starts_with(before), "{after}");
+        assert!(
+            after.ends_with("oauth_client_id = \"app-1\"\noauth_tenant = \"example.com\"\n"),
+            "{after}"
+        );
+        let config = Config::parse(&after).unwrap();
+        assert_eq!(config.accounts.len(), 2);
+        assert_eq!(
+            config.accounts[1].oauth_tenant.as_deref(),
+            Some("example.com")
+        );
+
+        // Text that would end a string in TOML is written so that it does
+        // not: the file still reads back as what was asked for.
+        let mut odd = microsoft(None);
+        odd.name = "Work \"main\"\n[ui]".to_owned();
+        let text = add_sign_in_account("", &odd).unwrap();
+        let config = Config::parse(&text).unwrap();
+        assert_eq!(config.accounts.len(), 1);
+        assert_eq!(config.accounts[0].name, odd.name);
     }
 
     #[test]

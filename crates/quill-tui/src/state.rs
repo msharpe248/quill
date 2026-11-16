@@ -1731,6 +1731,7 @@ impl State {
                 self.sign_in = Some(SignIn {
                     account: String::new(),
                     stage: SignInStage::Starting,
+                    fresh: false,
                 });
             }
             CommandId::NavOpen => self.open(out),
@@ -2263,9 +2264,17 @@ impl State {
             // Nothing was snoozed or sent.
         } else if self.unsubscribe.take().is_some() {
             // Nothing was asked of the list, written or opened.
-        } else if self.sign_in.take().is_some() {
+        } else if let Some(sign_in) = self.sign_in.take() {
             // Nothing is kept of a sign-in given up on.
             out.accounts.push(AccountRequest::CancelSignIn);
+            // The account the form added a moment ago is kept, though, and
+            // has not been heard saying what it still needs.
+            if sign_in.fresh {
+                self.notices.push_back(Notice::info(format!(
+                    "Added {}, with nobody signed in to it yet. \"Sign in to an account\" in the palette or the File menu does that.",
+                    sign_in.account
+                )));
+            }
         } else if let Some(setup) = &mut self.setup {
             if setup.back() {
                 self.setup = None;
@@ -3386,15 +3395,31 @@ impl State {
         };
         let (requests, outcome) = setup.on_event(event);
         out.accounts.extend(requests);
-        if let Outcome::Added(name) = outcome {
-            self.setup = None;
-            self.notices.push_back(Notice::info(format!(
-                "Added {}. Its mail is on the way.",
-                text::sanitize_line(&name)
-            )));
-            // The new account is in the store: show it.
-            out.data.push(DataRequest::LoadSidebar);
-            out.data.push(DataRequest::LoadMessages(self.mailbox));
+        match outcome {
+            Outcome::Open => {}
+            Outcome::Added(name) => {
+                self.setup = None;
+                self.notices.push_back(Notice::info(format!(
+                    "Added {}. Its mail is on the way.",
+                    text::sanitize_line(&name)
+                )));
+                // The new account is in the store: show it.
+                out.data.push(DataRequest::LoadSidebar);
+                out.data.push(DataRequest::LoadMessages(self.mailbox));
+            }
+            // Saved, with nobody signed in to it yet. The form has asked
+            // for that already, so its place is taken by the sign-in, which
+            // says how it ends.
+            Outcome::SigningIn(name) => {
+                self.setup = None;
+                self.sign_in = Some(SignIn {
+                    account: text::sanitize_line(&name),
+                    stage: SignInStage::Starting,
+                    fresh: true,
+                });
+                out.data.push(DataRequest::LoadSidebar);
+                out.data.push(DataRequest::LoadMessages(self.mailbox));
+            }
         }
     }
 
@@ -3967,6 +3992,16 @@ impl State {
                 }
             }
             SyncEvent::Problem { account, message } => {
+                // An account the form added a moment ago says at once that
+                // nobody has signed in to it. They are doing just that, and
+                // the sign-in will say how it went.
+                if self
+                    .sign_in
+                    .as_ref()
+                    .is_some_and(|sign_in| sign_in.fresh && sign_in.account == account)
+                {
+                    return;
+                }
                 self.notices
                     .push_back(Notice::error(text::sanitize_line(&format!(
                         "{account}: {message}"

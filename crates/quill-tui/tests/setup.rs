@@ -12,7 +12,8 @@ use quill_core::{CertificateDetails, CertificateProblem};
 use quill_sync::SyncEvent;
 use quill_tui::command::{CommandId, Context};
 use quill_tui::setup::{
-    AccountDraft, AccountEvent, AccountRequest, Discovery, ServerDraft, Trusting, VerifyProblem,
+    AccountDraft, AccountEvent, AccountRequest, Discovery, ServerDraft, SignInDraft, Trusting,
+    VerifyProblem,
 };
 use quill_tui::state::Action;
 
@@ -38,8 +39,43 @@ fn found(address: &str) -> AccountEvent {
             },
             found: true,
             note: Some("Found in the DNS records of example.com.".to_owned()),
+            microsoft_application: None,
         },
     }
+}
+
+/// What discovery says of an address whose mail Microsoft hosts, with the
+/// application id the config already has, if it has one.
+fn found_at_microsoft(address: &str, application: Option<&str>) -> AccountEvent {
+    let AccountEvent::Discovered { address, mut found } = found(address) else {
+        unreachable!()
+    };
+    found.draft.imap.host = "outlook.office365.com".to_owned();
+    found.draft.smtp = Some(ServerDraft {
+        host: "smtp.office365.com".to_owned(),
+        port: 587,
+        tls: TlsMode::Starttls,
+        username: address.clone(),
+    });
+    found.note = Some(
+        "Mail for example.com is hosted by Microsoft. Microsoft takes no password from a mail program. Its accounts sign in with Microsoft."
+            .to_owned(),
+    );
+    found.microsoft_application = application.map(str::to_owned);
+    AccountEvent::Discovered { address, found }
+}
+
+/// The form open at the server step for an address Microsoft hosts.
+fn at_microsoft(width: u16, height: u16, application: Option<&str>) -> Harness {
+    let mut harness = Harness::with_accounts(width, height);
+    harness.keys("A");
+    harness.type_text("robin@example.com");
+    harness.keys("enter");
+    harness.act(Action::Account(found_at_microsoft(
+        "robin@example.com",
+        application,
+    )));
+    harness
 }
 
 fn problem() -> Box<CertificateProblem> {
@@ -158,6 +194,253 @@ fn an_account_is_added_from_address_to_syncing() {
         harness
             .screen()
             .contains("Added Example. Its mail is on the way.")
+    );
+}
+
+#[test]
+fn a_microsoft_account_is_added_without_a_password_and_goes_on_to_signing_in() {
+    let mut harness = at_microsoft(120, 30, None);
+    let screen = harness.screen();
+    assert!(screen.contains(" Add an account: Microsoft "), "{screen}");
+    assert!(screen.contains("Microsoft (sign in)"), "{screen}");
+    assert!(screen.contains("robin@example.com"), "{screen}");
+    assert!(
+        screen.contains("Application id:") && screen.contains("Tenant:"),
+        "{screen}"
+    );
+    assert!(screen.contains("docs/oauth.md"), "{screen}");
+    // It has no servers to confirm.
+    for absent in ["Server:", "Port:", "Security:", "Send via:", "Sign in:"] {
+        assert!(!screen.contains(absent), "{absent}\n{screen}");
+    }
+
+    // The cursor is in the application id, and letters are typing there.
+    let selected = harness.state.list.selected;
+    harness.type_text("jq-app-1");
+    assert_eq!(
+        harness.state.setup.as_ref().unwrap().application.text(),
+        "jq-app-1"
+    );
+    assert_eq!(harness.state.list.selected, selected);
+    assert!(!harness.state.should_quit);
+
+    harness.keys("enter");
+    assert_eq!(
+        harness.account_requests.last(),
+        Some(&AccountRequest::SaveSignIn {
+            draft: SignInDraft {
+                name: "Example".to_owned(),
+                address: "robin@example.com".to_owned(),
+                application_id: "jq-app-1".to_owned(),
+                tenant: None,
+            }
+        })
+    );
+    assert!(harness.screen().contains("Saving Example"));
+
+    harness.act(Action::Account(AccountEvent::Saved(Ok(
+        "Example".to_owned()
+    ))));
+    // The form is gone and the sign-in has its place, for that account.
+    assert!(harness.state.setup.is_none());
+    assert_eq!(harness.state.context(), Context::SignIn);
+    assert_eq!(
+        harness.account_requests.last(),
+        Some(&AccountRequest::SignIn {
+            account: Some("Example".to_owned())
+        })
+    );
+    let screen = harness.screen();
+    assert!(screen.contains(" Sign in to Example "), "{screen}");
+    assert!(screen.contains("Getting ready to sign in"), "{screen}");
+    // On the way no password was asked for, checked or saved.
+    assert!(!harness.account_requests.iter().any(|request| matches!(
+        request,
+        AccountRequest::Verify { .. } | AccountRequest::Save { .. }
+    )));
+
+    // The new account says at once that nobody has signed in to it. That
+    // is what is being done, and it is not put in front of the user.
+    harness.act(Action::Sync(SyncEvent::Problem {
+        account: "Example".to_owned(),
+        message: "nobody has signed in to it yet.".to_owned(),
+    }));
+    assert!(harness.state.notices.is_empty());
+
+    // From here it is the sign-in there always was.
+    harness.act(Action::Account(AccountEvent::SignInBrowser {
+        account: "Example".to_owned(),
+        url: "https://login.example.com/authorize?client_id=jq-app-1".to_owned(),
+    }));
+    assert_eq!(
+        harness.host_requests.last(),
+        Some(&quill_tui::state::HostRequest::OpenUrl(
+            "https://login.example.com/authorize?client_id=jq-app-1".to_owned()
+        ))
+    );
+    harness.act(Action::Account(AccountEvent::SignedIn {
+        account: "Example".to_owned(),
+        result: Ok(()),
+    }));
+    assert_ne!(harness.state.context(), Context::SignIn);
+    assert!(
+        harness
+            .screen()
+            .contains("Signed in to Example. Its mail is on the way.")
+    );
+    assert_eq!(
+        harness.sync_requests.last(),
+        Some(&quill_sync::SyncRequest::SyncNow)
+    );
+    // Signed in, the account is heard like any other.
+    harness.keys("esc");
+    harness.act(Action::Sync(SyncEvent::Problem {
+        account: "Example".to_owned(),
+        message: "Cannot reach the server.".to_owned(),
+    }));
+    assert!(
+        harness
+            .screen()
+            .contains("Example: Cannot reach the server.")
+    );
+}
+
+#[test]
+fn only_the_account_just_added_is_hushed_while_it_is_signed_in_to() {
+    let mut harness = at_microsoft(120, 30, Some("app-1"));
+    harness.keys("enter");
+    harness.act(Action::Account(AccountEvent::Saved(Ok(
+        "Example".to_owned()
+    ))));
+    assert_eq!(harness.state.context(), Context::SignIn);
+    // Another account's trouble is still told.
+    harness.act(Action::Sync(SyncEvent::Problem {
+        account: "Work".to_owned(),
+        message: "Cannot reach the server.".to_owned(),
+    }));
+    assert!(harness.screen().contains("Work: Cannot reach the server."));
+
+    // Giving up on the sign-in keeps the account, and says what it still
+    // needs, since the account itself was not heard.
+    harness.keys("esc");
+    assert_eq!(
+        harness.account_requests.last(),
+        Some(&AccountRequest::CancelSignIn)
+    );
+    assert_ne!(harness.state.context(), Context::SignIn);
+    assert!(harness.state.setup.is_none());
+    harness.keys("esc");
+    let screen = harness.screen();
+    assert!(
+        screen.contains("Added Example, with nobody signed in to it yet."),
+        "{screen}"
+    );
+
+    // And a sign-in asked for with `S` hushes nobody, and giving up on it
+    // says nothing.
+    let mut harness = Harness::with_accounts(120, 30);
+    harness.keys("S");
+    harness.act(Action::Account(AccountEvent::SignInBrowser {
+        account: "Work".to_owned(),
+        url: "https://login.example.com/authorize".to_owned(),
+    }));
+    harness.act(Action::Sync(SyncEvent::Problem {
+        account: "Work".to_owned(),
+        message: "Cannot reach the server.".to_owned(),
+    }));
+    assert!(harness.screen().contains("Work: Cannot reach the server."));
+    harness.keys("esc");
+    assert_eq!(harness.state.notices.len(), 1);
+}
+
+#[test]
+fn the_type_is_changed_in_the_form_and_a_microsoft_server_takes_no_password_account() {
+    // An address Quill takes for a password account can be made a
+    // Microsoft one: the type is the field above the name.
+    let mut harness = Harness::with_accounts(120, 30);
+    harness.keys("A");
+    harness.type_text("robin@example.com");
+    harness.keys("enter");
+    harness.act(Action::Account(found("robin@example.com")));
+    let screen = harness.screen();
+    assert!(screen.contains("IMAP (password)"), "{screen}");
+    assert!(screen.contains("Server:"), "{screen}");
+    harness.keys("shift-tab");
+    // A choice has no cursor, and says how it is changed.
+    assert_eq!(harness.cursor(), None);
+    assert!(harness.screen().contains("←/→ to change"));
+    harness.keys("right");
+    let screen = harness.screen();
+    assert!(
+        screen.contains("Microsoft (sign in)") && screen.contains("Application id:"),
+        "{screen}"
+    );
+    assert!(!screen.contains("Server:"), "{screen}");
+    harness.keys("left");
+    assert!(harness.screen().contains("Server:"));
+
+    // At one of Microsoft's servers a password account goes no further.
+    let mut harness = at_microsoft(120, 30, None);
+    harness.keys("shift-tab shift-tab left enter");
+    let setup = harness.state.setup.as_ref().unwrap();
+    assert_eq!(setup.step, quill_tui::setup::Step::Server);
+    let screen = harness.screen();
+    assert!(
+        screen.contains("Microsoft takes no password. Change Type to Microsoft."),
+        "{screen}"
+    );
+    assert!(!screen.contains("Password:"), "{screen}");
+    // Nothing was asked of anyone but to find the server.
+    assert!(
+        harness
+            .account_requests
+            .iter()
+            .all(|request| matches!(request, AccountRequest::Discover { .. }))
+    );
+    // The cursor is on the type: one key, and the account can be added.
+    harness.keys("right");
+    assert!(harness.screen().contains("Application id:"));
+}
+
+#[test]
+fn in_a_narrow_window_what_the_form_says_last_is_not_cut_off() {
+    // 58 columns of text in a dialog 16 rows deep: the app's window as it
+    // first opens. What is said under the fields has to fit there.
+    let narrow = |application| {
+        let mut harness = Harness::with_accounts(66, 24);
+        harness.keys("A");
+        harness.type_text("robin.vale@outlook.example");
+        harness.keys("enter");
+        let AccountEvent::Discovered { address, mut found } =
+            found_at_microsoft("robin.vale@outlook.example", application)
+        else {
+            unreachable!()
+        };
+        // As long as the note gets: the one for a Microsoft address.
+        found.note = Some(
+            "robin.vale@outlook.example is a Microsoft address. Microsoft takes no password from a mail program. Its accounts sign in with Microsoft."
+                .to_owned(),
+        );
+        harness.act(Action::Account(AccountEvent::Discovered { address, found }));
+        harness
+    };
+
+    // The Microsoft account, with nothing typed and the id asked for.
+    let mut harness = narrow(None);
+    harness.keys("enter");
+    let screen = harness.screen();
+    assert!(screen.contains("Tenant may be left empty."), "{screen}");
+    assert!(screen.contains("for Quill."), "{screen}");
+
+    // A password account at Microsoft's server: every field of a server,
+    // and still the way out under them.
+    let mut harness = narrow(Some("app-1"));
+    harness.keys("shift-tab left enter");
+    let screen = harness.screen();
+    assert!(screen.contains("Security:  STARTTLS"), "{screen}");
+    assert!(
+        screen.contains("Microsoft takes no password. Change Type to Microsoft."),
+        "{screen}"
     );
 }
 
@@ -454,6 +737,20 @@ fn snapshots_of_the_form_and_the_certificate_question() {
             VerifyProblem::Sending("Cannot reach the server: connection refused.".to_owned()),
         ))));
         snap("setup_sending_failed", &harness);
+
+        // An address Microsoft hosts: the account that signs in with
+        // Microsoft, first as it opens and then filled in but for the id.
+        let mut harness = at_microsoft(width, height, None);
+        snap("setup_microsoft", &harness);
+        harness.keys("tab");
+        harness.type_text("example.com");
+        harness.keys("enter");
+        snap("setup_microsoft_no_id", &harness);
+
+        // A password account asked for at Microsoft's server all the same.
+        let mut harness = at_microsoft(width, height, Some("app-1"));
+        harness.keys("shift-tab left enter");
+        snap("setup_microsoft_as_imap", &harness);
 
         let mut harness = Harness::with_accounts(width, height);
         harness.act(Action::Sync(SyncEvent::Certificate {

@@ -7,20 +7,20 @@ expression: harness.screen()
 │ ┏ Add an account: the server ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓1┃
 │ ┃ Found in the DNS records of example.com.                                 ┃5┃
 │ ┃                                                                          ┃0┃
+│ ┃ Type:      IMAP (password)                                               ┃i┃
 │ ┃ Name:      Example                                                       ┃i┃
 │ ┃ Server:    imap.example.com                                              ┃i┃
-│ ┃ Port:      993                                                           ┃i┃
+│ ┃ Port:      993                                                           ┃u┃
 │ ┃ Security:  TLS                                                           ┃u┃
-│ ┃ Sign in:   robin@example.com                                             ┃u┃
-│ ┃                                                                          ┃d┃
-│ ┃ Send via:  smtp.example.com                                              ┃e┃
+│ ┃ Sign in:   robin@example.com                                             ┃d┃
+│ ┃                                                                          ┃e┃
+│ ┃ Send via:  smtp.example.com                                              ┃n┃
 │ ┃ Port:      465                                                           ┃n┃
-│ ┃ Security:  TLS                                                           ┃n┃
-│ ┃                                                                          ┃6┃
-│ ┃ Mail can be read, but not sent through smtp.example.com: Cannot reach    ┃2┃
+│ ┃ Security:  TLS                                                           ┃6┃
+│ ┃                                                                          ┃2┃
+│ ┃ Mail can be read, but not sent through smtp.example.com: Cannot reach    ┃5┃
 │ ┃ the server: connection refused. Correct it, or clear it to add the       ┃5┃
-│ ┃ account without sending.                                                 ┃5┃
-│ ┃                                                                          ┃ ┃
+│ ┃ account without sending.                                                 ┃ ┃
 │ ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ ┃
 │                │┃                                                            ┃
 │                │┃                                                            ┃

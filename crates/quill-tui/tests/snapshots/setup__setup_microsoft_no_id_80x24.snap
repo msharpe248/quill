@@ -1,0 +1,28 @@
+---
+source: crates/quill-tui/tests/setup.rs
+expression: harness.screen()
+---
+┌ [1] Accounts ──┐┏ [2] Inbox (unified) - 12 unread ━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+│> Unified    12 │┃> * @ W Ana Ruiz        Q4 roadmap                     09:14┃
+│ ┏ Add an account: Microsoft ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓1┃
+│ ┃ Mail for example.com is hosted by Microsoft. Microsoft takes no password ┃5┃
+│ ┃ from a mail program. Its accounts sign in with Microsoft.                ┃0┃
+│ ┃                                                                          ┃i┃
+│ ┃ Type:           Microsoft (sign in)                                      ┃i┃
+│ ┃ Name:           Example                                                  ┃i┃
+│ ┃ Address:        robin@example.com                                        ┃u┃
+│ ┃ Application id:                                                          ┃u┃
+│ ┃ Tenant:         example.com                                              ┃d┃
+│ ┃                                                                          ┃e┃
+│ ┃ Register Quill with Microsoft once to get the application id: see        ┃n┃
+│ ┃ docs/oauth.md. Tenant may be left empty.                                 ┃n┃
+│ ┃                                                                          ┃6┃
+│ ┃ Enter the application id: the Application (client) ID Microsoft shows    ┃2┃
+│ ┃ for Quill.                                                               ┃5┃
+│ ┃                                                                          ┃5┃
+│ ┃                                                                          ┃ ┃
+│ ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+└────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+ enter continue  tab next field  esc back

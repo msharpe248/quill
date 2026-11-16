@@ -25,6 +25,7 @@ expression: harness.screen()
 │                          │┃                                 ┏ Add an account: the server ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓, including the dependency chart you asked for. Comments in  │
 │                          │┃                                 ┃ Found in the DNS records of example.com.                                 ┃hichever is easier.                                          │
 │                          │┃                                 ┃                                                                          ┃                                                             │
+│                          │┃                                 ┃ Type:      IMAP (password)                                               ┃                                                             │
 │                          │┃                                 ┃ Name:      Example                                                       ┃                                                             │
 │                          │┃                                 ┃ Server:    imap.example.com                                              ┃                                                             │
 │                          │┃                                 ┃ Port:      993                                                           ┃                                                             │
@@ -38,7 +39,6 @@ expression: harness.screen()
 │                          │┃                                 ┃ Mail can be read, but not sent through smtp.example.com: Cannot reach    ┃                                                             │
 │                          │┃                                 ┃ the server: connection refused. Correct it, or clear it to add the       ┃                                                             │
 │                          │┃                                 ┃ account without sending.                                                 ┃                                                             │
-│                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛                                                             │
 │                          │┃                                                                                    ┃│                                                                                    │
 │                          │┃                                                                                    ┃│                                                                                    │

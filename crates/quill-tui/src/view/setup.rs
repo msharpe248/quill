@@ -11,13 +11,16 @@ use ratatui::widgets::{Block, BorderType, Padding};
 use crate::command::CommandId;
 use crate::input::LineInput;
 use crate::setup::{
-    ServerField, Setup, SignInStage, Step, certificate_reason, grouped_fingerprint,
+    Kind, ServerField, Setup, SignInStage, Step, certificate_reason, grouped_fingerprint,
 };
 use crate::state::{Env, State, UnsubscribeHow, WhenFor};
 use crate::text;
 
 /// The width of the longest label and its gap: `Issued to: `.
 const LABEL_WIDTH: usize = 11;
+
+/// The same for the form of a Microsoft account: `Application id: `.
+const MICROSOFT_LABEL_WIDTH: usize = 16;
 
 pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
     // A certificate waiting for an answer is asked about before anything
@@ -173,6 +176,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
     };
     let title = match setup.step {
         Step::Address => " Add an account ",
+        Step::Server if setup.kind == Kind::Microsoft => " Add an account: Microsoft ",
         Step::Server => " Add an account: the server ",
         Step::Password => " Add an account: sign in ",
         Step::Certificate => " Add an account: certificate ",
@@ -189,12 +193,24 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
             rows.blank();
             rows.field("Address:", &setup.address, typing);
         }
+        Step::Server if setup.kind == Kind::Microsoft => {
+            if let Some(note) = &setup.note {
+                rows.dim(note);
+                rows.blank();
+            }
+            microsoft(&mut rows, setup, typing);
+        }
         Step::Server => {
             if let Some(note) = &setup.note {
                 rows.dim(note);
                 rows.blank();
             }
             let at = setup.server_field();
+            rows.choice(
+                "Type:",
+                setup.kind.label(),
+                typing && at == ServerField::Type,
+            );
             rows.field("Name:", &setup.name, typing && at == ServerField::Name);
             rows.field("Server:", &setup.host, typing && at == ServerField::Host);
             rows.field("Port:", &setup.port, typing && at == ServerField::Port);
@@ -240,8 +256,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
             if setup.tls == TlsMode::None
                 || (setup.smtp_tls == TlsMode::None && !setup.smtp_host.is_empty())
             {
-                rows.blank();
-                rows.warning(
+                rows.warning_below(
                     "With no encryption, your password and mail cross the network readable by anyone on the way.",
                 );
             }
@@ -264,13 +279,40 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
     status(&mut rows, setup);
 }
 
+/// The fields of an account that signs in with Microsoft: no server to
+/// name, since Microsoft's is known, and the application to sign in as.
+fn microsoft(rows: &mut Rows<'_, '_>, setup: &Setup, typing: bool) {
+    let at = setup.server_field();
+    rows.label = MICROSOFT_LABEL_WIDTH;
+    rows.choice(
+        "Type:",
+        setup.kind.label(),
+        typing && at == ServerField::Type,
+    );
+    rows.field("Name:", &setup.name, typing && at == ServerField::Name);
+    rows.pair("Address:", setup.address.text());
+    rows.field(
+        "Application id:",
+        &setup.application,
+        typing && at == ServerField::Application,
+    );
+    rows.field(
+        "Tenant:",
+        &setup.tenant,
+        typing && at == ServerField::Tenant,
+    );
+    rows.blank();
+    rows.dim(
+        "Register Quill with Microsoft once to get the application id: see docs/oauth.md. Tenant may be left empty.",
+    );
+}
+
 fn status(rows: &mut Rows<'_, '_>, setup: &Setup) {
     if let Some(busy) = &setup.busy {
         rows.blank();
         rows.dim(busy);
     } else if let Some(error) = &setup.error {
-        rows.blank();
-        rows.warning(error);
+        rows.warning_below(error);
     }
 }
 
@@ -345,6 +387,8 @@ struct Rows<'f, 'a> {
     area: Rect,
     y: u16,
     env: &'f Env,
+    /// How wide the column of labels is.
+    label: usize,
 }
 
 impl<'f, 'a> Rows<'f, 'a> {
@@ -354,7 +398,18 @@ impl<'f, 'a> Rows<'f, 'a> {
             area,
             y: area.y,
             env,
+            label: LABEL_WIDTH,
         }
+    }
+
+    /// How many rows are still free.
+    fn left(&self) -> usize {
+        usize::from((self.area.y + self.area.height).saturating_sub(self.y))
+    }
+
+    /// How many rows `words` would take.
+    fn lines(&self, words: &str) -> usize {
+        text::wrap(&text::sanitize_line(words), usize::from(self.area.width)).len()
     }
 
     fn row(&mut self) -> Option<Rect> {
@@ -389,12 +444,22 @@ impl<'f, 'a> Rows<'f, 'a> {
         self.wrapped(words, self.env.styles.error());
     }
 
+    /// A warning under the fields, after a gap. With the form nearly full
+    /// the gap goes first: the words are worth more than the row above
+    /// them.
+    fn warning_below(&mut self, words: &str) {
+        if self.left() > self.lines(words) {
+            self.blank();
+        }
+        self.warning(words);
+    }
+
     /// A label and a value that is only shown.
     fn pair(&mut self, label: &str, value: &str) {
         let Some(rect) = self.row() else { return };
-        let room = usize::from(self.area.width).saturating_sub(LABEL_WIDTH);
+        let room = usize::from(self.area.width).saturating_sub(self.label);
         let line = Line::from(vec![
-            Span::styled(text::fit(label, LABEL_WIDTH), self.env.styles.dim()),
+            Span::styled(text::fit(label, self.label), self.env.styles.dim()),
             Span::styled(
                 text::truncate(&text::sanitize_line(value), room),
                 self.env.styles.text(),
@@ -406,7 +471,7 @@ impl<'f, 'a> Rows<'f, 'a> {
     /// A label and a text field. The focused one holds the cursor.
     fn field(&mut self, label: &str, input: &LineInput, focused: bool) {
         let Some(rect) = self.row() else { return };
-        let room = usize::from(self.area.width).saturating_sub(LABEL_WIDTH);
+        let room = usize::from(self.area.width).saturating_sub(self.label);
         let (shown, column) = input.view(room);
         let label_style = if focused {
             self.env.styles.key()
@@ -416,15 +481,13 @@ impl<'f, 'a> Rows<'f, 'a> {
         // Underlined to its full width, so an empty field is still a field.
         let field_style = self.env.styles.text().add_modifier(Modifier::UNDERLINED);
         let line = Line::from(vec![
-            Span::styled(text::fit(label, LABEL_WIDTH), label_style),
+            Span::styled(text::fit(label, self.label), label_style),
             Span::styled(text::fit(&shown, room), field_style),
         ]);
         self.frame.render_widget(line, rect);
         if focused {
-            self.frame.set_cursor_position(Position::new(
-                rect.x + (LABEL_WIDTH + column) as u16,
-                rect.y,
-            ));
+            self.frame
+                .set_cursor_position(Position::new(rect.x + (self.label + column) as u16, rect.y));
         }
     }
 
@@ -433,7 +496,7 @@ impl<'f, 'a> Rows<'f, 'a> {
         let Some(rect) = self.row() else { return };
         let styles = &self.env.styles;
         let mut spans = vec![Span::styled(
-            text::fit(label, LABEL_WIDTH),
+            text::fit(label, self.label),
             if focused { styles.key() } else { styles.dim() },
         )];
         if focused {

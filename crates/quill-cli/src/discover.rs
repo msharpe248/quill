@@ -72,6 +72,7 @@ pub async fn discover(address: &str, dns: &dyn Dns, prober: &dyn Prober) -> Disc
             Some(note) => format!("{how} {note}"),
             None => how,
         }),
+        microsoft_application: None,
     };
 
     // 1. A provider known by name.
@@ -113,6 +114,7 @@ pub async fn discover(address: &str, dns: &dyn Dns, prober: &dyn Prober) -> Disc
             draft: draft(account_name(&domain), found, smtp),
             found: true,
             note: Some(format!("Found in the DNS records of {domain}.")),
+            microsoft_application: None,
         };
     }
 
@@ -158,6 +160,7 @@ pub async fn discover(address: &str, dns: &dyn Dns, prober: &dyn Prober) -> Disc
                         draft: draft(account_name(&domain), (host.clone(), port, tls), smtp),
                         found: true,
                         note: Some(format!("A mail server answered at {host}.")),
+                        microsoft_application: None,
                     };
                 }
             }
@@ -174,6 +177,7 @@ pub async fn discover(address: &str, dns: &dyn Dns, prober: &dyn Prober) -> Disc
         note: Some(format!(
             "Quill could not find the mail server for {domain}. Your provider's help pages will list it as the IMAP server."
         )),
+        microsoft_application: None,
     }
 }
 

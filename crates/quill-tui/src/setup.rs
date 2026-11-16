@@ -5,6 +5,10 @@
 //! what it found, give the password, and sign in. Only when sign-in has
 //! worked is anything saved.
 //!
+//! A Microsoft mailbox takes no password. Its account is saved with the id
+//! of the application it signs in as, and the form hands over to the
+//! sign-in that goes on in the browser.
+//!
 //! Nothing here touches the network, the Keychain or a file. Each step asks
 //! for work with an [`AccountRequest`] and hears the answer as an
 //! [`AccountEvent`]; whoever runs the UI supplies the service that does the
@@ -46,6 +50,41 @@ pub struct AccountDraft {
     pub smtp: Option<ServerDraft>,
 }
 
+/// An account that signs in with Microsoft, as far as the setup flow has
+/// got with it. It has no servers to name and no password.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignInDraft {
+    pub name: String,
+    pub address: String,
+    /// The id of the application registered for Quill with Microsoft.
+    pub application_id: String,
+    /// The one organisation to sign in to, when the application was
+    /// registered for one. `None`: any, which leaves `oauth_tenant` out.
+    pub tenant: Option<String>,
+}
+
+/// The kinds of account the form can add.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Kind {
+    /// A mail server that takes a password.
+    #[default]
+    Imap,
+    /// A Microsoft mailbox: it signs in with Microsoft, in the browser.
+    Microsoft,
+}
+
+impl Kind {
+    pub const ALL: [Kind; 2] = [Kind::Imap, Kind::Microsoft];
+
+    /// The kind as the form names it.
+    pub fn label(self) -> &'static str {
+        match self {
+            Kind::Imap => "IMAP (password)",
+            Kind::Microsoft => "Microsoft (sign in)",
+        }
+    }
+}
+
 /// Which certificates to accept from the account's server.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum Trusting {
@@ -76,6 +115,11 @@ pub enum AccountRequest {
         password: Secret,
         trusting: Trusting,
     },
+    /// Write an account that signs in with Microsoft to the config and
+    /// start syncing it. Nothing is asked of Microsoft and nothing goes in
+    /// the Keychain: signing in is the next thing, and is asked for
+    /// separately. Answered with [`AccountEvent::Saved`].
+    SaveSignIn { draft: SignInDraft },
     /// Accept an existing account's certificate, once or from now on.
     Trust {
         account: String,
@@ -150,6 +194,9 @@ pub struct SignIn {
     /// Which account, once the service has said. Empty until then.
     pub account: String,
     pub stage: SignInStage,
+    /// The account was added by the form a moment ago. Nobody can have
+    /// signed in to it yet, and it need not be heard saying so.
+    pub fresh: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -176,6 +223,9 @@ pub struct Discovery {
     /// Something the user should know: where the settings came from, or
     /// that this provider needs another kind of sign-in.
     pub note: Option<String>,
+    /// The application id an account in the config already signs in to
+    /// Microsoft with, to offer again. The form reads no config itself.
+    pub microsoft_application: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -202,6 +252,8 @@ pub enum Step {
 /// The fields of the server step, in order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServerField {
+    /// What kind of account this is. The fields after the name depend on it.
+    Type,
     Name,
     Host,
     Port,
@@ -211,10 +263,15 @@ pub enum ServerField {
     SmtpHost,
     SmtpPort,
     SmtpSecurity,
+    /// For a Microsoft account: the id of the application it signs in as.
+    Application,
+    /// For a Microsoft account: its organisation. Empty for any.
+    Tenant,
 }
 
 impl ServerField {
-    pub const ALL: [ServerField; 8] = [
+    pub const ALL: [ServerField; 11] = [
+        ServerField::Type,
         ServerField::Name,
         ServerField::Host,
         ServerField::Port,
@@ -223,6 +280,8 @@ impl ServerField {
         ServerField::SmtpHost,
         ServerField::SmtpPort,
         ServerField::SmtpSecurity,
+        ServerField::Application,
+        ServerField::Tenant,
     ];
 
     fn index(self) -> usize {
@@ -240,12 +299,18 @@ pub enum Outcome {
     Open,
     /// The account was saved under this name; the flow is over.
     Added(String),
+    /// The account was saved under this name and is being signed in to
+    /// with its provider: the form is over and the sign-in takes its place.
+    SigningIn(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Setup {
     pub step: Step,
     pub address: LineInput,
+    /// What kind of account is being added. Chosen for the user from the
+    /// server that was found, and theirs to change.
+    pub kind: Kind,
     pub name: LineInput,
     pub host: LineInput,
     pub port: LineInput,
@@ -255,6 +320,9 @@ pub struct Setup {
     pub smtp_port: LineInput,
     pub smtp_tls: TlsMode,
     pub password: LineInput,
+    /// For a Microsoft account: the application id, and the organisation.
+    pub application: LineInput,
+    pub tenant: LineInput,
     /// Which field of the server step has the cursor.
     pub field: usize,
     /// What is being waited for, in words. Keys other than `esc` wait too.
@@ -271,6 +339,7 @@ impl Default for Setup {
         Self {
             step: Step::Address,
             address: LineInput::default(),
+            kind: Kind::Imap,
             name: LineInput::default(),
             host: LineInput::default(),
             port: LineInput::default(),
@@ -280,7 +349,9 @@ impl Default for Setup {
             smtp_port: LineInput::new("465".to_owned()),
             smtp_tls: TlsMode::Implicit,
             password: LineInput::masked(),
-            field: 0,
+            application: LineInput::default(),
+            tenant: LineInput::default(),
+            field: ServerField::Name.index(),
             busy: None,
             error: None,
             note: None,
@@ -293,6 +364,25 @@ impl Default for Setup {
 impl Setup {
     pub fn server_field(&self) -> ServerField {
         ServerField::ALL[self.field.min(ServerField::ALL.len() - 1)]
+    }
+
+    /// Whether the server step shows `field` for the kind of account
+    /// chosen. A field that is not shown is not stopped at.
+    pub fn shows(&self, field: ServerField) -> bool {
+        match field {
+            ServerField::Type | ServerField::Name => true,
+            ServerField::Host
+            | ServerField::Port
+            | ServerField::Security
+            | ServerField::Username
+            | ServerField::SmtpHost => self.kind == Kind::Imap,
+            // With no sending server named, its port and security are not
+            // shown either.
+            ServerField::SmtpPort | ServerField::SmtpSecurity => {
+                self.kind == Kind::Imap && !self.smtp_host.is_empty()
+            }
+            ServerField::Application | ServerField::Tenant => self.kind == Kind::Microsoft,
+        }
     }
 
     /// The text field the cursor is in, if it is in one.
@@ -311,7 +401,9 @@ impl Setup {
                 ServerField::Username => Some(&self.username),
                 ServerField::SmtpHost => Some(&self.smtp_host),
                 ServerField::SmtpPort => Some(&self.smtp_port),
-                ServerField::Security | ServerField::SmtpSecurity => None,
+                ServerField::Application => Some(&self.application),
+                ServerField::Tenant => Some(&self.tenant),
+                ServerField::Type | ServerField::Security | ServerField::SmtpSecurity => None,
             },
         }
     }
@@ -331,7 +423,9 @@ impl Setup {
                 ServerField::Username => Some(&mut self.username),
                 ServerField::SmtpHost => Some(&mut self.smtp_host),
                 ServerField::SmtpPort => Some(&mut self.smtp_port),
-                ServerField::Security | ServerField::SmtpSecurity => None,
+                ServerField::Application => Some(&mut self.application),
+                ServerField::Tenant => Some(&mut self.tenant),
+                ServerField::Type | ServerField::Security | ServerField::SmtpSecurity => None,
             },
         }
     }
@@ -363,6 +457,22 @@ impl Setup {
                 Key::Char(_) => Some(Vec::new()),
                 _ => None,
             };
+        }
+        if self.step == Step::Server && self.server_field() == ServerField::Type {
+            let order = Kind::ALL;
+            let at = order
+                .iter()
+                .position(|kind| *kind == self.kind)
+                .unwrap_or(0);
+            let next = match chord.key {
+                Key::Right | Key::Char(' ') if plain => (at + 1) % order.len(),
+                Key::Left if plain => (at + order.len() - 1) % order.len(),
+                Key::Char(_) => return Some(Vec::new()),
+                _ => return None,
+            };
+            self.kind = order[next];
+            self.error = None;
+            return Some(Vec::new());
         }
         let choosing = match self.server_field() {
             ServerField::Security => Some(false),
@@ -419,14 +529,8 @@ impl Setup {
                 } else {
                     (self.field + count - 1) % count
                 };
-                // With no sending server named, its port and security are
-                // not shown and not stopped at.
-                let hidden = self.smtp_host.is_empty()
-                    && matches!(
-                        self.server_field(),
-                        ServerField::SmtpPort | ServerField::SmtpSecurity
-                    );
-                if !hidden {
+                // The type and the name are always shown, so this ends.
+                if self.shows(self.server_field()) {
                     break;
                 }
             }
@@ -454,6 +558,19 @@ impl Setup {
                 self.busy = Some(format!("Looking for the mail server of {domain}…"));
                 vec![AccountRequest::Discover { address }]
             }
+            Step::Server if self.kind == Kind::Microsoft => match self.sign_in_draft() {
+                // No password to ask for and nothing to check with a
+                // server: the account is saved, and then signed in to.
+                Ok(draft) => {
+                    self.busy = Some(format!("Saving {}…", draft.name));
+                    vec![AccountRequest::SaveSignIn { draft }]
+                }
+                Err((field, problem)) => {
+                    self.field = field.index();
+                    self.error = Some(problem);
+                    Vec::new()
+                }
+            },
             Step::Server => {
                 if let Err(problem) = self.draft() {
                     self.error = Some(problem);
@@ -461,8 +578,10 @@ impl Setup {
                 }
                 // A server that takes no password from a mail program is
                 // not asked for one: the answer is known, and it is no.
+                // The cursor goes to the choice that adds the account.
                 if let Some(whose) = quill_core::providers::takes_no_password(self.host.text()) {
                     self.error = Some(no_password(whose));
+                    self.field = ServerField::Type.index();
                     return Vec::new();
                 }
                 self.step = Step::Password;
@@ -555,6 +674,47 @@ impl Setup {
         })
     }
 
+    /// The Microsoft account as the fields describe it, or which field is
+    /// wrong and how.
+    fn sign_in_draft(&self) -> Result<SignInDraft, (ServerField, String)> {
+        let address = self.address.text().trim().to_owned();
+        let name = match self.name.text().trim() {
+            "" => address.clone(),
+            name => name.to_owned(),
+        };
+        let application_id = self.application.text().trim();
+        if application_id.is_empty() {
+            return Err((
+                ServerField::Application,
+                "Enter the application id: the Application (client) ID Microsoft shows for Quill."
+                    .to_owned(),
+            ));
+        }
+        if application_id.contains(char::is_whitespace) {
+            return Err((
+                ServerField::Application,
+                "An application id has no spaces in it.".to_owned(),
+            ));
+        }
+        let tenant = match self.tenant.text().trim() {
+            "" => None,
+            tenant if tenant.contains(char::is_whitespace) => {
+                return Err((
+                    ServerField::Tenant,
+                    "A tenant is an id or a domain name, with no spaces. Leave it empty for any."
+                        .to_owned(),
+                ));
+            }
+            tenant => Some(tenant.to_owned()),
+        };
+        Ok(SignInDraft {
+            name,
+            address,
+            application_id: application_id.to_owned(),
+            tenant,
+        })
+    }
+
     fn verify(&mut self) -> Vec<AccountRequest> {
         match self.draft() {
             Ok(draft) => {
@@ -633,9 +793,27 @@ impl Setup {
                 self.note = found.note;
                 self.trusting = Trusting::System;
                 self.step = Step::Server;
+                // A Microsoft server takes no password, so the account is
+                // offered as the kind that needs none.
+                self.kind = match quill_core::providers::takes_no_password(self.host.text()) {
+                    Some(_) => Kind::Microsoft,
+                    None => Kind::Imap,
+                };
+                // An id typed before going back to the address is kept.
+                if self.application.is_empty()
+                    && let Some(id) = found.microsoft_application
+                {
+                    self.application.set(id);
+                }
                 // Found: the cursor waits on the name, the one thing only
                 // the user can choose. Not found: on the server to fill in.
-                self.field = usize::from(!found.found);
+                // A Microsoft account with no application id yet: on that.
+                self.field = match self.kind {
+                    Kind::Microsoft if self.application.is_empty() => ServerField::Application,
+                    Kind::Imap if !found.found => ServerField::Host,
+                    _ => ServerField::Name,
+                }
+                .index();
                 (Vec::new(), Outcome::Open)
             }
             AccountEvent::Verified(result) => {
@@ -686,7 +864,7 @@ impl Setup {
                     Err(VerifyProblem::Other(reason)) => {
                         // Most likely the server's details: go back to them.
                         self.step = Step::Server;
-                        self.field = 1;
+                        self.field = ServerField::Host.index();
                         self.error = Some(reason);
                         (Vec::new(), Outcome::Open)
                     }
@@ -695,6 +873,15 @@ impl Setup {
             AccountEvent::Saved(result) => {
                 self.busy = None;
                 match result {
+                    // A Microsoft account is saved from the server step,
+                    // and has still to be signed in to. That is asked for
+                    // at once, for the account just made.
+                    Ok(name) if self.kind == Kind::Microsoft && self.step == Step::Server => {
+                        let sign_in = AccountRequest::SignIn {
+                            account: Some(name.clone()),
+                        };
+                        (vec![sign_in], Outcome::SigningIn(name))
+                    }
                     Ok(name) => (Vec::new(), Outcome::Added(name)),
                     Err(reason) => {
                         self.error = Some(format!("The account could not be saved: {reason}"));
@@ -724,19 +911,16 @@ pub struct CertificatePrompt {
     pub busy: bool,
 }
 
-/// Why a certificate was refused, in words for someone who has never read a
-/// TLS error. Falls back to the verifier's own text.
-/// What the form says of an account whose server takes no password from a
-/// mail program: that it stops here, and how the account is added instead.
-/// Two short lines, because that is the room the form has left under its
-/// fields; the note above them has already said why.
+/// What the form says when a password account is asked for at a server
+/// that takes no password from a mail program: how the account is added
+/// instead. One short line, because that is the room the form can count on
+/// under its fields; the note above them has already said why.
 fn no_password(whose: &str) -> String {
-    format!(
-        "Not added here: {whose} takes no password. Put a `graph` account in the \
-         config (see the README), then press S."
-    )
+    format!("{whose} takes no password. Change Type to {whose}.")
 }
 
+/// Why a certificate was refused, in words for someone who has never read a
+/// TLS error. Falls back to the verifier's own text.
 pub fn certificate_reason(reason: &str) -> String {
     let known = [
         (
@@ -812,8 +996,37 @@ mod tests {
                 },
                 found: true,
                 note: Some("Found in the DNS records of example.com.".to_owned()),
+                microsoft_application: None,
             },
         }
+    }
+
+    /// What discovery says of an address whose mail Microsoft hosts, and
+    /// the application id the config already has, if it has one.
+    fn found_at_microsoft(address: &str, application: Option<&str>) -> AccountEvent {
+        let AccountEvent::Discovered { address, mut found } = found(address) else {
+            unreachable!()
+        };
+        found.draft.imap.host = "outlook.office365.com".to_owned();
+        found.draft.smtp = Some(ServerDraft {
+            host: "smtp.office365.com".to_owned(),
+            port: 587,
+            tls: TlsMode::Starttls,
+            username: address.clone(),
+        });
+        found.note = Some("Mail for example.com is hosted by Microsoft.".to_owned());
+        found.microsoft_application = application.map(str::to_owned);
+        AccountEvent::Discovered { address, found }
+    }
+
+    /// The form at the server step, for an address Microsoft hosts.
+    fn at_microsoft(application: Option<&str>) -> Setup {
+        let mut setup = Setup::default();
+        setup.address.set("robin@example.com");
+        setup.advance();
+        setup.on_event(found_at_microsoft("robin@example.com", application));
+        assert_eq!(setup.step, Step::Server);
+        setup
     }
 
     fn problem() -> Box<CertificateProblem> {
@@ -838,12 +1051,265 @@ mod tests {
     }
 
     #[test]
-    fn a_server_that_takes_no_password_is_never_asked_for_one() {
+    fn the_type_is_chosen_from_the_server_that_was_found() {
+        // A server that takes a password: an IMAP account, as ever.
         let mut setup = Setup::default();
-        setup.address.set("robin@outlook.example");
+        setup.address.set("robin@example.com");
         setup.advance();
-        setup.on_event(found("robin@outlook.example"));
+        setup.on_event(found("robin@example.com"));
+        assert_eq!(setup.kind, Kind::Imap);
+        assert_eq!(setup.server_field(), ServerField::Name);
+        assert!(setup.shows(ServerField::Host) && !setup.shows(ServerField::Application));
+
+        // One of Microsoft's: a Microsoft account, with the cursor on the
+        // one thing it still needs.
+        let setup = at_microsoft(None);
+        assert_eq!(setup.kind, Kind::Microsoft);
+        assert_eq!(setup.server_field(), ServerField::Application);
+        assert_eq!(setup.application.text(), "");
+        assert_eq!(setup.name.text(), "Example");
+        // It has no servers to name.
+        for field in [
+            ServerField::Host,
+            ServerField::Port,
+            ServerField::Security,
+            ServerField::Username,
+            ServerField::SmtpHost,
+            ServerField::SmtpPort,
+            ServerField::SmtpSecurity,
+        ] {
+            assert!(!setup.shows(field), "{field:?}");
+        }
+
+        // An application id the config already has is offered again, and
+        // then the name is all there is left to choose.
+        let mut setup = at_microsoft(Some("app-1"));
+        assert_eq!(setup.application.text(), "app-1");
+        assert_eq!(setup.server_field(), ServerField::Name);
+
+        // Going back for another address chooses again, and keeps an id
+        // that was typed.
+        setup.application.set("app-2");
+        assert!(!setup.back());
+        setup.address.set("robin@example.org");
+        setup.advance();
+        setup.on_event(found("robin@example.org"));
+        assert_eq!(setup.kind, Kind::Imap);
+        assert!(!setup.back());
+        setup.address.set("robin@example.com");
+        setup.advance();
+        setup.on_event(found_at_microsoft("robin@example.com", Some("app-1")));
+        assert_eq!(setup.kind, Kind::Microsoft);
+        assert_eq!(setup.application.text(), "app-2");
+    }
+
+    #[test]
+    fn the_type_changes_with_the_arrow_keys() {
+        let mut setup = Setup::default();
+        setup.address.set("robin@example.com");
+        setup.advance();
+        setup.on_event(found("robin@example.com"));
+        // The type is the first field, before the name.
+        keys(&mut setup, "shift-tab");
+        assert_eq!(setup.server_field(), ServerField::Type);
+        assert_eq!(setup.focused_input(), None);
+
+        keys(&mut setup, "right");
+        assert_eq!(setup.kind, Kind::Microsoft);
+        keys(&mut setup, "right");
+        assert_eq!(setup.kind, Kind::Imap);
+        keys(&mut setup, "left");
+        assert_eq!(setup.kind, Kind::Microsoft);
+        keys(&mut setup, "space");
+        assert_eq!(setup.kind, Kind::Imap);
+        // Letters are not typed into a choice, and change nothing.
+        assert_eq!(keys(&mut setup, "m x"), []);
+        assert_eq!(setup.kind, Kind::Imap);
+        // Another key is not the form's: it goes on to be a command.
+        assert_eq!(setup.key("down".parse().unwrap()), None);
+
+        // Changing the type takes back what was said about the old one.
+        setup.error = Some("said of the other type".to_owned());
+        keys(&mut setup, "left");
+        assert_eq!(
+            (setup.kind, setup.error.as_deref()),
+            (Kind::Microsoft, None)
+        );
+
+        // The fields that follow are the type's own, and go round.
+        let mut seen = Vec::new();
+        for _ in 0..4 {
+            keys(&mut setup, "tab");
+            seen.push(setup.server_field());
+        }
+        assert_eq!(
+            seen,
+            [
+                ServerField::Name,
+                ServerField::Application,
+                ServerField::Tenant,
+                ServerField::Type
+            ]
+        );
+        keys(&mut setup, "shift-tab");
+        assert_eq!(setup.server_field(), ServerField::Tenant);
+        keys(&mut setup, "e x a m p l e . c o m");
+        assert_eq!(setup.tenant.text(), "example.com");
+
+        // Elsewhere the arrows are not the type's: in the name they move
+        // the cursor, and the type stays.
+        keys(&mut setup, "shift-tab shift-tab");
+        assert_eq!(setup.server_field(), ServerField::Name);
+        keys(&mut setup, "left right");
+        assert_eq!(setup.kind, Kind::Microsoft);
+    }
+
+    #[test]
+    fn a_microsoft_account_needs_its_application_id_and_may_name_a_tenant() {
+        let mut setup = at_microsoft(None);
+        // No id: nothing is asked for, and the cursor is where it goes.
+        setup.field = ServerField::Name.index();
+        assert_eq!(setup.advance(), []);
         assert_eq!(setup.step, Step::Server);
+        assert_eq!(setup.server_field(), ServerField::Application);
+        let said = setup.error.clone().unwrap();
+        assert!(said.contains("application id"), "{said}");
+        for blank in ["   ", "\t"] {
+            setup.application.set(blank);
+            assert_eq!(setup.advance(), [], "{blank:?}");
+            assert!(setup.error.is_some(), "{blank:?}");
+        }
+        // An id is one word.
+        setup.application.set("app 1");
+        assert_eq!(setup.advance(), []);
+        assert!(setup.error.as_deref().unwrap().contains("no spaces"));
+        // Typing takes the complaint away.
+        keys(&mut setup, "x");
+        assert_eq!(setup.error, None);
+
+        // The tenant is one word too, when there is one.
+        setup.application.set("app-1");
+        setup.tenant.set("not a tenant");
+        assert_eq!(setup.advance(), []);
+        assert_eq!(setup.server_field(), ServerField::Tenant);
+        assert!(setup.error.as_deref().unwrap().contains("tenant"));
+
+        // Each complaint fits the two lines the form has for it, at the
+        // narrowest the app shows the form.
+        for said in [
+            {
+                setup.application.set("");
+                setup.advance();
+                setup.error.clone().unwrap()
+            },
+            {
+                setup.application.set("a b");
+                setup.advance();
+                setup.error.clone().unwrap()
+            },
+            {
+                setup.application.set("app-1");
+                setup.advance();
+                setup.error.clone().unwrap()
+            },
+        ] {
+            assert!(text::wrap(&said, 58).len() <= 2, "{said}");
+        }
+
+        // With no tenant the account is for any organisation. What was
+        // typed around the id and the name is trimmed off.
+        setup.application.set("  0f1e2d3c-app-1 ");
+        setup.tenant.set("  ");
+        setup.name.set(" Work ");
+        assert_eq!(
+            setup.advance(),
+            [AccountRequest::SaveSignIn {
+                draft: SignInDraft {
+                    name: "Work".to_owned(),
+                    address: "robin@example.com".to_owned(),
+                    application_id: "0f1e2d3c-app-1".to_owned(),
+                    tenant: None,
+                }
+            }]
+        );
+        assert_eq!(setup.busy.as_deref(), Some("Saving Work…"));
+        // It was never asked for a password.
+        assert_eq!(setup.step, Step::Server);
+        assert!(setup.password.is_empty());
+
+        // With one, it is named. A name left empty is the address.
+        let mut setup = at_microsoft(Some("app-1"));
+        setup.name.set("");
+        setup.tenant.set(" example.com ");
+        assert_eq!(
+            setup.advance(),
+            [AccountRequest::SaveSignIn {
+                draft: SignInDraft {
+                    name: "robin@example.com".to_owned(),
+                    address: "robin@example.com".to_owned(),
+                    application_id: "app-1".to_owned(),
+                    tenant: Some("example.com".to_owned()),
+                }
+            }]
+        );
+    }
+
+    #[test]
+    fn a_saved_microsoft_account_is_signed_in_to_at_once() {
+        let mut setup = at_microsoft(Some("app-1"));
+        setup.name.set("Work");
+        let requests = setup.advance();
+        assert!(
+            matches!(requests.as_slice(), [AccountRequest::SaveSignIn { .. }]),
+            "{requests:?}"
+        );
+        // Saved: the form is over, and the sign-in is asked for, for the
+        // account just made and no other.
+        let (requests, outcome) = setup.on_event(AccountEvent::Saved(Ok("Work".to_owned())));
+        assert_eq!(
+            requests,
+            [AccountRequest::SignIn {
+                account: Some("Work".to_owned())
+            }]
+        );
+        assert_eq!(outcome, Outcome::SigningIn("Work".to_owned()));
+
+        // Not saved: the form stays where it was and says why. Nothing is
+        // signed in to.
+        let mut setup = at_microsoft(Some("app-1"));
+        setup.advance();
+        let (requests, outcome) = setup.on_event(AccountEvent::Saved(Err(
+            "there is already an account called Example".to_owned(),
+        )));
+        assert_eq!((requests, outcome), (Vec::new(), Outcome::Open));
+        assert_eq!((setup.step, setup.busy.clone()), (Step::Server, None));
+        assert!(
+            setup
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("already an account called Example")
+        );
+
+        // A password account that is saved is not signed in to this way.
+        let mut setup = at_password();
+        setup.advance();
+        setup.on_event(AccountEvent::Verified(Ok(())));
+        let (requests, outcome) = setup.on_event(AccountEvent::Saved(Ok("Example".to_owned())));
+        assert_eq!(
+            (requests, outcome),
+            (Vec::new(), Outcome::Added("Example".to_owned()))
+        );
+    }
+
+    #[test]
+    fn a_password_account_at_a_microsoft_server_is_never_asked_for_a_password() {
+        let mut setup = at_microsoft(None);
+        // The user would have a password account all the same.
+        setup.field = ServerField::Type.index();
+        keys(&mut setup, "left");
+        assert_eq!(setup.kind, Kind::Imap);
+        keys(&mut setup, "tab");
         // Microsoft's servers, however the address came to them: found
         // for the address, or typed in for a domain of the user's own.
         for host in [
@@ -852,19 +1318,32 @@ mod tests {
             "imap-mail.outlook.com",
         ] {
             setup.host.set(host);
-            // Going on stays where it is, asks nothing of the server,
-            // and says how the account is added instead.
+            setup.field = ServerField::Host.index();
+            // Going on stays where it is, asks nothing of the server, and
+            // says which type adds the account, with the cursor on it.
             assert_eq!(setup.advance(), [], "{host}");
             assert_eq!(setup.step, Step::Server, "{host}");
+            assert_eq!(setup.server_field(), ServerField::Type, "{host}");
             let said = setup.error.clone().unwrap_or_default();
             assert!(
                 said.contains("Microsoft takes no password"),
                 "{host}: {said}"
             );
-            assert!(said.contains("`graph` account"), "{said}");
-            assert!(said.contains("press S"), "{said}");
+            assert!(said.contains("Change Type to Microsoft"), "{said}");
+            // One line where the app shows the form at its narrowest:
+            // under all the fields of a server, longer is cut off.
+            assert_eq!(text::wrap(&said, 58).len(), 1, "{said}");
         }
+        // One key from there it is a Microsoft account, and the complaint
+        // is gone.
+        keys(&mut setup, "right");
+        assert_eq!(
+            (setup.kind, setup.error.as_deref()),
+            (Kind::Microsoft, None)
+        );
+
         // Another server, with a name that only looks alike, is asked.
+        keys(&mut setup, "left");
         setup.host.set("imap.notoutlook.com");
         assert_eq!(setup.advance(), []);
         assert_eq!(setup.step, Step::Password);
@@ -1053,7 +1532,7 @@ mod tests {
         assert_eq!(setup.draft().unwrap().smtp, None);
         setup.field = ServerField::SmtpHost.index();
         keys(&mut setup, "tab");
-        assert_eq!(setup.server_field(), ServerField::Name);
+        assert_eq!(setup.server_field(), ServerField::Type);
         keys(&mut setup, "shift-tab");
         assert_eq!(setup.server_field(), ServerField::SmtpHost);
         assert!(setup.advance().is_empty());

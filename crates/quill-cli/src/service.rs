@@ -5,6 +5,10 @@
 //! to the Keychain, and hands it to the sync engine. Accepting a server's
 //! certificate for an account that already exists goes the same way.
 //!
+//! An account that signs in with Microsoft has no password to check. It is
+//! written down and handed to the engine as it is, and signing in to it is
+//! a request of its own, which the UI makes next.
+//!
 //! The UI reaches no server itself, so the one request it ever asks to
 //! have made to a server that is not the user's comes through here too:
 //! telling a mailing list to unsubscribe them (see `unsubscribe`).
@@ -14,7 +18,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use quill_auth::SecretStore;
-use quill_core::config::{AccountConfig, Config};
+use quill_core::config::{AccountConfig, AccountType, Config};
+use quill_core::types::LocalAccountId;
 use quill_core::{Backend, Error};
 use quill_imap::{ImapBackend, ImapConfig, Trust};
 use quill_smtp::{SmtpAuth, SmtpConfig, SmtpSender};
@@ -22,7 +27,7 @@ use quill_store::Store;
 use quill_sync::{SyncAccount, SyncHandle};
 use quill_tui::app::AccountsLink;
 use quill_tui::setup::{
-    AccountDraft, AccountEvent, AccountRequest, ServerDraft, Trusting, VerifyProblem,
+    AccountDraft, AccountEvent, AccountRequest, ServerDraft, SignInDraft, Trusting, VerifyProblem,
 };
 use tokio::sync::mpsc::unbounded_channel;
 
@@ -108,7 +113,10 @@ impl Service {
     pub async fn handle(self: &Arc<Self>, request: AccountRequest) -> AccountEvent {
         match request {
             AccountRequest::Discover { address } => {
-                let found = discover::discover(&address, &*self.dns, &*self.prober).await;
+                let mut found = discover::discover(&address, &*self.dns, &*self.prober).await;
+                // The form reads no config: what it may offer from there
+                // goes with the answer.
+                found.microsoft_application = self.microsoft_application().await;
                 AccountEvent::Discovered { address, found }
             }
             AccountRequest::Verify {
@@ -131,6 +139,22 @@ impl Service {
                 .unwrap_or_else(|err| Err(err.to_string()));
                 AccountEvent::Saved(saved.map(|account| {
                     // The engine's tasks are started from the runtime.
+                    self.sync.set_account(account);
+                    name
+                }))
+            }
+            AccountRequest::SaveSignIn { draft } => {
+                let service = Arc::clone(self);
+                let name = draft.name.clone();
+                // Files and the store block.
+                let saved = tokio::task::spawn_blocking(move || service.save_sign_in(&draft))
+                    .await
+                    .unwrap_or_else(|err| Err(err.to_string()));
+                AccountEvent::Saved(saved.map(|account| {
+                    // Nobody has signed in to it yet, and the engine is
+                    // told so by the account itself, as for one that was
+                    // in the config when Quill started. It asks nothing of
+                    // Microsoft until there is a sign-in to ask with.
                     self.sync.set_account(account);
                     name
                 }))
@@ -292,10 +316,29 @@ impl Service {
         }
     }
 
-    fn register(
-        &self,
-        account: &AccountConfig,
-    ) -> Result<quill_core::types::LocalAccountId, String> {
+    /// The application id an account in the config already signs in to
+    /// Microsoft with, if there is one: the same registration serves every
+    /// account, so the form offers it again.
+    async fn microsoft_application(self: &Arc<Self>) -> Option<String> {
+        let service = Arc::clone(self);
+        // The config file blocks.
+        tokio::task::spawn_blocking(move || {
+            let config = Config::parse(&service.config_text().ok()?).ok()?;
+            config
+                .accounts
+                .iter()
+                .filter(|account| account.kind == AccountType::Graph)
+                .find_map(|account| {
+                    let id = account.oauth_client_id.as_deref()?.trim();
+                    (!id.is_empty()).then(|| id.to_owned())
+                })
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
+    fn register(&self, account: &AccountConfig) -> Result<LocalAccountId, String> {
         self.store
             .lock()
             .map_err(|_| "the store is unavailable after an earlier failure".to_owned())?
@@ -357,6 +400,52 @@ impl Service {
             &self.secrets,
             None,
         ))
+    }
+
+    /// Writes down an account that signs in with Microsoft and returns it
+    /// ready to sync, built as one found in the config at startup is.
+    /// Nothing is asked of Microsoft and nothing goes in the Keychain:
+    /// signing in is what the user does next.
+    fn save_sign_in(&self, draft: &SignInDraft) -> Result<SyncAccount, String> {
+        let before = self.config_text()?;
+        let existing = Config::parse(&before)
+            .map_err(|err| format!("config.toml has a mistake to fix first: {err}"))?;
+        if existing
+            .accounts
+            .iter()
+            .any(|account| account.name.eq_ignore_ascii_case(&draft.name))
+        {
+            return Err(format!(
+                "there is already an account called {}. Give this one another name",
+                draft.name
+            ));
+        }
+        // A sign-in is kept under the address, so a second Microsoft
+        // account at the same address would be the first one twice.
+        if let Some(same) = existing.accounts.iter().find(|account| {
+            account.kind == AccountType::Graph
+                && account.address.eq_ignore_ascii_case(&draft.address)
+        }) {
+            return Err(format!(
+                "{} is already the Microsoft account for {}",
+                same.name, draft.address
+            ));
+        }
+        let after = config_edit::add_sign_in_account(&before, draft)?;
+        let config = Config::parse(&after).map_err(|err| err.to_string())?;
+        let account = config
+            .accounts
+            .last()
+            .ok_or("the account was not added to config.toml")?;
+        // Built before anything is written: an account whose settings
+        // could never sign in (a tenant that is not one) is not saved.
+        let tokens = oauth::tokens(account, &self.secrets, &mut None)?
+            .ok_or("it does not sign in with a provider")?;
+        let mut built = oauth::graph_account(LocalAccountId(0), account, tokens)?;
+        config_edit::write(&self.config_file, &after)
+            .map_err(|err| format!("config.toml cannot be written: {err}"))?;
+        built.id = self.register(account)?;
+        Ok(built)
     }
 
     /// Accepts `fingerprint` as the certificate of one of an existing
@@ -1045,6 +1134,263 @@ mod tests {
             AccountEvent::Trusted { result: Err(_), .. } => {}
             other => panic!("{other:?}"),
         }
+    }
+
+    fn microsoft(name: &str, address: &str, tenant: Option<&str>) -> AccountRequest {
+        AccountRequest::SaveSignIn {
+            draft: SignInDraft {
+                name: name.to_owned(),
+                address: address.to_owned(),
+                application_id: "app-1".to_owned(),
+                tenant: tenant.map(str::to_owned),
+            },
+        }
+    }
+
+    /// Writes `text` as the rig's config, as the user might have.
+    fn write_config(rig: &Rig, text: &str) {
+        std::fs::create_dir_all(rig.service.config_file.parent().unwrap()).unwrap();
+        std::fs::write(&rig.service.config_file, text).unwrap();
+    }
+
+    fn config_text(rig: &Rig) -> String {
+        std::fs::read_to_string(&rig.service.config_file).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_microsoft_account_is_written_down_and_synced_without_a_password_or_a_restart() {
+        let mut rig = Rig::new();
+        let saved = rig.service.handle(microsoft("Work", USER, None)).await;
+        assert_eq!(saved, AccountEvent::Saved(Ok("Work".to_owned())));
+
+        // The account as docs/oauth.md has it written by hand, and no more.
+        assert_eq!(
+            config_text(&rig),
+            "[[account]]\nname = \"Work\"\ntype = \"graph\"\naddress = \"robin@example.com\"\noauth_client_id = \"app-1\"\n"
+        );
+        // It is in the store, to be listed.
+        let accounts = rig.store.accounts().unwrap();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].name, "Work");
+        // Nothing was put in the Keychain: nobody has signed in.
+        assert_eq!(
+            rig.secrets
+                .get("oauth:microsoft:robin@example.com")
+                .unwrap(),
+            None
+        );
+        // And the engine has it already: the account says for itself that
+        // nobody has signed in to it, having asked nothing of Microsoft.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            let event = tokio::time::timeout_at(deadline, rig.events.recv())
+                .await
+                .expect("the engine never tried the new account")
+                .expect("the engine stopped");
+            if let SyncEvent::Problem { account, message } = event {
+                assert_eq!(account, "Work");
+                assert!(message.contains("nobody has signed in"), "{message}");
+                break;
+            }
+        }
+
+        // With a tenant, that is written too.
+        let rig = Rig::new();
+        let saved = rig
+            .service
+            .handle(microsoft("Work", USER, Some("example.com")))
+            .await;
+        assert_eq!(saved, AccountEvent::Saved(Ok("Work".to_owned())));
+        assert_eq!(
+            config_text(&rig),
+            "[[account]]\nname = \"Work\"\ntype = \"graph\"\naddress = \"robin@example.com\"\noauth_client_id = \"app-1\"\noauth_tenant = \"example.com\"\n"
+        );
+        assert_eq!(
+            rig.config().accounts[0].oauth_tenant.as_deref(),
+            Some("example.com")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_microsoft_account_is_added_under_what_the_user_wrote_which_is_kept() {
+        let rig = Rig::new();
+        let before = "# My settings\n[ui]\ntheme = \"light\"   # easier on the eyes\n\n\
+                      [[account]]\nname = \"Personal\"   # home\ntype = \"imap\"\naddress = \"robin@example.org\"\n\
+                      imap = { host = \"mail.example.org\" }\n";
+        write_config(&rig, before);
+        let saved = rig.service.handle(microsoft("Work", USER, None)).await;
+        assert_eq!(saved, AccountEvent::Saved(Ok("Work".to_owned())));
+        assert_eq!(
+            config_text(&rig),
+            format!(
+                "{before}\n[[account]]\nname = \"Work\"\ntype = \"graph\"\naddress = \"robin@example.com\"\noauth_client_id = \"app-1\"\n"
+            )
+        );
+        let config = rig.config();
+        assert_eq!(config.accounts.len(), 2);
+        assert_eq!(config.accounts[1].kind, AccountType::Graph);
+    }
+
+    #[tokio::test]
+    async fn a_microsoft_account_that_cannot_be_is_refused_and_nothing_is_written() {
+        let rig = Rig::new();
+        let before = "[[account]]\nname = \"Personal\"\ntype = \"imap\"\naddress = \"robin@example.org\"\nimap = { host = \"mail.example.org\" }\n\n\
+                      [[account]]\nname = \"Work\"\ntype = \"graph\"\naddress = \"robin@example.com\"\noauth_client_id = \"app-1\"\n";
+        write_config(&rig, before);
+        let refused = |event| match event {
+            AccountEvent::Saved(Err(reason)) => reason,
+            other => panic!("{other:?}"),
+        };
+
+        // A name another account has, whatever its kind and its capitals.
+        for name in ["Personal", "work"] {
+            let reason = refused(
+                rig.service
+                    .handle(microsoft(name, "sam@example.com", None))
+                    .await,
+            );
+            assert!(reason.contains("already an account called"), "{reason}");
+        }
+        // An address a Microsoft account already signs in as: the sign-in
+        // is kept under the address, so it would be the same account twice.
+        let reason = refused(
+            rig.service
+                .handle(microsoft("Second", "Robin@Example.com", None))
+                .await,
+        );
+        assert!(
+            reason.contains("Work is already the Microsoft account for"),
+            "{reason}"
+        );
+        // A tenant that is not one.
+        let reason = refused(
+            rig.service
+                .handle(microsoft("Second", "sam@example.com", Some("not/a/tenant")))
+                .await,
+        );
+        assert!(reason.contains("tenant"), "{reason}");
+        // An application id that is none.
+        let reason = refused(
+            rig.service
+                .handle(AccountRequest::SaveSignIn {
+                    draft: SignInDraft {
+                        name: "Second".to_owned(),
+                        address: "sam@example.com".to_owned(),
+                        application_id: "  ".to_owned(),
+                        tenant: None,
+                    },
+                })
+                .await,
+        );
+        assert!(reason.contains("oauth_client_id"), "{reason}");
+
+        // None of it changed the file or listed an account.
+        assert_eq!(config_text(&rig), before);
+        assert!(rig.store.accounts().unwrap().is_empty());
+
+        // An address a password account has is another matter: that one
+        // signs in somewhere else.
+        let saved = rig
+            .service
+            .handle(microsoft("Second", "robin@example.org", None))
+            .await;
+        assert_eq!(saved, AccountEvent::Saved(Ok("Second".to_owned())));
+
+        // A config with a mistake in it is not added to.
+        let rig = Rig::new();
+        write_config(&rig, "[ui\ntheme = ");
+        let reason = refused(rig.service.handle(microsoft("Work", USER, None)).await);
+        assert!(reason.contains("mistake to fix first"), "{reason}");
+        assert_eq!(config_text(&rig), "[ui\ntheme = ");
+
+        // One that cannot be written says so, and no account is listed.
+        let rig = Rig::new();
+        std::fs::write(rig.dir.path().join("config"), "in the way").unwrap();
+        let reason = refused(rig.service.handle(microsoft("Work", USER, None)).await);
+        assert!(reason.contains("config.toml"), "{reason}");
+        assert!(rig.store.accounts().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn discovery_offers_the_application_id_a_microsoft_account_already_has() {
+        let discovered = |event| match event {
+            AccountEvent::Discovered { found, .. } => found,
+            other => panic!("{other:?}"),
+        };
+        let look = AccountRequest::Discover {
+            address: "sam@example.com".to_owned(),
+        };
+
+        // No config at all, and nothing to offer.
+        let rig = Rig::new();
+        let found = discovered(rig.service.handle(look.clone()).await);
+        assert_eq!(found.microsoft_application, None);
+
+        // Only an application registered with Microsoft is offered: not
+        // the one a Gmail account signs in to Google as.
+        write_config(
+            &rig,
+            "[[account]]\nname = \"Mail\"\ntype = \"imap\"\naddress = \"robin@example.org\"\nauth = \"oauth\"\noauth_client_id = \"google-app\"\nimap = { host = \"mail.example.org\" }\n",
+        );
+        let found = discovered(rig.service.handle(look.clone()).await);
+        assert_eq!(found.microsoft_application, None);
+
+        // A Microsoft account's is, trimmed; one with none is passed over.
+        write_config(
+            &rig,
+            "[[account]]\nname = \"Old\"\ntype = \"graph\"\naddress = \"old@example.com\"\n\n\
+             [[account]]\nname = \"Work\"\ntype = \"graph\"\naddress = \"robin@example.com\"\noauth_client_id = \" app-1 \"\n",
+        );
+        let found = discovered(rig.service.handle(look.clone()).await);
+        assert_eq!(found.microsoft_application.as_deref(), Some("app-1"));
+        // The rest of the answer is discovery's own.
+        assert_eq!(found.draft.address, "sam@example.com");
+        assert!(!found.found);
+
+        // A config that cannot be read offers nothing, and discovery
+        // still answers.
+        write_config(&rig, "[ui\ntheme = ");
+        let found = discovered(rig.service.handle(look).await);
+        assert_eq!(found.microsoft_application, None);
+    }
+
+    #[tokio::test]
+    async fn a_microsoft_account_just_saved_is_one_the_sign_in_can_be_started_for() {
+        let rig = Rig::new();
+        write_config(
+            &rig,
+            "[[account]]\nname = \"Other\"\ntype = \"graph\"\naddress = \"other@example.com\"\noauth_client_id = \"app-0\"\n",
+        );
+        let (requests, mut events) = link(&rig);
+        // What the form asks for, in its order: saved, then signed in to.
+        requests
+            .send(microsoft("Work", USER, Some("example.com")))
+            .unwrap();
+        assert_eq!(
+            next(&mut events).await,
+            AccountEvent::Saved(Ok("Work".to_owned()))
+        );
+        requests
+            .send(AccountRequest::SignIn {
+                account: Some("Work".to_owned()),
+            })
+            .unwrap();
+        // The browser is asked for, for the new account and its own
+        // application and tenant. Nobody opens it here: nothing is sent.
+        let AccountEvent::SignInBrowser { account, url } = next(&mut events).await else {
+            panic!("expected to be sent to the browser");
+        };
+        assert_eq!(account, "Work");
+        assert!(url.contains("/example.com/oauth2/v2.0/authorize?"), "{url}");
+        assert!(url.contains("client_id=app-1"), "{url}");
+        assert!(url.contains("login_hint=robin%40example.com"), "{url}");
+        requests.send(AccountRequest::CancelSignIn).unwrap();
+        assert_eq!(
+            rig.secrets
+                .get("oauth:microsoft:robin@example.com")
+                .unwrap(),
+            None
+        );
     }
 
     /// A stand-in for the sign-in service, and a config with one account

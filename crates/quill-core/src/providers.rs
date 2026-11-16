@@ -85,7 +85,7 @@ pub const PROVIDERS: &[Provider] = &[
         imap: tls("outlook.office365.com", 993),
         smtp: starttls("smtp.office365.com", 587),
         note: Some(
-            "Microsoft accounts do not accept a password over IMAP. They need Microsoft sign-in, which a Microsoft 365 account in Quill uses instead.",
+            "Microsoft takes no password from a mail program. Its accounts sign in with Microsoft.",
         ),
     },
     Provider {
