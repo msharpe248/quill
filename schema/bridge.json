@@ -891,7 +891,7 @@
     },
 
     "form.show": {
-      "description": "Core to shell. Show a form in a sheet on the main window, in place of whatever form the sheet shows now: the sheet is opened if it is not up. The core sends the whole form again whenever any of it changes, and the shell shows exactly the fields it names, in order. The shell lays the form out and knows nothing of what it is for; it keeps what the user has typed in a field unless the step is another one or the core's value for the field has changed. A secret field never has a value: the core does not send one back. What the user does arrives as form.used.",
+      "description": "Core to shell. Show a form in a sheet on the main window, in place of whatever form the sheet shows now: the sheet is opened if it is not up, and a sheet that is up is given the new form where it stands, whatever question the last one asked. A form is anything the core asks before going on: the steps of adding an account, a sign-in to wait for, a certificate to accept, a time to name, a thing to confirm. The core sends the whole form again whenever any of it changes, and the shell shows exactly the fields it names, in order. The shell lays the form out and knows nothing of what it is for; it keeps what the user has typed in a field unless the step is another one or the core's value for the field has changed. A secret field never has a value: the core does not send one back. What the user does arrives as form.used.",
       "type": "object",
       "required": ["jsonrpc", "method", "params"],
       "additionalProperties": false,
@@ -904,7 +904,7 @@
           "additionalProperties": false,
           "properties": {
             "step": {
-              "description": "Which step of the form this is. Sent back in form.used.",
+              "description": "Which step of which form this is: a name no other question on show at the same time shares. Sent back in form.used.",
               "$ref": "#/$defs/formId"
             },
             "title": { "type": "string", "minLength": 1 },
@@ -917,7 +917,7 @@
               "type": "string"
             },
             "busy": {
-              "description": "What the core is waiting for, in words. While it is there the fields take no typing.",
+              "description": "What is being waited for, in words: an answer from a server, or the user doing something elsewhere (signing in, in the browser). The shell says it beside a progress indicator. While it is there the fields take no typing; which buttons can be pressed is said by each button.",
               "type": "string"
             },
             "fields": {
@@ -1018,6 +1018,19 @@
           "additionalProperties": false,
           "properties": {
             "kind": { "const": "static" },
+            "id": { "$ref": "#/$defs/formId" },
+            "label": { "type": "string" },
+            "value": { "type": "string" },
+            "help": { "type": "string" }
+          }
+        },
+        {
+          "description": "Text shown to be read off, selected or copied, and typed somewhere else: a code to sign in with, the page to type it at. The shell shows it large, in a fixed-width face, and it can be selected. It is only shown, so it never has the focus. Neither side prints its value or writes it to a log or a dump.",
+          "type": "object",
+          "required": ["kind", "id", "label", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "code" },
             "id": { "$ref": "#/$defs/formId" },
             "label": { "type": "string" },
             "value": { "type": "string" },

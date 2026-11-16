@@ -6,8 +6,15 @@
 //! show, and [`Setup::used`] takes what the user did with it, which ends in
 //! the same steps the keys take in a terminal. Nothing about accounts is
 //! decided on the host's side.
+//!
+//! The other questions Quill asks are shown the same way, and are
+//! described beside the state that holds them (`state/sheet.rs`), with the
+//! pieces here: how a title is written, how a field is described, and what
+//! a certificate question says, which is the same whether it comes up
+//! while an account is added or for one that is already there.
 
 use jiff::tz::TimeZone;
+use quill_core::CertificateProblem;
 use quill_core::config::TlsMode;
 use quill_host::bridge::{
     FormButton, FormField, FormOption, FormRole, FormShow, FormShowParams, FormUsed,
@@ -135,11 +142,11 @@ impl Press {
         }
     }
 
-    fn named(id: &str) -> Option<Self> {
+    pub(crate) fn named(id: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|press| press.id() == id)
     }
 
-    fn button(self, role: Option<FormRole>, enabled: bool) -> FormButton {
+    pub(crate) fn button(self, role: Option<FormRole>, enabled: bool) -> FormButton {
         FormButton {
             id: self.id().to_owned(),
             title: self.title().to_owned(),
@@ -160,7 +167,7 @@ pub struct Used {
 /// A title of the form's in the capitals a Mac gives the title of a sheet:
 /// every word but the small ones, and those too at the start, at the end
 /// and after a colon. The words are the terminal's own.
-fn headline(title: &str) -> String {
+pub(crate) fn headline(title: &str) -> String {
     const SMALL: [&str; 9] = ["a", "an", "and", "for", "in", "of", "or", "the", "to"];
     let words: Vec<&str> = title.split(' ').collect();
     let last = words.len().saturating_sub(1);
@@ -180,7 +187,13 @@ fn headline(title: &str) -> String {
 
 /// A text field as the host shows it. What it holds may have come from a
 /// server (a name found for the account), so it is cleaned on the way.
-fn typed(id: &str, label: &str, input: &LineInput, focus: bool, help: Option<&str>) -> FormField {
+pub(crate) fn typed(
+    id: &str,
+    label: &str,
+    input: &LineInput,
+    focus: bool,
+    help: Option<&str>,
+) -> FormField {
     FormField::Text {
         id: id.to_owned(),
         label: label.to_owned(),
@@ -190,7 +203,7 @@ fn typed(id: &str, label: &str, input: &LineInput, focus: bool, help: Option<&st
     }
 }
 
-fn shown(id: &str, label: &str, value: String) -> FormField {
+pub(crate) fn shown(id: &str, label: &str, value: String) -> FormField {
     FormField::Static {
         id: id.to_owned(),
         label: label.to_owned(),
@@ -228,12 +241,83 @@ fn securities() -> Vec<FormOption> {
 
 /// Puts what a field of the host's held into the form's own, as typing or
 /// pasting it would have: with nothing in it that a line cannot hold.
-fn put(input: &mut LineInput, value: Option<&str>) {
+pub(crate) fn put(input: &mut LineInput, value: Option<&str>) {
     let Some(value) = value else { return };
     let mut line = LineInput::default();
     line.insert(value);
     if line.text() != input.text() {
         input.set(line.text().to_owned());
+    }
+}
+
+/// A certificate question as a host shows it: what it says above the
+/// certificate, what is wrong with it, the certificate in its own words,
+/// and the three things that can be done about it. The same wherever the
+/// question is asked: while an account is added, and of an account that
+/// is already there.
+pub(crate) struct CertificateAsked {
+    pub note: String,
+    /// What is drawn as a warning in a terminal: under the fields.
+    pub wrong: Vec<String>,
+    pub fields: Vec<FormField>,
+    pub buttons: Vec<FormButton>,
+}
+
+/// Describes the question about `problem`. `waiting`: an answer has been
+/// given and is being acted on, so only giving up can be pressed. `tz` is
+/// for the certificate's dates.
+pub(crate) fn certificate_asked(
+    problem: &CertificateProblem,
+    waiting: bool,
+    tz: &TimeZone,
+) -> CertificateAsked {
+    let mut wrong = vec![certificate_reason(&problem.reason)];
+    let mut fields = Vec::new();
+    if let Some(details) = &problem.details {
+        let date = |seconds| text::long_date(seconds, tz);
+        fields.push(shown(
+            "issued_to",
+            "Issued To:",
+            text::sanitize_line(&details.subject),
+        ));
+        fields.push(shown(
+            "issued_by",
+            "Issued By:",
+            text::sanitize_line(&details.issuer),
+        ));
+        fields.push(shown(
+            "valid",
+            "Valid:",
+            format!(
+                "{} to {}",
+                date(details.not_before),
+                date(details.not_after)
+            ),
+        ));
+    }
+    let mut buttons = vec![Press::Reject.button(Some(FormRole::Cancel), true)];
+    match &problem.fingerprint {
+        Some(fingerprint) => {
+            // Two rows of sixteen pairs, to compare with the server's own.
+            let grouped = text::sanitize_line(&grouped_fingerprint(fingerprint));
+            let (first, second) = grouped.split_at(grouped.len().min(48));
+            let mut value = first.trim_end_matches(':').to_owned();
+            if !second.is_empty() {
+                value.push('\n');
+                value.push_str(second);
+            }
+            fields.push(shown("sha256", "SHA-256:", value));
+            buttons.push(Press::TrustOnce.button(None, !waiting));
+            buttons.push(Press::TrustAlways.button(None, !waiting));
+        }
+        // What could not be read cannot be accepted.
+        None => wrong.push(UNREADABLE_CERTIFICATE.to_owned()),
+    }
+    CertificateAsked {
+        note: certificate_note(&problem.host),
+        wrong,
+        fields,
+        buttons,
     }
 }
 
@@ -254,6 +338,8 @@ impl Setup {
         let mut note = None;
         // What is drawn as a warning in a terminal: under the fields.
         let mut wrong: Vec<String> = Vec::new();
+        // The buttons of a certificate question, which come with it.
+        let mut asked_buttons = None;
         match self.step {
             Step::Address => {
                 note = Some(ADDRESS_NOTE.to_owned());
@@ -372,63 +458,18 @@ impl Setup {
             }
             Step::Certificate => {
                 if let Some(problem) = &self.problem {
-                    note = Some(certificate_note(&problem.host));
-                    wrong.push(certificate_reason(&problem.reason));
-                    if let Some(details) = &problem.details {
-                        let date = |seconds| text::long_date(seconds, tz);
-                        fields.push(shown(
-                            "issued_to",
-                            "Issued To:",
-                            text::sanitize_line(&details.subject),
-                        ));
-                        fields.push(shown(
-                            "issued_by",
-                            "Issued By:",
-                            text::sanitize_line(&details.issuer),
-                        ));
-                        fields.push(shown(
-                            "valid",
-                            "Valid:",
-                            format!(
-                                "{} to {}",
-                                date(details.not_before),
-                                date(details.not_after)
-                            ),
-                        ));
-                    }
-                    match &problem.fingerprint {
-                        Some(fingerprint) => {
-                            // Two rows of sixteen pairs, to compare with
-                            // the server's own.
-                            let grouped = text::sanitize_line(&grouped_fingerprint(fingerprint));
-                            let (first, second) = grouped.split_at(grouped.len().min(48));
-                            let mut value = first.trim_end_matches(':').to_owned();
-                            if !second.is_empty() {
-                                value.push('\n');
-                                value.push_str(second);
-                            }
-                            fields.push(shown("sha256", "SHA-256:", value));
-                        }
-                        None => wrong.push(UNREADABLE_CERTIFICATE.to_owned()),
-                    }
+                    let asked = certificate_asked(problem, waiting, tz);
+                    note = Some(asked.note);
+                    wrong.extend(asked.wrong);
+                    fields.extend(asked.fields);
+                    asked_buttons = Some(asked.buttons);
                 }
             }
         }
         wrong.extend(self.error.clone());
         let buttons = match self.step {
-            Step::Certificate => {
-                let mut buttons = vec![Press::Reject.button(Some(FormRole::Cancel), true)];
-                // What could not be read cannot be accepted.
-                if self
-                    .problem
-                    .as_ref()
-                    .is_some_and(|problem| problem.fingerprint.is_some())
-                {
-                    buttons.push(Press::TrustOnce.button(None, !waiting));
-                    buttons.push(Press::TrustAlways.button(None, !waiting));
-                }
-                buttons
-            }
+            Step::Certificate => asked_buttons
+                .unwrap_or_else(|| vec![Press::Reject.button(Some(FormRole::Cancel), true)]),
             step => {
                 let mut buttons = vec![Press::Cancel.button(Some(FormRole::Cancel), true)];
                 if step != Step::Address {

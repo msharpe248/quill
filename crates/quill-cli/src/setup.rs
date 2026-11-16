@@ -110,7 +110,7 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
         // Decided by the caller too: only Quill's own window has a checker.
         spell_check: false,
         // And only it has a sheet to show the add-an-account form in.
-        account_sheet: false,
+        sheets: false,
         // And only it has a Vim of its own; anywhere else the user's is run.
         editor_pane: false,
         // Asked for in the config, and meant only where there is a pane:

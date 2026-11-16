@@ -29,11 +29,12 @@ use crate::outgoing::{Handed, InviteAnswer, Response, SendRequest};
 use crate::palette::{self, Item, Palette, What};
 
 mod mouse;
-use quill_host::bridge::{FormShow, FormUsed};
+mod sheet;
+use quill_host::bridge::FormUsed;
 
 use crate::setup::{
     AccountEvent, AccountRequest, CertificatePrompt, Outcome, Preference, Setup, SignIn,
-    SignInStage, Used,
+    SignInStage,
 };
 use crate::template::{self, Template};
 use crate::theme::Styles;
@@ -97,12 +98,15 @@ pub struct Env {
     /// Whether the host has a spelling checker to ask. A terminal has
     /// none.
     pub spell_check: bool,
-    /// Whether the host shows the add-an-account form itself, in a sheet
-    /// on its window, as Quill's app does. The form is then not drawn
-    /// here: it is described to the host ([`State::account_form`]), and
-    /// what the user does with it comes back as [`Action::FormUsed`]. In
-    /// a terminal the form is drawn over the panes.
-    pub account_sheet: bool,
+    /// Whether the host shows Quill's forms and questions itself, in a
+    /// sheet on its window, as Quill's app does: the form to add an
+    /// account, a sign-in, a certificate, a time to name, unsubscribing.
+    /// The one in front is then not drawn here: it is described to the
+    /// host ([`State::form`]), and what the user does with it comes back
+    /// as [`Action::FormUsed`]. In a terminal each is drawn over the
+    /// panes. What is chosen from with the keyboard (the palette, the
+    /// pickers, the help) is drawn here whatever the host.
+    pub sheets: bool,
     /// Whether the host runs Vim itself, in a pane of its own, as
     /// Quill's app does. In a terminal Quill runs the user's own Vim
     /// there, and gives it a copy of the plugin.
@@ -245,9 +249,8 @@ pub enum Action {
         name: String,
         outcome: HookOutcome,
     },
-    /// The user pressed a button of the add-an-account form the host is
-    /// showing, or changed one of its choices: what its fields held, and
-    /// which button.
+    /// The user pressed a button of the form the host is showing, or
+    /// changed one of its choices: what its fields held, and which button.
     FormUsed(FormUsed),
     /// The list's cursor has rested on a message for a moment: the time
     /// to show it in the web reading pane. See [`State::settle_due`].
@@ -784,6 +787,54 @@ pub struct UnsubscribePrompt {
     pub how: UnsubscribeHow,
 }
 
+/// What the question about unsubscribing says first.
+pub const MAILING_LIST: &str = "This message is from a mailing list.";
+
+/// What the question about unsubscribing says of the way on offer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnsubscribeSays<'a> {
+    /// What saying yes does, exactly.
+    pub does: String,
+    /// And what it does not.
+    pub does_not: &'static str,
+    /// What the address shown is called.
+    pub label: &'static str,
+    /// The address itself: the one the request, the message or the
+    /// browser goes to.
+    pub shown: &'a str,
+    /// What saying yes is called.
+    pub yes: &'static str,
+}
+
+impl UnsubscribePrompt {
+    /// The words of the question, wherever it is asked.
+    pub fn says(&self) -> UnsubscribeSays<'_> {
+        match &self.how {
+            UnsubscribeHow::OneClick { url, host } => UnsubscribeSays {
+                does: format!("Quill will tell {host} to unsubscribe you."),
+                does_not: "One request goes to the address below, which the list gave for this. It says \"unsubscribe\" and nothing else: no cookies, and no page is opened.",
+                label: "Address:",
+                shown: url,
+                yes: "unsubscribe",
+            },
+            UnsubscribeHow::Mail { url: _, address } => UnsubscribeSays {
+                does: format!("A message will be written to {address}."),
+                does_not: "It is not sent for you. Look it over, then send it yourself to unsubscribe, or close it to do nothing.",
+                label: "To:",
+                shown: address,
+                yes: "write the message",
+            },
+            UnsubscribeHow::Page { url, host } => UnsubscribeSays {
+                does: format!("Your browser will open a page at {host}."),
+                does_not: "This list has no way for Quill to unsubscribe you itself: its page says what to do next. Quill sends nothing.",
+                label: "Address:",
+                shown: url,
+                yes: "open the page",
+            },
+        }
+    }
+}
+
 /// The way of unsubscribing that is on offer. Every address in it is the
 /// list's own, from the message's `List-Unsubscribe` header.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -874,6 +925,30 @@ pub enum WhenFor {
     Snooze(Vec<LocalMessageId>),
     /// When the message being written is sent.
     SendLater,
+}
+
+impl WhenPrompt {
+    /// What the question is called: what the time is for.
+    pub fn title(&self) -> String {
+        match &self.what {
+            WhenFor::Snooze(ids) if ids.len() > 1 => {
+                format!("Snooze {} messages until", ids.len())
+            }
+            WhenFor::Snooze(_) => "Snooze until".to_owned(),
+            WhenFor::SendLater => "Send at".to_owned(),
+        }
+    }
+
+    /// What is said under the examples: what else can be typed, or what
+    /// becomes of the message until then.
+    pub fn aside(&self) -> &'static str {
+        match self.what {
+            WhenFor::Snooze(_) => "\"now\" brings a snoozed message straight back.",
+            WhenFor::SendLater => {
+                "It waits in the Outbox and goes at that time if Quill is running, or when it next is."
+            }
+        }
+    }
 }
 
 /// The list of a message's attachments, open to choose one from.
@@ -1089,8 +1164,9 @@ pub struct State {
     pub flash: Option<(String, bool)>,
     /// The add-an-account flow, while it is open.
     pub setup: Option<Setup>,
-    /// The host shows that form, in a sheet of its own
-    /// ([`Env::account_sheet`]), so it is not drawn over the panes.
+    /// The host shows that form and the questions (a sign-in, a
+    /// certificate, a time, unsubscribing), in a sheet of its own
+    /// ([`Env::sheets`]), so none of them is drawn over the panes.
     pub form_hosted: bool,
     /// Web reading is on: mail is read in the host's web view pane, which
     /// follows the list, and no reader is drawn here.
@@ -1249,9 +1325,9 @@ impl State {
     pub fn update(&mut self, env: &Env, action: Action) -> Effects {
         let mut out = Effects::default();
         let mut changed = true;
-        // Where the form is shown is the host's to say, and the layout
-        // goes by it.
-        self.form_hosted = env.account_sheet;
+        // Where a form or a question is shown is the host's to say, and
+        // the layout goes by it.
+        self.form_hosted = env.sheets;
         // And so is whether there is a pane to read mail in.
         self.web_reading = self.web_reading_wanted(env);
         match action {
@@ -1286,7 +1362,7 @@ impl State {
             Action::EditorExited { ran, status } => {
                 self.on_editor_exited(env, ran, status, &mut out);
             }
-            Action::FormUsed(used) => self.on_form(&used, &mut out),
+            Action::FormUsed(used) => self.on_form(env, &used, &mut out),
             Action::SelectionSettled => {
                 // Nothing drawn here changes: the page is the host's.
                 changed = false;
@@ -1546,6 +1622,12 @@ impl State {
                     out.accounts.extend(requests);
                     return;
                 }
+            }
+            // The question is in a sheet of the host's, and is answered
+            // there: a letter typed here must not accept a certificate
+            // that is not on this screen.
+            Context::Certificate if self.form_hosted && matches!(chord.key, Key::Char(_)) => {
+                return;
             }
             Context::Certificate if self.answer_certificate(chord, out) => return,
             // Waiting on the browser: only giving up is on offer, and a
@@ -2072,21 +2154,13 @@ impl State {
         {
             return false;
         }
-        // The form is in a sheet of the host's, and is worked there. The
-        // commands that work it in a terminal would act on what the core
-        // holds, which is not what the sheet's fields hold until a button
-        // sends it: going on from here would be going on blind.
-        if env.account_sheet
-            && context == Context::Setup
-            && matches!(
-                id,
-                CommandId::NavOpen
-                    | CommandId::NavNext
-                    | CommandId::NavPrev
-                    | CommandId::FocusNext
-                    | CommandId::FocusPrev
-            )
-        {
+        // The form or the question is in a sheet of the host's, and is
+        // worked there. The commands that work it in a terminal would act
+        // on what the core holds, which is not what the sheet's fields
+        // hold until a button sends it: going on from here would be going
+        // on blind, and saying yes to a question that is not on this
+        // screen.
+        if self.answered_in_sheet(env, id) {
             return false;
         }
         match id {
@@ -2542,17 +2616,8 @@ impl State {
             // Nothing was snoozed or sent.
         } else if self.unsubscribe.take().is_some() {
             // Nothing was asked of the list, written or opened.
-        } else if let Some(sign_in) = self.sign_in.take() {
-            // Nothing is kept of a sign-in given up on.
-            out.accounts.push(AccountRequest::CancelSignIn);
-            // The account the form added a moment ago is kept, though, and
-            // has not been heard saying what it still needs.
-            if sign_in.fresh {
-                self.notices.push_back(Notice::info(format!(
-                    "Added {}, with nobody signed in to it yet. \"Sign in to an account\" in the palette or the File menu does that.",
-                    sign_in.account
-                )));
-            }
+        } else if self.sign_in.is_some() {
+            self.give_up_sign_in(out);
         } else if let Some(setup) = &mut self.setup {
             if setup.back() {
                 self.setup = None;
@@ -3348,6 +3413,23 @@ impl State {
         }
     }
 
+    /// Gives up on the sign-in that is waiting on the user.
+    fn give_up_sign_in(&mut self, out: &mut Effects) {
+        let Some(sign_in) = self.sign_in.take() else {
+            return;
+        };
+        // Nothing is kept of a sign-in given up on.
+        out.accounts.push(AccountRequest::CancelSignIn);
+        // The account the form added a moment ago is kept, though, and
+        // has not been heard saying what it still needs.
+        if sign_in.fresh {
+            self.notices.push_back(Notice::info(format!(
+                "Added {}, with nobody signed in to it yet. \"Sign in to an account\" in the palette or the File menu does that.",
+                sign_in.account
+            )));
+        }
+    }
+
     /// Sends the message being written: after the undo delay, or `at` a
     /// time the user chose.
     fn send(&mut self, env: &Env, at: Option<i64>, out: &mut Effects) {
@@ -3583,43 +3665,6 @@ impl State {
             });
         }
         true
-    }
-
-    /// The add-an-account form as the host is to show it, when the host
-    /// is the one showing it ([`Env::account_sheet`]) and the form is what
-    /// a terminal would have in front. `None`: the host shows no form.
-    ///
-    /// A question that comes before the form (a certificate of an account
-    /// already there, the help) is drawn in the terminal as ever, and the
-    /// host's form is put away until it is answered.
-    pub fn account_form(&self, env: &Env) -> Option<FormShow> {
-        if !env.account_sheet || self.context() != Context::Setup {
-            return None;
-        }
-        self.setup.as_ref()?.form(&env.tz)
-    }
-
-    /// Whether the add-an-account form is open and is the host's to show,
-    /// in a sheet, and not drawn here.
-    pub fn form_in_sheet(&self) -> bool {
-        self.form_hosted && self.context() == Context::Setup
-    }
-
-    /// The user did something with the form the host is showing.
-    fn on_form(&mut self, used: &FormUsed, out: &mut Effects) {
-        // Only while the form is what is in front: an answer given to a
-        // form the host has since been told to put away is dropped.
-        if self.context() != Context::Setup {
-            return;
-        }
-        let Some(setup) = &mut self.setup else {
-            return;
-        };
-        let Used { requests, close } = setup.used(used);
-        out.accounts.extend(requests);
-        if close {
-            self.setup = None;
-        }
     }
 
     fn on_account(&mut self, event: AccountEvent, out: &mut Effects) {

@@ -63,7 +63,7 @@ impl State {
         // a stray click must not answer it, or dismiss it.
         // The same while the form is in a sheet of the host's: nothing
         // behind it moves.
-        if areas.dialog.is_some() || self.setup.is_some() {
+        if areas.dialog.is_some() || self.setup.is_some() || self.form_in_sheet() {
             return;
         }
         if let Some(rect) = areas.links {

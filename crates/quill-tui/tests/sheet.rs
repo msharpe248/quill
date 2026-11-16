@@ -47,13 +47,13 @@ fn found(address: &str, host: &str) -> AccountEvent {
 /// through.
 fn in_the_app(width: u16, height: u16) -> Harness {
     let mut harness = Harness::with_accounts(width, height);
-    harness.env.account_sheet = true;
+    harness.env.sheets = true;
     harness
 }
 
 /// The form as the host is told to show it.
 fn sheet(harness: &Harness) -> Option<FormShow> {
-    harness.state.account_form(&harness.env)
+    harness.state.form(&harness.env)
 }
 
 fn ids(form: &FormShow) -> Vec<&str> {
@@ -97,7 +97,7 @@ fn dialog(harness: &Harness) -> Option<ratatui::layout::Rect> {
 #[test]
 fn in_a_terminal_the_form_is_drawn_and_no_host_is_told_of_it() {
     let mut harness = Harness::with_accounts(120, 30);
-    assert!(!harness.env.account_sheet);
+    assert!(!harness.env.sheets);
     harness.keys("A");
     assert_eq!(harness.state.context(), Context::Setup);
     assert!(harness.screen().contains(" Add an account "));
@@ -281,7 +281,7 @@ fn a_password_account_is_added_from_the_sheet() {
 }
 
 #[test]
-fn a_microsoft_account_goes_from_the_sheet_to_the_sign_in_in_the_terminal() {
+fn a_microsoft_account_goes_from_the_form_to_the_sign_in_in_the_same_sheet() {
     let mut harness = in_the_app(120, 30);
     harness.keys("A");
     press(
@@ -328,12 +328,18 @@ fn a_microsoft_account_goes_from_the_sheet_to_the_sign_in_in_the_terminal() {
     harness.act(Action::Account(AccountEvent::Saved(Ok(
         "Example".to_owned()
     ))));
-    // The sheet is put away, and the sign-in is where it always was: in
-    // the terminal.
-    assert_eq!(sheet(&harness), None);
+    // The form is over and the sign-in takes its place in the sheet, in
+    // the one update: the host is never told to put the sheet away in
+    // between, so there is no moment with nothing on the window.
+    let shown = sheet(&harness).unwrap();
+    assert_eq!(
+        (shown.step(), shown.title()),
+        ("sign_in", "Sign In to Example")
+    );
     assert_eq!(harness.state.context(), Context::SignIn);
-    assert!(dialog(&harness).is_some());
-    assert!(harness.screen().contains(" Sign in to Example "));
+    // Nothing of it is drawn in the terminal.
+    assert_eq!(dialog(&harness), None);
+    assert!(!harness.screen().contains("Sign in to Example"));
     assert_eq!(
         harness.account_requests.last(),
         Some(&AccountRequest::SignIn {
@@ -350,7 +356,13 @@ fn a_microsoft_account_goes_from_the_sheet_to_the_sign_in_in_the_terminal() {
             "https://login.example.com/authorize?client_id=1".to_owned()
         ))
     );
-    assert!(harness.screen().contains("Your browser has been opened"));
+    let shown = sheet(&harness).unwrap();
+    assert!(
+        shown
+            .note()
+            .is_some_and(|note| note.contains("Your browser has been opened"))
+    );
+    assert!(!harness.screen().contains("Your browser has been opened"));
 }
 
 #[test]
@@ -384,7 +396,7 @@ fn changing_the_type_in_the_sheet_changes_what_the_host_is_told_to_show() {
 }
 
 #[test]
-fn a_question_that_comes_first_is_drawn_and_the_sheet_waits_behind_it() {
+fn a_question_that_comes_first_takes_the_sheet_and_the_form_comes_back_after() {
     let mut harness = in_the_app(120, 40);
     harness.keys("A");
     press(
@@ -400,8 +412,8 @@ fn a_question_that_comes_first_is_drawn_and_the_sheet_waits_behind_it() {
     assert_eq!(sheet(&harness).unwrap().step(), "server");
 
     // A certificate of an account already there is asked about before
-    // anything else, in the terminal as ever. The host puts its form away
-    // meanwhile: a sheet would be in the way of the answer.
+    // anything else, as in a terminal. The sheet is the question's for as
+    // long as it is asked: the host is given it in the form's place.
     harness.act(Action::Sync(SyncEvent::Certificate {
         account: "Work".to_owned(),
         problem: Box::new(CertificateProblem {
@@ -414,9 +426,11 @@ fn a_question_that_comes_first_is_drawn_and_the_sheet_waits_behind_it() {
         sending: false,
     }));
     assert_eq!(harness.state.context(), Context::Certificate);
-    assert_eq!(sheet(&harness), None);
-    assert!(dialog(&harness).is_some());
-    assert!(harness.screen().contains(" Work: certificate "));
+    let asked = sheet(&harness).unwrap();
+    assert!(asked.step().starts_with("account_certificate_"));
+    assert_eq!(asked.title(), "Work: Certificate");
+    assert_eq!(dialog(&harness), None);
+    assert!(!harness.screen().contains("Work: certificate"));
     // The form is not answered while it is not what is in front.
     let stale = FormUsed::new("server", Some("continue"), &[("name", "Late")], &[]).unwrap();
     harness.act(Action::FormUsed(stale));
@@ -424,9 +438,10 @@ fn a_question_that_comes_first_is_drawn_and_the_sheet_waits_behind_it() {
         harness.state.setup.as_ref().map(|setup| setup.step),
         Some(Step::Server)
     );
+    assert_eq!(harness.state.context(), Context::Certificate);
 
     // Answered, the form is the host's to show again, where it was.
-    harness.keys("r");
+    press(&mut harness, Some(Press::Reject), &[], &[]);
     assert_eq!(harness.state.context(), Context::Setup);
     assert_eq!(sheet(&harness).unwrap().step(), "server");
     assert_eq!(dialog(&harness), None);

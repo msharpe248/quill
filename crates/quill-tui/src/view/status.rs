@@ -62,8 +62,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
     let offered = if in_vim {
         command::hints_in_vim()
     } else if state.form_in_sheet() {
-        // The form is in a sheet of the host's, with buttons of its own:
-        // the keys that work it here are not what is pressed there.
+        // The form or the question is in a sheet of the host's, with
+        // buttons of its own: the keys that work it here are not what is
+        // pressed there.
         &[]
     } else {
         command::hints(state.context())

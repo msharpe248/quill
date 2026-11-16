@@ -1,0 +1,18 @@
+{
+  "jsonrpc": "2.0",
+  "method": "form.show",
+  "params": {
+    "step": "sign_in",
+    "title": "Sign In to Work",
+    "fields": [
+      {
+        "kind": "code",
+        "id": "code",
+        "label": "Code:",
+        "value": "HJKL-MNPQ",
+        "focus": true
+      }
+    ],
+    "buttons": []
+  }
+}

@@ -24,6 +24,7 @@ use crate::text;
 mod sheet;
 
 pub use sheet::{Press, Used};
+pub(crate) use sheet::{certificate_asked, headline, put, shown, typed};
 
 /// What the form says at its first step.
 pub const ADDRESS_NOTE: &str =
@@ -61,6 +62,35 @@ pub fn security_label(tls: TlsMode) -> &'static str {
 /// What is said of a certificate the server at `host` presented.
 pub fn certificate_note(host: &str) -> String {
     format!("{host} presented a certificate that was not accepted. Nothing has been sent to it.")
+}
+
+/// What is said of a certificate of the server an existing account sends
+/// mail through, before the rest.
+pub const SENDING_CERTIFICATE: &str =
+    "This is the server the account sends mail through. A message is waiting in the Outbox for it.";
+
+/// What is said while an answer about a certificate is being acted on.
+pub const CERTIFICATE_WORKING: &str = "Working…";
+
+/// What a sign-in says before the service has said how it is to be done.
+pub const SIGN_IN_STARTING: &str = "Getting ready to sign in...";
+
+/// What a sign-in that goes on in the browser says: where it has gone,
+/// what to do there, and where the password does and does not go.
+pub const SIGN_IN_BROWSER: [&str; 3] = [
+    "Your browser has been opened at the provider's sign-in page.",
+    "Sign in there. When the page says you can close it, come back: Quill is waiting, and takes it from there.",
+    "Your password goes to the provider, never to Quill. Quill keeps only the sign-in the provider hands back, in the Keychain.",
+];
+
+/// What a sign-in with a code says above the page and the code, and under
+/// them.
+pub const SIGN_IN_CODE: &str = "On any device, open this page and enter the code:";
+pub const SIGN_IN_WAITING: &str = "Quill is waiting, and takes it from there.";
+
+/// How long a sign-in's code is good for, as it is said.
+pub fn sign_in_code_lasts(minutes: u64) -> String {
+    format!("The code is good for {minutes} minutes.")
 }
 
 /// Text that must not be shown or logged. `Debug` prints a placeholder.
@@ -255,7 +285,18 @@ pub struct SignIn {
     pub fresh: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl SignIn {
+    /// What the sign-in is called: whose it is, once that is known.
+    pub fn title(&self) -> String {
+        if self.account.is_empty() {
+            "Sign in".to_owned()
+        } else {
+            format!("Sign in to {}", self.account)
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
 pub enum SignInStage {
     /// Asked for; nothing heard yet.
     Starting,
@@ -267,6 +308,21 @@ pub enum SignInStage {
         code: String,
         minutes: u64,
     },
+}
+
+/// The page and the code are for the screen, and for nothing that prints
+/// the state.
+impl std::fmt::Debug for SignInStage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Starting => f.write_str("Starting"),
+            Self::Browser => f.write_str("Browser"),
+            Self::Code { minutes, .. } => f
+                .debug_struct("Code")
+                .field("minutes", minutes)
+                .finish_non_exhaustive(),
+        }
+    }
 }
 
 /// What discovery came back with. There is always a draft: when nothing was
@@ -1019,6 +1075,18 @@ pub struct CertificatePrompt {
     pub sending: bool,
     /// The answer has been given and is being acted on.
     pub busy: bool,
+}
+
+impl CertificatePrompt {
+    /// What the question is called: whose certificate, and of which of
+    /// the account's servers.
+    pub fn title(&self) -> String {
+        if self.sending {
+            format!("{}: certificate for sending", self.account)
+        } else {
+            format!("{}: certificate", self.account)
+        }
+    }
 }
 
 /// What the form says when a password account is asked for at a server

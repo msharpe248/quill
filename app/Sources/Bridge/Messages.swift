@@ -715,6 +715,10 @@ public struct FormField: Equatable, Sendable {
         case choice(value: String, options: [FormOption])
         /// Text that is only shown.
         case fixed(value: String)
+        /// Text shown to be read off, selected or copied, and typed
+        /// somewhere else: a code to sign in with, the page to type it at.
+        /// It is shown large, and nothing prints it.
+        case code(value: FormSecret)
 
         /// The kind's name on the bridge.
         public var name: String {
@@ -723,6 +727,7 @@ public struct FormField: Equatable, Sendable {
             case .secret: "secret"
             case .choice: "choice"
             case .fixed: "static"
+            case .code: "code"
             }
         }
     }
@@ -744,17 +749,20 @@ public struct FormField: Equatable, Sendable {
     }
 
     /// What the field holds, as the core has it. A secret has nothing to
-    /// say.
+    /// say, and what a code field shows is the view's to reveal.
     public var value: String? {
         switch kind {
         case let .text(value), let .choice(value, _), let .fixed(value): value
-        case .secret: nil
+        case .secret, .code: nil
         }
     }
 
     /// Whether the user can change what it holds.
     public var isEditable: Bool {
-        if case .fixed = kind { false } else { true }
+        switch kind {
+        case .text, .secret, .choice: true
+        case .fixed, .code: false
+        }
     }
 }
 
@@ -823,7 +831,7 @@ public struct FormShow: Equatable, Sendable {
         else { return nil }
         for field in fields {
             // Only a field that can be typed in or changed has the focus.
-            if case .fixed = field.kind, field.focus { return nil }
+            if !field.isEditable, field.focus { return nil }
             guard case let .choice(value, options) = field.kind else { continue }
             let ids = options.map(\.id)
             guard ids.allSatisfy(FormID.isValid), Set(ids).count == ids.count, ids.contains(value) else {
@@ -847,9 +855,11 @@ public struct FormShow: Equatable, Sendable {
     static let allowedKeys: Set<String> = ["step", "title", "note", "error", "busy", "fields", "buttons"]
 }
 
-/// What was typed into a secret field of a form: a password. It is written
-/// on the bridge and nowhere else. However it is printed, by itself or
-/// inside whatever holds it, a placeholder is printed in its place.
+/// What was typed into a secret field of a form: a password. Or what a code
+/// field of a form shows: a code to sign in with, the page to type it at. It
+/// is written on the bridge, a code is drawn in its field, and that is all.
+/// However it is printed, by itself or inside whatever holds it, a
+/// placeholder is printed in its place.
 public struct FormSecret: Equatable, Sendable, CustomStringConvertible, CustomDebugStringConvertible,
     CustomReflectable
 {

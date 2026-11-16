@@ -364,7 +364,7 @@ private extension FormField {
         case "text": ["kind", "id", "label", "value", "focus", "help"]
         case "secret": ["kind", "id", "label", "focus", "help"]
         case "choice": ["kind", "id", "label", "value", "options", "focus", "help"]
-        case "static": ["kind", "id", "label", "value", "help"]
+        case "static", "code": ["kind", "id", "label", "value", "help"]
         default: nil
         }
     }
@@ -372,7 +372,7 @@ private extension FormField {
     init(json: JSONValue) throws {
         let method = "form.show"
         guard let name = json.object?["kind"]?.string, let allowed = Self.allowedKeys(for: name) else {
-            throw BridgeError.malformed("\(method): a field is text, secret, choice or static")
+            throw BridgeError.malformed("\(method): a field is text, secret, choice, static or code")
         }
         let object = try FormObject(json, of: method, allowing: allowed)
         let kind: Kind
@@ -387,6 +387,8 @@ private extension FormField {
                 return try FormOption(id: option.string("id"), title: option.string("title"))
             }
             kind = try .choice(value: object.string("value"), options: options)
+        case "code":
+            kind = try .code(value: FormSecret(object.string("value")))
         default:
             kind = try .fixed(value: object.string("value"))
         }
@@ -402,6 +404,9 @@ private extension FormField {
             object["value"] = .string(value)
         case .secret:
             break
+        // Written out here, on its way to be shown, and nowhere else.
+        case let .code(value):
+            object["value"] = .string(value.revealed)
         case let .choice(value, options):
             object["value"] = .string(value)
             object["options"] = .array(options.map { .object(["id": .string($0.id), "title": .string($0.title)]) })

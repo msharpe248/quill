@@ -357,6 +357,136 @@ struct FormModelTests {
 
     // MARK: - The dump
 
+    /// A question that only waits: a sign-in with a code to read off.
+    private func signIn() -> FormShow {
+        FormShow(
+            step: "sign_in", title: "Sign In to Work", note: "On any device, open this page and enter the code:",
+            busy: "Quill is waiting, and takes it from there.",
+            fields: [
+                FormField(
+                    id: "page", label: "Page:", kind: .code(value: FormSecret("https://login.example.com/device"))),
+                FormField(
+                    id: "code", label: "Code:", kind: .code(value: FormSecret("HJKL-MNPQ")),
+                    help: "The code is good for 15 minutes."),
+            ],
+            buttons: [FormButton(id: "cancel", title: "Cancel", role: .cancel)])!
+    }
+
+    /// A question that asks for a time: a line to type on, and times to
+    /// choose ready-made.
+    private func time(_ typed: String = "", chosen: String = "typed", error: String? = nil) -> FormShow {
+        FormShow(
+            step: "snooze", title: "Snooze Until", error: error,
+            fields: [
+                FormField(id: "when", label: "When:", kind: .text(value: typed), focus: true, help: "Such as: 2h"),
+                FormField(
+                    id: "offered", label: "Preset:",
+                    kind: .choice(
+                        value: chosen,
+                        options: [
+                            FormOption(id: "typed", title: "None"), FormOption(id: "in_2h", title: "In 2 Hours"),
+                            FormOption(id: "tomorrow", title: "Tomorrow"),
+                        ])),
+            ],
+            buttons: [
+                FormButton(id: "cancel", title: "Cancel", role: .cancel),
+                FormButton(id: "confirm", title: "Snooze", role: .confirm),
+            ])!
+    }
+
+    @Test func oneQuestionTakesAnothersPlaceInTheSheetThatIsUp() {
+        var model = FormModel()
+        #expect(model.show(microsoft(focus: "name")).opens)
+        model.type("Work", in: "name")
+        // Another question altogether: the sheet is not opened again, and
+        // nothing of the form before it is kept or drawn.
+        let update = model.show(signIn())
+        #expect(update == FormUpdate(opens: false, sameStep: false, focus: nil))
+        #expect(model.isUp)
+        #expect(model.rows.map(\.id) == ["page", "code"])
+        #expect(model.isBusy)
+        // It has one thing to press, and that sends nothing but itself.
+        #expect(model.press("continue", secrets: [:]) == nil)
+        #expect(model.press("cancel", secrets: [:]) == FormUsed(step: "sign_in", button: "cancel", values: [:]))
+        // And back: the form starts from what the core says, with the
+        // keyboard where the core says.
+        let back = model.show(microsoft(name: "Example", focus: "name"))
+        #expect(back == FormUpdate(opens: false, sameStep: false, focus: "name"))
+        #expect(text(model, "name") == "Example")
+    }
+
+    @Test func aCodeIsDrawnAndIsNoFieldToTypeInOrSend() {
+        var model = FormModel()
+        _ = model.show(signIn())
+        // It is there for the view to draw, with what is said under it.
+        guard case let .code(shown)? = model.rows.last?.content else {
+            Issue.record("not a code")
+            return
+        }
+        #expect(shown.revealed == "HJKL-MNPQ")
+        #expect(model.rows.last?.help == "The code is good for 15 minutes.")
+        // It takes no typing and no choosing, and is nothing a button
+        // sends back.
+        model.type("0000", in: "code")
+        #expect(model.choose("0000", in: "code") == nil)
+        guard case let .code(still)? = model.rows.last?.content else {
+            Issue.record("not a code")
+            return
+        }
+        #expect(still.revealed == "HJKL-MNPQ")
+        #expect(model.press("cancel", secrets: ["code": "0000"])?.values == [:])
+
+        // Nothing that prints the model or sums it up has the code or the
+        // page: the dump of a scripted run has a marker for each.
+        var dumped = ""
+        dump(model, to: &dumped)
+        for text in ["\(model)", String(reflecting: model), dumped, model.summary.joined(separator: "\n")] {
+            #expect(!text.contains("HJKL"), "\(text)")
+            #expect(!text.contains("login.example.com"), "\(text)")
+        }
+        #expect(
+            model.summary == [
+                "sheet: up",
+                "sheet step: sign_in",
+                #"sheet title: "Sign In to Work""#,
+                #"sheet note: "On any device, open this page and enter the code:""#,
+                "sheet error: ",
+                #"sheet busy: "Quill is waiting, and takes it from there.""#,
+                "sheet field page [code] = <secret>",
+                "sheet field code [code] = <secret>",
+                #"sheet buttons: cancel "Cancel" (esc)"#,
+            ])
+    }
+
+    @Test func aTimeChosenIsSentAtOnceAndTheCoresLineIsShownInPlaceOfWhatWasTyped() {
+        var model = FormModel()
+        #expect(model.show(time()).focus == "when")
+        model.type("fri 9", in: "when")
+        // Choosing a ready-made time tells the core, with what the line
+        // held and no button.
+        #expect(
+            model.choose("tomorrow", in: "offered")
+                == FormUsed(step: "snooze", button: nil, values: ["when": "fri 9", "offered": "tomorrow"]))
+        // The core types it on the line: its value for the line has
+        // changed, so that is what is shown, and the keyboard stays put.
+        #expect(model.show(time("tomorrow", chosen: "tomorrow")).focus == nil)
+        #expect(text(model, "when") == "tomorrow")
+        #expect(chosen(model, "offered") == "tomorrow")
+        // Typed over, the button sends what the line holds now.
+        model.type("tomorrow 9", in: "when")
+        #expect(
+            model.press("confirm", secrets: [:])
+                == FormUsed(
+                    step: "snooze", button: "confirm", values: ["when": "tomorrow 9", "offered": "tomorrow"]))
+        // Refused: what was typed stays on the line to correct, the core
+        // says none of its times is chosen, and the keyboard is back on
+        // the line.
+        let refused = model.show(time("tomorrow 9", chosen: "typed", error: "That is not a time."))
+        #expect(refused == FormUpdate(opens: false, sameStep: true, focus: "when"))
+        #expect(text(model, "when") == "tomorrow 9")
+        #expect(chosen(model, "offered") == "typed")
+    }
+
     @Test func theSummarySaysWhatIsOnScreenAndMarksASecret() {
         var model = FormModel()
         _ = model.show(microsoft(error: "Enter the application id.", focus: "application"))

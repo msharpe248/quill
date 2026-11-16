@@ -2,7 +2,10 @@ import AppKit
 import Bridge
 import Forms
 
-/// A form the core has the shell show, as a sheet on the main window.
+/// A form the core has the shell show, as a sheet on the main window: the
+/// steps of adding an account, and every other question the core asks
+/// before going on (a sign-in to wait for, a certificate, a time, a thing to
+/// confirm). Which of them it is showing is nothing this knows.
 ///
 /// The sheet is drawn from what the core sends and nothing else: its title,
 /// what it says, its fields in the core's order and its buttons. It is drawn
@@ -34,6 +37,8 @@ final class FormSheet: NSObject, NSTextFieldDelegate {
     /// How wide the sheet's content is, and the room around it, in points.
     private static let width: CGFloat = 500
     private static let margin: CGFloat = 20
+    /// How large a code to be read off is drawn, in points.
+    private static let codeSize: CGFloat = 18
 
     init(send: @escaping (FormUsed) -> Void) {
         self.send = send
@@ -122,9 +127,10 @@ final class FormSheet: NSObject, NSTextFieldDelegate {
         column.translatesAutoresizingMaskIntoConstraints = false
         guard let form = model.form else { return (column, NSSize(width: Self.width, height: 0)) }
 
-        let title = NSTextField(labelWithString: form.title)
-        title.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
-        title.lineBreakMode = .byTruncatingTail
+        // A title can be a whole sentence (what saying yes will do), or
+        // have an account's name in it: it takes the lines it needs.
+        let title = Self.wrapping(
+            form.title, width: inner, color: .labelColor, font: .boldSystemFont(ofSize: NSFont.systemFontSize))
         column.addArrangedSubview(title)
         if let note = form.note, !note.isEmpty {
             column.addArrangedSubview(Self.wrapping(note, width: inner, color: .secondaryLabelColor))
@@ -262,6 +268,15 @@ final class FormSheet: NSObject, NSTextFieldDelegate {
             return popup
         case let .fixed(text):
             let label = Self.wrapping(text, width: width, color: .labelColor)
+            label.identifier = identifier
+            return label
+        case let .code(code):
+            // To be read off and typed somewhere else: large, and in
+            // letters that are not taken for one another. Revealed here,
+            // where it is drawn, and nowhere else.
+            let label = Self.wrapping(
+                code.revealed, width: width, color: .labelColor,
+                font: .monospacedSystemFont(ofSize: Self.codeSize, weight: .medium))
             label.identifier = identifier
             return label
         }

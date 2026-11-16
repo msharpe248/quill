@@ -1000,9 +1000,10 @@ pub fn valid_form_id(id: &str) -> bool {
         && bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
 }
 
-/// Text that must not be shown or logged: what was typed into a secret
-/// field of a form. `Debug` prints a placeholder, and there is no
-/// `Display`.
+/// Text that must not be logged: what was typed into a secret field of a
+/// form, or what a form shows to be read off and carried somewhere else (a
+/// code to sign in with, the page to type it at). `Debug` prints a
+/// placeholder, and there is no `Display`.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Secret(String);
@@ -1032,7 +1033,8 @@ impl std::fmt::Debug for Secret {
 /// is not one, two fields or two buttons of one name, a choice whose value
 /// is not one of its options, more than one field with the focus, or more
 /// than one button for return or for esc. A secret field has no value: the
-/// core never sends one.
+/// core never sends one. What a code field shows is a [`Secret`], so that
+/// printing the form prints none of it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "FormShowParams", into = "FormShowParams")]
 pub struct FormShow {
@@ -1218,6 +1220,17 @@ pub enum FormField {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         help: Option<String>,
     },
+    /// Text shown to be read off, selected or copied, and typed somewhere
+    /// else: a code to sign in with, the page to type it at. The shell
+    /// shows it large, in letters that cannot be mistaken for one another.
+    /// Neither side prints it or writes it to a dump.
+    Code {
+        id: String,
+        label: String,
+        value: Secret,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        help: Option<String>,
+    },
 }
 
 impl FormField {
@@ -1226,7 +1239,8 @@ impl FormField {
             Self::Text { id, .. }
             | Self::Secret { id, .. }
             | Self::Choice { id, .. }
-            | Self::Static { id, .. } => id,
+            | Self::Static { id, .. }
+            | Self::Code { id, .. } => id,
         }
     }
 
@@ -1235,18 +1249,28 @@ impl FormField {
             Self::Text { label, .. }
             | Self::Secret { label, .. }
             | Self::Choice { label, .. }
-            | Self::Static { label, .. } => label,
+            | Self::Static { label, .. }
+            | Self::Code { label, .. } => label,
         }
     }
 
     /// What the field holds, as the core has it. A secret has nothing to
-    /// say.
+    /// say, and what a code field shows is asked for by name
+    /// ([`FormField::code`]).
     pub fn value(&self) -> Option<&str> {
         match self {
             Self::Text { value, .. } | Self::Choice { value, .. } | Self::Static { value, .. } => {
                 Some(value)
             }
-            Self::Secret { .. } => None,
+            Self::Secret { .. } | Self::Code { .. } => None,
+        }
+    }
+
+    /// What a code field shows.
+    pub fn code(&self) -> Option<&Secret> {
+        match self {
+            Self::Code { value, .. } => Some(value),
+            _ => None,
         }
     }
 
@@ -1256,7 +1280,7 @@ impl FormField {
             Self::Text { focus, .. } | Self::Secret { focus, .. } | Self::Choice { focus, .. } => {
                 *focus
             }
-            Self::Static { .. } => false,
+            Self::Static { .. } | Self::Code { .. } => false,
         }
     }
 
@@ -1266,7 +1290,8 @@ impl FormField {
             Self::Text { help, .. }
             | Self::Secret { help, .. }
             | Self::Choice { help, .. }
-            | Self::Static { help, .. } => help.as_deref(),
+            | Self::Static { help, .. }
+            | Self::Code { help, .. } => help.as_deref(),
         }
     }
 }
@@ -2216,6 +2241,67 @@ mod tests {
         }
         // What is not secret still prints, to be of use.
         assert!(format!("{used:?}").contains("Example"));
+    }
+
+    #[test]
+    fn a_code_is_shown_and_sent_but_never_printed() {
+        let code = |id: &str, value: &str| FormField::Code {
+            id: id.to_owned(),
+            label: "Code:".to_owned(),
+            value: Secret::new(value),
+            help: None,
+        };
+        let shown = FormShow::new(FormShowParams {
+            step: "sign_in".to_owned(),
+            title: "Sign In to Work".to_owned(),
+            busy: Some("Quill is waiting.".to_owned()),
+            fields: vec![
+                code("page", "https://login.example.com/device"),
+                code("code", "HJKL-MNPQ"),
+            ],
+            buttons: vec![button("cancel", Some(FormRole::Cancel))],
+            ..FormShowParams::default()
+        })
+        .unwrap();
+        // It is there for the one place that shows it, and is no value to
+        // be typed over or the keyboard's to start in.
+        let field = &shown.fields()[1];
+        assert_eq!(field.code().map(Secret::reveal), Some("HJKL-MNPQ"));
+        assert_eq!(field.value(), None);
+        assert!(!field.focus());
+        assert_eq!((field.id(), field.label()), ("code", "Code:"));
+        assert_eq!(
+            shown.fields()[0].code().map(Secret::reveal).map(str::len),
+            Some(32)
+        );
+        // On the wire it is a string like any other, and comes back whole.
+        let message = CoreToShell::FormShow(shown.clone());
+        let line = encode(&message).unwrap();
+        assert!(
+            line.contains(r#"{"kind":"code","id":"code","label":"Code:","value":"HJKL-MNPQ"}"#),
+            "{line}"
+        );
+        assert_eq!(decode::<CoreToShell>(&line).unwrap(), message);
+        // Printed any way there is, neither the code nor the page is there.
+        for printed in [
+            format!("{field:?}"),
+            format!("{shown:?}"),
+            format!("{shown:#?}"),
+            format!("{message:?}"),
+            format!("{message:#?}"),
+        ] {
+            assert!(!printed.contains("HJKL"), "{printed}");
+            assert!(!printed.contains("login.example.com"), "{printed}");
+            assert!(printed.contains("Secret(…)"), "{printed}");
+        }
+        // It is only shown: it has no focus to be given, and it says what
+        // it shows.
+        for line in [
+            r#"{"jsonrpc":"2.0","method":"form.show","params":{"step":"sign_in","title":"x","fields":[{"kind":"code","id":"code","label":"Code:","value":"HJKL-MNPQ","focus":true}],"buttons":[]}}"#,
+            r#"{"jsonrpc":"2.0","method":"form.show","params":{"step":"sign_in","title":"x","fields":[{"kind":"code","id":"code","label":"Code:"}],"buttons":[]}}"#,
+        ] {
+            assert!(decode::<CoreToShell>(line).is_err(), "{line}");
+        }
     }
 
     #[test]

@@ -323,12 +323,14 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
             links_height,
         ));
     }
-    // The form is not drawn here when the host shows it, in a sheet.
-    if (state.setup.is_some() && !state.form_hosted)
-        || !state.certificates.is_empty()
-        || state.sign_in.is_some()
-        || state.when.is_some()
-        || state.unsubscribe.is_some()
+    // A form or a question is not drawn here when the host shows it, in a
+    // sheet.
+    if !state.form_hosted
+        && (state.setup.is_some()
+            || !state.certificates.is_empty()
+            || state.sign_in.is_some()
+            || state.when.is_some()
+            || state.unsubscribe.is_some())
     {
         let dialog_width = width.saturating_sub(4).min(76);
         let dialog_height = body_height.saturating_sub(2).min(18);

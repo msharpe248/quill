@@ -83,6 +83,7 @@ private enum Examples {
             "notification-with-no-id.json", "too-many-notification-actions.json", "url-that-is-not-mail.json",
             "misspelt-word-with-no-length.json", "too-many-suggestions.json", "editor-on-a-relative-path.json",
             "form-secret-sent-by-the-core.json", "form-choice-with-no-options.json",
+            "form-code-with-the-focus.json", "form-code-with-nothing-to-show.json",
             "form-field-of-an-unknown-kind.json", "form-used-with-a-button-that-is-no-name.json",
             "form-used-with-no-secrets.json", "reading-header-too-long.json", "reading-scroll-sideways.json",
             "relative-reading-path.json", "reading-place-with-no-columns.json", "window-wider-than-a-terminal.json",

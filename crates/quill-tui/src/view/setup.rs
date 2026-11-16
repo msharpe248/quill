@@ -10,11 +10,12 @@ use ratatui::widgets::{Block, BorderType, Padding};
 use crate::command::CommandId;
 use crate::input::LineInput;
 use crate::setup::{
-    ADDRESS_NOTE, Kind, MICROSOFT_NOTE, MICROSOFT_OWN_NOTE, NO_ENCRYPTION, NO_SENDING, ServerField,
-    Setup, SignInStage, Step, UNREADABLE_CERTIFICATE, certificate_note, certificate_reason,
-    grouped_fingerprint, security_label,
+    ADDRESS_NOTE, CERTIFICATE_WORKING, Kind, MICROSOFT_NOTE, MICROSOFT_OWN_NOTE, NO_ENCRYPTION,
+    NO_SENDING, SENDING_CERTIFICATE, SIGN_IN_BROWSER, SIGN_IN_CODE, SIGN_IN_STARTING,
+    SIGN_IN_WAITING, ServerField, Setup, SignInStage, Step, UNREADABLE_CERTIFICATE,
+    certificate_note, certificate_reason, grouped_fingerprint, security_label, sign_in_code_lasts,
 };
-use crate::state::{Env, State, UnsubscribeHow, WhenFor};
+use crate::state::{Env, MAILING_LIST, State};
 use crate::text;
 
 /// The width of the longest label and its gap: `Issued to: `.
@@ -27,55 +28,40 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
     // A certificate waiting for an answer is asked about before anything
     // else, the form included.
     if let Some(prompt) = state.certificates.front() {
-        let inner = dialog(
-            frame,
-            area,
-            &if prompt.sending {
-                format!(" {}: certificate for sending ", prompt.account)
-            } else {
-                format!(" {}: certificate ", prompt.account)
-            },
-            env,
-        );
+        let inner = dialog(frame, area, &format!(" {} ", prompt.title()), env);
         let mut rows = Rows::new(frame, inner, env);
         if prompt.sending {
-            rows.text("This is the server the account sends mail through. A message is waiting in the Outbox for it.");
+            rows.text(SENDING_CERTIFICATE);
             rows.blank();
         }
         certificate(&mut rows, &prompt.problem, prompt.busy);
         return;
     }
     if let Some(sign_in) = &state.sign_in {
-        let title = if sign_in.account.is_empty() {
-            " Sign in ".to_owned()
-        } else {
-            format!(" Sign in to {} ", sign_in.account)
-        };
-        let inner = dialog(frame, area, &title, env);
+        let inner = dialog(frame, area, &format!(" {} ", sign_in.title()), env);
         let mut rows = Rows::new(frame, inner, env);
         match &sign_in.stage {
-            SignInStage::Starting => rows.text("Getting ready to sign in..."),
+            SignInStage::Starting => rows.text(SIGN_IN_STARTING),
             SignInStage::Browser => {
-                rows.text("Your browser has been opened at the provider's sign-in page.");
+                let [opened, to_do, password] = SIGN_IN_BROWSER;
+                rows.text(opened);
                 rows.blank();
-                rows.text(
-                    "Sign in there. When the page says you can close it, come back: Quill is waiting, and takes it from there.",
-                );
+                rows.text(to_do);
                 rows.blank();
-                rows.dim("Your password goes to the provider, never to Quill. Quill keeps only the sign-in the provider hands back, in the Keychain.");
+                rows.dim(password);
             }
             SignInStage::Code {
                 address,
                 code,
                 minutes,
             } => {
-                rows.text("On any device, open this page and enter the code:");
+                rows.text(SIGN_IN_CODE);
                 rows.blank();
                 rows.pair("Page:", address);
                 rows.pair("Code:", code);
                 rows.blank();
-                rows.text("Quill is waiting, and takes it from there.");
-                rows.dim(&format!("The code is good for {minutes} minutes."));
+                rows.text(SIGN_IN_WAITING);
+                rows.dim(&sign_in_code_lasts(*minutes));
             }
         }
         rows.blank();
@@ -83,14 +69,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         return;
     }
     if let Some(when) = &state.when {
-        let title = match &when.what {
-            WhenFor::Snooze(ids) if ids.len() > 1 => {
-                format!(" Snooze {} messages until ", ids.len())
-            }
-            WhenFor::Snooze(_) => " Snooze until ".to_owned(),
-            WhenFor::SendLater => " Send at ".to_owned(),
-        };
-        let inner = dialog(frame, area, &title, env);
+        let inner = dialog(frame, area, &format!(" {} ", when.title()), env);
         let mut rows = Rows::new(frame, inner, env);
         if let Some(rect) = rows.row() {
             let width = usize::from(rect.width).saturating_sub(6);
@@ -113,63 +92,31 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
             rows.warning(problem);
             rows.blank();
         }
-        rows.dim(&format!("Such as: {}", crate::when::EXAMPLES));
-        match &when.what {
-            WhenFor::Snooze(_) => {
-                rows.dim("\"now\" brings a snoozed message straight back.");
-            }
-            WhenFor::SendLater => rows.dim(
-                "It waits in the Outbox and goes at that time if Quill is running, or when it next is.",
-            ),
-        }
+        rows.dim(&crate::when::such_as());
+        rows.dim(when.aside());
         return;
     }
     if let Some(prompt) = &state.unsubscribe {
         let inner = dialog(frame, area, " Unsubscribe ", env);
         let mut rows = Rows::new(frame, inner, env);
-        rows.text("This message is from a mailing list.");
+        rows.text(MAILING_LIST);
         rows.blank();
         rows.pair("From:", &prompt.sender);
         rows.blank();
         // What saying yes does, exactly; then what it does not.
-        let (does, does_not, shown, yes) = match &prompt.how {
-            UnsubscribeHow::OneClick { url, host } => (
-                format!("Quill will tell {host} to unsubscribe you."),
-                "One request goes to the address below, which the list gave for this. It says \"unsubscribe\" and nothing else: no cookies, and no page is opened.",
-                url,
-                "unsubscribe",
-            ),
-            UnsubscribeHow::Mail { url: _, address } => (
-                format!("A message will be written to {address}."),
-                "It is not sent for you. Look it over, then send it yourself to unsubscribe, or close it to do nothing.",
-                address,
-                "write the message",
-            ),
-            UnsubscribeHow::Page { url, host } => (
-                format!("Your browser will open a page at {host}."),
-                "This list has no way for Quill to unsubscribe you itself: its page says what to do next. Quill sends nothing.",
-                url,
-                "open the page",
-            ),
-        };
-        rows.text(&does);
+        let says = prompt.says();
+        rows.text(&says.does);
         rows.blank();
-        rows.dim(does_not);
+        rows.dim(says.does_not);
         rows.blank();
-        rows.pair(
-            match prompt.how {
-                UnsubscribeHow::Mail { .. } => "To:",
-                _ => "Address:",
-            },
-            shown,
-        );
+        rows.pair(says.label, says.shown);
         rows.blank();
         let key = |id| {
             env.hint_key(id)
                 .map_or_else(String::new, ToString::to_string)
         };
         let (go, stop) = (key(CommandId::NavOpen), key(CommandId::NavBack));
-        rows.keys(&[(go.as_str(), yes), (stop.as_str(), "cancel")]);
+        rows.keys(&[(go.as_str(), says.yes), (stop.as_str(), "cancel")]);
         return;
     }
     let Some(setup) = &state.setup else {
@@ -340,7 +287,7 @@ fn certificate(rows: &mut Rows<'_, '_>, problem: &CertificateProblem, busy: bool
             }
             rows.blank();
             if busy {
-                rows.dim("Working…");
+                rows.dim(CERTIFICATE_WORKING);
             } else {
                 rows.keys(&[
                     ("r", "reject"),

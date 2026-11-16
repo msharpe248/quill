@@ -69,11 +69,15 @@ import WebKit
 /// scrolled) and the lines above it. A web view's page is drawn into the
 /// picture from the web view's own snapshot of itself.
 ///
-/// The sheet is the real one, on the window; `press:` reaches it while it is
-/// up, so `press:enter` is its default button and `press:esc` its cancel.
-/// The dump says whether it is up, its step, what it says, and each field
-/// with what it holds. What a secret field holds is never written: the dump
-/// has a fixed marker in its place, and the picture shows bullets.
+/// The sheet is the real one, on the window, whichever of the core's
+/// questions it is showing (the form that adds an account, a sign-in, a
+/// certificate, a time, unsubscribing); `press:` reaches it while it is up,
+/// so `press:enter` is its default button and `press:esc` its cancel. The
+/// dump says whether it is up, its step, what it says, and each field with
+/// what it holds. What a secret field holds is never written: the dump has a
+/// fixed marker in its place, and the picture shows bullets. Nor is a code
+/// to sign in with, or the page to type it at: the dump has the same marker
+/// for each, and only the picture shows them.
 ///
 /// The copy of the vimrc is kept in the scratch config folder when the run
 /// has one (`--core-env QUILL_CONFIG_DIR=...`), in its `vim` folder, and

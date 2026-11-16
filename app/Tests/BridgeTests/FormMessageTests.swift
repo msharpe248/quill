@@ -34,7 +34,9 @@ import Testing
         #expect(form.error == "The port is a number from 1 to 65535.")
         #expect(form.busy == nil)
         #expect(
-            form.fields.map(\.id) == ["type", "name", "address", "host", "port", "security", "smtp_host", "password"])
+            form.fields.map(\.id) == [
+                "type", "name", "address", "host", "port", "security", "smtp_host", "password", "code",
+            ])
         #expect(
             form.fields[0]
                 == FormField(
@@ -54,7 +56,15 @@ import Testing
         // A secret has nothing to say of what it holds.
         #expect(form.fields[7] == FormField(id: "password", label: "Password:", kind: .secret))
         #expect(form.fields[7].value == nil)
-        #expect(form.fields.map(\.isEditable) == [true, true, false, true, true, true, true, true])
+        // A code is shown to be read off: it is there for the view to draw,
+        // and is no value to type over.
+        #expect(
+            form.fields[8]
+                == FormField(
+                    id: "code", label: "Code:", kind: .code(value: FormSecret("HJKL-MNPQ")),
+                    help: "The code is good for 15 minutes."))
+        #expect(form.fields[8].value == nil)
+        #expect(form.fields.map(\.isEditable) == [true, true, false, true, true, true, true, true, false])
         #expect(
             form.buttons == [
                 FormButton(id: "cancel", title: "Cancel", role: .cancel),
@@ -125,6 +135,8 @@ import Testing
         #expect(build([focused("a")], []) != nil)
         #expect(build([focused("a"), focused("b")], []) == nil)
         #expect(build([FormField(id: "a", label: "x", kind: .fixed(value: "y"), focus: true)], []) == nil)
+        #expect(build([FormField(id: "a", label: "x", kind: .code(value: FormSecret("y")))], []) != nil)
+        #expect(build([FormField(id: "a", label: "x", kind: .code(value: FormSecret("y")), focus: true)], []) == nil)
         // A choice is one of its options, each with a name of its own.
         let choice = { (value: String, ids: [String]) in
             FormField(
@@ -179,7 +191,7 @@ import Testing
         #expect(throws: BridgeError.malformed("form.show: note is not a string")) {
             try show(#"{"step":"a","title":"x","note":null,"fields":[],"buttons":[]}"#)
         }
-        #expect(throws: BridgeError.malformed("form.show: a field is text, secret, choice or static")) {
+        #expect(throws: BridgeError.malformed("form.show: a field is text, secret, choice, static or code")) {
             try show(
                 #"{"step":"a","title":"x","fields":[{"kind":"html","id":"a","label":"","value":""}],"buttons":[]}"#)
         }
@@ -194,6 +206,20 @@ import Testing
             try show(
                 #"{"step":"a","title":"x","fields":[{"kind":"static","id":"a","label":"","value":"","focus":true}],"buttons":[]}"#
             )
+        }
+        // A code is only shown too, and what it shows is said, never quoted
+        // in what is wrong with the form.
+        #expect(throws: BridgeError.malformed("form.show: unexpected focus")) {
+            try show(
+                #"{"step":"a","title":"x","fields":[{"kind":"code","id":"a","label":"","value":"HJKL-MNPQ","focus":true}],"buttons":[]}"#
+            )
+        }
+        #expect(throws: BridgeError.malformed("form.show: missing value")) {
+            try show(#"{"step":"a","title":"x","fields":[{"kind":"code","id":"a","label":""}],"buttons":[]}"#)
+        }
+        #expect(throws: BridgeError.malformed("form.show: value is not a string")) {
+            try show(
+                #"{"step":"a","title":"x","fields":[{"kind":"code","id":"a","label":"","value":4711}],"buttons":[]}"#)
         }
         #expect(throws: BridgeError.malformed("form.show: missing options")) {
             try show(
@@ -254,6 +280,51 @@ import Testing
         #expect("\(used)".contains("<secret>"))
         // What is not secret still prints, to be of use.
         #expect("\(used)".contains("Example"))
+    }
+
+    @Test func aCodeIsWrittenOnTheBridgeAndDrawnAndNeverPrinted() throws {
+        let code = "HJKL-MNPQ"
+        let page = "https://login.example.com/device"
+        let form = FormShow(
+            step: "sign_in", title: "Sign In to Work", note: "On any device, open this page and enter the code:",
+            busy: "Quill is waiting, and takes it from there.",
+            fields: [
+                FormField(id: "page", label: "Page:", kind: .code(value: FormSecret(page))),
+                FormField(
+                    id: "code", label: "Code:", kind: .code(value: FormSecret(code)),
+                    help: "The code is good for 15 minutes."),
+            ],
+            buttons: [FormButton(id: "cancel", title: "Cancel", role: .cancel)])!
+        let message = CoreToShell.formShow(form)
+        // It comes from the core as a string like any other, and is there
+        // for the view that draws it.
+        #expect(message.line.contains(#""kind":"code""#))
+        #expect(message.line.contains(#""value":"HJKL-MNPQ""#))
+        #expect(try CoreToShell(line: message.line) == message)
+        guard case let .code(shown) = form.fields[1].kind else {
+            Issue.record("not a code")
+            return
+        }
+        #expect(shown.revealed == code)
+
+        // Printed any way there is, neither the code nor the page is there.
+        var dumped = ""
+        dump(form, to: &dumped)
+        dump(message, to: &dumped)
+        dump(form.fields, to: &dumped)
+        let printed: [String] = [
+            "\(form)", String(describing: form), String(reflecting: form),
+            "\(message)", String(describing: message), String(reflecting: message),
+            "\(form.fields)", "\(form.fields[1].kind)", String(reflecting: form.fields[0]),
+            dumped,
+        ]
+        for text in printed {
+            #expect(!text.contains("HJKL"), "\(text)")
+            #expect(!text.contains("login.example.com"), "\(text)")
+        }
+        #expect("\(form)".contains("<secret>"))
+        // What is not kept back still prints, to be of use.
+        #expect("\(form)".contains("Sign In to Work"))
     }
 
     @Test func whyAFormUsedCouldNotBeReadNeverQuotesIt() {

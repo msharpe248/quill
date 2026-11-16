@@ -13,6 +13,9 @@ public struct FormRow: Equatable, Sendable {
         case choice(selected: String, options: [FormOption])
         /// Text that is only shown.
         case fixed(String)
+        /// Text to read off and type somewhere else, shown large. Only the
+        /// view that draws it reveals it.
+        case code(FormSecret)
     }
 
     public let id: String
@@ -82,7 +85,7 @@ public struct FormModel: Equatable, Sendable {
                 (core, allowed) = (value, nil)
             case let .choice(value, options):
                 (core, allowed) = (value, options.map(\.id))
-            case .secret, .fixed:
+            case .secret, .fixed, .code:
                 continue
             }
             nextTold[field.id] = core
@@ -131,6 +134,8 @@ public struct FormModel: Equatable, Sendable {
                 content = .choice(selected: entered[field.id] ?? value, options: options)
             case let .fixed(value):
                 content = .fixed(value)
+            case let .code(value):
+                content = .code(value)
             }
             return FormRow(
                 id: field.id, label: field.label, content: content, help: field.help,
@@ -198,7 +203,7 @@ public struct FormModel: Equatable, Sendable {
 
     /// The sheet in lines of text: whether it is up, its step, what it
     /// says, and each field with what it holds on screen. A secret field
-    /// is a fixed marker whatever it holds, or nothing.
+    /// is a fixed marker whatever it holds, or nothing, and so is a code.
     public var summary: [String] {
         guard let form else { return ["sheet: none"] }
         var lines = ["sheet: up", "sheet step: \(form.step)", "sheet title: \(form.title.debugDescription)"]
@@ -216,6 +221,9 @@ public struct FormModel: Equatable, Sendable {
                 shown = "[choice] = \(selected) (\(options.map(\.id).joined(separator: "|")))"
             case let .fixed(text):
                 shown = "[static] = \(text.debugDescription)"
+            case let .code(code):
+                // Its placeholder, whatever it shows.
+                shown = "[code] = \(code)"
             }
             lines.append("sheet field \(row.id) \(shown)\(field.focus ? " (focus)" : "")")
         }

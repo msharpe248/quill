@@ -13,6 +13,22 @@ const EVENING: i8 = 18;
 /// Examples to show beside the box.
 pub const EXAMPLES: &str = "30m  2h  3d  tonight  tomorrow  fri 14:30  2026-12-01 9:00";
 
+/// The examples as they are said beside the box.
+pub fn such_as() -> String {
+    format!("Such as: {EXAMPLES}")
+}
+
+/// The times that are offered ready-made where there is something to
+/// choose them from: the first of the examples, each as it would be typed
+/// and as it is called.
+pub const OFFERED: [(&str, &str); 5] = [
+    ("30m", "In 30 Minutes"),
+    ("2h", "In 2 Hours"),
+    ("3d", "In 3 Days"),
+    ("tonight", "Tonight"),
+    ("tomorrow", "Tomorrow"),
+];
+
 /// The moment `text` names, in seconds since the Unix epoch, as someone in
 /// `tz` at `now` would mean it. `None` when it names none, or one that is
 /// not in the future.
@@ -164,6 +180,17 @@ mod tests {
         assert_eq!(utc(" 3D ").unwrap(), "2026-11-17T09:30:00Z");
         assert_eq!(utc("1w").unwrap(), "2026-11-21T09:30:00Z");
         assert_eq!(utc("2 h"), None);
+    }
+
+    #[test]
+    fn every_time_on_offer_is_one() {
+        for (typed, called) in OFFERED {
+            assert!(utc(typed).is_some(), "{typed}");
+            assert!(!called.is_empty());
+            // Each is one of the examples said beside the box.
+            assert!(EXAMPLES.split_whitespace().any(|word| word == typed));
+        }
+        assert_eq!(such_as(), format!("Such as: {EXAMPLES}"));
     }
 
     #[test]

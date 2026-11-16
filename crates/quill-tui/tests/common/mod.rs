@@ -103,7 +103,7 @@ impl Harness {
             Keymap::preset(KeymapPreset::Vim),
             ColorMode::TrueColor,
             true,
-            |env| env.account_sheet = true,
+            |env| env.sheets = true,
         )
     }
 
@@ -207,8 +207,8 @@ impl Harness {
             // Tests that check spelling say so: most have no checker, as
             // a terminal has none.
             spell_check: false,
-            // As in a terminal: the form to add an account is drawn here.
-            account_sheet: false,
+            // As in a terminal: forms and questions are drawn here.
+            sheets: false,
             // As in a terminal: Vim is the user's own, and programs run.
             editor_pane: false,
             external: quill_tui::vim::ExternalEditor::Vim,

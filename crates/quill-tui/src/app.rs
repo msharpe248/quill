@@ -160,7 +160,7 @@ struct Io<'a> {
     /// A private directory for files handed to the host for viewing.
     preview_dir: PathBuf,
     last_host_state: Option<HostState>,
-    /// The add-an-account form as the host was last told to show it.
+    /// The form or question the host was last told to show in its sheet.
     last_form: Option<bridge::FormShow>,
     /// The place the host was last told its reading pane has.
     last_place: Option<u16>,
@@ -173,6 +173,30 @@ struct Io<'a> {
     editor_wanted: Option<(PathBuf, PathBuf, vim::ExternalEditor, u32)>,
     /// Set as the UI closes, for work started here that must end with it.
     closing: Arc<AtomicBool>,
+}
+
+/// What the host is to be told about its sheet.
+#[derive(Debug, PartialEq, Eq)]
+enum SheetChange<'a> {
+    /// Show this form: in a sheet that is opened for it, or in place of
+    /// the form the sheet has.
+    Show(&'a bridge::FormShow),
+    /// Take the sheet down.
+    Close,
+}
+
+/// What to tell the host, given the form it was last told to show and the
+/// one in front now. Nothing while they are the same. One form giving way
+/// to another, whatever each is asking, is the new one shown and never the
+/// sheet taken down first.
+fn sheet_change<'a>(
+    last: Option<&bridge::FormShow>,
+    current: Option<&'a bridge::FormShow>,
+) -> Option<SheetChange<'a>> {
+    if last == current {
+        return None;
+    }
+    Some(current.map_or(SheetChange::Close, SheetChange::Show))
 }
 
 /// The most pictures the terminal is left holding at once. Each is a few
@@ -519,17 +543,17 @@ impl Io<'_> {
         self.last_place = current;
     }
 
-    /// Has the host show the add-an-account form as it now is, where the
-    /// host is the one that shows it: the whole form whenever any of it
-    /// has changed, and word to put it away when it is over.
+    /// Has the host show the form or question in front as it now is,
+    /// where the host is the one that shows them: the whole form whenever
+    /// any of it has changed, and word to put it away when it is over.
+    /// One question giving way to another is one message: the sheet is
+    /// given the new form where it stands, and is not taken down between.
     fn mirror_form(&mut self, state: &State, env: &Env) {
-        let current = state.account_form(env);
-        if current == self.last_form {
-            return;
-        }
-        match &current {
-            Some(form) => self.host.show_form(form.clone()),
-            None => self.host.close_form(),
+        let current = state.form(env);
+        match sheet_change(self.last_form.as_ref(), current.as_ref()) {
+            Some(SheetChange::Show(form)) => self.host.show_form(form.clone()),
+            Some(SheetChange::Close) => self.host.close_form(),
+            None => return,
         }
         self.last_form = current;
     }
@@ -1006,7 +1030,7 @@ mod tests {
             searches: Vec::new(),
             templates: Vec::new(),
             spell_check: false,
-            account_sheet: false,
+            sheets: false,
             editor_pane: false,
             external: vim::ExternalEditor::Vim,
             vim_program: None,
@@ -1035,6 +1059,42 @@ mod tests {
         // Quit is the shell's to offer.
         assert_eq!(find("app.quit").menu, None);
         assert_eq!(find("help.toggle").menu, Some(bridge::Menu::Help));
+    }
+
+    #[test]
+    fn the_host_hears_of_its_sheet_only_when_it_changes_and_never_of_a_gap() {
+        let form = |step: &str, busy: Option<&str>| {
+            bridge::FormShow::new(bridge::FormShowParams {
+                step: step.to_owned(),
+                title: "Add an Account".to_owned(),
+                busy: busy.map(str::to_owned),
+                ..bridge::FormShowParams::default()
+            })
+            .unwrap()
+        };
+        let (saving, signing_in) = (form("server", Some("Saving…")), form("sign_in", None));
+        assert_eq!(sheet_change(None, None), None);
+        assert_eq!(
+            sheet_change(None, Some(&saving)),
+            Some(SheetChange::Show(&saving))
+        );
+        assert_eq!(sheet_change(Some(&saving), Some(&saving)), None);
+        // Any of it changing is the whole form again.
+        let saved = form("server", None);
+        assert_eq!(
+            sheet_change(Some(&saving), Some(&saved)),
+            Some(SheetChange::Show(&saved))
+        );
+        // One question in another's place is one message: the new form,
+        // with no word to take the sheet down in between.
+        assert_eq!(
+            sheet_change(Some(&saving), Some(&signing_in)),
+            Some(SheetChange::Show(&signing_in))
+        );
+        assert_eq!(
+            sheet_change(Some(&signing_in), None),
+            Some(SheetChange::Close)
+        );
     }
 
     #[test]
