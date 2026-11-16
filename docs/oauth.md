@@ -13,13 +13,15 @@ Quill reads and sends this mail through Microsoft Graph.
 ### Register the application
 
 1. Go to <https://entra.microsoft.com> and sign in. A work account may need its administrator's leave to register applications; a personal Microsoft account can use <https://portal.azure.com> the same way.
-2. Open **Applications**, then **App registrations**, then **New registration**.
+2. In the menu on the left open **Entra ID**, then **App registrations**, then press **New registration**. (Older screens have it under **Applications**. If there is no App registrations at all, or you are told you have no directory, see the note below the list.)
 3. Give it a name, such as "Quill".
-4. Under **Supported account types** choose "Accounts in any organizational directory and personal Microsoft accounts", unless you only ever want accounts of your own organisation.
+4. Under **Supported account types** choose "Any Entra ID Tenant + Personal Microsoft accounts" (older screens: "Accounts in any organizational directory and personal Microsoft accounts"), unless you only ever want accounts of your own organisation. An Outlook.com or Hotmail address is a personal account, and needs this choice.
 5. Under **Redirect URI** choose the platform **Public client/native (mobile & desktop)** and enter `http://localhost`. Just that: no port and no path.
-6. Press **Register**. The page that follows shows the **Application (client) ID**. That is what goes in the config.
+6. Press **Register**. The **Overview** page that follows shows the **Application (client) ID**, a long code of letters, digits and dashes. That is the application id Quill asks for, and all it needs from this page.
 7. Open **Authentication**. Under **Advanced settings** turn on **Allow public client flows**. Signing in with a code from another computer needs it.
 8. Open **API permissions**, then **Add a permission**, **Microsoft Graph**, **Delegated permissions**, and add `Mail.ReadWrite`, `Mail.Send`, `User.Read` and `offline_access`.
+
+An application is registered in a directory (a "tenant"). A work or school account has one. A personal Microsoft account may have none, and then the admin center has nowhere to put a registration: Microsoft's own answer is to create a directory first, which a free Azure account does. This guide has not been through that case.
 
 Do not create a client secret. A desktop application cannot keep one, and Microsoft does not ask a public client for one.
 
