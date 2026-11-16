@@ -113,6 +113,8 @@ pub struct MessageLocation {
 pub enum Mailbox {
     /// Every account's inbox, merged.
     Unified,
+    /// One account's inbox: what choosing the account itself shows.
+    Account(LocalAccountId),
     Folder(LocalFolderId),
     /// Mail being written, from every account. It lives only here.
     Drafts,
@@ -481,6 +483,34 @@ impl Store {
         Ok(rows.collect::<rusqlite::Result<_>>()?)
     }
 
+    /// The accounts whose folders are folded away in the accounts pane.
+    /// Every other account is open, one just added among them.
+    pub fn closed_accounts(&self) -> Result<Vec<LocalAccountId>> {
+        let mut statement = self
+            .conn
+            .prepare("SELECT account_id FROM closed_accounts ORDER BY account_id")?;
+        let rows = statement.query_map([], |row| Ok(LocalAccountId(row.get(0)?)))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Remembers whether an account's folders are on show in the accounts
+    /// pane. An account that is not here any more is not remembered.
+    pub fn set_account_open(&mut self, account: LocalAccountId, open: bool) -> Result<()> {
+        if open {
+            self.conn.execute(
+                "DELETE FROM closed_accounts WHERE account_id = ?1",
+                [account.0],
+            )?;
+        } else {
+            self.conn.execute(
+                "INSERT OR IGNORE INTO closed_accounts (account_id)
+                 SELECT id FROM accounts WHERE id = ?1",
+                [account.0],
+            )?;
+        }
+        Ok(())
+    }
+
     /// Every folder with its counts, grouped by account and ordered by role:
     /// Inbox, Drafts, Sent, Archive, Junk, Trash, then the rest by name.
     pub fn folders(&self) -> Result<Vec<FolderRow>> {
@@ -530,6 +560,17 @@ impl Store {
                 ))?;
                 statement
                     .query_map([], message_row)?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            }
+            Mailbox::Account(account) => {
+                let mut statement = self.conn.prepare(&format!(
+                    "SELECT {COLUMNS} FROM messages m JOIN folders f ON f.id = m.folder_id
+                     WHERE f.role = 'inbox' AND f.account_id = ?1
+                       AND m.hidden = 0 AND m.snoozed_until IS NULL
+                     {ORDER}"
+                ))?;
+                statement
+                    .query_map([account.0], message_row)?
                     .collect::<rusqlite::Result<Vec<_>>>()?
             }
             Mailbox::Folder(folder) => {
@@ -1091,6 +1132,69 @@ mod tests {
         // "archived" (date 250) is not in an inbox and must not appear.
         assert_eq!(subjects(&rows), ["newest", "personal", "middle", "oldest"]);
         assert_eq!(rows[1].account, personal);
+
+        // An account's own mailbox is its inbox and nobody else's.
+        let rows = store.messages(Mailbox::Account(personal)).unwrap();
+        assert_eq!(subjects(&rows), ["personal"]);
+        let work = store.accounts().unwrap()[0].id;
+        let rows = store.messages(Mailbox::Account(work)).unwrap();
+        assert_eq!(subjects(&rows), ["newest", "middle", "oldest"]);
+        assert!(
+            store
+                .messages(Mailbox::Account(LocalAccountId(9999)))
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_closed_account_is_remembered_across_a_restart_and_a_new_one_starts_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("quill.db");
+        let (work, personal) = {
+            let mut store = Store::open(&path).unwrap();
+            let work = store
+                .upsert_account("Work", "robin@example.com", "imap")
+                .unwrap();
+            let personal = store
+                .upsert_account("Personal", "robin.vale@example.com", "imap")
+                .unwrap();
+            // Nothing has been closed yet: every account is open.
+            assert!(store.closed_accounts().unwrap().is_empty());
+            store.set_account_open(personal, false).unwrap();
+            // Said twice, it is still one account closed.
+            store.set_account_open(personal, false).unwrap();
+            assert_eq!(store.closed_accounts().unwrap(), [personal]);
+            (work, personal)
+        };
+
+        let mut store = Store::open(&path).unwrap();
+        assert_eq!(store.closed_accounts().unwrap(), [personal]);
+        // An account added later starts open, and so does one whose
+        // settings are written again.
+        let third = store
+            .upsert_account("Club", "robin@club.example.com", "imap")
+            .unwrap();
+        store
+            .upsert_account("Personal", "robin.vale@example.com", "imap")
+            .unwrap();
+        assert_eq!(store.closed_accounts().unwrap(), [personal]);
+        assert!(!store.closed_accounts().unwrap().contains(&third));
+
+        store.set_account_open(work, false).unwrap();
+        store.set_account_open(personal, true).unwrap();
+        // Opening what is open changes nothing.
+        store.set_account_open(third, true).unwrap();
+        drop(store);
+        let mut store = Store::open(&path).unwrap();
+        assert_eq!(store.closed_accounts().unwrap(), [work]);
+
+        // An account that is not here is not remembered, and one that is
+        // taken away takes what was remembered with it.
+        store.set_account_open(LocalAccountId(9999), false).unwrap();
+        assert_eq!(store.closed_accounts().unwrap(), [work]);
+        store.retain_accounts(&["Personal", "Club"]).unwrap();
+        assert!(store.closed_accounts().unwrap().is_empty());
     }
 
     #[test]

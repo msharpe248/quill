@@ -4,13 +4,13 @@ expression: harness.screen()
 ---
 ┏ [1] Accounts ━━┓┌ [2] Work / Trash ──────────────────────────────────────────┐
 ┃  Unified    12 ┃│                                                            │
-┃  Work          ┃│                                                            │
+┃  ▾ Work        ┃│                                                            │
 ┃    Inbox     8 ┃│                                                            │
 ┃    Drafts      ┃│                                                            │
 ┃    Sent        ┃│                                                            │
 ┃    Archive     ┃│                                                            │
 ┃>   Trash       ┃│                                                            │
-┃  Personal      ┃│                                                            │
+┃  ▾ Personal    ┃│                                                            │
 ┃    Inbox     4 ┃│                                                            │
 ┃    Drafts      ┃│                                                            │
 ┃    Sent        ┃│                         No messages                        │
@@ -25,4 +25,4 @@ expression: harness.screen()
 ┃                ┃│                                                            │
 ┃                ┃│                                                            │
 ┗━━━━━━━━━━━━━━━━┛└────────────────────────────────────────────────────────────┘
- j/k move  enter open  tab next pane  z zoom  ? help  q quit
+ j/k move  enter open  h hide folders  tab next pane  z zoom  ? help  q quit

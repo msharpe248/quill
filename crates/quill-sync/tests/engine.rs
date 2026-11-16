@@ -1216,6 +1216,71 @@ async fn an_account_added_while_running_starts_syncing() {
 }
 
 #[tokio::test]
+async fn one_account_is_synced_on_request_and_the_others_are_left_alone() {
+    let work = MemoryBackend::new(10);
+    work.add("INBOX", "1", "Work mail", NOW_ISH);
+    let mut rig = Rig::start(work.clone());
+    rig.pass().await;
+    let personal = MemoryBackend::new(10);
+    personal.add("INBOX", "1", "Personal mail", NOW_ISH);
+    let id = rig
+        .store
+        .upsert_account("Personal", "robin@home.example.com", "imap")
+        .unwrap();
+    rig.handle.set_account(SyncAccount::reading(
+        id,
+        "Personal",
+        Arc::new(personal.clone()),
+    ));
+    rig.pass().await;
+    let inbox = |rig: &Rig, account| -> Vec<String> {
+        rig.store
+            .messages(Mailbox::Account(account))
+            .unwrap()
+            .into_iter()
+            .map(|row| row.headers.subject)
+            .collect()
+    };
+
+    // Mail arrives on both servers. Only the account asked about is asked.
+    work.add("INBOX", "2", "More work", NOW_ISH + 1);
+    personal.add("INBOX", "2", "More of my own", NOW_ISH + 1);
+    assert!(rig.handle.send(SyncRequest::SyncOne(id)));
+    let events = rig.pass().await;
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            SyncEvent::Syncing { account, .. } if *account == rig.account
+        )),
+        "{events:?}"
+    );
+    assert_eq!(inbox(&rig, id), ["More of my own", "Personal mail"]);
+    // Given time, the other still has not been: its interval is an hour.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(rig.events.try_recv().is_err());
+    assert_eq!(inbox(&rig, rig.account), ["Work mail"]);
+
+    // An account nobody is syncing is nobody to ask, and nothing is.
+    assert!(rig.handle.send(SyncRequest::SyncOne(LocalAccountId(9999))));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(rig.events.try_recv().is_err());
+
+    // And the other in its turn, by itself.
+    personal.add("INBOX", "3", "Not asked for yet", NOW_ISH + 2);
+    assert!(rig.handle.send(SyncRequest::SyncOne(rig.account)));
+    let events = rig.pass().await;
+    assert!(
+        events.iter().all(|event| !matches!(
+            event,
+            SyncEvent::Syncing { account, .. } if *account == id
+        )),
+        "{events:?}"
+    );
+    assert_eq!(inbox(&rig, rig.account), ["More work", "Work mail"]);
+    assert_eq!(inbox(&rig, id), ["More of my own", "Personal mail"]);
+}
+
+#[tokio::test]
 async fn an_account_set_again_is_replaced_not_doubled() {
     let old = MemoryBackend::new(10);
     old.add("INBOX", "1", "From the old settings", NOW_ISH);

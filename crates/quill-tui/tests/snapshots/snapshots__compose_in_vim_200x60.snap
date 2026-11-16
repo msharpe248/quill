@@ -5,13 +5,13 @@ expression: harness.screen()
 ┌ [1] Accounts ────────────┐┌ [2] Inbox (unified) - 12 unread ───────────────────────────────────────────────────┐┏ [3] New message ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 │> Unified              12 ││> * @ W Ana Ruiz              Q4 roadmap                                       09:14│┃ This message is being written in Vim.                                              ┃
 │  Drafts                1 ││      W Build Bot             [quill] PR #42 passed                            08:51│┃                                                                                    ┃
-│  Work                    ││  *   P Peter Vale            Sunday dinner                                    08:35│┃ :QuillSend sends it.                                                               ┃
+│  ▾ Work                  ││  *   P Peter Vale            Sunday dinner                                    08:35│┃ :QuillSend sends it.                                                               ┃
 │    Inbox               8 ││  *   P Maya Okafor           Trail run Saturday                               04:30│┃ :QuillPostpone saves it as a draft and closes it.                                  ┃
 │    Drafts                ││  * @ W Sam Lee               Photos from Sat                                    Fri│┃ :QuillDiscard throws it away.                                                      ┃
 │    Sent                  ││  *   P Riverside Library     Your hold is ready                                 Fri│┃ :wq brings it back here, to send, to save or to close.                             ┃
 │    Archive               ││  *   W Priya Nair            Re: Offsite agenda                                 Fri│┃ :cq leaves it as it was before Vim.                                                ┃
 │    Trash                 ││  *!@ W Tomás Ortega          Invoice 2026-114                                   Thu│┃                                                                                    ┃
-│  Personal                ││      P Jo Park               Re: Book club pick                                 Thu│┃                                                                                    ┃
+│  ▾ Personal              ││      P Jo Park               Re: Book club pick                                 Thu│┃                                                                                    ┃
 │    Inbox               4 ││  *   W 陈静 Chen Jing        Design review notes 设计评审                       Wed│┃                                                                                    ┃
 │    Drafts                ││      W IT Helpdesk           Scheduled maintenance Sunday                       Tue│┃                                                                                    ┃
 │    Sent                  ││  *   W Lena Fischer          Lunch on Thursday?                                 Mon│┃                                                                                    ┃

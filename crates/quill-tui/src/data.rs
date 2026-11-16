@@ -46,6 +46,13 @@ pub enum Bulk {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DataRequest {
     LoadSidebar,
+    /// Remember that an account's folders are on show in the accounts
+    /// pane, or folded away. Nothing is answered: the pane already shows
+    /// it.
+    SetAccountOpen {
+        account: LocalAccountId,
+        open: bool,
+    },
     LoadMessages(Mailbox),
     LoadBody(LocalMessageId),
     SetSeen {
@@ -220,6 +227,9 @@ pub enum DataEvent {
         outbox: u32,
         /// How many messages are snoozed, and when the next is due back.
         snoozed: (u32, Option<i64>),
+        /// The accounts whose folders were folded away when the accounts
+        /// pane was last used. Every other account is open.
+        closed: Vec<LocalAccountId>,
     },
     MessagesLoaded {
         mailbox: Mailbox,
@@ -407,7 +417,12 @@ fn run(
             drafts: u32::try_from(store.drafts()?.len()).unwrap_or(u32::MAX),
             outbox: u32::try_from(store.outbox()?.len()).unwrap_or(u32::MAX),
             snoozed: store.snoozed()?,
+            closed: store.closed_accounts()?,
         }],
+        DataRequest::SetAccountOpen { account, open } => {
+            store.set_account_open(account, open)?;
+            Vec::new()
+        }
         DataRequest::LoadMessages(mailbox) => vec![DataEvent::MessagesLoaded {
             mailbox,
             rows: store.messages(mailbox)?,

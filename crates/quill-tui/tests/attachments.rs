@@ -168,7 +168,7 @@ fn sound_is_played_and_is_not_one_of_the_files_to_page_through() {
 
     // A message with a text file and a picture: looking at one offers both.
     // It is in Work's Sent folder.
-    let mut harness = reading_in("1 j j j enter", "Offsite agenda");
+    let mut harness = reading_in("1 j j j j enter", "Offsite agenda");
     harness.keys("a enter");
     let [HostRequest::Preview { files, index }] = harness.host_requests.as_slice() else {
         panic!("{:?}", harness.host_requests);

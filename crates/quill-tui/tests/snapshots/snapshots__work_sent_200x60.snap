@@ -4,13 +4,13 @@ expression: harness.screen()
 ---
 ┏ [1] Accounts ━━━━━━━━━━━━┓┌ [2] Work / Sent ───────────────────────────────────────────────────────────────────┐┌ [3] Reader ──────────────────────────────────────────────────────────── attachment ┐
 ┃  Unified              12 ┃│>   @ To: Priya Nair        Offsite agenda                                       Fri││ From:    Robin Vale <robin@example.com>                                            │
-┃  Work                    ┃│    @ To: Omar Haddad       Contract redlines                                 Nov 05││ To:      Priya Nair <priya.nair@example.com>                                       │
+┃  ▾ Work                  ┃│    @ To: Omar Haddad       Contract redlines                                 Nov 05││ To:      Priya Nair <priya.nair@example.com>                                       │
 ┃    Inbox               8 ┃│                                                                                    ││ Date:    Fri 13 Nov 2026 02:30                                                     │
 ┃    Drafts                ┃│                                                                                    ││ Subject: Offsite agenda                                                            │
 ┃>   Sent                  ┃│                                                                                    ││ Attach:  offsite-agenda.txt (210 bytes), chart.png (833 bytes)  (a lists them)     │
 ┃    Archive               ┃│                                                                                    ││                                                                                    │
 ┃    Trash                 ┃│                                                                                    ││ Draft agenda attached. Shout if anything is missing.                               │
-┃  Personal                ┃│                                                                                    ││ We have the room from nine until four.                                             │
+┃  ▾ Personal              ┃│                                                                                    ││ We have the room from nine until four.                                             │
 ┃    Inbox               4 ┃│                                                                                    ││                                                                                    │
 ┃    Drafts                ┃│                                                                                    ││ Robin                                                                              │
 ┃    Sent                  ┃│                                                                                    ││                                                                                    │
@@ -61,4 +61,4 @@ expression: harness.screen()
 ┃                          ┃│                                                                                    ││                                                                                    │
 ┃                          ┃│                                                                                    ││                                                                                    │
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━┛└────────────────────────────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────────────────────────────────────────┘
- j/k move  enter open  tab next pane  z zoom  ? help  q quit
+ j/k move  enter open  h hide folders  tab next pane  z zoom  ? help  q quit

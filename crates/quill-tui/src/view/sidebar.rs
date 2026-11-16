@@ -1,4 +1,5 @@
-//! The accounts pane: the unified inbox, then each account and its folders.
+//! The accounts pane: the unified inbox, then each account and, while it
+//! is open, its folders.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -6,10 +7,15 @@ use ratatui::text::{Line, Span};
 
 use super::{pane_block, placeholder};
 use crate::state::{Env, Pane, SidebarEntry, State};
-use crate::text;
+use crate::{layout, text};
 
 /// The fewest cells kept on the right for an unread count and a margin.
 const COUNT_WIDTH: usize = 5;
+
+/// What stands before an account's name: whether its folders are on show.
+/// A click on it, or anywhere left of the name, opens and closes.
+const OPEN: &str = "▾ ";
+const CLOSED: &str = "▸ ";
 
 pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
     let styles = &env.styles;
@@ -31,23 +37,23 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         .entries
         .iter()
         .map(|entry| match entry {
-            SidebarEntry::Unified { unread } | SidebarEntry::Folder { unread, .. } => *unread,
+            SidebarEntry::Unified { unread }
+            | SidebarEntry::Account { unread, .. }
+            | SidebarEntry::Folder { unread, .. } => *unread,
             SidebarEntry::Local { count, .. } => *count,
-            SidebarEntry::Account { .. } | SidebarEntry::Searches | SidebarEntry::Search { .. } => {
-                0
-            }
+            SidebarEntry::Searches | SidebarEntry::Search { .. } => 0,
         })
         .max()
         .unwrap_or(0);
     let count_width = COUNT_WIDTH.max(widest.to_string().len() + 2);
     let label_width = width.saturating_sub(count_width);
-    let visible = state
-        .sidebar
-        .entries
+    // The folders of a closed account are not among the rows shown.
+    let shown = state.sidebar.shown();
+    let visible = shown
         .iter()
-        .enumerate()
         .skip(state.sidebar.offset)
-        .take(usize::from(inner.height));
+        .take(usize::from(inner.height))
+        .filter_map(|index| Some((*index, state.sidebar.entries.get(*index)?)));
     for (row, (index, entry)) in visible.enumerate() {
         let rect = Rect::new(inner.x, inner.y + row as u16, inner.width, 1);
         let selected = index == state.sidebar.selected;
@@ -60,13 +66,37 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
             SidebarEntry::Local { name, count, .. } => {
                 counted_row(cursor, name, *count, label_width, count_width, env)
             }
-            SidebarEntry::Account { index, name } => Line::from(vec![
-                Span::raw(cursor),
-                Span::styled(
-                    text::truncate(name, width.saturating_sub(2)),
-                    styles.account(*index),
-                ),
-            ]),
+            SidebarEntry::Account {
+                index: position,
+                id,
+                name,
+                unread,
+            } => {
+                let open = state.sidebar.is_open(*id);
+                let marker = Span::styled(if open { OPEN } else { CLOSED }, styles.dim());
+                // What the name may take: the row, less the cursor, the
+                // marker and the margin on the right.
+                let room = width.saturating_sub(usize::from(layout::SIDEBAR_MARKER_CELLS) + 1);
+                // Open, its unread mail is counted on its inbox, the row
+                // below. Closed, this row is where the count is: in the
+                // column of the others, and the name has what is left.
+                let count = if open || *unread == 0 {
+                    String::new()
+                } else {
+                    unread.to_string()
+                };
+                let name_room = if count.is_empty() {
+                    room
+                } else {
+                    room.saturating_sub(count.len() + 1)
+                };
+                Line::from(vec![
+                    Span::raw(cursor),
+                    marker,
+                    Span::styled(text::fit(name, name_room), styles.account(*position)),
+                    Span::styled(text::fit_right(&count, room - name_room), styles.unread()),
+                ])
+            }
             SidebarEntry::Folder { name, unread, .. } => counted_row(
                 cursor,
                 &format!("  {name}"),

@@ -129,8 +129,9 @@ fn deleting_goes_to_the_trash_first_and_from_the_trash_for_good() {
         .unwrap();
     harness.act(Action::Data(quill_tui::data::DataEvent::StoreChanged));
     harness.keys("1");
-    // Work's Trash is five mailboxes below the unified inbox.
-    harness.keys("j j j j j enter");
+    // Work's Trash is six rows below the unified inbox: the account's own
+    // row, then its folders.
+    harness.keys("j j j j j j enter");
     assert_eq!(harness.state.mailbox, Mailbox::Folder(trash.id));
     let there = harness.state.list.rows.len();
     assert!(there >= 1);

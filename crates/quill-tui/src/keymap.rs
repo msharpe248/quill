@@ -345,6 +345,8 @@ const VIM: PresetTable = &[
     (CommandId::AccountAdd, &["A"]),
     (CommandId::AccountSignIn, &["S"]),
     (CommandId::MailboxSync, &["ctrl-r", "cmd-r"]),
+    (CommandId::SidebarOpen, &["l", "right"]),
+    (CommandId::SidebarClose, &["h", "left"]),
     (CommandId::HelpToggle, &["?"]),
 ];
 
@@ -414,6 +416,8 @@ const MUTT: PresetTable = &[
     (CommandId::AccountAdd, &["A"]),
     (CommandId::AccountSignIn, &["S"]),
     (CommandId::MailboxSync, &["G", "ctrl-r", "cmd-r"]),
+    (CommandId::SidebarOpen, &["right"]),
+    (CommandId::SidebarClose, &["left"]),
     (CommandId::HelpToggle, &["?"]),
 ];
 

@@ -207,6 +207,8 @@ pub enum CommandId {
     AccountAdd,
     AccountSignIn,
     MailboxSync,
+    SidebarOpen,
+    SidebarClose,
     HelpToggle,
 }
 
@@ -570,6 +572,24 @@ impl Registry {
                     ),
                     "arrow.clockwise",
                 ),
+                // In the accounts pane only: elsewhere the keys they take
+                // are free.
+                spec(
+                    SidebarOpen,
+                    "sidebar.open",
+                    "Show the account's folders",
+                    Panes,
+                    Some(Menu::Mailbox),
+                    &[Context::Sidebar],
+                ),
+                spec(
+                    SidebarClose,
+                    "sidebar.close",
+                    "Hide the account's folders",
+                    Panes,
+                    Some(Menu::Mailbox),
+                    &[Context::Sidebar],
+                ),
                 spec(
                     PaletteOpen,
                     "palette.open",
@@ -909,6 +929,9 @@ pub fn hints(context: Context) -> &'static [Hint] {
     const SIDEBAR: &[Hint] = &[
         hint(&[NavNext, NavPrev], "move"),
         hint(&[NavOpen], "open"),
+        // One or the other, and only on an account or one of its folders.
+        hint_while_enabled(&[SidebarOpen], "show folders"),
+        hint_while_enabled(&[SidebarClose], "hide folders"),
         hint(&[FocusNext], "next pane"),
         hint(&[ViewZoom], "zoom"),
         hint(&[HelpToggle], "help"),

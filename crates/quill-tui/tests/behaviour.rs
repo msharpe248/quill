@@ -157,19 +157,27 @@ fn message_keys_do_nothing_in_the_sidebar() {
 }
 
 #[test]
-fn the_sidebar_cursor_skips_account_headings_and_loads_each_mailbox() {
+fn the_sidebar_cursor_stops_on_accounts_and_folders_and_loads_each_mailbox() {
     let mut harness = Harness::demo(200, 60);
+    // An account's own row is somewhere to be: its inbox, said to be so.
     harness.keys("1 j");
+    assert_eq!(harness.state.mailbox_title(), "Inbox (Work)");
+    assert_eq!(harness.state.list.rows.len(), 11);
+    assert_eq!(harness.state.mailbox_unread(), 8);
+    harness.keys("j");
     assert_eq!(harness.state.mailbox_title(), "Work / Inbox");
     assert_eq!(harness.state.list.rows.len(), 11);
     assert_eq!(harness.state.mailbox_unread(), 8);
     harness.keys("j j j j j");
-    // Past Work's Trash and over the "Personal" heading.
+    // Past Work's Trash to Personal's own row, and on to its inbox.
+    assert_eq!(harness.state.mailbox_title(), "Inbox (Personal)");
+    assert_eq!(harness.state.list.rows.len(), 6);
+    harness.keys("j");
     assert_eq!(harness.state.mailbox_title(), "Personal / Inbox");
     assert_eq!(harness.state.list.rows.len(), 6);
     assert_eq!(harness.selected_subject(), "Sunday dinner");
     assert!(harness.screen().contains("Your mother wants to know"));
-    harness.keys("k");
+    harness.keys("k k");
     assert_eq!(harness.state.mailbox_title(), "Work / Trash");
     assert!(harness.state.list.rows.is_empty());
     assert!(harness.state.reader.row.is_none());
@@ -184,15 +192,19 @@ fn the_sidebar_cursor_skips_account_headings_and_loads_each_mailbox() {
 #[test]
 fn enter_in_the_sidebar_moves_to_the_list() {
     let mut harness = Harness::demo(200, 60);
-    harness.keys("1 j enter");
+    harness.keys("1 j j enter");
     assert_eq!(harness.state.focus, Pane::List);
     assert_eq!(harness.state.mailbox_title(), "Work / Inbox");
+    // And from an account's own row, to its inbox.
+    harness.keys("1 k enter");
+    assert_eq!(harness.state.focus, Pane::List);
+    assert_eq!(harness.state.mailbox_title(), "Inbox (Work)");
 }
 
 #[test]
 fn an_answer_for_a_mailbox_already_left_is_ignored() {
     let mut harness = Harness::demo(200, 60);
-    harness.keys("1 j");
+    harness.keys("1 j j");
     let work_inbox = harness.state.mailbox;
     let stale = harness.store.messages(Mailbox::Unified).unwrap();
     harness.act(Action::Data(DataEvent::MessagesLoaded {
@@ -356,7 +368,7 @@ fn under_60_columns_the_sidebar_is_an_overlay_that_esc_closes() {
     assert_eq!(harness.state.focus, Pane::Reader);
     assert!(!harness.screen().contains("[1] Accounts"));
     // Choosing a mailbox in the overlay and pressing enter lands on its list.
-    harness.keys("1 j j enter");
+    harness.keys("1 j j j enter");
     assert_eq!(harness.state.focus, Pane::List);
     assert_eq!(harness.state.mailbox_title(), "Work / Drafts");
     assert!(harness.screen().contains("To: Ana Ruiz"));
@@ -879,7 +891,7 @@ fn the_host_is_told_what_applies_where_the_focus_is() {
     // Nothing to go back to from the list.
     assert!(!enabled.contains(&CommandId::NavBack));
 
-    harness.keys("1 j j j j j");
+    harness.keys("1 j j j j j j");
     let state = harness.state.host_state(&harness.env);
     assert_eq!(state.context, Context::Sidebar);
     assert_eq!(state.title, "Work / Trash");

@@ -257,14 +257,30 @@ impl State {
         if mouse.row >= rect.y + rect.height.saturating_sub(1) {
             return;
         }
-        let index = self.sidebar.offset + usize::from(row);
-        // A heading is not somewhere to go.
-        if !self
+        // Among the rows on show: a closed account's folders are not there
+        // to be clicked.
+        let Some(index) = self
             .sidebar
-            .entries
-            .get(index)
-            .is_some_and(super::SidebarEntry::is_place)
+            .shown()
+            .get(self.sidebar.offset + usize::from(row))
+            .copied()
+        else {
+            return;
+        };
+        let Some(entry) = self.sidebar.entries.get(index) else {
+            return;
+        };
+        // An account's marker, and the margin left of its name, open and
+        // close it. The rest of its row is the account, to go to.
+        if let super::SidebarEntry::Account { id, .. } = entry
+            && mouse.column <= rect.x + layout::SIDEBAR_MARKER_CELLS
         {
+            let account = *id;
+            self.toggle_account(env, account, out);
+            return;
+        }
+        // A heading is not somewhere to go.
+        if !entry.is_place() {
             return;
         }
         if index == self.sidebar.selected {

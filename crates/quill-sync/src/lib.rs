@@ -162,6 +162,9 @@ pub enum SyncEvent {
 pub enum SyncRequest {
     /// Sync every account now instead of at the next interval.
     SyncNow,
+    /// Sync this account now, and leave the others to their own time. An
+    /// account that is not being synced is not asked.
+    SyncOne(LocalAccountId),
     /// Download a message's body. Answered by `BodyReady` or `BodyFailed`.
     FetchBody(LocalMessageId),
     /// The store's queue or outbox has something new: a change the user
@@ -321,6 +324,13 @@ async fn serve(engine: Arc<Engine>, mut queue: UnboundedReceiver<SyncRequest>) {
                 .running()
                 .iter()
                 .for_each(|account| account.wake.notify_one()),
+            // The same wake as for all of them, for the one named: its
+            // loop makes the pass it would have made at its next turn.
+            SyncRequest::SyncOne(id) => {
+                if let Some(account) = engine.account(id) {
+                    account.wake.notify_one();
+                }
+            }
             // Each on its own task: a slow download must not hold up the
             // next request. The backend serialises what shares a connection.
             SyncRequest::FetchBody(id) => {

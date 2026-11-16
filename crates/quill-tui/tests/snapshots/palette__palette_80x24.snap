@@ -4,13 +4,13 @@ expression: harness.screen()
 ---
 ┌ [1] Accounts ──┐┏ [2] Inbox (unified) - 12 unread ━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 │> Unifi┏ Commands ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓  09:14┃
-│  Work ┃ : re                                                         ┃  08:51┃
+│  ▾ Wor┃ : re                                                         ┃  08:51┃
 │    Inb┃ > Reply                                                    r ┃  08:35┃
 │    Dra┃   Reply to all                                             R ┃  04:30┃
 │    Sen┃   Focus the reader                                         3 ┃    Fri┃
 │    Arc┃   Mark read or unread                                      u ┃    Fri┃
 │    Tra┃   Load remote pictures for this message                    i ┃    Fri┃
-│  Perso┃   Always load remote pictures from this sender             I ┃    Thu┃
+│  ▾ Per┃   Always load remote pictures from this sender             I ┃    Thu┃
 │    Inb┃   Select a range                                           V ┃    Thu┃
 │    Dra┃   Focus the previous pane or field                 shift-tab ┃    Wed┃
 │    Sen┃   Archive                                                  e ┃    Tue┃

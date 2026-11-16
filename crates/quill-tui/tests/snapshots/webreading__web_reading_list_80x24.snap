@@ -4,13 +4,13 @@ expression: harness.screen()
 ---
 ┌ [1] Accounts ──┐┏ [2] Inbox (unified) - 11 unread ━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 │> Unified    11 │┃  * @ W Ana Ruiz        Q4 roadmap                     09:14┃
-│  Work          │┃      W Build Bot       [quill] PR #42 passed          08:51┃
+│  ▾ Work        │┃      W Build Bot       [quill] PR #42 passed          08:51┃
 │    Inbox     8 │┃>     P Peter Vale      Sunday dinner                  08:35┃
 │    Drafts      │┃  *   P Maya Okafor     Trail run Saturday             04:30┃
 │    Sent        │┃  * @ W Sam Lee         Photos from Sat                  Fri┃
 │    Archive     │┃  *   P Riverside Libr… Your hold is ready               Fri┃
 │    Trash       │┃  *   W Priya Nair      Re: Offsite agenda               Fri┃
-│  Personal      │┃  *!@ W Tomás Ortega    Invoice 2026-114                 Thu┃
+│  ▾ Personal    │┃  *!@ W Tomás Ortega    Invoice 2026-114                 Thu┃
 │    Inbox     3 │┃      P Jo Park         Re: Book club pick               Thu┃
 │    Drafts      │┃  *   W 陈静 Chen Jing  Design review notes 设计评…      Wed┃
 │    Sent        │┃      W IT Helpdesk     Scheduled maintenance Sund…      Tue┃

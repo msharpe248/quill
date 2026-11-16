@@ -4,13 +4,13 @@ expression: harness.screen()
 ---
 ┌ [1] Accounts ──┐┏ [3] Reader ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ attachment ┓
 │> Unified    11 │┃ From:    Ana Ruiz <ana.ruiz@example.com>                   ┃
-│  Work          │┃ To:      Robin Vale <robin@example.com>                    ┃
+│  ▾ Work        │┃ To:      Robin Vale <robin@example.com>                    ┃
 │    Inbox     7 │┃ Date:    Sat 14 Nov 2026 09:14                             ┃
 │    Drafts      │┃ Subject: Q4 roadmap                                        ┃
 │    Sent        │┃ Attach:  roadmap.pdf (937 bytes)  (a lists them)           ┃
 │    Archive     │┃                                                            ┃
 │    Trash       │┃ Hi Robin,                                                  ┃
-│  Personal      │┃                                                            ┃
+│  ▾ Personal    │┃                                                            ┃
 │    Inbox     4 │┃ Here is the draft roadmap for Q4. The short version: we    ┃
 │    Drafts      │┃ ship the sync rewrite in October, spend November on        ┃
 │    Sent        │┃ search, and keep December for whatever the first two       ┃

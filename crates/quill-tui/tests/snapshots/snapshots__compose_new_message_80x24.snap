@@ -4,13 +4,13 @@ expression: harness.screen()
 ---
 ┌ [1] Accounts ──┐┏ [3] New message ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 │> Unified    12 │┃ From:    robin@example.com  (Work)                         ┃
-│  Work          │┃ To:      Priya Nair <priya.nair@example.com>,              ┃
+│  ▾ Work        │┃ To:      Priya Nair <priya.nair@example.com>,              ┃
 │    Inbox     8 │┃ Cc:                                                        ┃
 │    Drafts      │┃ Subject: Lunch on Thursday                                 ┃
 │    Sent        │┃ ────────────────────────────────────────────────────────── ┃
 │    Archive     │┃ Hi Priya,                                                  ┃
 │    Trash       │┃                                                            ┃
-│  Personal      │┃ Are you *free* on Thursday? The usual place, `12:30`.      ┃
+│  ▾ Personal    │┃ Are you *free* on Thursday? The usual place, `12:30`.      ┃
 │    Inbox     4 │┃                                                            ┃
 │    Drafts      │┃ > Tuesday is out, I am afraid.                             ┃
 │    Sent        │┃                                                            ┃

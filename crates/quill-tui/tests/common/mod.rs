@@ -132,6 +132,20 @@ impl Harness {
         )
     }
 
+    /// Over a store of the test's own: one kept in a file, to be opened
+    /// again as Quill is when it is started again. `accounts`: there is a
+    /// service to add accounts through, and servers to ask for mail.
+    pub fn over_store(store: Store, width: u16, height: u16, accounts: bool) -> Self {
+        Self::over(
+            store,
+            width,
+            height,
+            Keymap::preset(KeymapPreset::Vim),
+            ColorMode::TrueColor,
+            accounts,
+        )
+    }
+
     /// The list's cursor has rested for a moment: what the run loop says
     /// when it has, for the web reading pane to follow it.
     pub fn settle(&mut self) {

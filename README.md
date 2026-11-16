@@ -189,22 +189,26 @@ Press `?` at any time for the keys that apply where you are. The bottom bar show
 | `d` | Delete (to Trash; from Trash, for good) | `m` | Move to a folder |
 | `U` | Undo the last move, deletion or send | `A` | Add an account |
 | `S` | Sign in to an account (Microsoft, Google) | `T` | Group or ungroup conversations |
-| `b` | Snooze until a time | `ctrl-r` | Check for new mail now |
+| `b` | Snooze until a time | `ctrl-r` | Check for new mail now: every account, or the one chosen in the accounts pane |
 | `/` | Search | `a` | List a message's attachments |
 | `v` | View the message as a web page | `B` | Open that page in the browser |
 | `i` | Load remote pictures for this message | `I` | Always load them from this sender |
 | `x` | Select or unselect, and move on | `V` | Start or end a range |
 | `X` | Unsubscribe from a mailing list | `\|` | Give the message to one of your own programs (in a terminal) |
 | `y` / `n` | Accept, decline an invitation | `M` | Answer an invitation with maybe |
-| `w` | Read in a web pane, or in the text reader (in the app) | | |
+| `w` | Read in a web pane, or in the text reader (in the app) | `l` / `h` | In the accounts pane: show, hide an account's folders |
 
-Arrow keys, `home`, `end`, `pageup` and `pagedown` work too. `ctrl-d` also pages down and `ctrl-c` also quits.
+Arrow keys, `home`, `end`, `pageup` and `pagedown` work too; in the accounts pane `→` shows an account's folders and `←` hides them. `ctrl-d` also pages down and `ctrl-c` also quits.
 
-Set `keymap = "mutt"` in the config for mutt-flavoured keys.
+Set `keymap = "mutt"` in the config for mutt-flavoured keys. There the arrows show and hide an account's folders, and `h` and `l` are left free.
+
+The accounts pane lists "Unified", every account's inbox together, then each account with its folders under it. An account can be closed, so that its folders are not listed, and opened again: `h` or `←` on the account or on any of its folders closes it (from a folder, the cursor goes to the account), `l` or `→` on a closed account opens it, and a click on the `▾` or `▸` before its name does either. A closed account shows how much is unread in its inbox. Which accounts were closed is remembered the next time Quill starts, and an account you add starts open. An account's own row is somewhere to be, like any folder: it shows that account's inbox, and the list's title says "Inbox (Work)". Going to a folder of a closed account by name, from the command palette, opens the account.
+
+`ctrl-r` (`cmd-r` in the app, where it is also Mailbox > Check for New Mail and a toolbar button) checks for new mail now instead of at the next turn. What it checks goes by the row chosen in the accounts pane, wherever the keys are: on "Unified", or on Drafts, Outbox, Snoozed or a saved search, every account; on an account or one of its folders, that account only. The bottom bar says which: "Checking for new mail." or "Checking Work for new mail."
 
 `:` or `ctrl-k` opens the command palette: type a few letters of a command or a mailbox and press `enter`. Each command is listed with its key.
 
-The mouse works too. A click selects, a second click on what is selected opens it, and the wheel scrolls whatever is under the pointer. Links in a message and the line naming its files can be clicked, and in a message being written a click places the cursor and a drag selects. While Quill has the mouse, selecting text the terminal's own way needs `shift` held; `mouse = false` under `[ui]` gives the mouse back to the terminal.
+The mouse works too. A click selects, a second click on what is selected opens it, and the wheel scrolls whatever is under the pointer. In the accounts pane a click on the mark before an account's name shows or hides its folders. Links in a message and the line naming its files can be clicked, and in a message being written a click places the cursor and a drag selects. While Quill has the mouse, selecting text the terminal's own way needs `shift` held; `mouse = false` under `[ui]` gives the mouse back to the terminal.
 
 In the message list, `>` marks the cursor, `+` a selected message, `*` an unread one, `r` one you have answered, `!` a starred one and `@` one with attachments.
 
@@ -627,7 +631,8 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `compose.spell_suggest`, `compose.spell_next` | List other spellings of the misspelt word at the cursor; go to the next misspelt word |
 | `edit.undo` | Undo the last move, deletion or send |
 | `search.start` | Search |
-| `mailbox.sync` | Check every account for new mail now |
+| `mailbox.sync` | Check for new mail now: every account, or only the one chosen in the accounts pane |
+| `sidebar.open`, `sidebar.close` | In the accounts pane, show or hide an account's folders |
 | `palette.open` | The command palette |
 | `message.attachments` | List the message's attachments |
 | `message.view_html`, `message.open_in_browser` | Show the message as a web page, beside the reader or in the browser |

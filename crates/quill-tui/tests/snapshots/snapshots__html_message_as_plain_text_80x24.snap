@@ -4,13 +4,13 @@ expression: harness.screen()
 ---
 ┌ [1] Accounts ──┐┏ [3] Reader ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 │> Unified    11 │┃ From:    The Weekly Parser <newsletter@example.com>        ┃
-│  Work          │┃ To:      Robin Vale <robin@example.com>                    ┃
+│  ▾ Work        │┃ To:      Robin Vale <robin@example.com>                    ┃
 │    Inbox     7 │┃ Date:    Mon 02 Nov 2026 09:30                             ┃
 │    Drafts      │┃ Subject: Issue 88: Parsing email is still hard             ┃
 │    Sent        │┃                                                            ┃
 │    Archive     │┃ The Weekly Parser, issue 88: parsing email is still hard.  ┃
 │    Trash       │┃                                                            ┃
-│  Personal      │┃ This week: why nobody agrees on what a quoted-printable    ┃
+│  ▾ Personal    │┃ This week: why nobody agrees on what a quoted-printable    ┃
 │    Inbox     4 │┃ soft line break is, a tour of the worst Content-Type       ┃
 │    Drafts      │┃ headers seen in the wild, and a reader asks whether RFC    ┃
 │    Sent        │┃ 5322 comments can really be nested. (They can.)            ┃

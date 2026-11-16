@@ -4,13 +4,13 @@ expression: harness.screen()
 ---
 ┌ [1] Accounts ──┐┏ [2] Inbox (unified) - 12 unread ━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 │> Unifi┏ Help: Message list ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓  09:14┃
-│  Work ┃ Navigation                                                   ┃  08:51┃
+│  ▾ Wor┃ Navigation                                                   ┃  08:51┃
 │    Inb┃   j, down                  Next item or line                 ┃  08:35┃
 │    Dra┃   k, up                    Previous item or line             ┃  04:30┃
 │    Sen┃   g g, home                Go to the top                     ┃    Fri┃
 │    Arc┃   G, end                   Go to the bottom                  ┃    Fri┃
 │    Tra┃   space, ctrl-d, pagedown  Page down                         ┃    Fri┃
-│  Perso┃   ctrl-u, pageup           Page up                           ┃    Thu┃
+│  ▾ Per┃   ctrl-u, pageup           Page up                           ┃    Thu┃
 │    Inb┃   enter                    Open                              ┃    Thu┃
 │    Dra┃   esc, q                   Back, close or dismiss            ┃    Wed┃
 │    Sen┃                                                              ┃    Tue┃

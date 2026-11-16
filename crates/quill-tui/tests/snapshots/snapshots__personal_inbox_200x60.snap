@@ -4,13 +4,13 @@ expression: harness.screen()
 ---
 ┏ [1] Accounts ━━━━━━━━━━━━┓┌ [2] Personal / Inbox - 4 unread ───────────────────────────────────────────────────┐┌ [3] Reader ──────────────────────────────────────────────────────────────── unread ┐
 ┃  Unified              12 ┃│> *   Peter Vale            Sunday dinner                                      08:35││ From:    Peter Vale <peter.vale@example.com>                                       │
-┃  Work                    ┃│  *   Maya Okafor           Trail run Saturday                                 04:30││ To:      Robin Vale <robin.vale@example.com>                                       │
+┃  ▾ Work                  ┃│  *   Maya Okafor           Trail run Saturday                                 04:30││ To:      Robin Vale <robin.vale@example.com>                                       │
 ┃    Inbox               8 ┃│  *   Riverside Library     Your hold is ready                                   Fri││ Date:    Sat 14 Nov 2026 08:35                                                     │
 ┃    Drafts                ┃│      Jo Park               Re: Book club pick                                   Thu││ Subject: Sunday dinner                                                             │
 ┃    Sent                  ┃│  *   Hillcrest Dental      Appointment reminder                                 Sun││                                                                                    │
 ┃    Archive               ┃│   !@ Maya Okafor           Recipe you asked for                              Oct 25││ Your mother wants to know whether you are coming on Sunday and whether you are     │
 ┃    Trash                 ┃│                                                                                    ││ bringing anyone. I want to know whether you still have my drill.                   │
-┃  Personal                ┃│                                                                                    ││                                                                                    │
+┃  ▾ Personal              ┃│                                                                                    ││                                                                                    │
 ┃>   Inbox               4 ┃│                                                                                    ││ Dad                                                                                │
 ┃    Drafts                ┃│                                                                                    ││                                                                                    │
 ┃    Sent                  ┃│                                                                                    ││                                                                                    │
@@ -61,4 +61,4 @@ expression: harness.screen()
 ┃                          ┃│                                                                                    ││                                                                                    │
 ┃                          ┃│                                                                                    ││                                                                                    │
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━┛└────────────────────────────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────────────────────────────────────────┘
- j/k move  enter open  tab next pane  z zoom  ? help  q quit
+ j/k move  enter open  h hide folders  tab next pane  z zoom  ? help  q quit

@@ -5,13 +5,13 @@ expression: harness.screen()
 ┌ [1] Accounts ──┐┏ [3] New message ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 │> Unified    12 │┃ This message is being written in Vim.                      ┃
 │  Drafts      1 │┃                                                            ┃
-│  Work          │┃ :QuillSend sends it.                                       ┃
+│  ▾ Work        │┃ :QuillSend sends it.                                       ┃
 │    Inbox     8 │┃ :QuillPostpone saves it as a draft and closes it.          ┃
 │    Drafts      │┃ :QuillDiscard throws it away.                              ┃
 │    Sent        │┃ :wq brings it back here, to send, to save or to close.     ┃
 │    Archive     │┃ :cq leaves it as it was before Vim.                        ┃
 │    Trash       │┃                                                            ┃
-│  Personal      │┃                                                            ┃
+│  ▾ Personal    │┃                                                            ┃
 │    Inbox     4 │┃                                                            ┃
 │    Drafts      │┃                                                            ┃
 │    Sent        │┃                                                            ┃

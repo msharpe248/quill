@@ -1,0 +1,64 @@
+---
+source: crates/quill-tui/tests/accounts.rs
+expression: harness.screen()
+---
+┏ [1] Accounts ━━━━━━━━━━━━┓┌ [2] Inbox (Work) - 8 unread ───────────────────────────────────────────────────────┐┌ [3] Reader ──────────────────────────────────────────────────── unread, attachment ┐
+┃  Unified              12 ┃│> * @ Ana Ruiz              Q4 roadmap                                         09:14││ From:    Ana Ruiz <ana.ruiz@example.com>                                           │
+┃> ▸ Work                8 ┃│      Build Bot             [quill] PR #42 passed                              08:51││ To:      Robin Vale <robin@example.com>                                            │
+┃  ▾ Personal              ┃│  * @ Sam Lee               Photos from Sat                                      Fri││ Date:    Sat 14 Nov 2026 09:14                                                     │
+┃    Inbox               4 ┃│  *   Priya Nair            Re: Offsite agenda                                   Fri││ Subject: Q4 roadmap                                                                │
+┃    Drafts                ┃│  *!@ Tomás Ortega          Invoice 2026-114                                     Thu││ Attach:  roadmap.pdf (937 bytes)  (a lists them)                                   │
+┃    Sent                  ┃│  *   陈静 Chen Jing        Design review notes 设计评审                         Wed││                                                                                    │
+┃    Archive               ┃│      IT Helpdesk           Scheduled maintenance Sunday                         Tue││ Hi Robin,                                                                          │
+┃    Trash                 ┃│  *   Lena Fischer          Lunch on Thursday?                                   Mon││                                                                                    │
+┃                          ┃│  *!@ Omar Haddad           Re: Contract redlines                             Nov 06││ Here is the draft roadmap for Q4. The short version: we ship the sync rewrite in   │
+┃                          ┃│  *   The Weekly Parser     Issue 88: Parsing email is still hard             Nov 02││ October, spend November on search, and keep December for whatever the first two    │
+┃                          ┃│      Ana Ruiz              Welcome to the team                             Oct 2025││ months break.                                                                      │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││ Three things I would like your eyes on before Thursday:                            │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││ 1. The search milestone assumes the index format is settled. Is it?                │
+┃                          ┃│                                                                                    ││ 2. I have pencilled in two weeks for the offline queue. Tell me if that is         │
+┃                          ┃│                                                                                    ││ fantasy.                                                                           │
+┃                          ┃│                                                                                    ││ 3. The on-call rota over the holidays is still empty.                              │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││ The PDF has the detail, including the dependency chart you asked for. Comments in  │
+┃                          ┃│                                                                                    ││ the doc or by reply, whichever is easier.                                          │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││ Thanks,                                                                            │
+┃                          ┃│                                                                                    ││ Ana                                                                                │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││ --                                                                                 │
+┃                          ┃│                                                                                    ││ Ana Ruiz                                                                           │
+┃                          ┃│                                                                                    ││ Product, Example Corp                                                              │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┃                          ┃│                                                                                    ││                                                                                    │
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━┛└────────────────────────────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────────────────────────────────────────┘
+ j/k move  enter open  l show folders  tab next pane  z zoom  ? help  q quit

@@ -76,17 +76,17 @@ fn help_for_the_sidebar() {
 
 #[test]
 fn sent_folder_shows_recipients() {
-    snapshot_after("work_sent", "1 j j j");
+    snapshot_after("work_sent", "1 j j j j");
 }
 
 #[test]
 fn empty_folder() {
-    snapshot_after("work_trash", "1 j j j j j");
+    snapshot_after("work_trash", "1 j j j j j j");
 }
 
 #[test]
 fn personal_inbox() {
-    snapshot_after("personal_inbox", "1 G g g j j j j j j");
+    snapshot_after("personal_inbox", "1 G g g j j j j j j j j");
 }
 
 #[test]

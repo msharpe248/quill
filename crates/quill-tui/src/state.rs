@@ -448,10 +448,14 @@ pub enum SidebarEntry {
         name: &'static str,
         count: u32,
     },
-    /// A heading. The cursor skips it.
+    /// An account: its inbox, and the row its folders open and close
+    /// under.
     Account {
         index: usize,
+        id: LocalAccountId,
         name: String,
+        /// What is unread in its inbox: its share of the unified count.
+        unread: u32,
     },
     Folder {
         id: LocalFolderId,
@@ -475,7 +479,8 @@ impl SidebarEntry {
         match self {
             Self::Unified { .. } => Some(Mailbox::Unified),
             Self::Local { mailbox, .. } => Some(*mailbox),
-            Self::Account { .. } | Self::Searches | Self::Search { .. } => None,
+            Self::Account { id, .. } => Some(Mailbox::Account(*id)),
+            Self::Searches | Self::Search { .. } => None,
             Self::Folder { id, .. } => Some(Mailbox::Folder(*id)),
         }
     }
@@ -489,9 +494,65 @@ impl SidebarEntry {
 
 #[derive(Debug, Default)]
 pub struct Sidebar {
+    /// Every row there is, the folders of a closed account among them:
+    /// they are not shown, and are still folders to move mail to or to go
+    /// to by name.
     pub entries: Vec<SidebarEntry>,
+    /// The row the cursor is on, as a place in `entries`. It is always one
+    /// that is shown.
     pub selected: usize,
+    /// How many of the rows shown are scrolled off the top.
     pub offset: usize,
+    /// The accounts whose folders are folded away.
+    pub closed: BTreeSet<LocalAccountId>,
+}
+
+impl Sidebar {
+    /// The account a row belongs to: an account's own row, or one of its
+    /// folders.
+    pub fn account_of(&self, index: usize) -> Option<LocalAccountId> {
+        match self.entries.get(index)? {
+            SidebarEntry::Account { id, .. } => Some(*id),
+            // An account's folders follow its row.
+            SidebarEntry::Folder { .. } => {
+                self.entries[..index]
+                    .iter()
+                    .rev()
+                    .find_map(|entry| match entry {
+                        SidebarEntry::Account { id, .. } => Some(*id),
+                        _ => None,
+                    })
+            }
+            _ => None,
+        }
+    }
+
+    /// Where an account's own row is.
+    pub fn account_row(&self, account: LocalAccountId) -> Option<usize> {
+        self.entries
+            .iter()
+            .position(|entry| matches!(entry, SidebarEntry::Account { id, .. } if *id == account))
+    }
+
+    pub fn is_open(&self, account: LocalAccountId) -> bool {
+        !self.closed.contains(&account)
+    }
+
+    /// The rows on show, as places in `entries`, top to bottom: all of
+    /// them but the folders of a closed account.
+    pub fn shown(&self) -> Vec<usize> {
+        let mut open = true;
+        let mut shown = Vec::with_capacity(self.entries.len());
+        for (index, entry) in self.entries.iter().enumerate() {
+            match entry {
+                SidebarEntry::Account { id, .. } => open = self.is_open(*id),
+                SidebarEntry::Folder { .. } if !open => continue,
+                _ => {}
+            }
+            shown.push(index);
+        }
+        shown
+    }
 }
 
 #[derive(Debug, Default)]
@@ -1582,14 +1643,8 @@ impl State {
                     }
                     Some(What::Mailbox(mailbox)) => {
                         self.show_mailbox(mailbox, out);
-                        if let Some(index) = self
-                            .sidebar
-                            .entries
-                            .iter()
-                            .position(|entry| entry.mailbox() == Some(mailbox))
-                        {
-                            self.sidebar.selected = index;
-                        }
+                        // A folder of a closed account is opened to.
+                        self.select_mailbox_row(mailbox, out);
                         self.set_focus(Pane::List);
                     }
                     None => {}
@@ -1837,12 +1892,35 @@ impl State {
                 }
             }
             CommandId::AccountAdd => self.setup = Some(Setup::default()),
-            // Every account, now, instead of at its next turn. What comes
-            // of it is told the usual way: new mail appears, and an
-            // account that cannot be reached says so.
-            CommandId::MailboxSync => {
-                out.sync.push(SyncRequest::SyncNow);
-                self.flash = Some(("Checking for new mail.".to_owned(), false));
+            // Now, instead of at its next turn: the account chosen in the
+            // accounts pane, or every account when what is chosen there is
+            // nobody's alone. What comes of it is told the usual way: new
+            // mail appears, and an account that cannot be reached says so.
+            CommandId::MailboxSync => match self.chosen_account() {
+                Some(account) => {
+                    out.sync.push(SyncRequest::SyncOne(account.id));
+                    self.flash = Some((
+                        format!(
+                            "Checking {} for new mail.",
+                            text::sanitize_line(&account.name)
+                        ),
+                        false,
+                    ));
+                }
+                None => {
+                    out.sync.push(SyncRequest::SyncNow);
+                    self.flash = Some(("Checking for new mail.".to_owned(), false));
+                }
+            },
+            CommandId::SidebarOpen => {
+                if let Some(account) = self.sidebar.account_of(self.sidebar.selected) {
+                    self.set_account_open(account, true, out);
+                }
+            }
+            CommandId::SidebarClose => {
+                if let Some(account) = self.sidebar.account_of(self.sidebar.selected) {
+                    self.close_account(env, account, out);
+                }
             }
             CommandId::AccountSignIn => {
                 out.accounts.push(AccountRequest::SignIn {
@@ -2131,6 +2209,16 @@ impl State {
             CommandId::AccountSignIn => env.accounts && !self.accounts.is_empty(),
             // Only where there is a server to ask: not the demo mailbox.
             CommandId::MailboxSync => env.accounts && !self.accounts.is_empty(),
+            // Only on an account that is closed, and on an open one or
+            // one of its folders.
+            CommandId::SidebarOpen => self
+                .sidebar
+                .account_of(self.sidebar.selected)
+                .is_some_and(|account| !self.sidebar.is_open(account)),
+            CommandId::SidebarClose => self
+                .sidebar
+                .account_of(self.sidebar.selected)
+                .is_some_and(|account| self.sidebar.is_open(account)),
             CommandId::NavOpen => {
                 self.focus == Pane::Sidebar || self.list.rows.get(self.list.selected).is_some()
             }
@@ -2326,11 +2414,14 @@ impl State {
             Pane::Sidebar => {
                 let selectable: Vec<usize> = self
                     .sidebar
-                    .entries
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, entry)| entry.is_place())
-                    .map(|(index, _)| index)
+                    .shown()
+                    .into_iter()
+                    .filter(|index| {
+                        self.sidebar
+                            .entries
+                            .get(*index)
+                            .is_some_and(SidebarEntry::is_place)
+                    })
                     .collect();
                 let position = selectable
                     .iter()
@@ -2497,14 +2588,7 @@ impl State {
             self.search = None;
             self.list = MessageList::default();
             out.data.push(DataRequest::LoadMessages(self.mailbox));
-            if let Some(index) = self
-                .sidebar
-                .entries
-                .iter()
-                .position(|entry| entry.mailbox() == Some(self.mailbox))
-            {
-                self.sidebar.selected = index;
-            }
+            self.select_mailbox_row(self.mailbox, out);
         } else {
             match self.focus {
                 Pane::Reader => self.set_focus(Pane::List),
@@ -2637,6 +2721,11 @@ impl State {
             .target_row()
             .map(|row| row.account)
             .filter(|_| self.mailbox != Mailbox::Unified)
+            // An account chosen by its own row, with no mail to go by.
+            .or(match self.mailbox {
+                Mailbox::Account(id) => Some(id),
+                _ => None,
+            })
             .or_else(|| self.accounts.first().map(|account| account.id));
         let Some(account) = account else {
             return;
@@ -3734,8 +3823,12 @@ impl State {
             let id = row.account;
             return self.accounts.iter().find(|account| account.id == id);
         }
-        let Mailbox::Folder(folder) = self.mailbox else {
-            return None;
+        let folder = match self.mailbox {
+            Mailbox::Folder(folder) => folder,
+            Mailbox::Account(id) => {
+                return self.accounts.iter().find(|account| account.id == id);
+            }
+            _ => return None,
         };
         self.sidebar.entries.iter().find_map(|entry| match entry {
             SidebarEntry::Folder { id, account, .. } if *id == folder => {
@@ -3743,6 +3836,80 @@ impl State {
             }
             _ => None,
         })
+    }
+
+    /// The account chosen in the accounts pane: the one the cursor there
+    /// is on, or whose folder it is on, wherever the keys are. `None` on
+    /// a row that is every account's: the unified inbox, the mail kept
+    /// only here, a saved search.
+    fn chosen_account(&self) -> Option<&AccountRow> {
+        let id = self.sidebar.account_of(self.sidebar.selected)?;
+        self.accounts.iter().find(|account| account.id == id)
+    }
+
+    /// Opens or closes an account in the accounts pane, and has the store
+    /// remember it.
+    fn set_account_open(&mut self, account: LocalAccountId, open: bool, out: &mut Effects) {
+        let changed = if open {
+            self.sidebar.closed.remove(&account)
+        } else {
+            self.sidebar.closed.insert(account)
+        };
+        if changed {
+            out.data.push(DataRequest::SetAccountOpen { account, open });
+        }
+    }
+
+    /// Folds an account's folders away. The cursor does not go with them:
+    /// from one of them it moves to the account's own row, and the list
+    /// shows what that row stands for.
+    fn close_account(&mut self, env: &Env, account: LocalAccountId, out: &mut Effects) {
+        let on_a_folder = matches!(
+            self.sidebar.entries.get(self.sidebar.selected),
+            Some(SidebarEntry::Folder { .. })
+        ) && self.sidebar.account_of(self.sidebar.selected) == Some(account);
+        if on_a_folder && let Some(row) = self.sidebar.account_row(account) {
+            self.go_to_entry(env, row, out);
+        }
+        self.set_account_open(account, false, out);
+    }
+
+    /// Opens an account that is closed and closes one that is open: what
+    /// a click on its marker does.
+    pub(super) fn toggle_account(&mut self, env: &Env, account: LocalAccountId, out: &mut Effects) {
+        if self.sidebar.is_open(account) {
+            self.close_account(env, account, out);
+        } else {
+            self.set_account_open(account, true, out);
+        }
+    }
+
+    /// Puts the accounts pane's cursor on a row. The cursor is never on a
+    /// row that is not shown: going to a folder of a closed account opens
+    /// the account.
+    fn select_row(&mut self, index: usize, out: &mut Effects) {
+        self.sidebar.selected = index;
+        if matches!(
+            self.sidebar.entries.get(index),
+            Some(SidebarEntry::Folder { .. })
+        ) && let Some(account) = self.sidebar.account_of(index)
+        {
+            self.set_account_open(account, true, out);
+        }
+    }
+
+    /// Puts the accounts pane's cursor on the row of a mailbox, if it has
+    /// one.
+    fn select_mailbox_row(&mut self, mailbox: Mailbox, out: &mut Effects) -> bool {
+        let row = self
+            .sidebar
+            .entries
+            .iter()
+            .position(|entry| entry.mailbox() == Some(mailbox));
+        if let Some(row) = row {
+            self.select_row(row, out);
+        }
+        row.is_some()
     }
 
     /// Starts a message to the people a `mailto:` address names.
@@ -3827,6 +3994,7 @@ impl State {
             // The one about several messages: the inbox is where they are.
             if id == SEVERAL_NOTIFICATION && action.is_none() && self.compose.is_none() {
                 self.show_mailbox(Mailbox::Unified, out);
+                self.select_mailbox_row(Mailbox::Unified, out);
                 self.set_focus(Pane::List);
             }
             return;
@@ -3842,6 +4010,7 @@ impl State {
                 // The unified inbox has every account's new mail.
                 if self.mailbox != Mailbox::Unified || self.search.is_some() {
                     self.show_mailbox(Mailbox::Unified, out);
+                    self.select_mailbox_row(Mailbox::Unified, out);
                 } else {
                     self.go_to_pending(env, out);
                 }
@@ -4560,8 +4729,19 @@ impl State {
                 drafts,
                 outbox,
                 snoozed: (snoozed, next_wake),
+                closed,
             } => {
                 self.next_wake = next_wake;
+                // How the accounts were left is read once, as Quill
+                // starts. From then on they are opened and closed here and
+                // the store is told: an answer that was on its way while
+                // one was closed must not open it again.
+                if !self.accounts_known {
+                    self.sidebar.closed = closed.into_iter().collect();
+                }
+                self.sidebar
+                    .closed
+                    .retain(|id| accounts.iter().any(|account| account.id == *id));
                 self.sidebar.entries =
                     sidebar_entries(&accounts, &folders, [drafts, outbox, snoozed], self.mailbox);
                 if !self.sidebar.entries.is_empty() && !env.searches.is_empty() {
@@ -4591,7 +4771,7 @@ impl State {
                         .iter()
                         .position(|entry| entry.mailbox() == Some(self.mailbox))
                 }) {
-                    Some(index) => self.sidebar.selected = index,
+                    Some(index) => self.select_row(index, out),
                     None => {
                         // The folder being shown is gone.
                         self.sidebar.selected = 0;
@@ -4958,11 +5138,18 @@ impl State {
     fn relayout(&mut self, env: &Env) {
         let areas = layout::compute(self, self.size, env.reader_width);
         if let Some(rect) = areas.sidebar {
+            // Counted among the rows on show: a closed account's folders
+            // take no room.
+            let shown = self.sidebar.shown();
+            let selected = shown
+                .iter()
+                .position(|index| *index == self.sidebar.selected)
+                .unwrap_or(0);
             keep_visible(
                 &mut self.sidebar.offset,
-                self.sidebar.selected,
+                selected,
                 layout::inner_height(rect),
-                self.sidebar.entries.len(),
+                shown.len(),
             );
         }
         if let Some(rect) = areas.list {
@@ -5259,10 +5446,28 @@ impl State {
         })
     }
 
-    /// The list pane's title: "Inbox (unified)" or "Work / Sent".
+    /// The name and unread count of the account whose own row is what
+    /// the list shows.
+    fn shown_account(&self) -> Option<(&str, u32)> {
+        let Mailbox::Account(current) = self.mailbox else {
+            return None;
+        };
+        self.sidebar.entries.iter().find_map(|entry| match entry {
+            SidebarEntry::Account {
+                id, name, unread, ..
+            } if *id == current => Some((name.as_str(), *unread)),
+            _ => None,
+        })
+    }
+
+    /// The list pane's title: "Inbox (unified)", "Inbox (Work)" for an
+    /// account's own row, or "Work / Sent".
     pub fn mailbox_title(&self) -> String {
         match (self.mailbox, self.current_folder()) {
             (Mailbox::Unified, _) => "Inbox (unified)".to_owned(),
+            (Mailbox::Account(_), _) => self
+                .shown_account()
+                .map_or_else(String::new, |(name, _)| format!("Inbox ({name})")),
             (Mailbox::Folder(_), Some((account, folder, _, _))) => format!("{account} / {folder}"),
             (Mailbox::Folder(_), None) => String::new(),
             (Mailbox::Drafts, _) => "Drafts".to_owned(),
@@ -5282,6 +5487,7 @@ impl State {
                     _ => None,
                 })
                 .unwrap_or(0),
+            Mailbox::Account(_) => self.shown_account().map_or(0, |(_, unread)| unread),
             Mailbox::Folder(_) => self.current_folder().map_or(0, |(_, _, _, unread)| unread),
             Mailbox::Drafts | Mailbox::Outbox | Mailbox::Snoozed => 0,
         }
@@ -5331,7 +5537,14 @@ fn sidebar_entries(
     for (index, account) in accounts.iter().enumerate() {
         entries.push(SidebarEntry::Account {
             index,
+            id: account.id,
             name: text::sanitize_line(&account.name),
+            // Its inbox's, as the unified count is every inbox's.
+            unread: folders
+                .iter()
+                .filter(|folder| folder.account == account.id && folder.role == FolderRole::Inbox)
+                .map(|folder| folder.unread)
+                .sum(),
         });
         entries.extend(
             folders

@@ -93,12 +93,16 @@ fn the_sidebar_is_clicked_through_to_a_mailbox() {
     assert_eq!(harness.state.focus, Pane::Sidebar);
     assert!(matches!(harness.state.mailbox, Mailbox::Folder(_)));
     assert!(harness.row_with("[2]").contains("Work / Sent"));
-    // A heading is not somewhere to go.
-    click_on(&mut harness, "  Personal");
-    assert!(harness.row_with("[2]").contains("Work / Sent"));
     // A click on the mailbox on show goes to its mail.
     click_on(&mut harness, ">   Sent");
     assert_eq!(harness.state.focus, Pane::List);
+    // An account's name is somewhere to go too: its inbox.
+    click_on(&mut harness, "Personal");
+    assert_eq!(harness.state.focus, Pane::Sidebar);
+    assert!(harness.row_with("[2]").contains("Inbox (Personal)"));
+    assert!(harness.screen().contains("> ▾ Personal"));
+    // Nothing was closed by it.
+    assert!(harness.state.sidebar.closed.is_empty());
 }
 
 #[test]

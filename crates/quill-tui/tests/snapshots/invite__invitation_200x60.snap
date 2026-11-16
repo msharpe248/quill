@@ -4,13 +4,13 @@ expression: harness.screen()
 ---
 ┌ [1] Accounts ────────────┐┌ [2] Inbox (unified) - 12 unread ───────────────────────────────────────────────────┐┏ [3] Reader ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 │> Unified              12 ││>     W Ana Ruiz              Offsite                                          09:31│┃ From:    Ana Ruiz <ana.ruiz@example.com>                                           ┃
-│  Work                    ││  * @ W Ana Ruiz              Q4 roadmap                                       09:14│┃ To:      Robin Vale <robin@example.com>                                            ┃
+│  ▾ Work                  ││  * @ W Ana Ruiz              Q4 roadmap                                       09:14│┃ To:      Robin Vale <robin@example.com>                                            ┃
 │    Inbox               8 ││      W Build Bot             [quill] PR #42 passed                            08:51│┃ Date:    Sat 14 Nov 2026 09:31                                                     ┃
 │    Drafts                ││  *   P Peter Vale            Sunday dinner                                    08:35│┃ Subject: Offsite                                                                   ┃
 │    Sent                  ││  *   P Maya Okafor           Trail run Saturday                               04:30│┃ Attach:  attachment-2.ics (589 bytes)  (a lists them)                              ┃
 │    Archive               ││  * @ W Sam Lee               Photos from Sat                                    Fri│┃                                                                                    ┃
 │    Trash                 ││  *   P Riverside Library     Your hold is ready                                 Fri│┃ ── Invitation ──────────────────────────────────────────────────────────────────── ┃
-│  Personal                ││  *   W Priya Nair            Re: Offsite agenda                                 Fri│┃ What:    Offsite, day one                                                          ┃
+│  ▾ Personal              ││  *   W Priya Nair            Re: Offsite agenda                                 Fri│┃ What:    Offsite, day one                                                          ┃
 │    Inbox               4 ││  *!@ W Tomás Ortega          Invoice 2026-114                                   Thu│┃ When:    Fri 20 Nov 2026 09:00 to 16:00                                            ┃
 │    Drafts                ││      P Jo Park               Re: Book club pick                                 Thu│┃ Where:   Room 4; second floor                                                      ┃
 │    Sent                  ││  *   W 陈静 Chen Jing        Design review notes 设计评审                       Wed│┃ Host:    Ana Ruiz <ana.ruiz@example.com>                                           ┃

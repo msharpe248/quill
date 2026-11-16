@@ -17,6 +17,10 @@ pub const MIN_SIZE: (u16, u16) = (24, 6);
 
 const MEDIUM_SIDEBAR: u16 = 18;
 const OVERLAY_SIDEBAR: u16 = 26;
+/// The cells before an account's name in the accounts pane, inside its
+/// border: the cursor's two, then the marker that says whether its folders
+/// are on show and a space. A click there opens and closes the account.
+pub const SIDEBAR_MARKER_CELLS: u16 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LayoutMode {

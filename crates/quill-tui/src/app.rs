@@ -447,7 +447,7 @@ impl Io<'_> {
                         reason: "The body of this message has not been downloaded.".to_owned(),
                     }));
                 }
-                (None, SyncRequest::SyncNow | SyncRequest::Queue) => {}
+                (None, SyncRequest::SyncNow | SyncRequest::SyncOne(_) | SyncRequest::Queue) => {}
             }
         }
     }

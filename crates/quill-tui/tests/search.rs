@@ -133,7 +133,7 @@ fn choosing_a_mailbox_leaves_the_search() {
     let mut harness = Harness::demo(200, 60);
     harness.keys("/");
     harness.type_text("roadmap");
-    harness.keys("enter 1 j enter");
+    harness.keys("enter 1 j j enter");
     assert!(harness.state.search.is_none());
     assert!(
         title(&harness).contains("Work / Inbox"),

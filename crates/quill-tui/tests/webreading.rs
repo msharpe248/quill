@@ -407,7 +407,7 @@ fn a_list_that_opens_or_a_wheel_that_passes_reads_nothing_and_a_click_does() {
     assert!(is_read(&harness, "Sunday dinner"));
 
     // Another mailbox: the message its cursor starts on is shown, unread.
-    harness.keys("1 j j");
+    harness.keys("1 j j j");
     assert_eq!(harness.state.mailbox_title(), "Work / Drafts");
     harness.keys("k");
     assert_eq!(harness.state.mailbox_title(), "Work / Inbox");
@@ -630,7 +630,7 @@ fn a_plain_message_a_draft_and_an_empty_folder_all_have_a_page() {
     );
 
     // A folder with nothing in it: the pane says so, and stays.
-    harness.keys("1 j j j j j 2");
+    harness.keys("1 j j j j j j 2");
     assert_eq!(harness.state.mailbox_title(), "Work / Trash");
     assert!(harness.state.list.rows.is_empty());
     harness.settle();

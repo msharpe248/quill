@@ -1,0 +1,28 @@
+---
+source: crates/quill-tui/tests/accounts.rs
+expression: harness.screen()
+---
+┏ [1] Accounts ━━┓┌ [2] Inbox (Work) - 8 unread ───────────────────────────────┐
+┃  Unified    12 ┃│> * @ Ana Ruiz        Q4 roadmap                       09:14│
+┃> ▸ Work      8 ┃│      Build Bot       [quill] PR #42 passed            08:51│
+┃  ▾ Personal    ┃│  * @ Sam Lee         Photos from Sat                    Fri│
+┃    Inbox     4 ┃│  *   Priya Nair      Re: Offsite agenda                 Fri│
+┃    Drafts      ┃│  *!@ Tomás Ortega    Invoice 2026-114                   Thu│
+┃    Sent        ┃│  *   陈静 Chen Jing  Design review notes 设计评审       Wed│
+┃    Archive     ┃│      IT Helpdesk     Scheduled maintenance Sunday       Tue│
+┃    Trash       ┃│  *   Lena Fischer    Lunch on Thursday?                 Mon│
+┃                ┃│  *!@ Omar Haddad     Re: Contract redlines           Nov 06│
+┃                ┃│  *   The Weekly Par… Issue 88: Parsing email is s…   Nov 02│
+┃                ┃│      Ana Ruiz        Welcome to the team           Oct 2025│
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┗━━━━━━━━━━━━━━━━┛└────────────────────────────────────────────────────────────┘
+ j/k move  enter open  l show folders  tab next pane  z zoom  ? help  q quit

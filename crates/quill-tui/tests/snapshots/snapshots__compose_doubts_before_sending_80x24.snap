@@ -4,13 +4,13 @@ expression: harness.screen()
 ---
 ┌ [1] Accounts ──┐┏ [3] New message ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 │> Unified    12 │┃ From:    robin@example.com  (Work)                         ┃
-│  Work          │┃ To:      Priya Nair <priya.nair@example.com>,              ┃
+│  ▾ Work        │┃ To:      Priya Nair <priya.nair@example.com>,              ┃
 │    Inbox     8 │┃ Cc:                                                        ┃
 │    Drafts      │┃ Subject:                                                   ┃
 │    Sent        │┃ ────────────────────────────────────────────────────────── ┃
 │    Archive     │┃ The agenda is attached.                                    ┃
 │    Trash       │┃                                                            ┃
-│  Personal      │┃                                                            ┃
+│  ▾ Personal    │┃                                                            ┃
 │    Inbox     4 │┃                                                            ┃
 │    Drafts      │┃                                                            ┃
 │    Sent        │┃                                                            ┃
