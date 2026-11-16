@@ -60,6 +60,8 @@ Press `A` (or File, Add an Account in the app). Quill asks for:
 2. **The servers**, as found, to confirm or correct: the one mail is read from (its name, port, security and the name to sign in with) and, under "Send via", the one it is sent through. `tab` moves between the fields and `←`/`→` changes the security. Clear "Send via" to add an account that only reads.
 3. **The password.** Quill signs in to both servers to check it, and sends nothing. Only when that works is anything saved: the account in `config.toml`, the password in your Keychain and nowhere else. If reading works and sending does not, the form says so and goes back to the sending server.
 
+A Microsoft mailbox (Outlook.com, Hotmail, Microsoft 365) cannot be added this way: Microsoft takes no password from a mail program. The form says so at the servers and stops there. Those accounts sign in with Microsoft instead, as described under "Microsoft 365 and Gmail" below.
+
 `enter` goes on, `esc` goes back a step. Many providers (Gmail, iCloud, Fastmail, Yahoo) want an app password here, not your normal one; the form says so when it recognises the provider. Microsoft accounts (Microsoft 365, Outlook.com) do not accept a password at all: see the next section.
 
 If the server's certificate is not one your Mac trusts, as with a self-signed certificate on a home server, Quill sends it nothing and shows you the certificate: who it was issued to and by, its dates and its SHA-256 fingerprint. `r` rejects it, `o` trusts it until Quill quits, `p` trusts that one certificate from now on by writing its fingerprint into the config. The same question is asked if an existing account's certificate stops being trusted.
@@ -176,7 +178,7 @@ Press `?` at any time for the keys that apply where you are. The bottom bar show
 | `d` | Delete (to Trash; from Trash, for good) | `m` | Move to a folder |
 | `U` | Undo the last move, deletion or send | `A` | Add an account |
 | `S` | Sign in to an account (Microsoft, Google) | `T` | Group or ungroup conversations |
-| `b` | Snooze until a time | | |
+| `b` | Snooze until a time | `ctrl-r` | Check for new mail now |
 | `/` | Search | `a` | List a message's attachments |
 | `v` | View the message as a web page | `B` | Open that page in the browser |
 | `i` | Load remote pictures for this message | `I` | Always load them from this sender |
@@ -593,6 +595,7 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `compose.spell_suggest`, `compose.spell_next` | List other spellings of the misspelt word at the cursor; go to the next misspelt word |
 | `edit.undo` | Undo the last move, deletion or send |
 | `search.start` | Search |
+| `mailbox.sync` | Check every account for new mail now |
 | `palette.open` | The command palette |
 | `message.attachments` | List the message's attachments |
 | `message.view_html`, `message.open_in_browser` | Show the message as a web page, beside the reader or in the browser |

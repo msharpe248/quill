@@ -15,6 +15,7 @@ use quill_core::config::TlsMode;
 
 use crate::input::LineInput;
 use crate::keymap::{Key, KeyChord, Mods};
+use crate::text;
 
 /// Text that must not be shown or logged. `Debug` prints a placeholder.
 #[derive(Clone, PartialEq, Eq)]
@@ -458,6 +459,12 @@ impl Setup {
                     self.error = Some(problem);
                     return Vec::new();
                 }
+                // A server that takes no password from a mail program is
+                // not asked for one: the answer is known, and it is no.
+                if let Some(whose) = quill_core::providers::takes_no_password(self.host.text()) {
+                    self.error = Some(no_password(whose));
+                    return Vec::new();
+                }
                 self.step = Step::Password;
                 Vec::new()
             }
@@ -654,6 +661,7 @@ impl Setup {
                         }
                     },
                     Err(VerifyProblem::Auth(reason)) => {
+                        let reason = text::sanitize_line(&reason);
                         self.error = Some(format!(
                             "The server did not accept that name and password. It said: {reason}"
                         ));
@@ -718,6 +726,17 @@ pub struct CertificatePrompt {
 
 /// Why a certificate was refused, in words for someone who has never read a
 /// TLS error. Falls back to the verifier's own text.
+/// What the form says of an account whose server takes no password from a
+/// mail program: that it stops here, and how the account is added instead.
+/// Two short lines, because that is the room the form has left under its
+/// fields; the note above them has already said why.
+fn no_password(whose: &str) -> String {
+    format!(
+        "Not added here: {whose} takes no password. Put a `graph` account in the \
+         config (see the README), then press S."
+    )
+}
+
 pub fn certificate_reason(reason: &str) -> String {
     let known = [
         (
@@ -816,6 +835,51 @@ mod tests {
         assert_eq!(setup.step, Step::Password);
         setup.password.set("hunter2");
         setup
+    }
+
+    #[test]
+    fn a_server_that_takes_no_password_is_never_asked_for_one() {
+        let mut setup = Setup::default();
+        setup.address.set("robin@outlook.example");
+        setup.advance();
+        setup.on_event(found("robin@outlook.example"));
+        assert_eq!(setup.step, Step::Server);
+        // Microsoft's servers, however the address came to them: found
+        // for the address, or typed in for a domain of the user's own.
+        for host in [
+            "outlook.office365.com",
+            "Outlook.Office365.com.",
+            "imap-mail.outlook.com",
+        ] {
+            setup.host.set(host);
+            // Going on stays where it is, asks nothing of the server,
+            // and says how the account is added instead.
+            assert_eq!(setup.advance(), [], "{host}");
+            assert_eq!(setup.step, Step::Server, "{host}");
+            let said = setup.error.clone().unwrap_or_default();
+            assert!(
+                said.contains("Microsoft takes no password"),
+                "{host}: {said}"
+            );
+            assert!(said.contains("`graph` account"), "{said}");
+            assert!(said.contains("press S"), "{said}");
+        }
+        // Another server, with a name that only looks alike, is asked.
+        setup.host.set("imap.notoutlook.com");
+        assert_eq!(setup.advance(), []);
+        assert_eq!(setup.step, Step::Password);
+    }
+
+    #[test]
+    fn what_the_server_said_is_shown_as_one_clean_line() {
+        let mut setup = at_password();
+        setup.advance();
+        setup.on_event(AccountEvent::Verified(Err(VerifyProblem::Auth(
+            "Basic authentication\nis disabled.\u{1b}[31m".to_owned(),
+        ))));
+        let said = setup.error.clone().unwrap_or_default();
+        assert!(said.starts_with("The server did not accept that name and password."));
+        assert!(!said.contains('\n') && !said.contains('\u{1b}'), "{said:?}");
     }
 
     #[test]

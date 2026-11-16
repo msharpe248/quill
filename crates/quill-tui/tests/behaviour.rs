@@ -1784,3 +1784,41 @@ fn mail_that_is_all_here_and_drafts_are_never_fetched() {
     assert!(matches!(&harness.state.reader.body, Body::Loaded(body) if !body.copy_missing));
     assert!(fetches(&harness).is_empty());
 }
+
+#[test]
+fn checking_for_new_mail_asks_every_account_now() {
+    // Where there are servers to ask: a mailbox with accounts of its own.
+    let mut harness = Harness::with_accounts(120, 30);
+    assert!(
+        harness
+            .state
+            .is_enabled(&harness.env, CommandId::MailboxSync)
+    );
+    assert!(harness.sync_requests.is_empty());
+    harness.keys("ctrl-r");
+    assert_eq!(harness.sync_requests, [quill_sync::SyncRequest::SyncNow]);
+    assert!(harness.screen().contains("Checking for new mail."));
+    // The app's key for it, from any of the panes.
+    harness.keys("1 cmd-r 3 cmd-r");
+    assert_eq!(harness.sync_requests.len(), 3);
+
+    // It is in the Mailbox menu and has a toolbar button, by its name.
+    let registry = Registry::builtin();
+    let spec = registry.get(CommandId::MailboxSync).unwrap();
+    assert_eq!(spec.name, "mailbox.sync");
+    assert_eq!(spec.title, "Check for New Mail");
+    assert_eq!(spec.symbol, Some("arrow.clockwise"));
+    assert!(spec.menu.is_some());
+
+    // mutt's own key for fetching mail does it too.
+    let mut mutt = Harness::with_accounts(120, 30);
+    mutt.env.keymap = Keymap::preset(KeymapPreset::Mutt);
+    mutt.keys("G");
+    assert_eq!(mutt.sync_requests, [quill_sync::SyncRequest::SyncNow]);
+
+    // The demo mailbox has no server behind it: nothing to ask.
+    let mut demo = Harness::demo(120, 30);
+    assert!(!demo.state.is_enabled(&demo.env, CommandId::MailboxSync));
+    demo.keys("ctrl-r");
+    assert!(demo.sync_requests.is_empty());
+}

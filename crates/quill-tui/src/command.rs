@@ -205,6 +205,7 @@ pub enum CommandId {
     EditUndo,
     AccountAdd,
     AccountSignIn,
+    MailboxSync,
     HelpToggle,
 }
 
@@ -543,6 +544,17 @@ impl Registry {
                         PANES,
                     ),
                     "magnifyingglass",
+                ),
+                with_symbol(
+                    spec(
+                        MailboxSync,
+                        "mailbox.sync",
+                        "Check for New Mail",
+                        General,
+                        Some(Menu::Mailbox),
+                        PANES,
+                    ),
+                    "arrow.clockwise",
                 ),
                 spec(
                     PaletteOpen,

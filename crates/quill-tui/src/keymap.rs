@@ -343,6 +343,7 @@ const VIM: PresetTable = &[
     (CommandId::EditUndo, &["U"]),
     (CommandId::AccountAdd, &["A"]),
     (CommandId::AccountSignIn, &["S"]),
+    (CommandId::MailboxSync, &["ctrl-r", "cmd-r"]),
     (CommandId::HelpToggle, &["?"]),
 ];
 
@@ -410,6 +411,7 @@ const MUTT: PresetTable = &[
     (CommandId::EditUndo, &["U"]),
     (CommandId::AccountAdd, &["A"]),
     (CommandId::AccountSignIn, &["S"]),
+    (CommandId::MailboxSync, &["G", "ctrl-r", "cmd-r"]),
     (CommandId::HelpToggle, &["?"]),
 ];
 

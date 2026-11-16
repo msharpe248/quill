@@ -75,6 +75,39 @@ pub struct ImapBackend {
     push: AtomicU8,
 }
 
+/// What the server said when it refused, as it said it.
+///
+/// The library hands a refusal over as the debug text of its parts, such
+/// as `code: None, info: Some("Basic authentication is disabled.")`. A
+/// person is shown the server's own sentence, and that there was none when
+/// there was none.
+fn server_words(text: &str) -> String {
+    let Some((_, said)) = text.split_once("info: ") else {
+        return text.to_owned();
+    };
+    let Some(quoted) = said
+        .strip_prefix("Some(\"")
+        .and_then(|rest| rest.strip_suffix("\")"))
+    else {
+        return "it gave no reason".to_owned();
+    };
+    // Debug text escapes what a string cannot hold as it is.
+    let mut words = String::with_capacity(quoted.len());
+    let mut letters = quoted.chars();
+    while let Some(letter) = letters.next() {
+        if letter != '\\' {
+            words.push(letter);
+            continue;
+        }
+        match letters.next() {
+            Some('n' | 'r' | 't') => words.push(' '),
+            Some(other) => words.push(other),
+            None => {}
+        }
+    }
+    words
+}
+
 /// Signs in on a connection that has just been made, with whatever the
 /// account signs in with: `LOGIN` for a password, `AUTHENTICATE XOAUTH2`
 /// for a token.
@@ -88,7 +121,7 @@ where
 {
     let refused = |err| match err {
         async_imap::error::Error::No(text) | async_imap::error::Error::Bad(text) => {
-            Error::Auth(text)
+            Error::Auth(server_words(&text))
         }
         async_imap::error::Error::Io(err) => Error::Connection(err.to_string()),
         other => Error::Connection(other.to_string()),
@@ -114,7 +147,7 @@ where
                             .authenticate("XOAUTH2", XOAuth2::new(user, &renewed))
                             .await
                             .map_err(|(err, _)| refused(err)),
-                        _ => Err(Error::Auth(text)),
+                        _ => Err(Error::Auth(server_words(&text))),
                     }
                 }
                 Err((err, _)) => Err(refused(err)),
@@ -909,6 +942,27 @@ async fn set_flags<T: Wire>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_refusal_is_shown_in_the_servers_own_words() {
+        assert_eq!(
+            server_words("code: None, info: Some(\"Basic authentication is disabled.\")"),
+            "Basic authentication is disabled."
+        );
+        assert_eq!(
+            server_words(
+                "code: Some(AuthenticationFailed), info: Some(\"Invalid credentials (Failure)\")"
+            ),
+            "Invalid credentials (Failure)"
+        );
+        assert_eq!(
+            server_words("code: None, info: Some(\"said \\\"no\\\" twice\\nand left\")"),
+            "said \"no\" twice and left"
+        );
+        assert_eq!(server_words("code: None, info: None"), "it gave no reason");
+        // Anything in another shape is passed on as it came.
+        assert_eq!(server_words("LOGIN failed."), "LOGIN failed.");
+    }
     use crate::scripted::{scripted, scripted_within, steps};
 
     const SELECTED: (&str, &str) = (

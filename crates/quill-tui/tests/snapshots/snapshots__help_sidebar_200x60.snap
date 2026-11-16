@@ -29,12 +29,12 @@ expression: harness.screen()
 ┃                          ┃│                                       ┃ General                                                      ┃                                                                   │
 ┃                          ┃│                                       ┃   q, ctrl-c                Quit                              ┃                                                                   │
 ┃                          ┃│                                       ┃   /, cmd-f                 Search                            ┃                                                                   │
-┃                          ┃│                                       ┃   :, ctrl-k                Command palette                   ┃                                                                   │
-┃                          ┃│                                       ┃   U                        Undo the last move, deletion or … ┃ Corp                                                              │
+┃                          ┃│                                       ┃   ctrl-r, cmd-r            Check for New Mail                ┃                                                                   │
+┃                          ┃│                                       ┃   :, ctrl-k                Command palette                   ┃ Corp                                                              │
+┃                          ┃│                                       ┃   U                        Undo the last move, deletion or … ┃                                                                   │
 ┃                          ┃│                                       ┃   A                        Add an account                    ┃                                                                   │
 ┃                          ┃│                                       ┃   S                        Sign in to an account             ┃                                                                   │
 ┃                          ┃│                                       ┃   ?                        Help for this context             ┃                                                                   │
-┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │

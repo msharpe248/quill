@@ -122,6 +122,17 @@ pub const PROVIDERS: &[Provider] = &[
     },
 ];
 
+/// Whether the mail server `host` is one that takes no password at all from
+/// a mail program, and whose it is. Microsoft's do not: every mailbox there,
+/// Outlook.com or Microsoft 365, signs in with Microsoft.
+pub fn takes_no_password(host: &str) -> Option<&'static str> {
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    ["office365.com", "outlook.com", "hotmail.com", "live.com"]
+        .iter()
+        .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
+        .then_some("Microsoft")
+}
+
 /// The provider that owns an address domain, such as `gmail.com`.
 pub fn by_domain(domain: &str) -> Option<&'static Provider> {
     PROVIDERS.iter().find(|provider| {
@@ -149,6 +160,29 @@ pub fn by_mail_exchanger(exchanger: &str) -> Option<&'static Provider> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn microsofts_servers_take_no_password() {
+        for host in [
+            "outlook.office365.com",
+            "smtp.office365.com",
+            "OUTLOOK.OFFICE365.COM",
+            "imap-mail.outlook.com",
+            "outlook.com",
+            "smtp.live.com.",
+        ] {
+            assert_eq!(takes_no_password(host), Some("Microsoft"), "{host}");
+        }
+        for host in [
+            "imap.gmail.com",
+            "imap.example.com",
+            "notoutlook.com",
+            "office365.com.example.com",
+            "",
+        ] {
+            assert_eq!(takes_no_password(host), None, "{host}");
+        }
+    }
 
     #[test]
     fn a_provider_is_found_by_its_address_domain() {

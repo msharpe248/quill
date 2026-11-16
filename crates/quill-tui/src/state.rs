@@ -1717,6 +1717,13 @@ impl State {
                 }
             }
             CommandId::AccountAdd => self.setup = Some(Setup::default()),
+            // Every account, now, instead of at its next turn. What comes
+            // of it is told the usual way: new mail appears, and an
+            // account that cannot be reached says so.
+            CommandId::MailboxSync => {
+                out.sync.push(SyncRequest::SyncNow);
+                self.flash = Some(("Checking for new mail.".to_owned(), false));
+            }
             CommandId::AccountSignIn => {
                 out.accounts.push(AccountRequest::SignIn {
                     account: self.current_account().map(|account| account.name.clone()),
@@ -1975,6 +1982,8 @@ impl State {
                 .any(|id| DraftId::from_message_id(*id).is_none()),
             CommandId::AccountAdd => env.accounts,
             CommandId::AccountSignIn => env.accounts && !self.accounts.is_empty(),
+            // Only where there is a server to ask: not the demo mailbox.
+            CommandId::MailboxSync => env.accounts && !self.accounts.is_empty(),
             CommandId::NavOpen => {
                 self.focus == Pane::Sidebar || self.list.rows.get(self.list.selected).is_some()
             }
