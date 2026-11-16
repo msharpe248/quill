@@ -111,7 +111,7 @@ What this leaves open, knowingly:
 
 ### The config, from the app
 
-- **"Edit Config" (`cmd-,`) and "Reveal Config in Finder" are in the Quill menu** (added with M8's work). The config is a file in the app's container, which nobody finds by looking. With no config yet, Edit Config makes one that is empty but for a comment: an empty config is a valid one. A scripted run records what would have been opened and shown, and opens nothing.
+- **"Edit Config" (`cmd-,`) and "Reveal Config in Finder" are in the Quill menu** (added with M8's work). The config is a file in the app's container, which nobody finds by looking. With no config yet, Edit Config makes one that is empty but for a comment: an empty config is a valid one. A scripted run records what would have been opened and shown, and opens nothing. On 2026-11-15 the owner had them renamed "Settings…" and "Reveal Settings File in Finder", to be what a Mac calls them; the spec still has the old names. They do what they did: Settings opens the file, there is no settings window.
 - **The config is still read once, at startup.** The spec's hot reload is not built; the made file says so.
 
 ### Entitlements

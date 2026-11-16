@@ -16,12 +16,13 @@ enum MainMenu {
         app.addItem(.separator())
         append(commands.makeMenuItems(for: .app), to: app, thenSeparator: true)
         // The config is a file in the app's container, which is not a
-        // place anyone finds by looking. These two get to it.
+        // place anyone finds by looking. These two get to it. They are
+        // called what a Mac calls them: Settings, on cmd-comma.
         let editConfig = app.addItem(
-            withTitle: "Edit Config", action: #selector(MainWindowController.editConfig(_:)), keyEquivalent: ",")
+            withTitle: "Settings\u{2026}", action: #selector(MainWindowController.editConfig(_:)), keyEquivalent: ",")
         editConfig.target = panes
         let revealConfig = app.addItem(
-            withTitle: "Reveal Config in Finder", action: #selector(MainWindowController.revealConfig(_:)),
+            withTitle: "Reveal Settings File in Finder", action: #selector(MainWindowController.revealConfig(_:)),
             keyEquivalent: "")
         revealConfig.target = panes
         // The vimrc for writing mail in Vim is copied in by the shell: the
