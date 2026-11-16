@@ -63,7 +63,8 @@ pub enum CoreToShell {
     /// `spell.suggested`.
     #[serde(rename = "spell.suggest")]
     SpellSuggest(SpellSuggest),
-    /// Run Vim on a draft file, in a pane. Answered by `editor.exited`.
+    /// Run an editor on a draft file, in a pane. Answered by
+    /// `editor.exited`.
     #[serde(rename = "pane.editor")]
     PaneEditor(PaneEditor),
 }
@@ -668,25 +669,68 @@ impl From<NotifyUsed> for NotifyUsedParams {
     }
 }
 
-/// A draft file for the shell's Vim to edit, and the draft's own folder.
+/// A draft file for the shell to run an editor on, and the draft's own
+/// folder.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PaneEditor {
     pub path: AbsolutePath,
     pub dir: AbsolutePath,
     pub title: String,
-    /// Which Vim to run.
-    pub vim: EditorVim,
+    /// Which editor to run.
+    pub editor: EditorKind,
+    /// The line of the file its body starts on, counting from 1: where an
+    /// editor that has no plugin of Quill's is started.
+    pub line: LineNumber,
 }
 
-/// Which Vim the shell runs: the one that comes with macOS, or the user's
-/// own by way of the script they keep in the app's scripts folder. It is
-/// one of these words: the shell is never given a path to a program.
+/// The highest line a `pane.editor` may name.
+pub const MOST_LINES: u32 = 1_000_000;
+
+/// A line of a file, counting from 1, and no higher than [`MOST_LINES`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "u32", into = "u32")]
+pub struct LineNumber(u32);
+
+impl LineNumber {
+    /// The nearest line there can be to `line`.
+    pub fn nearest(line: u32) -> Self {
+        Self(line.clamp(1, MOST_LINES))
+    }
+
+    pub fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl TryFrom<u32> for LineNumber {
+    type Error = String;
+
+    fn try_from(line: u32) -> Result<Self, Self::Error> {
+        if (1..=MOST_LINES).contains(&line) {
+            Ok(Self(line))
+        } else {
+            Err(format!("a line is from 1 to {MOST_LINES}"))
+        }
+    }
+}
+
+impl From<LineNumber> for u32 {
+    fn from(line: LineNumber) -> Self {
+        line.0
+    }
+}
+
+/// Which editor the shell runs: one of those that come with macOS, or the
+/// user's own Vim by way of the script they keep in the app's scripts
+/// folder. It is one of these words: the shell is never given a path to a
+/// program.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum EditorVim {
+pub enum EditorKind {
     #[default]
-    System,
+    Vim,
+    Nano,
     Script,
 }
 

@@ -61,9 +61,9 @@ final class Scratch {
 
     /// The Mac's own Vim, as far as a test has one, with the plugin from
     /// `bundle`.
-    func systemVim(inBundle bundle: URL) throws -> SystemVim {
+    func systemVim(inBundle bundle: URL) throws -> SystemEditor {
         try write("#!/bin/sh\n", to: "usr/bin/vim", permissions: 0o755)
-        return try SystemVim(inBundle: bundle, binary: systemVimPath, within: file("usr").path)
+        return try SystemEditor(.vim, inBundle: bundle, binary: systemVimPath, within: file("usr").path)
     }
 
     func permissions(of file: URL) throws -> Int {

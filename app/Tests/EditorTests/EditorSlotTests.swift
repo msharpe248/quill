@@ -128,16 +128,31 @@ struct EditorSlotTests {
 
 struct PoliteStopTests {
     @Test func vimIsAskedAsSomeoneAtTheKeyboardWould() {
-        // esc on its own first.
-        #expect(Array(PoliteStop.leaveMode.utf8) == [0x1B])
-        // Then ctrl-\ ctrl-n, :wqa and return.
-        #expect(Array(PoliteStop.saveAndQuit.utf8) == [0x1C, 0x0E] + Array(":wqa".utf8) + [0x0D])
+        // The Mac's own and the user's own are asked alike.
+        for vim in [EditorKind.vim, .script] {
+            // esc on its own first.
+            #expect(Array(PoliteStop.leaveMode(for: vim).utf8) == [0x1B])
+            // Then ctrl-\ ctrl-n, :wqa and return.
+            #expect(Array(PoliteStop.saveAndQuit(for: vim).utf8) == [0x1C, 0x0E] + Array(":wqa".utf8) + [0x0D])
+        }
+    }
+
+    @Test func nanoIsAskedInItsOwnKeys() {
+        // ctrl-c, which cancels a question it is asking.
+        #expect(Array(PoliteStop.leaveMode(for: .nano).utf8) == [0x03])
+        // Then ctrl-x: in its tool mode, leaving saves without asking.
+        #expect(Array(PoliteStop.saveAndQuit(for: .nano).utf8) == [0x18])
+        #expect(EditorLaunch.picoToolMode == "-t")
+        // Nothing of Vim's is typed into a message being written in nano.
+        #expect(!PoliteStop.saveAndQuit(for: .nano).contains(":wqa"))
     }
 
     @Test func nothingInItIsAVerdict() {
         // Closing the pane is not sending, postponing or discarding.
         for word in ["Quill", "send", "postpone", "discard", "!", "cq"] {
-            #expect(!PoliteStop.saveAndQuit.contains(word))
+            for editor in EditorKind.allCases {
+                #expect(!PoliteStop.saveAndQuit(for: editor).contains(word))
+            }
         }
     }
 

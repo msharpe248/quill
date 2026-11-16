@@ -4,7 +4,7 @@ import Testing
 
 @testable import Editor
 
-struct VimLaunchTests {
+struct EditorLaunchTests {
     /// What the shell itself might have in its environment, none of which is
     /// Vim's business.
     private static let base: [String: String] = [
@@ -37,9 +37,9 @@ struct VimLaunchTests {
         dir: String = container + "/tmp/quill-edit-812",
         vimrc: URL? = nil,
         base: [String: String] = base
-    ) throws -> VimLaunch {
-        VimLaunch(
-            vim: .system(try scratch.systemVim(inBundle: bundle)),
+    ) throws -> EditorLaunch {
+        EditorLaunch(
+            editor: .system(try scratch.systemVim(inBundle: bundle)),
             draft: try #require(PaneEditor(path: path, dir: dir, title: "Re: Q4 roadmap")),
             vimrc: vimrc,
             term: "xterm-256color",
@@ -108,7 +108,7 @@ struct VimLaunchTests {
     @Test func onlyTheAllowListIsInherited() throws {
         let scratch = try Scratch()
         let bundle = try scratch.bundleWithPlugin()
-        #expect(VimLaunch.inherited == ["LANG", "LC_ALL", "LC_CTYPE", "TZ"])
+        #expect(EditorLaunch.inherited == ["LANG", "LC_ALL", "LC_CTYPE", "TZ"])
         // Every variable but those on the list is the same whatever the
         // shell had, down to having nothing at all.
         let full = try makeLaunch(scratch, bundle: bundle)
@@ -121,7 +121,7 @@ struct VimLaunchTests {
         // A variable of the shell's is passed on only if it is on the list,
         // whatever it is called and whatever it holds.
         var hostile = Self.base
-        for name in VimLaunch.inherited {
+        for name in EditorLaunch.inherited {
             hostile[name] = nil
         }
         for index in 0..<50 {
@@ -149,9 +149,9 @@ struct VimLaunchTests {
         // One command before the vimrc and one after the draft is read, and
         // they are always the same two.
         #expect(launch.argv.filter { $0 == "--cmd" }.count == 1)
-        #expect(launch.arguments[6...7] == ["--cmd", VimLaunch.noModelines])
+        #expect(launch.arguments[6...7] == ["--cmd", EditorLaunch.noModelines])
         #expect(launch.argv.filter { $0 == "-c" || $0 == "-S" || $0.hasPrefix("+") }.count == 1)
-        #expect(launch.arguments[8...9] == ["-c", VimLaunch.loadPlugin])
+        #expect(launch.arguments[8...9] == ["-c", EditorLaunch.loadPlugin])
         // Vim is told the shell is a program that does nothing.
         #expect(launch.environment["SHELL"] == "/usr/bin/false")
         #expect(launch.environment["PATH"] == nil)
@@ -218,6 +218,6 @@ struct VimLaunchTests {
         }
         #expect(launch.argv[0] == scratch.systemVimPath)
         // The plugin that command names is the one that was found.
-        #expect(try scratch.systemVim(inBundle: bundle).plugin.path == launch.environment["QUILL_VIM_PLUGIN"])
+        #expect(try scratch.systemVim(inBundle: bundle).plugin?.path == launch.environment["QUILL_VIM_PLUGIN"])
     }
 }

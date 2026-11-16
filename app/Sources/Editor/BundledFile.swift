@@ -6,7 +6,7 @@ import Foundation
 ///
 /// They are in the app's bundle and are looked for nowhere else. The app has
 /// no Vim of its own inside it: the Vim is the one that comes with macOS
-/// (`SystemVim`) or the user's own by their script (`UserEditorScript`).
+/// (`SystemEditor`) or the user's own by their script (`UserEditorScript`).
 public enum BundledFile {
     /// Why a file of Quill's cannot be used.
     public enum Problem: Error, Equatable, CustomStringConvertible {

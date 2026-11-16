@@ -4,9 +4,9 @@ import Testing
 
 @testable import Editor
 
-/// The Vim that comes with macOS: the one program outside the bundle that
-/// the shell will start, and only that one.
-struct SystemVimTests {
+/// The editors that come with macOS: the only programs outside the bundle
+/// that the shell itself will start.
+struct SystemEditorTests {
     private static let container = "/Users/robin/Library/Containers/dev.quill.Quill/Data"
 
     /// A bundle with the plugin in it, as `build-app.sh` makes. There is no
@@ -16,18 +16,72 @@ struct SystemVimTests {
         return scratch.file("Quill.app")
     }
 
-    @Test func theProgramIsAConstantInTheSystemsOwnFolder() {
-        #expect(SystemVim.path == "/usr/bin/vim")
-        #expect(SystemVim.systemRoot == "/usr")
+    @Test func eachProgramIsAConstantInTheSystemsOwnFolder() {
+        #expect(SystemEditor.path(of: .vim) == "/usr/bin/vim")
+        #expect(SystemEditor.path(of: .nano) == "/usr/bin/nano")
+        // The user's own Vim is not one of macOS's, and is not found here.
+        #expect(SystemEditor.path(of: .script) == nil)
+        #expect(SystemEditor.systemRoot == "/usr")
+        let scratch = try? Scratch()
+        if let scratch, let bundle = try? bundleWithoutVim(scratch) {
+            #expect(throws: SystemEditor.Problem.notOneOfThem("script")) {
+                try SystemEditor(.script, inBundle: bundle)
+            }
+            #expect(throws: SystemEditor.Problem.notOneOfThem("script")) {
+                try SystemEditor(.script, inBundle: bundle, binary: "/usr/bin/vim", within: "/usr")
+            }
+        }
+    }
+
+    @Test func nanoNeedsNoPluginAndIsStartedToSaveAsItLeaves() throws {
+        let scratch = try Scratch()
+        // Not even a plugin in the bundle: nano has no use for one.
+        try scratch.folder("Quill.app/Contents")
+        let program = try scratch.write("#!/bin/sh\n", to: "usr/bin/nano", permissions: 0o755)
+        let nano = try SystemEditor(
+            .nano, inBundle: scratch.file("Quill.app"), binary: program.path, within: scratch.file("usr").path)
+        #expect(nano.kind == .nano)
+        #expect(nano.plugin == nil)
+        #expect(EditorToRun.system(nano).kind == .nano)
+        let dir = Self.container + "/tmp/quill-view-1/it's \"edit\" 1"
+        let launch = EditorLaunch(
+            editor: .system(nano),
+            draft: try #require(
+                PaneEditor(path: dir + "/message.quill", dir: dir, title: "Lunch", editor: .nano, line: 7)),
+            // An imported vimrc is Vim's and no business of nano's.
+            vimrc: URL(fileURLWithPath: Self.container + "/vim/vimrc"),
+            term: "xterm-256color",
+            home: Self.container,
+            temporaryDirectory: Self.container + "/tmp/",
+            base: ["SHELL": "/bin/zsh", "PATH": "/opt/homebrew/bin:/usr/bin", "HOME": "/Users/robin", "TZ": "UTC"]
+        )
+        #expect(launch.executable.path == program.path)
+        #expect(!launch.userScript)
+        // Save on leaving without asking, start where the body does, and
+        // the draft: whole, last, and never an option.
+        #expect(launch.arguments == ["-t", "+7", dir + "/message.quill"])
+        // The same environment built from nothing, without what is Vim's.
+        #expect(
+            launch.environment == [
+                "LANG": "en_US.UTF-8",
+                "TZ": "UTC",
+                "TERM": "xterm-256color",
+                "HOME": Self.container,
+                "TMPDIR": Self.container + "/tmp/",
+                "SHELL": "/usr/bin/false",
+            ])
+        #expect(launch.workingDirectory.path == dir)
     }
 
     @Test func aProgramInTheSystemsFolderWithThePluginInTheBundleIsTaken() throws {
         let scratch = try Scratch()
         let bundle = try bundleWithoutVim(scratch)
         let program = try scratch.write("#!/bin/sh\n", to: "usr/bin/vim", permissions: 0o755)
-        let vim = try SystemVim(inBundle: bundle, binary: program.path, within: scratch.file("usr").path)
+        let vim = try SystemEditor(.vim, inBundle: bundle, binary: program.path, within: scratch.file("usr").path)
+        #expect(vim.kind == .vim)
+        #expect(EditorToRun.system(vim).kind == .vim)
         #expect(vim.binary.path == program.path)
-        #expect(vim.plugin.path == bundle.path + "/Contents/Resources/vim/quill.vim")
+        #expect(vim.plugin?.path == bundle.path + "/Contents/Resources/vim/quill.vim")
     }
 
     @Test func nothingThereAFolderOrAFileThatMayNotBeRunIsRefused() throws {
@@ -36,17 +90,17 @@ struct SystemVimTests {
         let root = scratch.file("usr").path
         try scratch.folder("usr/bin")
         let path = scratch.file("usr/bin/vim").path
-        #expect(throws: SystemVim.Problem.missing(path)) {
-            try SystemVim(inBundle: bundle, binary: path, within: root)
+        #expect(throws: SystemEditor.Problem.missing(path)) {
+            try SystemEditor(.vim, inBundle: bundle, binary: path, within: root)
         }
         try scratch.write("#!/bin/sh\n", to: "usr/bin/vim", permissions: 0o644)
-        #expect(throws: SystemVim.Problem.unusable(path)) {
-            try SystemVim(inBundle: bundle, binary: path, within: root)
+        #expect(throws: SystemEditor.Problem.unusable(path)) {
+            try SystemEditor(.vim, inBundle: bundle, binary: path, within: root)
         }
         let folder = scratch.file("usr/bin/vi").path
         try scratch.folder("usr/bin/vi")
-        #expect(throws: SystemVim.Problem.unusable(folder)) {
-            try SystemVim(inBundle: bundle, binary: folder, within: root)
+        #expect(throws: SystemEditor.Problem.unusable(folder)) {
+            try SystemEditor(.vim, inBundle: bundle, binary: folder, within: root)
         }
     }
 
@@ -58,19 +112,19 @@ struct SystemVimTests {
         let other = try scratch.write("#!/bin/sh\n", to: "opt/homebrew/bin/vim", permissions: 0o755)
         try scratch.link("usr/bin/vim", to: other)
         let path = scratch.file("usr/bin/vim").path
-        #expect(throws: SystemVim.Problem.notTheSystems(path)) {
-            try SystemVim(inBundle: bundle, binary: path, within: root)
+        #expect(throws: SystemEditor.Problem.notTheSystems(path)) {
+            try SystemEditor(.vim, inBundle: bundle, binary: path, within: root)
         }
         // A folder whose name only starts the same is not inside it.
         let beside = try scratch.write("#!/bin/sh\n", to: "usr-local/bin/vim", permissions: 0o755)
-        #expect(throws: SystemVim.Problem.notTheSystems(beside.path)) {
-            try SystemVim(inBundle: bundle, binary: beside.path, within: root)
+        #expect(throws: SystemEditor.Problem.notTheSystems(beside.path)) {
+            try SystemEditor(.vim, inBundle: bundle, binary: beside.path, within: root)
         }
         // A link that stays inside it is the system's own arrangement.
         let real = try scratch.write("#!/bin/sh\n", to: "usr/libexec/vim-9", permissions: 0o755)
         try scratch.link("usr/bin/vim9", to: real)
         #expect(throws: Never.self) {
-            try SystemVim(inBundle: bundle, binary: scratch.file("usr/bin/vim9").path, within: root)
+            try SystemEditor(.vim, inBundle: bundle, binary: scratch.file("usr/bin/vim9").path, within: root)
         }
     }
 
@@ -80,13 +134,13 @@ struct SystemVimTests {
         let root = scratch.file("usr").path
         try scratch.folder("Quill.app/Contents")
         #expect(throws: BundledFile.Problem.missing("Contents/Resources/vim/quill.vim")) {
-            try SystemVim(inBundle: scratch.file("Quill.app"), binary: program.path, within: root)
+            try SystemEditor(.vim, inBundle: scratch.file("Quill.app"), binary: program.path, within: root)
         }
         // Nor with a plugin that is a link to a file somewhere else.
         let elsewhere = try scratch.write("\" not ours\n", to: "elsewhere/quill.vim")
         try scratch.link("Quill.app/\(BundledFile.pluginPath)", to: elsewhere)
         #expect(throws: BundledFile.Problem.outsideBundle("Contents/Resources/vim/quill.vim")) {
-            try SystemVim(inBundle: scratch.file("Quill.app"), binary: program.path, within: root)
+            try SystemEditor(.vim, inBundle: scratch.file("Quill.app"), binary: program.path, within: root)
         }
     }
 
@@ -94,11 +148,11 @@ struct SystemVimTests {
         let scratch = try Scratch()
         let bundle = try bundleWithoutVim(scratch)
         let program = try scratch.write("#!/bin/sh\n", to: "usr/bin/vim", permissions: 0o755)
-        let vim = try SystemVim(inBundle: bundle, binary: program.path, within: scratch.file("usr").path)
+        let vim = try SystemEditor(.vim, inBundle: bundle, binary: program.path, within: scratch.file("usr").path)
         let dir = Self.container + "/tmp/quill-view-1/edit-1"
-        let launch = VimLaunch(
-            vim: .system(vim),
-            draft: try #require(PaneEditor(path: dir + "/message.quill", dir: dir, title: "Lunch", vim: .system)),
+        let launch = EditorLaunch(
+            editor: .system(vim),
+            draft: try #require(PaneEditor(path: dir + "/message.quill", dir: dir, title: "Lunch", editor: .vim)),
             vimrc: nil,
             term: "xterm-256color",
             home: Self.container,
@@ -134,11 +188,12 @@ struct SystemVimTests {
     }
 
     @Test func problemsSayWhatIsWrong() {
-        #expect(SystemVim.Problem.missing("/usr/bin/vim").description == "there is no /usr/bin/vim on this Mac")
+        #expect(SystemEditor.Problem.missing("/usr/bin/vim").description == "there is no /usr/bin/vim on this Mac")
         #expect(
-            SystemVim.Problem.unusable("/usr/bin/vim").description == "/usr/bin/vim is not a program that can be run")
+            SystemEditor.Problem.unusable("/usr/bin/vim").description == "/usr/bin/vim is not a program that can be run"
+        )
         #expect(
-            SystemVim.Problem.notTheSystems("/usr/bin/vim").description
+            SystemEditor.Problem.notTheSystems("/usr/bin/vim").description
                 == "/usr/bin/vim leads to a program that is not macOS's own")
     }
 }

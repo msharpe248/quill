@@ -1,18 +1,19 @@
 import Bridge
 import Foundation
 
-/// How Vim is started on a draft: the program, its arguments, the whole of
-/// its environment and the folder it starts in.
+/// How an editor is started on a draft: the program, its arguments, the
+/// whole of its environment and the folder it starts in.
 ///
 /// The draft's path and its folder come from outside the shell. Each is an
 /// argument or an environment value, whole: neither is ever written into a
-/// command for Vim to parse, nor passed through a shell. The one command
-/// Vim is given is a constant.
-public struct VimLaunch: Equatable, Sendable {
+/// command for an editor to parse, nor passed through a shell. The one
+/// command Vim is given is a constant, and the other editors are given
+/// none.
+public struct EditorLaunch: Equatable, Sendable {
     public let executable: URL
     /// The arguments after the program's own name.
     public let arguments: [String]
-    /// Every variable Vim is given. It inherits no other.
+    /// Every variable the editor is given. It inherits no other.
     public let environment: [String: String]
     /// The draft's own folder.
     public let workingDirectory: URL
@@ -59,11 +60,24 @@ public struct VimLaunch: Equatable, Sendable {
     /// `VIMINIT`, `EXINIT`, `SHELL` or `PATH` of the user's reaches Vim.
     public static let inherited = ["LANG", "LC_ALL", "LC_CTYPE", "TZ"]
 
+    /// What Pico (and so the Mac's nano) is given: save on leaving, without
+    /// asking.
+    public static let picoToolMode = "-t"
+
+    /// What nano is given to start on a line: the one the message's body
+    /// starts on, past the header fields. It knows nothing of the draft's
+    /// shape; Vim's plugin puts the cursor for Vim. A number the
+    /// core gave, and so only ever digits.
+    public static func startAt(_ line: Int) -> String {
+        "+\(line)"
+    }
+
     /// - Parameters:
-    ///   - vim: the Vim to run: the one macOS has, or the user's own by
-    ///     their script.
+    ///   - editor: the editor to run: one macOS has, or the user's own Vim
+    ///     by their script.
     ///   - draft: the file to edit and its folder, as the core named them.
-    ///   - vimrc: the user's imported vimrc, if they have one.
+    ///   - vimrc: the user's imported vimrc, if they have one. Only the
+    ///     Mac's own Vim is given it.
     ///   - term: `TERM`, as the main terminal has it.
     ///   - home: the app's own home folder: inside the sandbox, its
     ///     container.
@@ -71,7 +85,7 @@ public struct VimLaunch: Equatable, Sendable {
     ///   - base: the shell's environment, from which only `inherited` is
     ///     taken.
     public init(
-        vim: VimToRun,
+        editor: EditorToRun,
         draft: PaneEditor,
         vimrc: URL?,
         term: String,
@@ -80,8 +94,8 @@ public struct VimLaunch: Equatable, Sendable {
         base: [String: String]
     ) {
         workingDirectory = URL(fileURLWithPath: draft.dir, isDirectory: true)
-        let system: SystemVim
-        switch vim {
+        let system: SystemEditor
+        switch editor {
         case let .system(found):
             system = found
         case let .script(script):
@@ -104,27 +118,36 @@ public struct VimLaunch: Equatable, Sendable {
         }
         executable = system.binary
         userScript = false
-        arguments = [
-            // A vimrc named with -u leaves Vim behaving as vi did, which no
-            // vimrc written for Vim expects. -N says otherwise first.
-            "-N",
-            // Naming a vimrc, or none, also keeps Vim from reading the one
-            // macOS has for everybody.
-            "-u", vimrc?.path ?? Self.defaults,
-            // No viminfo file and no swap file: nothing is kept of a
-            // message but the draft.
-            "-i", "NONE",
-            "-n",
-            // A message quotes other people's words, and a line of them
-            // that looks like a modeline must not set options here,
-            // whatever the vimrc says about modelines.
-            "--cmd", Self.noModelines,
-            "-c", Self.loadPlugin,
-            // Whatever follows is a file, even if it were to start with a
-            // dash or a plus.
-            "--",
-            draft.path,
-        ]
+        switch system.kind {
+        case .vim, .script:
+            arguments = [
+                // A vimrc named with -u leaves Vim behaving as vi did, which
+                // no vimrc written for Vim expects. -N says otherwise first.
+                "-N",
+                // Naming a vimrc, or none, also keeps Vim from reading the
+                // one macOS has for everybody.
+                "-u", vimrc?.path ?? Self.defaults,
+                // No viminfo file and no swap file: nothing is kept of a
+                // message but the draft.
+                "-i", "NONE",
+                "-n",
+                // A message quotes other people's words, and a line of them
+                // that looks like a modeline must not set options here,
+                // whatever the vimrc says about modelines.
+                "--cmd", Self.noModelines,
+                "-c", Self.loadPlugin,
+                // Whatever follows is a file, even if it were to start with
+                // a dash or a plus.
+                "--",
+                draft.path,
+            ]
+        case .nano:
+            // Pico's "tool mode", for an editor run by another program:
+            // leaving saves the draft without asking, and the file is never
+            // written under another name. The path is absolute, so it
+            // never reads as an option.
+            arguments = [Self.picoToolMode, Self.startAt(draft.line), draft.path]
+        }
         var environment: [String: String] = [:]
         for name in Self.inherited {
             environment[name] = base[name]
@@ -136,11 +159,13 @@ public struct VimLaunch: Equatable, Sendable {
         environment["HOME"] = home
         environment["TMPDIR"] = temporaryDirectory
         environment["SHELL"] = Self.noShell
-        // Vim knows where its own files are, so `VIM` and `VIMRUNTIME` are
-        // left for it to work out. Only the plugin is Quill's.
-        environment["QUILL_VIM_PLUGIN"] = system.plugin.path
-        // The plugin reads the draft's folder from here.
-        environment["QUILL_DRAFT_DIR"] = draft.dir
+        if let plugin = system.plugin {
+            // Vim knows where its own files are, so `VIM` and `VIMRUNTIME`
+            // are left for it to work out. Only the plugin is Quill's, and
+            // it reads the draft's folder from here.
+            environment["QUILL_VIM_PLUGIN"] = plugin.path
+            environment["QUILL_DRAFT_DIR"] = draft.dir
+        }
         self.environment = environment
     }
 

@@ -746,7 +746,7 @@ impl Registry {
                 spec(
                     ComposeVim,
                     "compose.vim",
-                    "Write in Vim",
+                    "Write in Another Editor",
                     Message,
                     Some(Menu::Message),
                     COMPOSE,
@@ -979,7 +979,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         hint(&[FocusNext], "next field"),
         hint(&[NavBack], "close"),
         // Last: the first to give way in a narrow window.
-        hint_while_enabled(&[ComposeVim], "Vim"),
+        hint_while_enabled(&[ComposeVim], "another editor"),
     ];
     match context {
         Context::Compose => COMPOSING,
@@ -1020,7 +1020,9 @@ pub fn hints_in_vim() -> &'static [Hint] {
         },
         Hint {
             commands: &[NavBack],
-            label: "close Vim",
+            // Shown as "close Vim", "close nano" and so on: the bottom
+            // bar names the editor that has the message.
+            label: "close the editor",
             only_enabled: true,
         },
     ];

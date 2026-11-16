@@ -514,38 +514,47 @@ public struct SpellSuggested: Equatable, Sendable, Codable {
     static let allowedKeys: Set<String> = ["id", "words"]
 }
 
-/// Which Vim the shell is to run. The core says which of the two; it never
+/// Which editor the shell is to run. The core says which of these; it never
 /// names a program by its path.
-public enum EditorVim: String, Equatable, Sendable, Codable {
-    /// The one that comes with macOS. The app has none of its own inside
-    /// it.
-    case system
-    /// The user's own, by way of the script they keep in the app's scripts
-    /// folder, which they have asked for in their config.
+public enum EditorKind: String, Equatable, Sendable, Codable, CaseIterable {
+    /// The Vim that comes with macOS.
+    case vim
+    /// The nano that comes with macOS, which is Pico.
+    case nano
+    /// The user's own Vim, by way of the script they keep in the app's
+    /// scripts folder, which they have asked for in their config.
     case script
 }
 
-/// A draft file for Vim to edit, and the draft's own folder, where Vim and
-/// the core leave each other notes. The shell passes the folder to Vim in
-/// the environment and does nothing else with it.
+/// A draft file for an editor to edit, and the draft's own folder, where Vim
+/// and the core leave each other notes. The shell passes the folder to Vim
+/// in the environment and does nothing else with it.
 public struct PaneEditor: Equatable, Sendable, Codable {
     /// The draft file.
     public let path: String
     /// The draft's own folder.
     public let dir: String
     public let title: String
-    public let vim: EditorVim
+    public let editor: EditorKind
+    /// The line of the file the message's body starts on, counting from 1:
+    /// where an editor that has no plugin of Quill's is started.
+    public let line: Int
 
-    /// `nil` unless both paths are absolute.
-    public init?(path: String, dir: String, title: String, vim: EditorVim = .system) {
-        guard path.hasPrefix("/"), dir.hasPrefix("/") else { return nil }
+    /// The lines a draft may be said to start its body on.
+    public static let lines = 1...1_000_000
+
+    /// `nil` unless both paths are absolute and the line is one there can
+    /// be.
+    public init?(path: String, dir: String, title: String, editor: EditorKind = .vim, line: Int = 1) {
+        guard path.hasPrefix("/"), dir.hasPrefix("/"), Self.lines.contains(line) else { return nil }
         self.path = path
         self.dir = dir
         self.title = title
-        self.vim = vim
+        self.editor = editor
+        self.line = line
     }
 
-    static let allowedKeys: Set<String> = ["path", "dir", "title", "vim"]
+    static let allowedKeys: Set<String> = ["path", "dir", "title", "editor", "line"]
 }
 
 /// How the editor ended.

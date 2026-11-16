@@ -1,0 +1,11 @@
+{
+  "jsonrpc": "2.0",
+  "method": "pane.editor",
+  "params": {
+    "path": "/tmp/quill-edit-1/message.quill",
+    "dir": "/tmp/quill-edit-1",
+    "title": "x",
+    "editor": "nano",
+    "line": 0
+  }
+}

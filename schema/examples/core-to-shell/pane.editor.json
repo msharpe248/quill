@@ -5,6 +5,7 @@
     "path": "/Users/robin/Library/Containers/dev.quill.Quill/Data/tmp/quill-edit-812/message.quill",
     "dir": "/Users/robin/Library/Containers/dev.quill.Quill/Data/tmp/quill-edit-812",
     "title": "Re: Q4 roadmap",
-    "vim": "system"
+    "editor": "vim",
+    "line": 7
   }
 }

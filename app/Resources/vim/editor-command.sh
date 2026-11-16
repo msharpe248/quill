@@ -1,6 +1,6 @@
 #!/bin/sh
 # Quill runs this script when a message is to be written in your own Vim:
-# `vim = "script"` under [compose] in Quill's config.
+# `editor = "script"` under [compose] in Quill's config.
 #
 # macOS runs it outside Quill's sandbox, as you. The Vim it starts is the one
 # you use in a terminal, with your vimrc and your plugins, and it appears in

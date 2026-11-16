@@ -110,8 +110,6 @@ pub enum KeymapPreset {
 #[serde(default, deny_unknown_fields)]
 pub struct ComposeConfig {
     pub editor: ComposeEditor,
-    /// Which Vim Quill's own app runs. A terminal runs the user's own.
-    pub vim: ComposeVim,
     pub format: ComposeFormat,
     pub reply_position: ReplyPosition,
     pub spell_check: bool,
@@ -122,7 +120,6 @@ impl Default for ComposeConfig {
     fn default() -> Self {
         Self {
             editor: ComposeEditor::Builtin,
-            vim: ComposeVim::System,
             format: ComposeFormat::Markdown,
             reply_position: ReplyPosition::Above,
             spell_check: true,
@@ -131,27 +128,33 @@ impl Default for ComposeConfig {
     }
 }
 
+/// What a message is written in.
+///
+/// Quill's own editor, or one outside it. In a terminal an outside editor
+/// is the user's own, found on their `PATH`. Quill's app is sandboxed and
+/// has none inside it: there the editors are the ones that come with
+/// macOS, each named here by a word and never by a path, or the user's own
+/// by way of a script of theirs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ComposeEditor {
+    /// Quill's own.
     #[default]
     Builtin,
+    /// Vim: `/usr/bin/vim` in the app, `vim` in a terminal.
     Vim,
-}
-
-/// The Vim that Quill's own app writes a message in. The app has none of
-/// its own inside it: it is one of these two.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ComposeVim {
-    /// The one that comes with macOS, `/usr/bin/vim`, run inside the
-    /// app's sandbox.
-    #[default]
-    System,
+    /// nano. On a Mac that is Pico under another name.
+    Nano,
+    /// Pico.
+    Pico,
+    /// mg, a small Emacs. In a terminal only: the one that comes with
+    /// macOS does not survive being started inside the app's sandbox.
+    Mg,
     /// The user's own Vim, with all of their own setup, by way of a
     /// script they have put in the app's scripts folder
     /// (`editor-command.sh`). macOS runs that script outside the app's
-    /// sandbox; it is the user's and not Quill's.
+    /// sandbox; it is the user's and not Quill's. In a terminal this is
+    /// the same as `vim`: there the user's own Vim needs no script.
     Script,
 }
 
@@ -515,9 +518,9 @@ font = "JetBrains Mono"
 font_size = 13
 
 [compose]
-editor = "builtin"        # or "vim"
-vim = "system"            # in the app: the Vim that comes with macOS; or "script",
-                          # your own, through editor-command.sh
+editor = "builtin"        # or one that comes with macOS: "vim", "nano", "pico"
+                          # ("mg" too, in a terminal); or "script", your own Vim
+                          # through editor-command.sh
 format = "markdown"       # or "plain"
 reply_position = "above"  # or "below"
 spell_check = true

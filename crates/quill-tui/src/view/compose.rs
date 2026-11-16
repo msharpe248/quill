@@ -16,6 +16,7 @@ use crate::layout;
 use crate::state::{Env, State};
 use crate::text;
 use crate::theme::Styles;
+use crate::vim::ExternalEditor;
 
 /// The width of the longest label and its gap: `Subject: `.
 const LABEL_WIDTH: usize = 9;
@@ -300,10 +301,12 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
 fn in_vim(frame: &mut Frame, inner: Rect, away: Away, env: &Env) {
     let styles = &env.styles;
     let width = usize::from(inner.width);
-    let said: &[(&str, bool)] = match away {
-        Away::Leaving => &[("Handing this message to Vim…", false)],
-        Away::Returning => &[("Reading back what was written in Vim…", false)],
-        Away::InVim => &[
+    let editor = env.external;
+    let name = editor.name();
+    let said: Vec<(String, bool)> = match away {
+        Away::Leaving => vec![(format!("Handing this message to {name}…"), false)],
+        Away::Returning => vec![(format!("Reading back what was written in {name}…"), false)],
+        Away::InVim if editor.is_vim() => [
             ("This message is being written in Vim.", false),
             ("", true),
             (":QuillSend sends it.", true),
@@ -314,10 +317,30 @@ fn in_vim(frame: &mut Frame, inner: Rect, away: Away, env: &Env) {
                 true,
             ),
             (":cq leaves it as it was before Vim.", true),
+        ]
+        .into_iter()
+        .map(|(words, dim)| (words.to_owned(), dim))
+        .collect(),
+        // An editor with none of Quill's commands in it: the message
+        // comes back when it has been saved and the editor has gone.
+        Away::InVim => vec![
+            (format!("This message is being written in {name}."), false),
+            (String::new(), true),
+            (
+                match editor {
+                    ExternalEditor::Mg => {
+                        "ctrl-x ctrl-s saves it, and ctrl-x ctrl-c then brings it back here, \
+                         to send, to save or to close."
+                    }
+                    _ => "ctrl-x saves it and brings it back here, to send, to save or to close.",
+                }
+                .to_owned(),
+                true,
+            ),
         ],
     };
     let mut y = inner.y;
-    for (words, dim) in said {
+    for (words, dim) in &said {
         let lines = if words.is_empty() {
             vec![String::new()]
         } else {

@@ -44,7 +44,7 @@ import Notifications
 /// The editor pane is the real one, running the Vim that comes with macOS
 /// inside the sandbox, and it reaches nothing outside the window. One case
 /// does reach outside: a config
-/// that says `vim = "script"` has the user's own `editor-command.sh` run,
+/// that says `editor = "script"` has the user's own `editor-command.sh` run,
 /// outside the sandbox, as it would be for them. A scripted run only does
 /// that when the config it is pointed at asks for it.
 ///

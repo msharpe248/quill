@@ -9,12 +9,12 @@ use std::path::Path;
 
 use jiff::tz::TimeZone;
 use quill_core::config::Config;
-use quill_core::config::{ComposeEditor, ComposeFormat, ComposeVim, ReplyPosition};
-use quill_host::bridge::EditorVim;
+use quill_core::config::{ComposeEditor, ComposeFormat, ReplyPosition};
 use quill_tui::command::Registry;
 use quill_tui::keymap::Keymap;
 use quill_tui::state::{ComposeSettings, Env, Identity, Notice};
 use quill_tui::theme::{ColorMode, Styles, Theme};
+use quill_tui::vim::ExternalEditor;
 
 mod templates;
 
@@ -83,7 +83,7 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
             reply_above: config.compose.reply_position == ReplyPosition::Above,
             undo_send_seconds: config.compose.undo_send_seconds,
             spell_check: config.compose.spell_check,
-            vim: config.compose.editor == ComposeEditor::Vim,
+            vim: config.compose.editor != ComposeEditor::Builtin,
         },
         identities: config
             .accounts
@@ -113,9 +113,14 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
         editor_pane: false,
         // Asked for in the config, and meant only where there is a pane:
         // a terminal runs the user's own Vim whatever this says.
-        app_vim: match config.compose.vim {
-            ComposeVim::System => EditorVim::System,
-            ComposeVim::Script => EditorVim::Script,
+        // With Quill's own editor as the usual one, the editor a message
+        // can still be handed to is Vim.
+        external: match config.compose.editor {
+            ComposeEditor::Builtin | ComposeEditor::Vim => ExternalEditor::Vim,
+            ComposeEditor::Nano => ExternalEditor::Nano,
+            ComposeEditor::Pico => ExternalEditor::Pico,
+            ComposeEditor::Mg => ExternalEditor::Mg,
+            ComposeEditor::Script => ExternalEditor::Script,
         },
         vim_program: None,
         hooks,
@@ -386,47 +391,53 @@ mod tests {
     }
 
     #[test]
-    fn the_config_says_whether_messages_are_written_in_vim() {
+    fn the_config_says_what_messages_are_written_in() {
         let dir = TempDir::new().unwrap();
-        assert!(!load_from(&dir).env.compose.vim);
-        write(&dir, "config.toml", "[compose]\neditor = \"vim\"\n");
+        // With nothing said: Quill's own editor, and Vim for a message
+        // that is handed over all the same.
         let loaded = load_from(&dir);
-        assert!(loaded.notices.is_empty(), "{:?}", loaded.notices);
-        assert!(loaded.env.compose.vim);
-        write(&dir, "config.toml", "[compose]\neditor = \"builtin\"\n");
-        assert!(!load_from(&dir).env.compose.vim);
-    }
-
-    #[test]
-    fn the_config_says_which_vim_the_app_runs() {
-        let dir = TempDir::new().unwrap();
-        // With nothing said it is the one every Mac has.
-        assert_eq!(load_from(&dir).env.app_vim, EditorVim::System);
-        write(&dir, "config.toml", "[compose]\nvim = \"system\"\n");
-        let loaded = load_from(&dir);
-        assert!(loaded.notices.is_empty(), "{:?}", loaded.notices);
-        assert_eq!(loaded.env.app_vim, EditorVim::System);
-        // Asking for Vim and saying which are separate things.
         assert!(!loaded.env.compose.vim);
-        write(&dir, "config.toml", "[compose]\nvim = \"script\"\n");
+        assert_eq!(loaded.env.external, ExternalEditor::Vim);
+        for (word, editor) in [
+            ("vim", ExternalEditor::Vim),
+            ("nano", ExternalEditor::Nano),
+            ("pico", ExternalEditor::Pico),
+            ("mg", ExternalEditor::Mg),
+            ("script", ExternalEditor::Script),
+        ] {
+            write(
+                &dir,
+                "config.toml",
+                &format!("[compose]\neditor = \"{word}\"\n"),
+            );
+            let loaded = load_from(&dir);
+            assert!(loaded.notices.is_empty(), "{word}: {:?}", loaded.notices);
+            // Every message goes there as it opens.
+            assert!(loaded.env.compose.vim, "{word}");
+            assert_eq!(loaded.env.external, editor, "{word}");
+        }
+        write(&dir, "config.toml", "[compose]\neditor = \"builtin\"\n");
         let loaded = load_from(&dir);
         assert!(loaded.notices.is_empty(), "{:?}", loaded.notices);
-        assert_eq!(loaded.env.app_vim, EditorVim::Script);
-        // It is one of two words, never a program: a path is a mistake in
-        // the config, said as one, and not a Vim to run. So is the Vim
-        // that used to be built into the app, which no longer is.
-        write(&dir, "config.toml", "[compose]\nvim = \"bundled\"\n");
-        let loaded = load_from(&dir);
-        assert_eq!(loaded.env.app_vim, EditorVim::System);
-        assert!(!loaded.notices.is_empty());
-        write(
-            &dir,
-            "config.toml",
-            "[compose]\nvim = \"/opt/homebrew/bin/nvim\"\n",
-        );
-        let loaded = load_from(&dir);
-        assert_eq!(loaded.env.app_vim, EditorVim::System);
-        assert!(!loaded.notices.is_empty());
+        assert!(!loaded.env.compose.vim);
+        assert_eq!(loaded.env.external, ExternalEditor::Vim);
+        // It is one of those words, never a program: a path is a mistake
+        // in the config, said as one, and not an editor to run. So are an
+        // editor macOS does not come with, and the settings this one
+        // replaced.
+        for mistaken in [
+            "editor = \"/opt/homebrew/bin/nvim\"",
+            "editor = \"emacs\"",
+            "editor = \"bundled\"",
+            "vim = \"system\"",
+            "vim = \"script\"",
+        ] {
+            write(&dir, "config.toml", &format!("[compose]\n{mistaken}\n"));
+            let loaded = load_from(&dir);
+            assert!(!loaded.notices.is_empty(), "{mistaken}");
+            assert!(!loaded.env.compose.vim, "{mistaken}");
+            assert_eq!(loaded.env.external, ExternalEditor::Vim, "{mistaken}");
+        }
     }
 
     #[test]

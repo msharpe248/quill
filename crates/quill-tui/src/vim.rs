@@ -82,6 +82,20 @@ pub struct HandedOut {
     pub dir: PathBuf,
     /// The draft file in it.
     pub path: PathBuf,
+    /// The line of the file the body starts on, counting from 1: where an
+    /// editor that knows nothing of the file's shape should put the
+    /// cursor, past the header fields.
+    pub body_line: u32,
+}
+
+/// The line the body of a draft file starts on, counting from 1: the one
+/// after the first empty line. The first line, if there is no empty one.
+pub fn body_line(draft: &str) -> u32 {
+    draft
+        .lines()
+        .position(str::is_empty)
+        .and_then(|blank| u32::try_from(blank + 2).ok())
+        .unwrap_or(1)
 }
 
 /// Makes a folder for one edit and writes the draft into it: the draft
@@ -139,8 +153,10 @@ pub fn hand_out(
         .collect();
 
     let path = dir.join(DRAFT_FILE);
+    let draft = draft_file::write(content, &from);
+    let body_line = body_line(&draft);
     let written = (|| {
-        write_own(&path, draft_file::write(content, &from).as_bytes())?;
+        write_own(&path, draft.as_bytes())?;
         write_own(&dir.join(CONTACTS_FILE), contacts.as_bytes())?;
         if plugin {
             write_own(&dir.join(PLUGIN_FILE), PLUGIN.as_bytes())?;
@@ -148,7 +164,11 @@ pub fn hand_out(
         Ok(())
     })();
     match written {
-        Ok(()) => Ok(HandedOut { dir, path }),
+        Ok(()) => Ok(HandedOut {
+            dir,
+            path,
+            body_line,
+        }),
         Err(err) => {
             let _ = fs::remove_dir_all(&dir);
             Err(cannot(err))
@@ -270,21 +290,110 @@ const SOURCE_PLUGIN: &str = "execute 'source' fnameescape($QUILL_DRAFT_DIR . '/q
 /// The variable that tells the plugin where the draft's folder is.
 pub const DIR_VARIABLE: &str = "QUILL_DRAFT_DIR";
 
-/// How a terminal's Vim is started on a draft: the user's own Vim, with
-/// their own vimrc and environment, in the draft's folder. An argv, never
-/// a line for a shell.
-pub fn command(program: &Path, path: &Path, dir: &Path) -> std::process::Command {
+/// The editor outside Quill that a message is written in, when it is not
+/// written in Quill's own. Most of this file is about Vim, which has
+/// Quill's plugin to talk through; the others are given the draft file
+/// and nothing more, and the message comes back when they have saved it
+/// and gone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExternalEditor {
+    #[default]
+    Vim,
+    Nano,
+    Pico,
+    Mg,
+    /// The user's own Vim. Quill's app reaches it through a script of
+    /// theirs; in a terminal it is simply their Vim.
+    Script,
+}
+
+impl ExternalEditor {
+    /// What it is called, to the user.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Vim | Self::Script => "Vim",
+            Self::Nano => "nano",
+            Self::Pico => "Pico",
+            Self::Mg => "mg",
+        }
+    }
+
+    /// What closing it from Quill is called, in the bottom bar.
+    pub fn close_hint(self) -> &'static str {
+        match self {
+            Self::Vim | Self::Script => "close Vim",
+            Self::Nano => "close nano",
+            Self::Pico => "close Pico",
+            Self::Mg => "close mg",
+        }
+    }
+
+    /// Whether it is a Vim, with Quill's plugin loaded: `:QuillSend` and
+    /// the rest, and Send and Save reaching it from Quill.
+    pub fn is_vim(self) -> bool {
+        matches!(self, Self::Vim | Self::Script)
+    }
+
+    /// The program a terminal runs, by the name it has on a `PATH`.
+    pub fn program(self) -> &'static str {
+        match self {
+            Self::Vim | Self::Script => PROGRAM,
+            Self::Nano => "nano",
+            Self::Pico => "pico",
+            Self::Mg => "mg",
+        }
+    }
+
+    /// Which of the editors Quill's app can run this is, if it is one.
+    /// On a Mac nano is Pico, so the app has one word for both. mg is not
+    /// one: the mg that comes with macOS crashes as it starts inside the
+    /// app's sandbox, so the app is never asked for it.
+    pub fn in_the_app(self) -> Option<quill_host::bridge::EditorKind> {
+        use quill_host::bridge::EditorKind;
+        match self {
+            Self::Vim => Some(EditorKind::Vim),
+            Self::Nano | Self::Pico => Some(EditorKind::Nano),
+            Self::Mg => None,
+            Self::Script => Some(EditorKind::Script),
+        }
+    }
+}
+
+/// How a terminal's editor is started on a draft: the user's own, with
+/// their own settings and environment, in the draft's folder. An argv,
+/// never a line for a shell.
+pub fn command(
+    editor: ExternalEditor,
+    program: &Path,
+    path: &Path,
+    dir: &Path,
+    body_line: u32,
+) -> std::process::Command {
     let mut command = std::process::Command::new(program);
-    command
-        .arg("-N")
-        .arg("--cmd")
-        .arg(NO_MODELINES)
-        .arg("-c")
-        .arg(SOURCE_PLUGIN)
-        .arg("--")
-        .arg(path)
-        .env(DIR_VARIABLE, dir)
-        .current_dir(dir);
+    match editor {
+        ExternalEditor::Vim | ExternalEditor::Script => {
+            command
+                .arg("-N")
+                .arg("--cmd")
+                .arg(NO_MODELINES)
+                .arg("-c")
+                .arg(SOURCE_PLUGIN)
+                .arg("--");
+        }
+        // Save on leaving, without asking: the draft is the one file this
+        // run is for. Pico and nano both call that -t. They know nothing
+        // of the file's shape, so the cursor is put where the body starts,
+        // past the header fields: Vim's plugin does that for Vim.
+        ExternalEditor::Nano | ExternalEditor::Pico => {
+            command.arg("-t").arg(format!("+{body_line}"));
+        }
+        // No backup copy of the draft left beside it.
+        ExternalEditor::Mg => {
+            command.arg("-n").arg(format!("+{body_line}"));
+        }
+    }
+    // The draft's path is absolute, so it never reads as an option.
+    command.arg(path).env(DIR_VARIABLE, dir).current_dir(dir);
     command
 }
 
@@ -310,12 +419,14 @@ pub fn find_program(name: &OsStr, search: Option<&OsStr>) -> Option<PathBuf> {
         .find(|candidate| runnable(candidate))
 }
 
-/// The program to run as Vim: the one named, or `vim`.
-pub fn program_name(named: Option<&OsString>) -> &OsStr {
+/// The program a terminal runs as `editor`: for Vim the one named
+/// (`QUILL_VIM`) or `vim`; for the others, the name they go by.
+pub fn program_name(editor: ExternalEditor, named: Option<&OsString>) -> &OsStr {
     named
+        .filter(|_| editor.is_vim())
         .map(OsString::as_os_str)
         .filter(|name| !name.is_empty())
-        .unwrap_or(OsStr::new(PROGRAM))
+        .unwrap_or(OsStr::new(editor.program()))
 }
 
 #[cfg(test)]
@@ -586,10 +697,17 @@ mod tests {
 
     #[test]
     fn a_terminals_vim_is_started_with_an_argv_and_the_folder_in_its_environment() {
+        assert_eq!(body_line("From: a\nTo: b\nSubject: c\n\nHello\n"), 5);
+        assert_eq!(body_line("From: a\n\n\nHello\n"), 3);
+        assert_eq!(body_line("\nHello\n"), 2);
+        assert_eq!(body_line("no empty line at all\n"), 1);
+        assert_eq!(body_line(""), 1);
         let command = command(
+            ExternalEditor::Vim,
             Path::new("/usr/bin/vim"),
             Path::new("/tmp/view/edit-1/message.quill"),
             Path::new("/tmp/view/edit-1"),
+            7,
         );
         assert_eq!(command.get_program(), "/usr/bin/vim");
         let arguments: Vec<&OsStr> = command.get_args().collect();
@@ -649,10 +767,13 @@ mod tests {
         );
         assert_eq!(find_program(text.as_os_str(), None), None);
 
-        assert_eq!(program_name(None), "vim");
-        assert_eq!(program_name(Some(&OsString::new())), "vim");
+        assert_eq!(program_name(ExternalEditor::Vim, None), "vim");
         assert_eq!(
-            program_name(Some(&OsString::from("/opt/nvim"))),
+            program_name(ExternalEditor::Vim, Some(&OsString::new())),
+            "vim"
+        );
+        assert_eq!(
+            program_name(ExternalEditor::Script, Some(&OsString::from("/opt/nvim"))),
             "/opt/nvim"
         );
     }

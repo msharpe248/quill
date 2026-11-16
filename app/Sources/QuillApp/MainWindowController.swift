@@ -759,39 +759,39 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     /// asked for that. The core is always answered: now, when nothing is
     /// started, and otherwise when Vim ends.
     private func openEditor(_ request: PaneEditor) {
-        var vim: VimToRun?
+        var found: EditorToRun?
         if !editorSlot.isRunning {
             do {
                 // The one place macOS keeps its own, or the one script in
                 // the one folder that is the user's to fill, and nowhere
                 // else.
-                vim = try VimToRun(
-                    request.vim, inBundle: Bundle.main.bundleURL, scriptsFolder: editorScriptFolder)
+                found = try EditorToRun(
+                    request.editor, inBundle: Bundle.main.bundleURL, scriptsFolder: editorScriptFolder)
             } catch {
                 NSLog("Quill: there is no Vim to run: %@", String(describing: error))
             }
         }
-        switch editorSlot.request(title: request.title, available: vim != nil) {
+        switch editorSlot.request(title: request.title, available: found != nil) {
         case let .refuse(answer):
             if editorSlot.isRunning {
                 NSLog("Quill: an editor was asked for while one is running; the second was not started")
             }
             bridge?.send(.editorExited(answer))
         case .start:
-            guard let vim else {
-                // Not reached: a start is only answered when there is a Vim.
+            guard let found else {
+                // Not reached: a start is only answered when there is one.
                 if let answer = editorSlot.ended(.failedToStart) {
                     bridge?.send(.editorExited(answer))
                 }
                 return
             }
-            startEditor(vim, on: request)
+            startEditor(found, on: request)
         }
     }
 
-    private func startEditor(_ vim: VimToRun, on request: PaneEditor) {
-        let launch = VimLaunch(
-            vim: vim,
+    private func startEditor(_ found: EditorToRun, on request: PaneEditor) {
+        let launch = EditorLaunch(
+            editor: found,
             draft: request,
             vimrc: vimrc.current,
             term: CoreLocator.term,
@@ -802,7 +802,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         )
         let terminal = makeTerminalSurface()
         let running = RunningEditor(
-            surface: terminal, pane: EditorPane(title: request.title, terminal: terminal.view))
+            surface: terminal, pane: EditorPane(title: request.title, terminal: terminal.view), kind: found.kind)
         editor = running
         terminal.onExit = { [weak self, weak running] exit in
             guard let self, let running else { return }
@@ -863,14 +863,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         guard let running = editor, !running.isStopping else { return }
         running.isStopping = true
         running.pane.setClosing()
-        running.surface.sendKeys(PoliteStop.leaveMode)
+        running.surface.sendKeys(PoliteStop.leaveMode(for: running.kind))
         Task { [weak self, weak running] in
             try? await Task.sleep(for: .seconds(PoliteStop.pause))
             guard let self, let running, editor === running else { return }
-            running.surface.sendKeys(PoliteStop.saveAndQuit)
+            running.surface.sendKeys(PoliteStop.saveAndQuit(for: running.kind))
             try? await Task.sleep(for: .seconds(PoliteStop.patience))
             guard editor === running else { return }
-            NSLog("Quill: Vim did not leave when asked, and was hung up on")
+            NSLog("Quill: the editor did not leave when asked, and was hung up on")
             running.surface.terminate()
             try? await Task.sleep(for: .seconds(PoliteStop.lastResort))
             guard editor === running else { return }
@@ -1047,11 +1047,14 @@ extension MainWindowController: NSMenuItemValidation {
 private final class RunningEditor {
     let surface: any TerminalSurface
     let pane: EditorPane
-    /// Vim has been asked to save and leave.
+    /// Which editor it is: each is asked to leave in its own keys.
+    let kind: EditorKind
+    /// The editor has been asked to save and leave.
     var isStopping = false
 
-    init(surface: any TerminalSurface, pane: EditorPane) {
+    init(surface: any TerminalSurface, pane: EditorPane, kind: EditorKind) {
         self.surface = surface
         self.pane = pane
+        self.kind = kind
     }
 }

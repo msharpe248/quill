@@ -166,14 +166,22 @@ pub trait Host: Send + Sync {
         false
     }
 
-    /// Runs the host's own Vim on a draft file, in a pane of its own, if
-    /// this host has one. `dir` is the draft's folder, where the editor
-    /// and the core leave each other notes. Returns whether the host took
-    /// it on: when not, the caller runs an editor itself. `vim`
-    /// says which Vim, of those the host can run.
-    /// The answer is [`HostEvent::EditorExited`].
-    fn edit_draft(&self, path: &Path, dir: &Path, title: &str, vim: bridge::EditorVim) -> bool {
-        let _ = (path, dir, title, vim);
+    /// Runs an editor on a draft file, in a pane of its own, if this host
+    /// has one. `dir` is the draft's folder, where the editor and the core
+    /// leave each other notes. Returns whether the host took it on: when
+    /// not, the caller runs an editor itself. `editor` says which, of
+    /// those the host can run, and `body_line` the line of the file its
+    /// body starts on, for an editor that is to start there. The answer is
+    /// [`HostEvent::EditorExited`].
+    fn edit_draft(
+        &self,
+        path: &Path,
+        dir: &Path,
+        title: &str,
+        editor: bridge::EditorKind,
+        body_line: u32,
+    ) -> bool {
+        let _ = (path, dir, title, editor, body_line);
         false
     }
 

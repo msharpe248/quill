@@ -46,7 +46,7 @@ struct UserEditorScriptTests {
         let script = try UserEditorScript(inScriptsFolder: folder, bundle: bundle)
         #expect(script.script.path == folder.path + "/editor-command.sh")
         #expect(script.helper.path == bundle.path + "/Contents/Resources/vim/on-terminal")
-        #expect(try VimToRun(.script, inBundle: bundle, scriptsFolder: folder) == .script(script))
+        #expect(try EditorToRun(.script, inBundle: bundle, scriptsFolder: folder) == .script(script))
     }
 
     @Test func noScriptAFolderOrAFileThatMayNotBeRunIsRefused() throws {
@@ -73,7 +73,7 @@ struct UserEditorScriptTests {
         }
         // And with nowhere to look there is nothing to find.
         #expect(throws: UserEditorScript.Problem.self) {
-            try VimToRun(.script, inBundle: bundle, scriptsFolder: nil)
+            try EditorToRun(.script, inBundle: bundle, scriptsFolder: nil)
         }
     }
 
@@ -99,9 +99,9 @@ struct UserEditorScriptTests {
         try scratch.write("#!/bin/sh\n", to: "scripts/editor-command.sh", permissions: 0o755)
         let script = try UserEditorScript(inScriptsFolder: folder, bundle: bundle)
         let dir = "/Users/robin/Library/Containers/dev.quill.Quill/Data/tmp/quill-view-1/it's \"edit\" 1"
-        let launch = VimLaunch(
-            vim: .script(script),
-            draft: try #require(PaneEditor(path: dir + "/message.quill", dir: dir, title: "Lunch", vim: .script)),
+        let launch = EditorLaunch(
+            editor: .script(script),
+            draft: try #require(PaneEditor(path: dir + "/message.quill", dir: dir, title: "Lunch", editor: .script)),
             // An imported vimrc is for a Vim inside the sandbox. This one
             // reads the user's own.
             vimrc: URL(fileURLWithPath: "/Users/robin/Library/Containers/dev.quill.Quill/Data/vim/vimrc"),
@@ -131,8 +131,8 @@ struct UserEditorScriptTests {
         // The Mac's own Vim is not run that way.
         let system = try scratch.systemVim(inBundle: bundle)
         #expect(
-            !VimLaunch(
-                vim: .system(system), draft: try #require(PaneEditor(path: "/d/m", dir: "/d", title: "")),
+            !EditorLaunch(
+                editor: .system(system), draft: try #require(PaneEditor(path: "/d/m", dir: "/d", title: "")),
                 vimrc: nil, term: "x", home: "/h", temporaryDirectory: "/t", base: [:]
             ).userScript)
     }

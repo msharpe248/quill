@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 
 /// The user's own script for writing a message in their own Vim
-/// (`vim = "script"` under `[compose]`).
+/// (`editor = "script"` under `[compose]`).
 ///
 /// It lives in the app's scripts folder, `~/Library/Application
 /// Scripts/<the app's id>/`. That folder is how macOS lets a sandboxed app

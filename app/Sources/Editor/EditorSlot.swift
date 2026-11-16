@@ -104,26 +104,45 @@ public struct EditorSlot: Equatable, Sendable {
     }
 }
 
-/// Asking Vim to save and leave, as closing its pane does.
+/// Asking an editor to save and leave, as closing its pane does.
 ///
 /// Closing the pane must not lose what was written, and it is not a verdict
-/// on the message: nothing is written for Vim or the core to find. Vim is
-/// asked as a person at the keyboard would ask it, and is ended only if it
-/// does not go.
+/// on the message: nothing is written for the editor or the core to find.
+/// The editor is asked as a person at the keyboard would ask it, in its own
+/// keys, and is ended only if it does not go.
 public enum PoliteStop {
-    /// `esc`: out of insert mode, the command line or a half-typed command.
-    public static let leaveMode = "\u{1B}"
+    /// The key that gets an editor out of whatever it was in the middle of.
+    ///
+    /// - Vim: `esc`, out of insert mode, the command line or a half-typed
+    ///   command.
+    /// - nano (Pico): `ctrl-c`, which cancels a question it is asking and
+    ///   otherwise only says where the cursor is.
+    public static func leaveMode(for editor: EditorKind) -> String {
+        switch editor {
+        case .vim, .script: "\u{1B}"
+        case .nano: "\u{03}"
+        }
+    }
 
-    /// How long to leave `esc` on its own, in seconds, so that Vim does not
-    /// take it for the start of a longer key.
+    /// How long to leave that key on its own, in seconds, so that Vim does
+    /// not take `esc` for the start of a longer key.
     public static let pause = 0.2
 
-    /// `ctrl-\ ctrl-n`, which is normal mode from wherever `esc` left Vim,
-    /// then `:wqa` and return: write what has changed and quit.
-    public static let saveAndQuit = "\u{1C}\u{0E}:wqa\r"
+    /// The keys that write what has changed and quit.
+    ///
+    /// - Vim: `ctrl-\ ctrl-n`, which is normal mode from wherever `esc`
+    ///   left it, then `:wqa` and return.
+    /// - nano (Pico): `ctrl-x`. It was started in its tool mode, where
+    ///   leaving saves without asking.
+    public static func saveAndQuit(for editor: EditorKind) -> String {
+        switch editor {
+        case .vim, .script: "\u{1C}\u{0E}:wqa\r"
+        case .nano: "\u{18}"
+        }
+    }
 
-    /// How long Vim has to go after being asked, in seconds, before it is
-    /// hung up on.
+    /// How long the editor has to go after being asked, in seconds, before
+    /// it is hung up on.
     public static let patience = 2.0
 
     /// How long it then has, in seconds, before it is killed. The core is

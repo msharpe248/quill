@@ -82,9 +82,18 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
                 return None;
             }
             let keys = keys.join("/");
-            let piece = text::width(&keys) + 1 + text::width(hint.label) + 2;
+            // The editor a message can be handed to, and the way back
+            // from it, are called by that editor's name.
+            let label = if hint.commands == [CommandId::ComposeVim] {
+                env.external.name()
+            } else if in_vim && hint.commands == [CommandId::NavBack] {
+                env.external.close_hint()
+            } else {
+                hint.label
+            };
+            let piece = text::width(&keys) + 1 + text::width(label) + 2;
             let is_help = hint.commands.contains(&CommandId::HelpToggle);
-            Some((keys, hint.label, piece, is_help))
+            Some((keys, label, piece, is_help))
         })
         .collect();
     // The way to the full list of keys keeps its place however narrow the

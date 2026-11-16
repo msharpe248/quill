@@ -15,12 +15,12 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use common::Harness;
-use quill_host::bridge::EditorVim;
 use quill_store::{DraftState, Outgoing};
 use quill_tui::command::{CommandId, Context};
 use quill_tui::compose::Away;
 use quill_tui::editor::Editor;
 use quill_tui::state::{Action, HostRequest};
+use quill_tui::vim::ExternalEditor;
 
 /// Wide enough that nothing in the compose pane is cut short.
 fn wide() -> Harness {
@@ -106,7 +106,8 @@ fn the_message_goes_out_as_a_draft_file_and_vim_is_asked_to_run_on_it() {
             path: path.clone(),
             dir: dir.clone(),
             title: "Lunch".to_owned(),
-            vim: EditorVim::System,
+            editor: ExternalEditor::Vim,
+            body_line: 7,
         }]
     );
     assert_eq!(path, dir.join("message.quill"));
@@ -163,11 +164,17 @@ fn quills_own_app_has_the_plugin_already() {
 }
 
 #[test]
-fn quills_own_app_is_asked_for_the_vim_the_config_names() {
-    for vim in [EditorVim::System, EditorVim::Script] {
+fn quills_own_app_is_asked_for_the_editor_the_config_names() {
+    for editor in [
+        ExternalEditor::Vim,
+        ExternalEditor::Nano,
+        ExternalEditor::Pico,
+        ExternalEditor::Mg,
+        ExternalEditor::Script,
+    ] {
         let mut harness = wide();
         harness.env.editor_pane = true;
-        harness.env.app_vim = vim;
+        harness.env.external = editor;
         let (path, dir) = in_vim(&mut harness);
         let asked: Vec<&HostRequest> = harness
             .host_requests
@@ -180,13 +187,44 @@ fn quills_own_app_is_asked_for_the_vim_the_config_names() {
                 path,
                 dir: dir.clone(),
                 title: "Lunch".to_owned(),
-                vim,
+                editor,
+                body_line: 7,
             }]
         );
         // The Vim the app starts itself finds the plugin in the app. The
         // user's own, run by their script, is given a copy beside the
-        // draft, as in a terminal.
-        assert_eq!(dir.join("quill.vim").exists(), vim == EditorVim::Script);
+        // draft, as in a terminal. No other editor has a use for one.
+        assert_eq!(
+            dir.join("quill.vim").exists(),
+            editor == ExternalEditor::Script
+        );
+        // The pane says where the message is and how it comes back, in
+        // that editor's own terms.
+        let screen = harness.screen();
+        assert!(
+            screen.contains(&format!("being written in {}.", editor.name())),
+            "{screen}"
+        );
+        assert_eq!(screen.contains(":QuillSend"), editor.is_vim(), "{screen}");
+        assert_eq!(
+            screen.contains("ctrl-x"),
+            !editor.is_vim(),
+            "{editor:?}: {screen}"
+        );
+        assert!(
+            status(&harness).contains(editor.close_hint()),
+            "{}",
+            status(&harness)
+        );
+        // Only a Vim can be asked from here to send or save: it has
+        // Quill's commands in it.
+        for id in [CommandId::ComposeSend, CommandId::ComposeSave] {
+            assert_eq!(
+                harness.state.is_enabled(&harness.env, id),
+                editor.is_vim(),
+                "{editor:?} {id:?}"
+            );
+        }
         // And the user is told what to do about it when there is none to
         // run.
         harness.act(Action::EditorExited {
@@ -196,14 +234,74 @@ fn quills_own_app_is_asked_for_the_vim_the_config_names() {
         assert_eq!(away(&harness), None);
         assert!(!dir.exists());
         let screen = harness.screen();
-        match vim {
-            EditorVim::System => assert!(
-                screen.contains("The Vim that comes with macOS could not be started"),
+        if editor == ExternalEditor::Script {
+            assert!(screen.contains("editor-command.sh"), "{screen}");
+            assert!(screen.contains("Show Editor Script Folder"), "{screen}");
+        } else if editor == ExternalEditor::Mg {
+            // The app cannot run this one at all, and says which it can.
+            assert!(
+                screen.contains("mg does not run inside Quill's app"),
                 "{screen}"
-            ),
-            EditorVim::Script => {
-                assert!(screen.contains("editor-command.sh"), "{screen}");
-                assert!(screen.contains("Show Editor Script Folder"), "{screen}");
+            );
+        } else {
+            assert!(
+                screen.contains(&format!(
+                    "The {} that comes with macOS could not be started",
+                    editor.name()
+                )),
+                "{screen}"
+            );
+        }
+    }
+}
+
+#[test]
+fn each_editor_is_one_the_app_can_run_and_a_program_a_terminal_can() {
+    use quill_host::bridge::EditorKind;
+    for (editor, in_the_app, program) in [
+        (ExternalEditor::Vim, Some(EditorKind::Vim), "vim"),
+        // On a Mac nano is Pico: one word for both in the app, and each
+        // by its own name in a terminal, where nano may be the real one.
+        (ExternalEditor::Nano, Some(EditorKind::Nano), "nano"),
+        (ExternalEditor::Pico, Some(EditorKind::Nano), "pico"),
+        // mg is a terminal's alone: the Mac's own does not survive the
+        // app's sandbox.
+        (ExternalEditor::Mg, None, "mg"),
+        // The script is how the app reaches the user's own Vim. A
+        // terminal needs none.
+        (ExternalEditor::Script, Some(EditorKind::Script), "vim"),
+    ] {
+        assert_eq!(editor.in_the_app(), in_the_app);
+        assert_eq!(editor.program(), program);
+        // QUILL_VIM names another Vim, and only a Vim.
+        let named = std::ffi::OsString::from("/opt/homebrew/bin/nvim");
+        let chosen = quill_tui::vim::program_name(editor, Some(&named));
+        if editor.is_vim() {
+            assert_eq!(chosen, "/opt/homebrew/bin/nvim");
+        } else {
+            assert_eq!(chosen, program);
+        }
+        // What it is started with: the draft last, whole, and for the
+        // editors that are not Vim one option and nothing else.
+        let command = quill_tui::vim::command(
+            editor,
+            Path::new("/usr/bin/x"),
+            Path::new("/d/it's 1/message.quill"),
+            Path::new("/d/it's 1"),
+            9,
+        );
+        let arguments: Vec<&std::ffi::OsStr> = command.get_args().collect();
+        assert_eq!(arguments.last().unwrap(), &"/d/it's 1/message.quill");
+        match editor {
+            ExternalEditor::Nano | ExternalEditor::Pico => {
+                assert_eq!(arguments, ["-t", "+9", "/d/it's 1/message.quill"]);
+            }
+            ExternalEditor::Mg => {
+                assert_eq!(arguments, ["-n", "+9", "/d/it's 1/message.quill"]);
+            }
+            ExternalEditor::Vim | ExternalEditor::Script => {
+                assert_eq!(arguments[0], "-N");
+                assert_eq!(arguments[arguments.len() - 2], "--");
             }
         }
     }
@@ -895,7 +993,7 @@ fn real_vim() -> Option<PathBuf> {
 /// no vimrc: the same argv from `quill_tui::vim::command`, with `-es`
 /// (no screen), `-u NONE -i NONE` and the commands in `then`.
 fn run_headless(vim: &Path, path: &Path, dir: &Path, then: &[&str]) -> i32 {
-    let started = quill_tui::vim::command(vim, path, dir);
+    let started = quill_tui::vim::command(ExternalEditor::Vim, vim, path, dir, 1);
     let mut command = Command::new(vim);
     command.args(["-es", "-u", "NONE", "-i", "NONE"]);
     // Everything Quill passes, up to the file: `--` ends the options.
@@ -1069,7 +1167,7 @@ fn send_from_outside_reaches_a_real_vim_through_the_command_file() {
 
     // Vim as a terminal gets it, with no vimrc, waiting for keys that
     // never come.
-    let started = quill_tui::vim::command(&vim, &path, &dir);
+    let started = quill_tui::vim::command(ExternalEditor::Vim, &vim, &path, &dir, 1);
     let mut command = Command::new(script);
     command.args(["-q", "/dev/null"]).arg(&vim);
     command.args(["-u", "NONE", "-i", "NONE"]);

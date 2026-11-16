@@ -9,7 +9,6 @@ use std::path::PathBuf;
 
 use jiff::tz::TimeZone;
 use quill_core::types::{FolderRole, LocalAccountId, LocalFolderId, LocalMessageId};
-use quill_host::bridge::EditorVim;
 use quill_mime::html::Line;
 use quill_mime::{BodyFormat, ReplyPosition};
 use quill_store::{AccountRow, DraftContent, DraftId, FolderRow, Mailbox, MessageRow};
@@ -35,7 +34,7 @@ use crate::setup::{
 };
 use crate::template::{self, Template};
 use crate::theme::Styles;
-use crate::vim::Verdict;
+use crate::vim::{ExternalEditor, Verdict};
 use crate::{text, view};
 pub use mouse::{Mouse, MouseKind};
 
@@ -99,9 +98,10 @@ pub struct Env {
     /// Quill's app does. In a terminal Quill runs the user's own Vim
     /// there, and gives it a copy of the plugin.
     pub editor_pane: bool,
-    /// Which Vim that pane is to run: the one that comes with macOS, or
-    /// the user's own by their script (`vim` under `[compose]`).
-    pub app_vim: EditorVim,
+    /// The editor outside Quill that a message is handed to: the one the
+    /// config names (`editor` under `[compose]`), and Vim when it names
+    /// Quill's own.
+    pub external: ExternalEditor,
     /// The program a terminal runs as Vim, when it is not to be `vim`.
     pub vim_program: Option<std::ffi::OsString>,
     /// The user's programs that a message can be given to, from
@@ -136,8 +136,9 @@ pub struct ComposeSettings {
     pub undo_send_seconds: u32,
     /// Check the spelling of what is written, where the host can.
     pub spell_check: bool,
-    /// A message is written in Vim from the start (`editor = "vim"`).
-    /// Otherwise only when asked for.
+    /// A message is written outside Quill from the start: the config
+    /// names an editor other than Quill's own. Otherwise only when asked
+    /// for.
     pub vim: bool,
 }
 
@@ -314,8 +315,9 @@ pub enum HostRequest {
         path: PathBuf,
         dir: PathBuf,
         title: String,
-        /// In Quill's app: which Vim.
-        vim: EditorVim,
+        editor: ExternalEditor,
+        /// The line of the file the body starts on, counting from 1.
+        body_line: u32,
     },
     /// Close the host's pane. With Vim in it, that is asking Vim to save
     /// and go.
@@ -1241,7 +1243,10 @@ impl State {
             {
                 // Vim has a message, and it is not put aside for another.
                 self.flash = Some((
-                    "A message is being written in Vim. Finish it first.".to_owned(),
+                    format!(
+                        "A message is being written in {}. Finish it first.",
+                        env.external.name()
+                    ),
                     false,
                 ));
             } else {
@@ -1872,10 +1877,17 @@ impl State {
                     .is_some_and(|row| DraftId::from_message_id(row.id).is_none())
             }
             // A message in Vim is sent and saved by asking Vim; while it
-            // is on its way there or back there is nobody to ask.
+            // is on its way there or back there is nobody to ask. An
+            // editor without Quill's plugin cannot be asked at all: the
+            // message is sent once it is back.
             CommandId::ComposeSend | CommandId::ComposeSave => {
                 self.compose.as_ref().is_some_and(|compose| {
-                    !compose.sending && matches!(compose.away, None | Some(Away::InVim))
+                    !compose.sending
+                        && match compose.away {
+                            None => true,
+                            Some(Away::InVim) => env.external.is_vim(),
+                            Some(_) => false,
+                        }
                 })
             }
             // Everything else about writing waits for it to come back.
@@ -2267,7 +2279,7 @@ impl State {
             // message comes back to be sent, saved or closed.
             if away == Away::InVim {
                 out.host.push(HostRequest::ClosePane);
-                self.flash = Some(("Asked Vim to save and close.".to_owned(), false));
+                self.flash = Some(("Asked the editor to save and close.".to_owned(), false));
             }
         } else if self.compose.is_some() {
             self.put_away(false, out);
@@ -2540,8 +2552,10 @@ impl State {
             content: Box::new(content.clone()),
             // The Vim the app starts itself is told where the plugin is
             // in the app; the user's own, in a terminal or by their
-            // script, is given a copy beside the draft.
-            plugin: !env.editor_pane || env.app_vim == EditorVim::Script,
+            // script, is given a copy beside the draft. No other editor
+            // has a use for it.
+            plugin: env.external.is_vim()
+                && (!env.editor_pane || env.external == ExternalEditor::Script),
         });
         self.vim = Some(VimEdit {
             handed: content,
@@ -2553,7 +2567,14 @@ impl State {
     }
 
     /// The draft file is written: have Vim run on it.
-    fn on_edit_ready(&mut self, env: &Env, dir: PathBuf, path: PathBuf, out: &mut Effects) {
+    fn on_edit_ready(
+        &mut self,
+        env: &Env,
+        dir: PathBuf,
+        path: PathBuf,
+        body_line: u32,
+        out: &mut Effects,
+    ) {
         match (&mut self.compose, &mut self.vim) {
             (Some(compose), Some(edit)) if compose.away == Some(Away::Leaving) => {
                 compose.away = Some(Away::InVim);
@@ -2568,7 +2589,8 @@ impl State {
                     path,
                     dir,
                     title,
-                    vim: env.app_vim,
+                    editor: env.external,
+                    body_line,
                 });
             }
             // The message it was for has gone.
@@ -2599,26 +2621,41 @@ impl State {
             compose.away = None;
             // Said in the message's own pane, where the next key clears
             // it: the message is still there to write.
-            compose.error = Some(
-                if env.editor_pane && env.app_vim == EditorVim::Script {
-                    "Quill found no editor-command.sh it can run, so the message stays \
-                     here. \"Show Editor Script Folder\" in the Quill menu shows where \
-                     it goes."
-                } else if env.editor_pane {
-                    "The Vim that comes with macOS could not be started, so the message \
-                     stays here."
-                } else {
-                    "Vim could not be started, so the message stays here. Quill runs \
-                     the `vim` on your PATH."
-                }
-                .to_owned(),
-            );
+            let editor = env.external;
+            compose.error = Some(if env.editor_pane && editor == ExternalEditor::Script {
+                "Quill found no editor-command.sh it can run, so the message stays \
+                 here. \"Show Editor Script Folder\" in the Quill menu shows where \
+                 it goes."
+                    .to_owned()
+            } else if env.editor_pane && editor.in_the_app().is_none() {
+                format!(
+                    "{} does not run inside Quill's app, so the message stays here. \
+                     In the app, `editor` can be vim, nano, pico or script.",
+                    editor.name()
+                )
+            } else if env.editor_pane {
+                format!(
+                    "The {} that comes with macOS could not be started, so the message \
+                     stays here.",
+                    editor.name()
+                )
+            } else {
+                format!(
+                    "{} could not be started, so the message stays here. Quill runs \
+                     the `{}` on your PATH.",
+                    editor.name(),
+                    editor.program()
+                )
+            });
             out.data.push(DataRequest::EditDrop { dir });
         } else if status != 0 {
             // `:cq`, or a crash: never mind. The message is as it was.
             compose.away = None;
             self.flash = Some((
-                "Vim quit without handing the message back: it is as it was.".to_owned(),
+                format!(
+                    "{} quit without handing the message back: it is as it was.",
+                    env.external.name()
+                ),
                 false,
             ));
             out.data.push(DataRequest::EditDrop { dir });
@@ -2696,7 +2733,7 @@ impl State {
             Some(Verdict::Discard) => self.discard_compose(out),
             // `:wq` with nothing said: the message is here, to send, to
             // save or to close.
-            None => self.flash = Some(("Back from Vim.".to_owned(), false)),
+            None => self.flash = Some((format!("Back from {}.", env.external.name()), false)),
         }
     }
 
@@ -4197,7 +4234,11 @@ impl State {
                     after.attach_failed = true;
                 }
             }
-            DataEvent::EditReady { dir, path } => self.on_edit_ready(env, dir, path, out),
+            DataEvent::EditReady {
+                dir,
+                path,
+                body_line,
+            } => self.on_edit_ready(env, dir, path, body_line, out),
             DataEvent::EditFailed(reason) => {
                 self.vim = None;
                 if let Some(compose) = &mut self.compose

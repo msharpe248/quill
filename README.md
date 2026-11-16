@@ -15,13 +15,13 @@ Every milestone in the spec, M0 to M10, is built. M0 to M4 and POP3 have passed 
 | M5 | Signing in with Microsoft or Google; Microsoft Graph | Built. Tested against stand-in servers only |
 | M6 | Search, the palette, the mouse, push, conversations, notifications, mail links, spell check | Built. Notifications and being the default mail program are untried |
 | M8 | Snooze, send later, templates, saved searches, unsubscribe, invitations, rules, commands from a shell, hooks | Built. Unsubscribing and invitation replies have met no real server |
-| M9 | Writing mail in Vim | Works in a terminal with your own Vim, and in the app with the Vim that comes with macOS or, through a script, with your own. No Vim is shipped inside the app |
+| M9 | Writing mail in Vim or another editor | Works in a terminal with your own editor, and in the app with the Vim or nano that come with macOS or, through a script, with your own Vim. No editor is shipped inside the app |
 | M10 | Exchange on your own servers (EWS) | Built. Tested against a stand-in only |
 
 What needs a person, in the order it is worth doing:
 
 1. **Register Quill with Microsoft and Google** and put the two client ids in the config: [docs/oauth.md](docs/oauth.md) has the steps. Then `S` on an account, or `quill account sign-in`, signs in. Nothing here has yet met a real Microsoft 365 or Gmail mailbox.
-2. **Choose the app's Vim**, if you write mail in Vim. As it comes, the app uses the Vim macOS has. `vim = "script"` under `[compose]` uses your own, with all of your setup, through `editor-command.sh`.
+2. **Choose an editor**, if you would sooner write mail outside Quill's own: `editor = "vim"`, `"nano"` or `"script"` under `[compose]`. The last is your own Vim, with all of your setup, through `editor-command.sh`.
 3. **Allow notifications** when the app first asks, and make Quill the default mail program in Mail's settings if you want `mailto:` links to come here.
 4. **An Apple Developer account**, for signing and App Store validation. Deferred from M1, and the last thing outstanding.
 
@@ -400,13 +400,22 @@ Templates are read once, when Quill starts. A file over 64 KiB, one that is not 
 
 ### Writing in Vim
 
-A message can be written in Vim instead of the editor above. `ctrl-v` (or `cmd-shift-e` in the app) hands over the message being written, as it stands. With `editor = "vim"` every message goes to Vim as soon as it opens: a new one, a reply, a forward, a draft, a mail link.
+A message can be written in Vim instead of the editor above. `ctrl-v` (or `cmd-shift-e` in the app) hands over the message being written, as it stands. With `editor` set to anything but `builtin`, every message goes to that editor as soon as it opens: a new one, a reply, a forward, a draft, a mail link.
 
 ```toml
 [compose]
-editor = "vim"    # "builtin" by default
-vim = "script"    # in the app: your own Vim. "system", the Mac's own, by default
+editor = "vim"
 ```
+
+| `editor` | In Quill's app | In a terminal |
+|---|---|---|
+| `builtin` (the default) | Quill's own editor; `ctrl-v` hands a message to Vim | The same |
+| `vim` | The Vim that comes with macOS, `/usr/bin/vim` | Your own `vim` |
+| `nano` or `pico` | The nano that comes with macOS, which is Pico | Your own `nano` or `pico` |
+| `mg` | Not available: it crashes as it starts inside the app's sandbox | Your own `mg` |
+| `script` | Your own Vim, through `editor-command.sh` (below) | Your own `vim` |
+
+It is one of these words and never the path of a program. Vim has Quill's commands in it, described next. nano, Pico and mg have none: write the message, save it and leave (`ctrl-x` in nano and Pico, which Quill starts so that leaving saves; `ctrl-x ctrl-s` then `ctrl-x ctrl-c` in mg), and it comes back to Quill open, to send from there. The cursor starts where the message's body does, past the header fields.
 
 Vim is given the message as a file: the header fields, an empty line, then the body.
 
@@ -437,12 +446,12 @@ What comes back is checked as if it had been written in Quill. A send that raise
 
 **In a terminal** Quill runs your own Vim, the `vim` on your `PATH`, with your own vimrc, in the terminal Quill is in, and takes the terminal back when Vim quits. Mail goes on being fetched and sent meanwhile. `QUILL_VIM` names another program to run in its place; it is started the same way. With no Vim to run, the message stays in Quill's editor and says so. Modelines are switched off for the draft, so a line of quoted mail cannot set options in your Vim.
 
-**In the app** Vim runs in a pane beside the terminal. The app has no Vim of its own inside it; there are two it can run:
+**In the app** the editor runs in a pane beside the terminal. The app has no editor of this kind inside it; it runs one that comes with macOS, inside its own sandbox, or your own Vim by a script:
 
-- `vim = "system"` (the default): the Vim that comes with macOS, `/usr/bin/vim`, inside the app's sandbox. Nothing to build or install, and nothing of your own setup either.
-- `vim = "script"`: your own Vim, the one you use in a terminal, with your vimrc and your plugins. The app is sandboxed and cannot start it, so macOS does, by running a script of yours. See below.
+- `editor = "vim"` or `"nano"`: the one that comes with macOS. Nothing to build or install, and nothing of your own setup either.
+- `editor = "script"`: your own Vim, the one you use in a terminal, with your vimrc and your plugins. The app is sandboxed and cannot start it, so macOS does, by running a script of yours. See below.
 
-Whichever it is, Send and Save in the menus and toolbar reach Vim: it does as it would for `:QuillSend` or `:QuillPostpone`. `esc` in Quill, or closing the pane, asks it to save and close, and the message comes back open.
+Send and Save in the menus and toolbar reach Vim: it does as it would for `:QuillSend` or `:QuillPostpone`. They do not reach nano, which has to hand the message back first. `esc` in Quill, or closing the pane, asks the editor to save and close, in its own keys, and the message comes back open.
 
 **Your own Vim, through `editor-command.sh`.** macOS gives every sandboxed app one folder of scripts that it will run for the app outside the sandbox: `~/Library/Application Scripts/dev.quill.Quill/`. Only you can put a script there; the app can read the folder and cannot write to it. Quill runs the one called `editor-command.sh`. To set it up:
 
@@ -455,7 +464,7 @@ cp app/Resources/vim/editor-command.sh ~/Library/Application\ Scripts/dev.quill.
 
 That Vim is not in the sandbox. It is as it is in your terminal: it reads `~/.vimrc`, loads your plugins, and can run other programs. Quill's own guards still apply to the message: modelines stay off for the draft, and what comes back is checked as if it had been written in Quill.
 
-**The Mac's own Vim, inside the sandbox** (`system`), does not read `~/.vimrc` or `~/.vim`: the sandbox keeps both out of reach, and Quill starts it with its own settings. Nothing of your own setup is used unless you bring it in: "Import vimrc…" in the Quill menu copies one file. Settings and plugins that run other programs or read files elsewhere do not work there.
+**The Mac's own Vim, inside the sandbox** (`editor = "vim"`), does not read `~/.vimrc` or `~/.vim`: the sandbox keeps both out of reach, and Quill starts it with its own settings. Nothing of your own setup is used unless you bring it in: "Import vimrc…" in the Quill menu copies one file. Settings and plugins that run other programs or read files elsewhere do not work there.
 
 ## Rules for arriving mail
 
@@ -580,7 +589,7 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `compose.send_later` | Send the message being written at a time you type |
 | `compose.attach`, `compose.bcc` | Attach a file; add blind copies |
 | `compose.template` | Put a template into the message being written |
-| `compose.vim` | Write the message being written in Vim |
+| `compose.vim` | Write the message being written in another editor: Vim, unless `editor` names another |
 | `compose.spell_suggest`, `compose.spell_next` | List other spellings of the misspelt word at the cursor; go to the next misspelt word |
 | `edit.undo` | Undo the last move, deletion or send |
 | `search.start` | Search |

@@ -272,6 +272,8 @@ pub enum DataEvent {
     EditReady {
         dir: std::path::PathBuf,
         path: std::path::PathBuf,
+        /// The line of the file its body starts on, counting from 1.
+        body_line: u32,
     },
     /// It could not be written out, and why. Nothing was left behind.
     EditFailed(String),
@@ -578,6 +580,7 @@ fn run(
             Ok(out) => vec![DataEvent::EditReady {
                 dir: out.dir,
                 path: out.path,
+                body_line: out.body_line,
             }],
             Err(why) => vec![DataEvent::EditFailed(why)],
         },

@@ -164,7 +164,7 @@ struct Io<'a> {
     thumbnails: std::collections::HashMap<u64, PathBuf>,
     /// A draft file, and its folder, that Vim is to be run on in this
     /// terminal. The loop does it, since it owns the terminal.
-    editor_wanted: Option<(PathBuf, PathBuf)>,
+    editor_wanted: Option<(PathBuf, PathBuf, vim::ExternalEditor, u32)>,
     /// Set as the UI closes, for work started here that must end with it.
     closing: Arc<AtomicBool>,
 }
@@ -368,18 +368,29 @@ impl Io<'_> {
                     path,
                     dir,
                     title,
-                    vim,
+                    editor,
+                    body_line,
                 } if self.host.is_shell() => {
-                    if !self.host.edit_draft(&path, &dir, &title, vim) {
+                    // An editor the app cannot run is not asked for.
+                    let taken = editor.in_the_app().is_some_and(|kind| {
+                        self.host.edit_draft(&path, &dir, &title, kind, body_line)
+                    });
+                    if !taken {
                         let _ = self.injected.send(Action::EditorExited {
                             ran: false,
                             status: 0,
                         });
                     }
                 }
-                // In a terminal, the user's own Vim takes the terminal.
-                HostRequest::EditDraft { path, dir, .. } => {
-                    self.editor_wanted = Some((path, dir));
+                // In a terminal, the user's own editor takes the terminal.
+                HostRequest::EditDraft {
+                    path,
+                    dir,
+                    editor,
+                    body_line,
+                    ..
+                } => {
+                    self.editor_wanted = Some((path, dir, editor, body_line));
                 }
                 HostRequest::ClosePane => self.host.close_pane(),
                 HostRequest::RunHook(run) => self.run_hook(*run),
@@ -706,8 +717,9 @@ async fn event_loop(
             let effects = state.update(env, action);
             io.perform(effects);
         }
-        if let Some((path, dir)) = io.editor_wanted.take() {
-            match run_editor(terminal, env, io, &mut input, &path, &dir)? {
+        if let Some((path, dir, editor, body_line)) = io.editor_wanted.take() {
+            let draft = (editor, path.as_path(), dir.as_path(), body_line);
+            match run_editor(terminal, env, io, &mut input, draft)? {
                 Some(wait) => away = Some(wait),
                 // Nothing ran, and the terminal was never given up.
                 None => {
@@ -768,13 +780,12 @@ fn run_editor(
     env: &Env,
     io: &mut Io<'_>,
     input: &mut Option<EventStream>,
-    path: &std::path::Path,
-    dir: &std::path::Path,
+    (editor, path, dir, body_line): (vim::ExternalEditor, &std::path::Path, &std::path::Path, u32),
 ) -> io::Result<Option<EditorWait>> {
     // Looked for before anything is given up, so that having no Vim
     // costs nothing but a line saying so.
     let Some(program) = vim::find_program(
-        vim::program_name(env.vim_program.as_ref()),
+        vim::program_name(editor, env.vim_program.as_ref()),
         std::env::var_os("PATH").as_deref(),
     ) else {
         return Ok(None);
@@ -791,7 +802,7 @@ fn run_editor(
     let _ = io.images.sync(Vec::new(), io.images.size);
     let _ = terminal.show_cursor();
     terminal::leave();
-    match vim::command(&program, path, dir).spawn() {
+    match vim::command(editor, &program, path, dir, body_line).spawn() {
         Ok(mut child) => Ok(Some(tokio::task::spawn_blocking(move || child.wait()))),
         Err(_) => {
             // It was there and would not start. Take the terminal back.
@@ -894,7 +905,7 @@ mod tests {
             templates: Vec::new(),
             spell_check: false,
             editor_pane: false,
-            app_vim: quill_host::bridge::EditorVim::System,
+            external: vim::ExternalEditor::Vim,
             vim_program: None,
             hooks: Vec::new(),
             hooks_enabled: false,
