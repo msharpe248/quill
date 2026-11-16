@@ -13,6 +13,7 @@ mod service;
 mod settings;
 mod setup;
 mod signin;
+mod themes;
 
 /// The IMAP crate's own test server, for tests here that need a real one: a
 /// Dovecot started per test, with TLS in front of it under a certificate no
@@ -124,6 +125,34 @@ enum Command {
     /// Fetch new mail, carry out what is queued and send what is waiting,
     /// once, and stop
     Sync {
+        #[command(flatten)]
+        output: Output,
+    },
+    /// List the themes there are to choose from, or import one made for
+    /// Ghostty
+    Theme {
+        #[command(subcommand)]
+        action: ThemeAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum ThemeAction {
+    /// List the themes Quill has: its own, and the ones in themes/
+    List {
+        /// Also the themes made for Ghostty that are on this Mac to import
+        #[arg(long)]
+        ghostty: bool,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Copy a theme into themes/: one made for Ghostty, by its name, or a
+    /// theme file, by its path
+    Import {
+        /// The name of a theme made for Ghostty (`quill theme list
+        /// --ghostty` lists them), or the path of a theme file
+        #[arg(value_name = "NAME-or-PATH")]
+        what: String,
         #[command(flatten)]
         output: Output,
     },
@@ -292,6 +321,30 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             anyhow::ensure!(fine, "not everything synced");
             Ok(())
         }
+        Command::Theme {
+            action: ThemeAction::List { ghostty, output },
+        } => {
+            let paths = themes::paths(output.dirs.config_dir, output.dirs.data_dir)?;
+            themes::list(
+                &mut std::io::stdout(),
+                &paths,
+                &themes::ghostty_folders_here(),
+                ghostty,
+                output.json,
+            )
+        }
+        Command::Theme {
+            action: ThemeAction::Import { what, output },
+        } => {
+            let paths = themes::paths(output.dirs.config_dir, output.dirs.data_dir)?;
+            themes::import_command(
+                &mut std::io::stdout(),
+                &paths,
+                &themes::ghostty_folders_here(),
+                &what,
+                output.json,
+            )
+        }
     }
 }
 
@@ -384,6 +437,15 @@ async fn tui(args: TuiArgs) -> anyhow::Result<()> {
     );
     env.images = attached.host.is_shell()
         || quill_media::kitty::supported_by_environment(|name| std::env::var(name).ok());
+    // Quill's app says what the Mac looks like as it starts the core, so
+    // that the first frame is drawn with the theme for it. It says so again
+    // over the bridge, and whenever the Mac changes. Nobody says in a
+    // terminal, whatever its environment has in it.
+    if attached.host.is_shell() {
+        env.look.system_dark =
+            system_appearance(std::env::var("QUILL_SYSTEM_APPEARANCE").ok().as_deref());
+        env.restyle();
+    }
     app::run(store, env, notices, attached, sync, accounts)
         .await
         .context("the terminal UI stopped")
@@ -415,6 +477,16 @@ fn suit_host(env: &mut quill_tui::state::Env, shell: bool, vim: Option<std::ffi:
     // And a web view pane that can stand in the reader's place. A
     // terminal has none, whatever the config says about reading in one.
     env.web_pane = shell;
+}
+
+/// What the app said the Mac looks like as it started the core: `dark` or
+/// `light`, and nothing known for anything else.
+fn system_appearance(said: Option<&str>) -> Option<bool> {
+    match said {
+        Some("dark") => Some(true),
+        Some("light") => Some(false),
+        _ => None,
+    }
 }
 
 /// `quill account ...`: the saved passwords and sign-ins of the configured
@@ -582,6 +654,36 @@ mod tests {
     }
 
     #[test]
+    fn theme_commands_parse() {
+        let cli = Cli::try_parse_from(["quill", "theme", "list", "--ghostty", "--json"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Theme {
+                action: ThemeAction::List { ghostty: true, output }
+            } if output.json
+        ));
+        let cli = Cli::try_parse_from([
+            "quill",
+            "theme",
+            "import",
+            "Catppuccin Mocha",
+            "--config-dir",
+            "/c",
+        ])
+        .unwrap();
+        let Command::Theme {
+            action: ThemeAction::Import { what, output },
+        } = cli.command
+        else {
+            panic!("not theme import");
+        };
+        assert_eq!(what, "Catppuccin Mocha");
+        assert_eq!(output.dirs.config_dir, Some(PathBuf::from("/c")));
+        assert!(Cli::try_parse_from(["quill", "theme"]).is_err());
+        assert!(Cli::try_parse_from(["quill", "theme", "import"]).is_err());
+    }
+
+    #[test]
     fn the_app_runs_no_programs_and_a_terminal_has_no_panels() {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths {
@@ -611,6 +713,33 @@ mod tests {
         assert_eq!(env.vim_program, None);
         suit_host(&mut env, false, None);
         assert_eq!(env.vim_program, None);
+    }
+
+    #[test]
+    fn the_app_says_what_the_mac_looks_like_as_it_starts_the_core() {
+        assert_eq!(system_appearance(Some("dark")), Some(true));
+        assert_eq!(system_appearance(Some("light")), Some(false));
+        for unknown in [None, Some(""), Some("Dark"), Some("auto"), Some("1")] {
+            assert_eq!(system_appearance(unknown), None, "{unknown:?}");
+        }
+        // With a theme for each appearance, the first frame is drawn with
+        // the one for what the Mac is, and not with the dark one.
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths {
+            config_dir: dir.path().join("config"),
+            data_dir: dir.path().join("data"),
+        };
+        std::fs::create_dir_all(&paths.config_dir).unwrap();
+        std::fs::write(
+            paths.config_file(),
+            "[ui]\ntheme_light = \"light\"\ntheme_dark = \"dark\"\n",
+        )
+        .unwrap();
+        let mut env = setup::load(&paths, ColorMode::TrueColor, TimeZone::UTC).env;
+        assert_eq!(env.styles.theme_name(), "dark");
+        env.look.system_dark = system_appearance(Some("light"));
+        env.restyle();
+        assert_eq!(env.styles.theme_name(), "light");
     }
 
     #[cfg(unix)]

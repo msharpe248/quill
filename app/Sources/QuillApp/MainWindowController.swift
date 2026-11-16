@@ -6,6 +6,7 @@ import Notifications
 import Panes
 import Spelling
 import TerminalKit
+import Themes
 
 /// The main window: the terminal surface running the core, a toolbar built
 /// from the core's commands, and a second pane for native viewers or for
@@ -176,6 +177,34 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         }
     }
 
+    /// Asks the user for a theme file kept anywhere, and hands it to the
+    /// completion; `nil` means they thought better of it. A scripted run
+    /// replaces it, so that a check never waits on a panel.
+    var themeFilePicker: (NSWindow?, @escaping (URL?) -> Void) -> Void = { window, done in
+        let panel = NSOpenPanel()
+        panel.message = "Choose a theme made for Ghostty to copy into Quill"
+        panel.prompt = "Import"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.resolvesAliases = true
+        // Ghostty keeps the user's own themes in a folder whose name
+        // starts with a dot, in their own home folder and not the app's.
+        panel.showsHiddenFiles = true
+        if let home = GhosttyThemes.realHome() {
+            let own = home.appendingPathComponent(".config/ghostty/themes", isDirectory: true)
+            panel.directoryURL = own
+        }
+        let finish: (NSApplication.ModalResponse) -> Void = { response in
+            done(response == .OK ? panel.url : nil)
+        }
+        if let window {
+            panel.beginSheetModal(for: window, completionHandler: finish)
+        } else {
+            finish(panel.runModal())
+        }
+    }
+
     /// Tells the user that something they asked of the shell could not be
     /// done: a title and a sentence. A scripted run replaces it, so that a
     /// check never waits on an alert.
@@ -233,6 +262,32 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         send: { [weak self] message in self?.bridge?.send(message) },
         openFile: { [weak self] in self?.editConfig(nil) })
 
+    /// Copies a theme the user chose into the themes folder beside the
+    /// settings file.
+    let themeImport: ThemeImport
+
+    /// The chooser of themes to import: the ones of a Ghostty on this Mac,
+    /// and the way to a file kept anywhere else.
+    private(set) lazy var themeChooser = ThemeChooser(
+        folders: GhosttyThemes.folders(home: GhosttyThemes.realHome()),
+        onImport: { [weak self] file in self?.importTheme(from: file) },
+        onOther: { [weak self] window in
+            guard let self else { return }
+            themeFilePicker(window ?? self.window) { [weak self] file in
+                guard let file else { return }
+                self?.importTheme(from: file)
+            }
+        })
+
+    /// Whether the app's own parts are light or dark: what the settings
+    /// say, and in a scripted run what the script says the Mac is.
+    private(set) var look = AppLook()
+    /// What the core was last told the Mac is.
+    private(set) var systemDarkTold: Bool?
+    /// Word of the app's appearance changing: with the app left to the
+    /// Mac, that is the Mac changing.
+    private var appearanceObservation: NSKeyValueObservation?
+
     private(set) var coreIsRunning = false
     /// The app asked the core to stop, so its exit is not a failure.
     private var stopping = false
@@ -262,6 +317,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 support
                 .appendingPathComponent("Quill", isDirectory: true)
                 .appendingPathComponent("config", isDirectory: true)
+        }
+        themeImport = ThemeImport(configFolder: configFolder)
+        // A scripted run never asks what the Mac looks like: it is light
+        // until the script says otherwise, whatever the user has it as.
+        if options.isScripted {
+            look.pretended = false
         }
 
         let window = NSWindow(
@@ -383,6 +444,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             )
             self.bridge = bridge
             environment["QUILL_SHELL_SOCKET"] = bridge.socketPath
+            // What the Mac looks like, for a core whose settings say to
+            // follow it: said now, and whenever it changes. And said in the
+            // core's environment as well, so that its first frame is drawn
+            // with the right theme and not corrected a moment later.
+            systemDarkTold = nil
+            applyLook()
+            if let dark = systemDarkTold {
+                environment["QUILL_SYSTEM_APPEARANCE"] = dark ? "dark" : "light"
+            }
+            appearanceObservation = NSApp.observe(\.effectiveAppearance) { [weak self] _, _ in
+                Task { @MainActor in self?.reportSystemAppearance() }
+            }
             // If the terminal has been measured already. It waits in the
             // bridge until the core has connected.
             reportWindowColumns()
@@ -418,6 +491,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             window?.subtitle = state.unread > 0 ? "\(state.unread) unread" : ""
             NSApp.dockTile.badgeLabel = state.unread > 0 ? String(state.unread) : nil
             setTerminalColours(background: state.background, foreground: state.foreground)
+            setAppearance(state.appearance ?? .system)
         case let .panePreview(preview):
             let items = preview.items.map { PreviewItem(url: URL(fileURLWithPath: $0.path), title: $0.title) }
             guard let deck = PreviewDeck(items: items, index: preview.index) else { break }
@@ -463,6 +537,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             formSheet.close()
         case let .settingsShow(settings):
             settingsWindow.show(settings)
+        case .themesPick:
+            showThemeChooser()
         case let .readingShow(page):
             showReading(page)
         case let .readingScroll(by):
@@ -1066,6 +1142,57 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         surface.setAppearance(appearance)
     }
 
+    // MARK: - Light and dark
+
+    /// The app's own parts are made light or dark as the settings say, or
+    /// left to the Mac: the title bar and the toolbar, the sheets, the
+    /// settings window, and the reading pane with the pages Quill makes for
+    /// it. The terminals' colours are the theme's, and come separately.
+    private func setAppearance(_ setting: Appearance) {
+        guard setting != look.setting else { return }
+        look.setting = setting
+        applyLook()
+    }
+
+    private func applyLook() {
+        switch look.forced {
+        case true?: NSApp.appearance = NSAppearance(named: .darkAqua)
+        case false?: NSApp.appearance = NSAppearance(named: .aqua)
+        case nil: NSApp.appearance = nil
+        }
+        reportSystemAppearance()
+    }
+
+    /// Whether the app looks dark at this moment.
+    private var appIsDark: Bool {
+        NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+    }
+
+    /// Tells the core what the Mac looks like, when that is known and is
+    /// not what it was last told. While the settings hold the app light or
+    /// dark the Mac's own look is not asked after: the core has no use for
+    /// it, and is told as soon as the settings go back to following it.
+    private func reportSystemAppearance() {
+        guard let dark = look.systemIsDark(appIsDark: appIsDark), dark != systemDarkTold else { return }
+        systemDarkTold = dark
+        bridge?.send(.appearanceChanged(dark: dark))
+    }
+
+    /// As if the Mac had gone dark, or light: for a scripted run, which
+    /// must not change what the Mac really is.
+    func pretendSystem(dark: Bool) {
+        look.pretended = dark
+        applyLook()
+    }
+
+    /// The look in a line, for the dump.
+    var lookSummary: String {
+        let mac = look.pretended.map { "pretended \($0 ? "dark" : "light")" } ?? "its own"
+        let told = systemDarkTold.map { $0 ? "dark" : "light" } ?? "nothing"
+        return "setting \(look.setting.rawValue), Mac \(mac), app \(appIsDark ? "dark" : "light"), "
+            + "core told \(told)"
+    }
+
     // MARK: - The editor pane
 
     /// Runs Vim on a draft, in a terminal pane of its own: the one that
@@ -1287,6 +1414,44 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         }
     }
 
+    // MARK: - Themes
+
+    /// Shows the chooser of themes to import, on the settings window when
+    /// that is the one in front and otherwise on the main one.
+    @objc func importTheme(_: Any?) {
+        showThemeChooser()
+    }
+
+    private func showThemeChooser() {
+        themeChooser.open(on: sheetWindow)
+    }
+
+    /// Copies a theme file into the themes folder, off the main thread,
+    /// and tells the core its name: the core reads the folder again, and
+    /// makes the theme the one in force if it is a theme it can use.
+    func importTheme(from file: URL) {
+        let importer = themeImport
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let result = Result { try importer.importFile(file) }
+            await MainActor.run { self?.themeImported(result, from: file) }
+        }
+    }
+
+    private func themeImported(_ result: Result<String, any Error>, from file: URL) {
+        switch result {
+        case let .success(name):
+            note("\(file.path) (imported as \(name.debugDescription))", in: &themeResults)
+            if let imported = ThemesImported(name: name) {
+                bridge?.send(.themesImported(imported))
+            }
+        case let .failure(error):
+            note("\(file.path) (refused: \(error))", in: &themeResults)
+            problemReporter(
+                sheetWindow, "The theme was not imported",
+                "Quill could not import \(file.lastPathComponent): \(error).")
+        }
+    }
+
     // MARK: - Edit menu
 
     // The core edits text of its own inside the terminal, with a selection
@@ -1337,6 +1502,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     /// What became of each vimrc import or removal, in order.
     private(set) var vimrcResults: [String] = []
+
+    /// What became of each theme import, in order.
+    private(set) var themeResults: [String] = []
 
     /// The reading pane in a line, for the dump: `off`, or `on` and what
     /// it shows, or that another pane has its place for now.
@@ -1430,6 +1598,9 @@ extension MainWindowController: NSMenuItemValidation {
             pane != nil && !(pane is WebPane)
         case #selector(removeImportedVimrc(_:)):
             vimrc.current != nil
+        case #selector(importTheme(_:)):
+            // The core is the one that makes the theme the one in force.
+            coreIsRunning && bridge != nil && sheetWindow?.attachedSheet == nil
         default:
             true
         }

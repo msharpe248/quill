@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use base64::Engine;
 use futures_util::StreamExt;
+use quill_core::config::Appearance;
 use quill_host::bridge::{self, CommandInfo, StateUpdate};
 use quill_host::{Attached, Host, HostEvent};
 use quill_media::kitty;
@@ -341,6 +342,7 @@ impl Io<'_> {
             match request {
                 HostRequest::OpenUrl(url) => self.host.open_url(&url),
                 HostRequest::PickFiles => self.host.pick_files(),
+                HostRequest::PickTheme => self.host.pick_theme(),
                 HostRequest::Preview { files, index } => {
                     let files: Vec<(&std::path::Path, &str)> = files
                         .iter()
@@ -534,6 +536,11 @@ impl Io<'_> {
             title: current.title.clone(),
             background: current.background.map(terminal_color),
             foreground: current.foreground.map(terminal_color),
+            appearance: match current.appearance {
+                Appearance::System => bridge::Appearance::System,
+                Appearance::Light => bridge::Appearance::Light,
+                Appearance::Dark => bridge::Appearance::Dark,
+            },
         });
         self.last_host_state = Some(current);
     }
@@ -829,6 +836,8 @@ async fn event_loop(
                 HostEvent::SettingsOpened => Some(Action::Settings(SettingsAct::Opened)),
                 HostEvent::SettingsClosed => Some(Action::Settings(SettingsAct::Closed)),
                 HostEvent::SettingsUsed(used) => Some(Action::Settings(SettingsAct::Used(used))),
+                HostEvent::SystemAppearance { dark } => Some(Action::SystemAppearance { dark }),
+                HostEvent::ThemeImported(name) => Some(Action::ThemeImported(name)),
                 HostEvent::Thumbnail { id, ok } => {
                     io.thumbnail_made(id, ok);
                     None
@@ -862,6 +871,14 @@ async fn event_loop(
                 if settings.apply(env) {
                     io.host.commands(command_infos(env));
                 }
+                state.dirty = true;
+            }
+            // And what the host says the system's appearance is: with the
+            // settings saying "as the system is", another theme is drawn
+            // with from the next frame.
+            if let Some(dark) = effects.system_dark.take() {
+                env.look.system_dark = Some(dark);
+                env.restyle();
                 state.dirty = true;
             }
             io.perform(effects);
@@ -1053,6 +1070,7 @@ mod tests {
             registry: Registry::builtin(),
             keymap: Keymap::preset(KeymapPreset::Vim),
             styles: Styles::new(Theme::terminal(), ColorMode::None),
+            look: crate::theme::Look::one(Theme::terminal()),
             tz: TimeZone::UTC,
             reader_width: 0.5,
             images: false,

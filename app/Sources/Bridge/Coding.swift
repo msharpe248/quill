@@ -260,6 +260,15 @@ private struct EditorExitedParams: Codable {
     var status: Int
 }
 
+private struct AppearanceChangedParams: Codable {
+    var dark: Bool
+}
+
+/// `themes.imported` as it is on the wire, before its name is checked.
+private struct ThemesImportedParams: Codable {
+    var name: String
+}
+
 private struct NoParams: Codable {}
 
 private struct Outgoing<Params: Encodable>: Encodable {
@@ -404,6 +413,7 @@ private extension FormField {
         case "toggle": ["kind", "id", "label", "title", "value", "help"]
         case "number": FormNumber.allowedKeys
         case "list": FormList.allowedKeys
+        case "button": ["kind", "id", "label", "title", "enabled", "help"]
         default: nil
         }
     }
@@ -412,7 +422,7 @@ private extension FormField {
     /// window has: a sheet has none that report as they change, and the
     /// settings have no secret and no code.
     static let sheetKinds = ["text", "secret", "choice", "static", "code"]
-    static let settingsKinds = ["text", "choice", "static", "toggle", "number", "list"]
+    static let settingsKinds = ["text", "choice", "static", "toggle", "number", "list", "button"]
 
     /// A field of the message called `method`, which has fields of these
     /// `kinds`: a form's, or a settings pane's.
@@ -461,6 +471,8 @@ private extension FormField {
                     enabled: action.bool("enabled"))
             }
             kind = try .list(FormList(rows: rows, actions: actions, empty: object.optionalString("empty")))
+        case "button":
+            kind = try .button(title: object.string("title"), enabled: object.bool("enabled"))
         default:
             kind = try .fixed(value: object.string("value"))
         }
@@ -518,6 +530,9 @@ private extension FormField {
             if let empty = list.empty {
                 object["empty"] = .string(empty)
             }
+        case let .button(title, enabled):
+            object["title"] = .string(title)
+            object["enabled"] = .bool(enabled)
         }
         // Left out when false, as the core leaves it out.
         if focus {
@@ -737,6 +752,7 @@ public extension CoreToShell {
                     throw BridgeError.malformed("state.update: \(key) is not a #rrggbb colour")
                 }
             }
+            try envelope.requireNotNull("appearance")
             self = .stateUpdate(state)
         case "pane.preview":
             let params = try envelope.decode(PanePreviewParams.self, allowing: PanePreview.allowedKeys)
@@ -898,6 +914,9 @@ public extension CoreToShell {
             self = .readingPlace(place)
         case "settings.show":
             self = try .settingsShow(SettingsShow(params: envelope.params))
+        case "themes.pick":
+            try envelope.requireOnly([])
+            self = .themesPick
         default:
             throw BridgeError.unknownMethod(envelope.method)
         }
@@ -951,6 +970,8 @@ public extension CoreToShell {
             encodeLine(method: "reading.place", params: place)
         case let .settingsShow(settings):
             encodeLine(method: "settings.show", params: settings.json)
+        case .themesPick:
+            encodeLine(method: "themes.pick", params: NoParams())
         }
     }
 }
@@ -1046,6 +1067,15 @@ public extension ShellToCore {
             self = .settingsClosed
         case "settings.used":
             self = try .settingsUsed(SettingsUsed(params: envelope.params))
+        case "appearance.changed":
+            let params = try envelope.decode(AppearanceChangedParams.self, allowing: ["dark"])
+            self = .appearanceChanged(dark: params.dark)
+        case "themes.imported":
+            let params = try envelope.decode(ThemesImportedParams.self, allowing: ThemesImported.allowedKeys)
+            guard let imported = ThemesImported(name: params.name) else {
+                throw BridgeError.malformed("themes.imported: not a name a theme can have")
+            }
+            self = .themesImported(imported)
         case "app.will_quit":
             try envelope.requireOnly([])
             self = .appWillQuit
@@ -1086,6 +1116,10 @@ public extension ShellToCore {
             encodeLine(method: "settings.closed", params: NoParams())
         case let .settingsUsed(used):
             encodeLine(method: "settings.used", params: used.json)
+        case let .appearanceChanged(dark):
+            encodeLine(method: "appearance.changed", params: AppearanceChangedParams(dark: dark))
+        case let .themesImported(imported):
+            encodeLine(method: "themes.imported", params: imported)
         case .appWillQuit:
             encodeLine(method: "app.will_quit", params: NoParams())
         }

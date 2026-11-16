@@ -3,8 +3,12 @@ source: crates/quill-tui/tests/settings.rs
 expression: outline(&window.shown())
 ---
 == General (general, gearshape)
-   theme "Theme:": choice = dark of dark "Dark" | light "Light" | terminal "Terminal"
-     help: Themes of your own are files in the themes folder beside the settings file.
+   appearance "Appearance:": choice = system of system "System" | light "Light" | dark "Dark"
+     help: System follows the Mac, and changes with it.
+   theme_light "Light theme:": choice = dark of dark "Dark" | light "Light" | terminal "Terminal"
+   theme_dark "Dark theme:": choice = dark of dark "Dark" | light "Light" | terminal "Terminal"
+   import_theme "": button "Import Theme…"
+     help: Themes made for Ghostty can be imported. Themes of your own are files in the themes folder beside the settings file.
    keymap "Keys:": choice = vim of vim "Vim" | mutt "Mutt"
      help: Keys of your own in keys.toml stay on top of either.
    notifications "New mail:": toggle "Show a notification when mail arrives" = true

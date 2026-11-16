@@ -9,7 +9,7 @@ import Testing
 /// again when the core answers.
 struct SettingsModelTests {
     private func general(
-        theme: String = "dark", notifications: Bool = true, help: String? = nil
+        theme: String = "dark", notifications: Bool = true, help: String? = nil, canImport: Bool = true
     ) -> SettingsPane {
         SettingsPane(
             id: "general", title: "General", symbol: "gearshape",
@@ -25,6 +25,8 @@ struct SettingsModelTests {
                     kind: .toggle(title: "Show a notification", value: notifications)),
                 FormField(id: "nickname", label: "Called:", kind: .text(value: "Robin")),
                 FormField(id: "where", label: "Kept in:", kind: .fixed(value: "This Mac")),
+                FormField(
+                    id: "import_theme", label: "", kind: .button(title: "Import Theme\u{2026}", enabled: canImport)),
             ], more: "More is set in the settings file.")
     }
 
@@ -326,6 +328,26 @@ struct SettingsModelTests {
         #expect(back.pane == "composing" && !model.isUnreadable)
     }
 
+    @Test func aButtonTellsTheCoreItWasPressedAndChangesNothing() throws {
+        var model = SettingsModel()
+        _ = model.show(whole(), remembered: nil)
+        let before = model
+        let used = try #require(model.pressButton("import_theme", of: "general"))
+        #expect(used == SettingsUsed(pane: "general", field: "import_theme", did: .action("press", row: nil)))
+        // Nothing on show is another thing for it.
+        #expect(model == before)
+        // What is no button is not pressed, nor one that is off, nor one
+        // that is not there.
+        #expect(model.pressButton("theme", of: "general") == nil)
+        #expect(model.pressButton("import_theme", of: "accounts") == nil)
+        #expect(model.pressButton("nothing", of: "general") == nil)
+        #expect(model.press("press", in: "import_theme", of: "general") == nil)
+        #expect(model.set(.flag(true), in: "import_theme", of: "general") == nil)
+        _ = model.show(settings([general(canImport: false)]), remembered: nil)
+        #expect(model.pressButton("import_theme", of: "general") == nil)
+        #expect(model.summary.contains("settings field general.import_theme [button] \"Import Theme\u{2026}\" (off)"))
+    }
+
     @Test func theDumpSaysWhatEachFieldHolds() {
         var model = SettingsModel()
         _ = model.show(settings([general(), accounts(), composing()], problem: "Not changed."), remembered: nil)
@@ -338,6 +360,7 @@ struct SettingsModelTests {
         #expect(summary.contains(#"settings field general.notifications [toggle] = true "Show a notification""#))
         #expect(summary.contains(#"settings field general.nickname [text] = "Robin""#))
         #expect(summary.contains(#"settings field general.where [static] = "This Mac""#))
+        #expect(summary.contains("settings field general.import_theme [button] \"Import Theme\u{2026}\""))
         #expect(summary.contains(#"settings more general "More is set in the settings file.""#))
         #expect(
             summary.contains(

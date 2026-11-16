@@ -64,6 +64,9 @@ public enum CoreToShell: Equatable, Sendable {
     /// What the settings window shows: every pane with its settings as they
     /// stand. What the user does there goes back as `settingsUsed`.
     case settingsShow(SettingsShow)
+    /// Ask the user to choose a theme to import, with the shell's own
+    /// chooser. One that is imported is said with `themes.imported`.
+    case themesPick
 }
 
 /// A message the shell sends to the core.
@@ -100,6 +103,12 @@ public enum ShellToCore: Equatable, Sendable {
     /// A setting was changed in the settings window, or something was asked
     /// for from one of its lists.
     case settingsUsed(SettingsUsed)
+    /// Whether the Mac is in its dark appearance: once as the shell
+    /// starts, and whenever it changes.
+    case appearanceChanged(dark: Bool)
+    /// A theme file was put in the themes folder beside the settings file,
+    /// under this name.
+    case themesImported(ThemesImported)
     /// The app is quitting: flush and exit cleanly.
     case appWillQuit
 }
@@ -149,10 +158,13 @@ public struct StateUpdate: Equatable, Sendable, Codable {
     public var background: String?
     /// The colour of the terminal UI's text, likewise.
     public var foreground: String?
+    /// Whether the app is to be light, dark, or as the Mac is: what the
+    /// settings say. Left out, it is as the Mac is.
+    public var appearance: Appearance?
 
     public init(
         context: Context, enabled: [String], checked: [String] = [], unread: Int, title: String,
-        background: String? = nil, foreground: String? = nil
+        background: String? = nil, foreground: String? = nil, appearance: Appearance? = nil
     ) {
         self.context = context
         self.enabled = enabled
@@ -161,10 +173,11 @@ public struct StateUpdate: Equatable, Sendable, Codable {
         self.title = title
         self.background = background
         self.foreground = foreground
+        self.appearance = appearance
     }
 
     static let allowedKeys: Set<String> = [
-        "context", "enabled", "checked", "unread", "title", "background", "foreground",
+        "context", "enabled", "checked", "unread", "title", "background", "foreground", "appearance",
     ]
 
     /// Whether `text` is a colour as the bridge says one: `#` and six hex
@@ -174,6 +187,54 @@ public struct StateUpdate: Equatable, Sendable, Codable {
         return text.hasPrefix("#") && digits.count == 6
             && digits.allSatisfy { (0x30...0x39).contains($0) || (0x61...0x66).contains($0) }
     }
+}
+
+/// Whether the app is light, dark, or as the Mac is.
+public enum Appearance: String, Equatable, Sendable, Codable, CaseIterable {
+    case system, light, dark
+}
+
+/// What a theme of the user's own may be called: the name of a file in the
+/// themes folder, and nothing that could point outside that folder or be
+/// hidden in it. The core has the same rule, and is the one that decides.
+public enum ThemeName {
+    /// The longest name, in bytes.
+    public static let longest = 100
+
+    /// Not empty, at most `longest` bytes, no path separator or colon, no
+    /// control character, no dot to start with, no space at either end, and
+    /// not ending in `.toml`, which would make one file answer to two
+    /// names.
+    public static func isValid(_ name: String) -> Bool {
+        let scalars = name.unicodeScalars
+        guard let first = scalars.first, let last = scalars.last, name.utf8.count <= longest else {
+            return false
+        }
+        if first == "." || first.properties.isWhitespace || last.properties.isWhitespace {
+            return false
+        }
+        // In any case of the letters: `.TOML` is `.toml` to a Mac's disk.
+        if name.utf8.suffix(5).elementsEqual(".toml".utf8, by: { $0 == $1 || ($0 >= 0x41 && $0 | 0x20 == $1) }) {
+            return false
+        }
+        return !scalars.contains { scalar in
+            scalar == "/" || scalar == "\\" || scalar == ":" || scalar.properties.generalCategory == .control
+        }
+    }
+}
+
+/// A theme the shell has put in the themes folder.
+public struct ThemesImported: Equatable, Sendable, Codable {
+    /// The theme's name: the name of its file in the folder.
+    public let name: String
+
+    /// `nil` when the name is none a theme can have.
+    public init?(name: String) {
+        guard ThemeName.isValid(name) else { return nil }
+        self.name = name
+    }
+
+    static let allowedKeys: Set<String> = ["name"]
 }
 
 public enum Context: String, Equatable, Sendable, Codable {
@@ -758,6 +819,9 @@ public struct FormField: Equatable, Sendable {
         case number(FormNumber)
         /// Rows to pick one of, and things to do with it.
         case list(FormList)
+        /// Something to press, that starts something: a button, with what
+        /// is on it and whether it can be pressed now.
+        case button(title: String, enabled: Bool)
 
         /// The kind's name on the bridge.
         public var name: String {
@@ -770,6 +834,7 @@ public struct FormField: Equatable, Sendable {
             case .toggle: "toggle"
             case .number: "number"
             case .list: "list"
+            case .button: "button"
             }
         }
     }
@@ -795,7 +860,7 @@ public struct FormField: Equatable, Sendable {
     public var value: String? {
         switch kind {
         case let .text(value), let .choice(value, _), let .fixed(value): value
-        case .secret, .code, .toggle, .number, .list: nil
+        case .secret, .code, .toggle, .number, .list, .button: nil
         }
     }
 
@@ -803,7 +868,7 @@ public struct FormField: Equatable, Sendable {
     public var isEditable: Bool {
         switch kind {
         case .text, .secret, .choice, .toggle, .number: true
-        case .fixed, .code, .list: false
+        case .fixed, .code, .list, .button: false
         }
     }
 
@@ -812,7 +877,7 @@ public struct FormField: Equatable, Sendable {
     /// which a sheet has none of.
     public var reportsAsChanged: Bool {
         switch kind {
-        case .toggle, .number, .list: true
+        case .toggle, .number, .list, .button: true
         case .text, .secret, .choice, .fixed, .code: false
         }
     }
@@ -825,7 +890,7 @@ public struct FormField: Equatable, Sendable {
         case let .choice(value, options):
             let ids = options.map(\.id)
             return ids.allSatisfy(FormID.isValid) && Set(ids).count == ids.count && ids.contains(value)
-        case let .toggle(title, _):
+        case let .toggle(title, _), let .button(title, _):
             return !title.isEmpty
         case let .number(number):
             return number.isSound
@@ -1193,7 +1258,7 @@ public struct SettingsShow: Equatable, Sendable {
             for field in pane.fields {
                 switch field.kind {
                 case .secret, .code: return nil
-                case .text, .choice, .fixed, .toggle, .number, .list: break
+                case .text, .choice, .fixed, .toggle, .number, .list, .button: break
                 }
                 if field.focus || !field.isSound { return nil }
             }
@@ -1226,9 +1291,13 @@ public struct SettingsUsed: Equatable, Sendable {
     public enum Did: Equatable, Sendable {
         /// The field was given this value.
         case set(SettingValue)
-        /// This action of a list was asked for, of this row if of any.
+        /// This action of a list was asked for, of this row if of any. A
+        /// button that was pressed is the action `buttonPress`, of no row.
         case action(String, row: String?)
     }
+
+    /// The action a button reports when it is pressed.
+    public static let buttonPress = "press"
 
     public let pane: String
     public let field: String

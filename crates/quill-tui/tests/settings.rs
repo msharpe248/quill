@@ -13,7 +13,9 @@
 mod common;
 
 use common::{Harness, NOW};
-use quill_core::config::{AccountType, ComposeEditor, Config, KeymapPreset, RemoteImages};
+use quill_core::config::{
+    AccountType, Appearance, ComposeEditor, Config, KeymapPreset, RemoteImages,
+};
 use quill_core::types::{
     Address, Flags, FolderRole, Headers, RemoteId, RemoteMessage, SyncCursor, SyncDelta,
 };
@@ -36,6 +38,9 @@ struct File {
     mistake: Option<String>,
     /// Why the next change cannot be written, if it cannot.
     unwritable: Option<String>,
+    /// The file names a theme for one appearance or the other, and not
+    /// only the one theme for both.
+    apart: bool,
 }
 
 impl File {
@@ -55,6 +60,7 @@ impl File {
                 .collect(),
             mistake: None,
             unwritable: None,
+            apart: config.ui.theme_light.is_some() || config.ui.theme_dark.is_some(),
         }
     }
 
@@ -66,8 +72,10 @@ impl File {
             settings: self.settings.clone(),
             accounts: self.accounts.clone(),
             themes: Theme::builtin_names().map(str::to_owned).collect(),
-            theme: Theme::builtin(&self.settings.theme).unwrap(),
-            theme_problem: None,
+            theme_light: Theme::builtin(&self.settings.theme_light).unwrap(),
+            theme_light_problem: None,
+            theme_dark: Theme::builtin(&self.settings.theme_dark).unwrap(),
+            theme_dark_problem: None,
             keymap: Keymap::preset(self.settings.keymap),
             keys_problem: None,
         }))
@@ -82,7 +90,25 @@ impl File {
         }
         let settings = &mut self.settings;
         match change.clone() {
-            Change::Theme(name) => settings.theme = name,
+            Change::Appearance(appearance) => settings.appearance = appearance,
+            Change::ThemeLight(name) => {
+                settings.theme_light = name;
+                self.apart = true;
+            }
+            Change::ThemeDark(name) => {
+                settings.theme_dark = name;
+                self.apart = true;
+            }
+            // As the real service does it: the one theme, in a file that
+            // has one; the theme of the appearance in force otherwise.
+            Change::ThemeInForce { name, dark } => match (self.apart, dark) {
+                (false, _) => {
+                    settings.theme_light = name.clone();
+                    settings.theme_dark = name;
+                }
+                (true, true) => settings.theme_dark = name,
+                (true, false) => settings.theme_light = name,
+            },
             Change::Keymap(preset) => settings.keymap = preset,
             Change::Notifications(on) => settings.notifications = on,
             Change::Threads(on) => settings.threads = on,
@@ -298,6 +324,9 @@ fn outline(shown: &SettingsShow) -> String {
                     said.push(format!("     empty: {}", empty.as_deref().unwrap_or("")));
                     said.join("\n")
                 }
+                FormField::Button { title, enabled, .. } => {
+                    format!("button \"{title}\"{}", if *enabled { "" } else { ", off" })
+                }
                 other => format!("{other:?}"),
             };
             lines.push(format!("   {} \"{}\": {holds}", field.id(), field.label()));
@@ -372,16 +401,16 @@ fn a_change_goes_to_the_service_and_the_window_shows_what_the_file_then_says() {
     let mut window = Window::new(CONFIG);
     window.open();
     let before = window.answers();
-    window.choose("general", "theme", "light");
+    window.choose("general", "theme_dark", "light");
     assert_eq!(
         window.harness.account_requests.last(),
-        Some(&AccountRequest::Settings(Some(Change::Theme(
+        Some(&AccountRequest::Settings(Some(Change::ThemeDark(
             "light".to_owned()
         ))))
     );
-    assert_eq!(window.file.settings.theme, "light");
+    assert_eq!(window.file.settings.theme_dark, "light");
     assert!(matches!(
-        window.field("general", "theme"),
+        window.field("general", "theme_dark"),
         FormField::Choice { value, .. } if value == "light"
     ));
     // The host is told the settings once for the change, when it is made.
@@ -409,7 +438,11 @@ fn a_change_goes_to_the_service_and_the_window_shows_what_the_file_then_says() {
 
     // What the window never offered is not asked of the service at all.
     let asked = window.harness.account_requests.len();
-    window.choose("general", "theme", "solarized");
+    window.choose("general", "theme_dark", "solarized");
+    window.choose("general", "theme_light", "solarized");
+    window.choose("general", "appearance", "sepia");
+    // The old one pop-up of themes is gone from the window.
+    window.choose("general", "theme", "light");
     window.set(
         "composing",
         "undo_send_seconds",
@@ -451,7 +484,7 @@ fn the_settings_that_hold_at_once_do_and_the_two_that_wait_do_not() {
             false
         )
     );
-    window.choose("general", "theme", "terminal");
+    window.choose("general", "theme_dark", "terminal");
     window.choose("general", "keymap", "mutt");
     window.set("general", "notifications", FormValue::Flag(false));
     window.set("general", "threads", FormValue::Flag(false));
@@ -517,19 +550,267 @@ fn the_host_is_told_the_colours_of_the_theme_from_the_moment_it_is_changed() {
         colours(&window),
         (Some((0x1a, 0x1b, 0x26)), Some((0xc0, 0xca, 0xf5)))
     );
-    window.choose("general", "theme", "light");
+    window.choose("general", "theme_dark", "light");
     assert_eq!(
         colours(&window),
         (Some((0xfa, 0xfa, 0xfa)), Some((0x38, 0x3a, 0x42)))
     );
     // The terminal's own colours: nothing is said, and the app's
     // terminals keep theirs.
-    window.choose("general", "theme", "terminal");
+    window.choose("general", "theme_dark", "terminal");
     assert_eq!(colours(&window), (None, None));
-    window.choose("general", "theme", "dark");
+    window.choose("general", "theme_dark", "dark");
     assert_eq!(
         colours(&window),
         (Some((0x1a, 0x1b, 0x26)), Some((0xc0, 0xca, 0xf5)))
+    );
+}
+
+/// The app with a theme for each appearance: the light one and the dark
+/// one that come with Quill.
+fn with_a_theme_for_each() -> Window {
+    let mut window = Window::new(&format!(
+        "[ui]\ntheme_light = \"light\"\ntheme_dark = \"dark\"\n\n{CONFIG}"
+    ));
+    window.open();
+    window
+}
+
+fn theme_in_force(window: &Window) -> (String, Option<(u8, u8, u8)>, Appearance) {
+    let state = window.harness.state.host_state(&window.harness.env);
+    (
+        window.harness.env.styles.theme_name().to_owned(),
+        state.background,
+        state.appearance,
+    )
+}
+
+const DARK: Option<(u8, u8, u8)> = Some((0x1a, 0x1b, 0x26));
+const LIGHT: Option<(u8, u8, u8)> = Some((0xfa, 0xfa, 0xfa));
+
+#[test]
+fn light_or_dark_by_the_settings_and_the_host_is_told_which() {
+    let mut window = with_a_theme_for_each();
+    // As the system is, and nobody has said what that is: dark.
+    assert_eq!(
+        theme_in_force(&window),
+        ("dark".to_owned(), DARK, Appearance::System)
+    );
+    assert!(matches!(
+        window.field("general", "appearance"),
+        FormField::Choice { value, options, .. }
+            if value == "system" && options.iter().map(|option| option.id.as_str()).eq(["system", "light", "dark"])
+    ));
+
+    // Light: the light theme at once, and the host is told to be light,
+    // with the colours of that theme for its terminals.
+    window.choose("general", "appearance", "light");
+    assert_eq!(window.file.settings.appearance, Appearance::Light);
+    assert_eq!(
+        theme_in_force(&window),
+        ("light".to_owned(), LIGHT, Appearance::Light)
+    );
+    // The theme for the appearance that is not in force can be changed,
+    // and nothing is drawn differently.
+    window.choose("general", "theme_dark", "terminal");
+    assert_eq!(theme_in_force(&window).0, "light");
+    // Dark: that one.
+    window.choose("general", "appearance", "dark");
+    assert_eq!(
+        theme_in_force(&window),
+        ("terminal".to_owned(), None, Appearance::Dark)
+    );
+    window.choose("general", "theme_dark", "dark");
+    assert_eq!(
+        theme_in_force(&window),
+        ("dark".to_owned(), DARK, Appearance::Dark)
+    );
+    // What the system is makes no difference while the settings say.
+    window.harness.act(Action::SystemAppearance { dark: false });
+    assert_eq!(theme_in_force(&window).0, "dark");
+    // Back to the system's: light, since that is what it was last said
+    // to be.
+    window.choose("general", "appearance", "system");
+    assert_eq!(
+        theme_in_force(&window),
+        ("light".to_owned(), LIGHT, Appearance::System)
+    );
+}
+
+#[test]
+fn as_the_system_is_follows_the_system_as_the_host_says_it_changes() {
+    let mut window = with_a_theme_for_each();
+    assert_eq!(theme_in_force(&window).0, "dark");
+    // The app says what the Mac is as it starts, and whenever it changes.
+    window.harness.act(Action::SystemAppearance { dark: false });
+    assert_eq!(
+        theme_in_force(&window),
+        ("light".to_owned(), LIGHT, Appearance::System)
+    );
+    // Said again, nothing changes.
+    window.harness.act(Action::SystemAppearance { dark: false });
+    assert_eq!(theme_in_force(&window).0, "light");
+    window.harness.act(Action::SystemAppearance { dark: true });
+    assert_eq!(
+        theme_in_force(&window),
+        ("dark".to_owned(), DARK, Appearance::System)
+    );
+    // The window says what the Mac is now, beside the choice.
+    let help = |window: &Window| {
+        window
+            .field("general", "appearance")
+            .help()
+            .unwrap_or_default()
+            .to_owned()
+    };
+    assert_eq!(
+        help(&window),
+        "System follows the Mac, and changes with it. The Mac is dark now."
+    );
+    window.harness.act(Action::SystemAppearance { dark: false });
+    assert!(help(&window).ends_with("The Mac is light now."));
+
+    // A config that names one theme, as every config did, has that theme
+    // whatever the Mac does.
+    let mut old = Window::new(&format!("[ui]\ntheme = \"light\"\n\n{CONFIG}"));
+    old.open();
+    for dark in [true, false, true] {
+        old.harness.act(Action::SystemAppearance { dark });
+        assert_eq!(
+            theme_in_force(&old),
+            ("light".to_owned(), LIGHT, Appearance::System)
+        );
+    }
+    // And both pop-ups show it.
+    for field in ["theme_light", "theme_dark"] {
+        assert!(matches!(
+            old.field("general", field),
+            FormField::Choice { value, .. } if value == "light"
+        ));
+    }
+}
+
+#[test]
+fn in_a_terminal_nobody_says_what_the_system_is_and_it_is_dark() {
+    // The harness is told nothing of the system, as Quill in a terminal
+    // is not: with a theme for each, the dark one is drawn with.
+    let window = with_a_theme_for_each();
+    assert_eq!(window.harness.env.look.system_dark, None);
+    assert!(window.harness.env.look.is_dark());
+    assert_eq!(window.harness.env.styles.theme_name(), "dark");
+    // The window is not told the Mac is anything.
+    assert_eq!(
+        window.field("general", "appearance").help(),
+        Some("System follows the Mac, and changes with it.")
+    );
+}
+
+#[test]
+fn the_button_that_imports_a_theme_has_the_host_show_its_chooser() {
+    let mut window = Window::new(CONFIG);
+    window.open();
+    assert!(matches!(
+        window.field("general", "import_theme"),
+        FormField::Button { title, enabled: true, .. } if title == "Import Theme\u{2026}"
+    ));
+    let asked = window.harness.account_requests.len();
+    let before = window.answers();
+    let press = |window: &mut Window, field: &str, action: &str, row: Option<&str>| {
+        let used = SettingsUsed::action("general", field, action, row).unwrap();
+        window
+            .harness
+            .act(Action::Settings(SettingsAct::Used(used)));
+        window.serve();
+    };
+    press(&mut window, "import_theme", "press", None);
+    assert_eq!(
+        window.harness.host_requests.last(),
+        Some(&HostRequest::PickTheme)
+    );
+    // Nothing is asked of the service until a theme has been chosen, and
+    // the window is told the settings again, as for anything done in it.
+    assert_eq!(window.harness.account_requests.len(), asked);
+    assert_eq!(window.answers(), before + 1);
+    // Anything else done to it is nothing.
+    let chooser = |window: &Window| {
+        window
+            .harness
+            .host_requests
+            .iter()
+            .filter(|request| **request == HostRequest::PickTheme)
+            .count()
+    };
+    press(&mut window, "import_theme", "open", None);
+    press(&mut window, "import_theme", "press", Some("row"));
+    press(&mut window, "theme_dark", "press", None);
+    window.set("general", "import_theme", FormValue::Flag(true));
+    assert_eq!(chooser(&window), 1);
+}
+
+#[test]
+fn an_imported_theme_becomes_the_theme_in_force() {
+    // While Quill is dark it is the dark theme that is changed.
+    let mut window = with_a_theme_for_each();
+    window.file.settings.theme_dark = "dark".to_owned();
+    window
+        .harness
+        .act(Action::ThemeImported("terminal".to_owned()));
+    assert_eq!(
+        window.harness.account_requests.last(),
+        Some(&AccountRequest::Settings(Some(Change::ThemeInForce {
+            name: "terminal".to_owned(),
+            dark: true
+        })))
+    );
+    window.serve();
+    assert_eq!(window.file.settings.theme_dark, "terminal");
+    assert_eq!(window.file.settings.theme_light, "light");
+    assert_eq!(window.harness.env.styles.theme_name(), "terminal");
+    // While it is light, the light one.
+    window.harness.act(Action::SystemAppearance { dark: false });
+    window.harness.act(Action::ThemeImported("dark".to_owned()));
+    window.serve();
+    assert_eq!(window.file.settings.theme_light, "dark");
+    assert_eq!(window.file.settings.theme_dark, "terminal");
+    assert_eq!(window.harness.env.styles.theme_name(), "dark");
+
+    // A file with one theme for both appearances has that one changed.
+    let mut one = Window::new(CONFIG);
+    one.open();
+    one.harness.act(Action::ThemeImported("light".to_owned()));
+    one.serve();
+    assert_eq!(
+        (
+            one.file.settings.theme_light.as_str(),
+            one.file.settings.theme_dark.as_str()
+        ),
+        ("light", "light")
+    );
+    assert_eq!(one.harness.env.styles.theme_name(), "light");
+
+    // With the window closed, as when the chooser was opened from the
+    // menu: the theme still takes effect, and one that turns out not to
+    // be a theme is said in the bottom bar, there being no window to say
+    // it in.
+    window.harness.act(Action::Settings(SettingsAct::Closed));
+    window
+        .harness
+        .act(Action::ThemeImported("light".to_owned()));
+    window.serve();
+    assert_eq!(window.harness.env.styles.theme_name(), "light");
+    window.file.unwritable = Some("There is no theme called \"notes\".".to_owned());
+    window
+        .harness
+        .act(Action::ThemeImported("notes".to_owned()));
+    window.serve();
+    assert_eq!(window.harness.env.styles.theme_name(), "light");
+    assert!(
+        window
+            .harness
+            .screen()
+            .contains("There is no theme called \"notes\""),
+        "{}",
+        window.harness.screen()
     );
 }
 
@@ -896,11 +1177,11 @@ fn a_file_that_says_what_the_window_does_not_offer_is_shown_as_it_is() {
     // does not exist can be named in it. Each is shown as the choice made,
     // since it is, and is not one to change to.
     let mut window = Window::new("[privacy]\nremote_images = \"allowlist\"\n");
-    window.file.settings.theme = "Solarized".to_owned();
+    window.file.settings.theme_dark = "Solarized".to_owned();
     window.file.settings.remote_images = RemoteImages::Allowlist;
     let read = SettingsRead {
-        theme: Theme::builtin("dark").unwrap(),
-        theme_problem: Some(
+        theme_dark: Theme::builtin("dark").unwrap(),
+        theme_dark_problem: Some(
             "There is no theme called \"Solarized\". Using the dark theme.".to_owned(),
         ),
         ..*File::of("").read().unwrap()
@@ -915,7 +1196,9 @@ fn a_file_that_says_what_the_window_does_not_offer_is_shown_as_it_is() {
         read: Ok(Box::new(read)),
         changed: None,
     }));
-    match window.field("general", "theme") {
+    // The light theme is one there is, and says nothing.
+    assert_eq!(window.field("general", "theme_light").help(), None);
+    match window.field("general", "theme_dark") {
         FormField::Choice {
             value,
             options,

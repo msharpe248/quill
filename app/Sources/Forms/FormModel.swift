@@ -87,7 +87,7 @@ public struct FormModel: Equatable, Sendable {
                 (core, allowed) = (value, options.map(\.id))
             // The last three are the settings window's, and are in no
             // form a sheet is given.
-            case .secret, .fixed, .code, .toggle, .number, .list:
+            case .secret, .fixed, .code, .toggle, .number, .list, .button:
                 continue
             }
             nextTold[field.id] = core
@@ -139,7 +139,7 @@ public struct FormModel: Equatable, Sendable {
             case let .code(value):
                 content = .code(value)
             // The settings window's kinds: in no form a sheet is given.
-            case .toggle, .number, .list:
+            case .toggle, .number, .list, .button:
                 content = .fixed("")
             }
             return FormRow(

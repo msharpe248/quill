@@ -58,7 +58,8 @@ import WebKit
 /// - `settingspane:PANE` choose a pane of the settings window by its name, as
 ///   a click on its toolbar button does
 /// - `settingsset:PANE.FIELD=VALUE` give a control of the settings window a
-///   value, as the user does: the name of an option for a pop-up, `on` or
+///   value, as the user does: the name of an option for a pop-up, or what the
+///   option is called (a theme the user named has a made-up name), `on` or
 ///   `off` for a checkbox, what is typed for a field
 /// - `settingsstep:PANE.FIELD=up` click the stepper of a number field once,
 ///   up or `down`
@@ -67,6 +68,28 @@ import WebKit
 /// - `settingspress:PANE.FIELD.ACTION` press a button of a list
 /// - `settingskey:KEY` a real key event to the settings window, in Quill's
 ///   notation: `settingskey:esc`, `settingskey:cmd-w`
+/// - `settingspress:PANE.FIELD` also presses a button that is a field of its
+///   own, as Import Theme is
+/// - `themes:open`    open the chooser of themes to import, as Import Theme in
+///   the Quill menu does; `themes:import`, `themes:other` and `themes:cancel`
+///   press its buttons
+/// - `themesearch:TEXT` type into the chooser's search field, in place of what
+///   is there
+/// - `themescope:dark` list only the dark themes in the chooser, or `light`,
+///   or `all`
+/// - `themepick:NAME` pick the row of the theme with this name, as a click on
+///   it does
+/// - `themefile:PATH` what the open panel answers when Other is next pressed
+///   in the chooser; without it the answer is that the user cancelled. No
+///   panel is ever shown to a script, so inside the sandbox the file must be
+///   in the app's container
+/// - `importtheme:PATH` import this theme file, as if it had been chosen
+/// - `probefolder:PATH` note whether the app can list the folder at this path,
+///   and how many things are in it: for finding out what the App Sandbox lets
+///   the app see. Nothing in the folder is opened, and no name is written
+/// - `system:dark`    as if the Mac had gone dark; `system:light`, light. The
+///   Mac itself is not touched, and a scripted run never asks what it is: it
+///   is light until a step says otherwise
 ///
 /// The widths are in the dump, so that the place of the reading pane can be
 /// checked without a person: the terminal's columns and the width of its
@@ -105,6 +128,16 @@ import WebKit
 /// written beside the window's, with `.settings.png` after the dump's name.
 /// Which pane was last on show is kept for the run only: a scripted run
 /// neither reads nor writes the user's own.
+///
+/// The chooser of themes is the real one, a sheet on the window it was asked
+/// for from. The dump says whether it is up, what is typed in its search
+/// field, how many themes it lists and the first of them, which is picked,
+/// and where themes were looked for with what was found in each place; its
+/// picture is written with `.themes.png` after the dump's name. The dump also
+/// says whether the app is light or dark and what the core was told the Mac
+/// is, and what became of each theme imported. A theme is copied into the
+/// scratch config folder's `themes` folder when the run has one, and only
+/// otherwise into the user's own.
 ///
 /// The copy of the vimrc is kept in the scratch config folder when the run
 /// has one (`--core-env QUILL_CONFIG_DIR=...`), in its `vim` folder, and
@@ -170,6 +203,14 @@ enum DebugScript {
         controller.vimrcPicker = { _, done in
             vimrcPanelsAsked += 1
             done(nil)
+        }
+        // Nor wait on a panel for a theme file: the file named by the last
+        // `themefile:` step is what the user is taken to have chosen, once.
+        controller.themeFilePicker = { _, done in
+            themePanelsAsked += 1
+            let file = themeFile
+            themeFile = nil
+            done(file)
         }
         // Nor wait on an alert about something that could not be done. What
         // went wrong is in the dump, where the shell noted it.
@@ -374,6 +415,55 @@ enum DebugScript {
                 note("no settings window to press \(argument) in")
             }
             try? await Task.sleep(for: .milliseconds(400))
+        case "themes":
+            switch argument {
+            case "open":
+                controller.importTheme(nil)
+            case "import", "other", "cancel":
+                if !controller.themeChooser.press(argument) {
+                    note("cannot press \(argument) in the theme chooser")
+                }
+            default:
+                note("unknown step \(step)")
+            }
+            // The themes are looked for off the main thread, and a theme
+            // chosen is copied in there too.
+            try? await Task.sleep(for: .milliseconds(900))
+        case "themesearch":
+            if !controller.themeChooser.search(for: argument) {
+                note("no theme chooser to search in")
+            }
+            try? await Task.sleep(for: .milliseconds(200))
+        case "themescope":
+            if !controller.themeChooser.show(scope: argument) {
+                note("cannot show \(argument) themes in the chooser")
+            }
+            try? await Task.sleep(for: .milliseconds(200))
+        case "themepick":
+            if !controller.themeChooser.pick(named: argument) {
+                note("no theme \(argument) in the chooser to pick")
+            }
+            try? await Task.sleep(for: .milliseconds(200))
+        case "themefile":
+            // What the open panel will answer when it is next asked for.
+            themeFile = argument.isEmpty ? nil : URL(fileURLWithPath: argument)
+        case "importtheme":
+            controller.importTheme(from: URL(fileURLWithPath: argument))
+            try? await Task.sleep(for: .milliseconds(900))
+        case "probefolder":
+            do {
+                let count = try FileManager.default.contentsOfDirectory(atPath: argument).count
+                note("\(argument) can be listed (\(count) things)")
+            } catch {
+                note("\(argument) cannot be listed (\((error as NSError).localizedFailureReason ?? "no reason given"))")
+            }
+        case "system":
+            switch argument {
+            case "dark": controller.pretendSystem(dark: true)
+            case "light": controller.pretendSystem(dark: false)
+            default: note("unknown step \(step)")
+            }
+            try? await Task.sleep(for: .milliseconds(500))
         case "snap":
             let plain = !argument.isEmpty && argument.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" }
             if let destination, plain {
@@ -401,6 +491,8 @@ enum DebugScript {
     private static var saveDestination: URL?
     private static var savePanelsAsked: [String] = []
     private static var vimrcPanelsAsked = 0
+    private static var themeFile: URL?
+    private static var themePanelsAsked = 0
     private static let notifier = RecordingNotifier()
 
     /// Paths separated by commas.
@@ -595,6 +687,15 @@ enum DebugScript {
         lines.append("vimrc: \(controller.vimrc.size.map { "imported, \($0) bytes" } ?? "none")")
         lines.append("vimrc imports: \(controller.vimrcResults.joined(separator: "; "))")
         lines.append("vimrc panels asked for: \(vimrcPanelsAsked)")
+        // look: setting system, Mac pretended light, app light, core told light
+        lines.append("look: \(controller.lookSummary)")
+        // theme chooser: closed | up, with what is typed, how many it lists,
+        // the first of them and which is picked; then where themes were
+        // looked for, and what was found in each place.
+        lines.append(contentsOf: controller.themeChooser.summary)
+        // themes imported: /path/Dracula (imported as "Dracula"); /path/notes (refused: ...)
+        lines.append("themes imported: \(controller.themeResults.joined(separator: "; "))")
+        lines.append("theme panels asked for: \(themePanelsAsked)")
         // sheet: none
         // sheet: up, then its step, title, note, error and busy, a line for
         // each field (`sheet field name [text] = "Work" (focus)`), and its
@@ -673,8 +774,33 @@ enum DebugScript {
                     NSGraphicsContext.restoreGraphicsState()
                 }
             }
+            // The chooser of themes is a sheet too, and is drawn where it
+            // lies when it is this window's.
+            if let window = controller.window, let chooser = controller.themeChooser.window,
+                window.attachedSheet === chooser, let chooserFrame = chooser.contentView?.superview,
+                let chooserBitmap = chooserFrame.bitmapImageRepForCachingDisplay(in: chooserFrame.bounds),
+                let context = NSGraphicsContext(bitmapImageRep: bitmap)
+            {
+                chooserFrame.cacheDisplay(in: chooserFrame.bounds, to: chooserBitmap)
+                let origin = NSPoint(
+                    x: chooser.frame.minX - window.frame.minX, y: chooser.frame.minY - window.frame.minY)
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current = context
+                chooserBitmap.draw(
+                    in: NSRect(origin: origin, size: chooserFrame.bounds.size), from: .zero,
+                    operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+                NSGraphicsContext.restoreGraphicsState()
+            }
             try? bitmap.representation(using: .png, properties: [:])?
                 .write(to: destination.appendingPathExtension("png"))
+        }
+        // The chooser by itself as well, to be looked at closely.
+        if let chooser = controller.themeChooser.window, let frame = chooser.contentView?.superview,
+            let bitmap = frame.bitmapImageRepForCachingDisplay(in: frame.bounds)
+        {
+            frame.cacheDisplay(in: frame.bounds, to: bitmap)
+            try? bitmap.representation(using: .png, properties: [:])?
+                .write(to: destination.appendingPathExtension("themes.png"))
         }
         // The settings window is a window of its own, and has a picture of
         // its own: what it drew, title bar, toolbar and all, with a sheet

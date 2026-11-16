@@ -20,7 +20,8 @@
 use std::hash::{Hash, Hasher};
 
 use quill_core::config::{
-    AccountType, ComposeEditor, ComposeFormat, Config, KeymapPreset, RemoteImages, ReplyPosition,
+    AccountType, Appearance, ComposeEditor, ComposeFormat, Config, KeymapPreset, RemoteImages,
+    ReplyPosition,
 };
 use quill_host::bridge::{
     FormAction, FormField, FormOption, FormRow, FormValue, Number, SettingsPane, SettingsShow,
@@ -30,13 +31,19 @@ use quill_host::bridge::{
 use crate::keymap::Keymap;
 use crate::state::Env;
 use crate::text;
-use crate::theme::{Styles, Theme};
+use crate::theme::Theme;
 use crate::vim::ExternalEditor;
 
 /// The settings the window has, as `config.toml` says them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
-    pub theme: String,
+    /// Whether Quill is light, dark, or as the Mac is.
+    pub appearance: Appearance,
+    /// The theme while Quill is light, by name: `theme_light`, or `theme`
+    /// where the file does not say.
+    pub theme_light: String,
+    /// The theme while Quill is dark, likewise.
+    pub theme_dark: String,
     pub keymap: KeymapPreset,
     pub notifications: bool,
     pub threads: bool,
@@ -53,7 +60,9 @@ pub struct Settings {
 impl Settings {
     pub fn of(config: &Config) -> Self {
         Self {
-            theme: config.ui.theme.clone(),
+            appearance: config.ui.appearance,
+            theme_light: config.ui.theme_for(false).to_owned(),
+            theme_dark: config.ui.theme_for(true).to_owned(),
             keymap: config.ui.keymap,
             notifications: config.ui.notifications,
             threads: config.ui.threads,
@@ -73,7 +82,9 @@ impl Settings {
 /// One of the settings the window has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Setting {
-    Theme,
+    Appearance,
+    ThemeLight,
+    ThemeDark,
     Keymap,
     Notifications,
     Threads,
@@ -88,8 +99,10 @@ pub enum Setting {
 }
 
 impl Setting {
-    pub const ALL: [Setting; 12] = [
-        Setting::Theme,
+    pub const ALL: [Setting; 14] = [
+        Setting::Appearance,
+        Setting::ThemeLight,
+        Setting::ThemeDark,
         Setting::Keymap,
         Setting::Notifications,
         Setting::Threads,
@@ -107,7 +120,9 @@ impl Setting {
     /// setting's name on the bridge, in its pane.
     pub fn key(self) -> &'static str {
         match self {
-            Setting::Theme => "theme",
+            Setting::Appearance => "appearance",
+            Setting::ThemeLight => "theme_light",
+            Setting::ThemeDark => "theme_dark",
             Setting::Keymap => "keymap",
             Setting::Notifications => "notifications",
             Setting::Threads => "threads",
@@ -125,7 +140,9 @@ impl Setting {
     /// The section of the file it is in.
     pub fn section(self) -> &'static str {
         match self {
-            Setting::Theme
+            Setting::Appearance
+            | Setting::ThemeLight
+            | Setting::ThemeDark
             | Setting::Keymap
             | Setting::Notifications
             | Setting::Threads
@@ -143,7 +160,9 @@ impl Setting {
     /// The pane of the window it is in.
     pub fn pane(self) -> Pane {
         match self {
-            Setting::Theme
+            Setting::Appearance
+            | Setting::ThemeLight
+            | Setting::ThemeDark
             | Setting::Keymap
             | Setting::Notifications
             | Setting::Threads
@@ -232,7 +251,20 @@ impl Pane {
 /// One setting given another value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Change {
-    Theme(String),
+    Appearance(Appearance),
+    /// The theme while Quill is light, by name.
+    ThemeLight(String),
+    /// The theme while Quill is dark, by name.
+    ThemeDark(String),
+    /// A theme to draw with from now on, by name: the one just imported.
+    /// `dark` is whether Quill is dark as this is asked. Which key of the
+    /// file that comes to is decided where the file is: `theme`, the one
+    /// theme there is, for a file that has never named a theme for one
+    /// appearance, and otherwise the key of the appearance in force.
+    ThemeInForce {
+        name: String,
+        dark: bool,
+    },
     Keymap(KeymapPreset),
     Notifications(bool),
     Threads(bool),
@@ -258,7 +290,9 @@ pub enum Written<'a> {
 impl Change {
     pub fn setting(&self) -> Setting {
         match self {
-            Change::Theme(_) => Setting::Theme,
+            Change::Appearance(_) => Setting::Appearance,
+            Change::ThemeLight(_) | Change::ThemeInForce { dark: false, .. } => Setting::ThemeLight,
+            Change::ThemeDark(_) | Change::ThemeInForce { dark: true, .. } => Setting::ThemeDark,
             Change::Keymap(_) => Setting::Keymap,
             Change::Notifications(_) => Setting::Notifications,
             Change::Threads(_) => Setting::Threads,
@@ -277,7 +311,10 @@ impl Change {
     /// is written as one: `cache_gb = 5`, as a person writes it.
     pub fn written(&self) -> Written<'_> {
         match self {
-            Change::Theme(name) => Written::Word(name),
+            Change::Appearance(appearance) => Written::Word(appearance.as_str()),
+            Change::ThemeLight(name)
+            | Change::ThemeDark(name)
+            | Change::ThemeInForce { name, .. } => Written::Word(name),
             Change::Keymap(preset) => Written::Word(preset.as_str()),
             Change::Editor(editor) => Written::Word(editor.as_str()),
             Change::Format(format) => Written::Word(format.as_str()),
@@ -316,11 +353,14 @@ pub struct SettingsRead {
     /// The themes there are to choose from, by name: the ones Quill comes
     /// with, then the user's own.
     pub themes: Vec<String>,
-    /// The theme the file names, ready to draw with, or the one that
-    /// stands in for it.
-    pub theme: Theme,
+    /// The theme the file names for when Quill is light, ready to draw
+    /// with, or the one that stands in for it.
+    pub theme_light: Theme,
     /// Why another theme stands in for the one named, if one does.
-    pub theme_problem: Option<String>,
+    pub theme_light_problem: Option<String>,
+    /// The same for when Quill is dark.
+    pub theme_dark: Theme,
+    pub theme_dark_problem: Option<String>,
     /// The keys of the preset the file names, with the user's own on top.
     pub keymap: Keymap,
     /// Why the user's own keys were left out, if they were.
@@ -332,7 +372,9 @@ pub struct SettingsRead {
 /// state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Applied {
-    pub theme: Theme,
+    pub appearance: Appearance,
+    pub theme_light: Theme,
+    pub theme_dark: Theme,
     pub keymap: Keymap,
     pub notifications: bool,
     pub threads: bool,
@@ -348,7 +390,9 @@ impl Applied {
     pub fn of(read: &SettingsRead) -> Self {
         let settings = &read.settings;
         Self {
-            theme: read.theme.clone(),
+            appearance: settings.appearance,
+            theme_light: read.theme_light.clone(),
+            theme_dark: read.theme_dark.clone(),
             keymap: read.keymap.clone(),
             notifications: settings.notifications,
             threads: settings.threads,
@@ -368,7 +412,11 @@ impl Applied {
     /// no part of this: they hold from when Quill is next started.
     pub fn apply(self, env: &mut Env) -> bool {
         let keys_changed = env.keymap != self.keymap;
-        env.styles = Styles::new(self.theme, env.styles.mode());
+        // What the host says the system is stays as it was said.
+        env.look.appearance = self.appearance;
+        env.look.light = self.theme_light;
+        env.look.dark = self.theme_dark;
+        env.restyle();
         env.keymap = self.keymap;
         env.notifications = self.notifications;
         env.threads = self.threads;
@@ -394,6 +442,8 @@ pub struct Can {
     pub sign_in: bool,
 }
 
+/// The name of the button that imports a theme, in the general pane.
+pub const IMPORT_THEME: &str = "import_theme";
 /// The name of the list of accounts, in its pane.
 pub const ACCOUNTS: &str = "accounts";
 /// The actions of that list.
@@ -532,8 +582,17 @@ fn kind_title(kind: AccountType) -> &'static str {
     }
 }
 
-fn general(read: &SettingsRead) -> Vec<FormField> {
-    let settings = &read.settings;
+/// The pop-up of themes for one appearance: every theme there is, with
+/// the one the file names chosen. Under it, why another stands in for
+/// that one if one does, and otherwise `help`.
+fn theme_choice(
+    setting: Setting,
+    label: &str,
+    read: &SettingsRead,
+    named: &str,
+    problem: Option<&String>,
+    help: Option<&str>,
+) -> FormField {
     // The theme the file names is always among the choices, so that what
     // is shown as chosen is what the file says, whether or not there is
     // such a theme.
@@ -542,26 +601,72 @@ fn general(read: &SettingsRead) -> Vec<FormField> {
         .iter()
         .map(|name| option(theme_id(name), theme_title(name)))
         .collect();
-    if !read.themes.contains(&settings.theme) {
+    if !read.themes.iter().any(|name| name == named) {
         themes.push(option(
-            theme_id(&settings.theme),
-            format!("{} (not found)", text::sanitize_line(&settings.theme)),
+            theme_id(named),
+            format!("{} (not found)", text::sanitize_line(named)),
         ));
     }
+    choice(
+        setting,
+        label,
+        theme_id(named),
+        themes,
+        problem
+            .map(|problem| text::sanitize_line(problem))
+            .or_else(|| help.map(str::to_owned)),
+    )
+}
+
+fn general(read: &SettingsRead, env: &Env) -> Vec<FormField> {
+    let settings = &read.settings;
+    // What "as the Mac is" comes to now, where the host has said.
+    let system = match env.look.system_dark {
+        Some(true) => " The Mac is dark now.",
+        Some(false) => " The Mac is light now.",
+        None => "",
+    };
     vec![
         choice(
-            Setting::Theme,
-            "Theme:",
-            theme_id(&settings.theme),
-            themes,
-            Some(match &read.theme_problem {
-                Some(problem) => text::sanitize_line(problem),
-                None => {
-                    "Themes of your own are files in the themes folder beside the settings file."
-                        .to_owned()
-                }
-            }),
+            Setting::Appearance,
+            "Appearance:",
+            settings.appearance.as_str(),
+            vec![
+                option(Appearance::System.as_str(), "System"),
+                option(Appearance::Light.as_str(), "Light"),
+                option(Appearance::Dark.as_str(), "Dark"),
+            ],
+            Some(format!(
+                "System follows the Mac, and changes with it.{system}"
+            )),
         ),
+        theme_choice(
+            Setting::ThemeLight,
+            "Light theme:",
+            read,
+            &settings.theme_light,
+            read.theme_light_problem.as_ref(),
+            None,
+        ),
+        theme_choice(
+            Setting::ThemeDark,
+            "Dark theme:",
+            read,
+            &settings.theme_dark,
+            read.theme_dark_problem.as_ref(),
+            None,
+        ),
+        FormField::Button {
+            id: IMPORT_THEME.to_owned(),
+            label: String::new(),
+            title: "Import Theme\u{2026}".to_owned(),
+            enabled: true,
+            help: Some(
+                "Themes made for Ghostty can be imported. Themes of your own are files in \
+                 the themes folder beside the settings file."
+                    .to_owned(),
+            ),
+        },
         choice(
             Setting::Keymap,
             "Keys:",
@@ -803,7 +908,7 @@ pub fn describe(
                 "This is the demo mailbox. Accounts are not added or signed in to here.".to_owned()
             }),
             fields: match pane {
-                Pane::General => general(read),
+                Pane::General => general(read, env),
                 Pane::Accounts => accounts(read, can),
                 Pane::Composing => composing(read, env),
                 Pane::Privacy => privacy(read),
@@ -869,11 +974,22 @@ pub fn change(
             }
             let not_one = || format!("That is not one of the choices for {label}.");
             match setting {
-                Setting::Theme => read
+                Setting::Appearance => Appearance::ALL
+                    .into_iter()
+                    .find(|appearance| appearance.as_str() == chosen)
+                    .map(Change::Appearance)
+                    .ok_or_else(not_one),
+                Setting::ThemeLight | Setting::ThemeDark => read
                     .themes
                     .iter()
                     .find(|name| &theme_id(name) == chosen)
-                    .map(|name| Change::Theme(name.clone()))
+                    .map(|name| {
+                        if setting == Setting::ThemeLight {
+                            Change::ThemeLight(name.clone())
+                        } else {
+                            Change::ThemeDark(name.clone())
+                        }
+                    })
                     // The theme the file names and nobody has: it is shown,
                     // and is not to be chosen.
                     .ok_or_else(|| "There is no theme of that name to change to.".to_owned()),
@@ -989,7 +1105,16 @@ mod tests {
         assert_eq!(theme_id("solarized_2"), "solarized_2");
         // One that is not is given one, the same every time, and no two
         // names share one.
-        for name in ["Solarized", "solarized-dark", "x_1", "", "caf\u{e9}"] {
+        for name in [
+            "Solarized",
+            "solarized-dark",
+            "x_1",
+            "",
+            "caf\u{e9}",
+            "Catppuccin Mocha",
+            "Dracula+",
+            "Jack O' Lantern",
+        ] {
             let id = theme_id(name);
             assert!(valid_form_id(&id) && id.starts_with("x_"), "{name}: {id}");
             assert_eq!(id, theme_id(name));
@@ -1005,9 +1130,32 @@ mod tests {
     #[test]
     fn a_change_is_written_as_a_person_would_write_it() {
         assert_eq!(
-            Change::Theme("light".to_owned()).written(),
+            Change::ThemeLight("light".to_owned()).written(),
             Written::Word("light")
         );
+        assert_eq!(
+            Change::ThemeDark("Catppuccin Mocha".to_owned()).written(),
+            Written::Word("Catppuccin Mocha")
+        );
+        assert_eq!(
+            Change::Appearance(Appearance::System).written(),
+            Written::Word("system")
+        );
+        for dark in [false, true] {
+            let imported = Change::ThemeInForce {
+                name: "Dracula+".to_owned(),
+                dark,
+            };
+            assert_eq!(imported.written(), Written::Word("Dracula+"));
+            assert_eq!(
+                imported.setting(),
+                if dark {
+                    Setting::ThemeDark
+                } else {
+                    Setting::ThemeLight
+                }
+            );
+        }
         assert_eq!(
             Change::Keymap(KeymapPreset::Mutt).written(),
             Written::Word("mutt")
@@ -1032,7 +1180,9 @@ mod tests {
         }
         for setting in Setting::ALL {
             let change = match setting {
-                Setting::Theme => Change::Theme("dark".to_owned()),
+                Setting::Appearance => Change::Appearance(Appearance::Dark),
+                Setting::ThemeLight => Change::ThemeLight("light".to_owned()),
+                Setting::ThemeDark => Change::ThemeDark("dark".to_owned()),
                 Setting::Keymap => Change::Keymap(KeymapPreset::Vim),
                 Setting::Notifications => Change::Notifications(true),
                 Setting::Threads => Change::Threads(true),

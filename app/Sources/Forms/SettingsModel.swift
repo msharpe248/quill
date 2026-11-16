@@ -213,6 +213,13 @@ public struct SettingsModel: Equatable, Sendable {
         return SettingsUsed(pane: pane, field: field, did: .action(action, row: row))
     }
 
+    /// The user pressed a button. Returns what to tell the core, or `nil`
+    /// when the field is no button or cannot be pressed now.
+    public func pressButton(_ field: String, of pane: String) -> SettingsUsed? {
+        guard case let .button(_, enabled)? = settings?.field(field, in: pane)?.kind, enabled else { return nil }
+        return SettingsUsed(pane: pane, field: field, did: .action(SettingsUsed.buttonPress, row: nil))
+    }
+
     private static func key(_ pane: String, _ field: String) -> String {
         "\(pane).\(field)"
     }
@@ -273,6 +280,8 @@ public struct SettingsModel: Equatable, Sendable {
                         "\(canPress(action.id, in: field.id, of: described.id) ? "+" : "-")\(action.id)"
                     }
                     shown = "[list] rows: \(rows.joined(separator: "; ")) actions: \(actions.joined(separator: " "))"
+                case let .button(title, enabled):
+                    shown = "[button] \(title.debugDescription)\(enabled ? "" : " (off)")"
                 // Settings have neither.
                 case .secret, .code:
                     shown = "[\(field.kind.name)]"

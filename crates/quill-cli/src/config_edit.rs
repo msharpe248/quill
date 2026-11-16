@@ -123,15 +123,28 @@ pub fn set_web_reading(text: &str, on: bool) -> Result<String, String> {
 /// wrong with it and wherever: the window does not edit a file it cannot
 /// show. Nor is a file left unreadable by the change.
 pub fn set(text: &str, change: &Change) -> Result<String, String> {
-    Config::parse(text).map_err(|err| format!("config.toml has a mistake to fix first: {err}"))?;
+    let config = Config::parse(text)
+        .map_err(|err| format!("config.toml has a mistake to fix first: {err}"))?;
     let setting = change.setting();
+    // A theme to draw with from now on. In a file that has one theme for
+    // both appearances, as every file had before there were two, that is
+    // `theme`, and it goes on being the one theme. In a file that names a
+    // theme for either appearance, it is the theme of the one in force.
+    let key = match change {
+        Change::ThemeInForce { .. }
+            if config.ui.theme_light.is_none() && config.ui.theme_dark.is_none() =>
+        {
+            "theme"
+        }
+        _ => setting.key(),
+    };
     let written = match change.written() {
         Written::Word(word) => Value::from(word),
         Written::Flag(on) => Value::from(on),
         Written::Whole(number) => Value::from(number),
         Written::Decimal(number) => Value::from(number),
     };
-    set_value(text, setting.section(), setting.key(), written)
+    set_value(text, setting.section(), key, written)
 }
 
 /// `text` with `key` in `section` set to `new`.
@@ -380,14 +393,10 @@ mod tests {
     #[test]
     fn a_setting_is_changed_where_it_stands_and_everything_else_is_left_as_it_was() {
         use quill_core::config::{
-            ComposeEditor, ComposeFormat, KeymapPreset, RemoteImages, ReplyPosition,
+            Appearance, ComposeEditor, ComposeFormat, KeymapPreset, RemoteImages, ReplyPosition,
         };
 
         // On its own line, with the comment that was on it.
-        assert_eq!(
-            set(WRITTEN, &Change::Theme("dark".to_owned())).unwrap(),
-            WRITTEN.replace("theme = \"light\"   #", "theme = \"dark\"   #")
-        );
         assert_eq!(
             set(WRITTEN, &Change::Keymap(KeymapPreset::Mutt)).unwrap(),
             WRITTEN.replace("keymap = \"vim\"", "keymap = \"mutt\"")
@@ -414,6 +423,82 @@ mod tests {
                 "keymap = \"vim\"\n",
                 "keymap = \"vim\"\nweb_reading = true\n"
             )
+        );
+        // The appearance, and a theme for each: keys of their own, beside
+        // the `theme` the file had, which is left as it was written and
+        // still stands for whichever of the two is not said.
+        assert_eq!(
+            set(WRITTEN, &Change::Appearance(Appearance::Dark)).unwrap(),
+            WRITTEN.replace(
+                "keymap = \"vim\"\n",
+                "keymap = \"vim\"\nappearance = \"dark\"\n"
+            )
+        );
+        let dark = set(WRITTEN, &Change::ThemeDark("Catppuccin Mocha".to_owned())).unwrap();
+        assert_eq!(
+            dark,
+            WRITTEN.replace(
+                "keymap = \"vim\"\n",
+                "keymap = \"vim\"\ntheme_dark = \"Catppuccin Mocha\"\n"
+            )
+        );
+        let ui = Config::parse(&dark).unwrap().ui;
+        assert_eq!(
+            (ui.theme.as_str(), ui.theme_for(false), ui.theme_for(true)),
+            ("light", "light", "Catppuccin Mocha")
+        );
+        let both = set(&dark, &Change::ThemeLight("terminal".to_owned())).unwrap();
+        assert_eq!(
+            both,
+            dark.replace(
+                "theme_dark = \"Catppuccin Mocha\"\n",
+                "theme_dark = \"Catppuccin Mocha\"\ntheme_light = \"terminal\"\n"
+            )
+        );
+        // Changed again, each is changed where it stands.
+        assert_eq!(
+            set(&both, &Change::ThemeDark("dark".to_owned())).unwrap(),
+            both.replace("theme_dark = \"Catppuccin Mocha\"", "theme_dark = \"dark\"")
+        );
+        assert!(both.contains("theme = \"light\"   # easier on the eyes\n"));
+
+        // A theme to draw with from now on, as one just imported is. With
+        // one theme for both appearances in the file, it is that one that
+        // changes, where it stands, whichever appearance is in force.
+        let imported = |dark| Change::ThemeInForce {
+            name: "Dracula+".to_owned(),
+            dark,
+        };
+        for dark in [false, true] {
+            assert_eq!(
+                set(WRITTEN, &imported(dark)).unwrap(),
+                WRITTEN.replace("theme = \"light\"   #", "theme = \"Dracula+\"   #")
+            );
+            // A file that says nothing of themes is given the one.
+            assert_eq!(
+                set("", &imported(dark)).unwrap(),
+                "[ui]\ntheme = \"Dracula+\"\n"
+            );
+        }
+        // With a theme for either appearance in the file, it is the theme
+        // of the appearance in force, and `theme` is left alone.
+        assert_eq!(
+            set(&dark, &imported(true)).unwrap(),
+            dark.replace(
+                "theme_dark = \"Catppuccin Mocha\"",
+                "theme_dark = \"Dracula+\""
+            )
+        );
+        assert_eq!(
+            set(&dark, &imported(false)).unwrap(),
+            dark.replace(
+                "theme_dark = \"Catppuccin Mocha\"\n",
+                "theme_dark = \"Catppuccin Mocha\"\ntheme_light = \"Dracula+\"\n"
+            )
+        );
+        assert_eq!(
+            set(&both, &imported(false)).unwrap(),
+            both.replace("theme_light = \"terminal\"", "theme_light = \"Dracula+\"")
         );
         for (change, line) in [
             (Change::Editor(ComposeEditor::Nano), "editor = \"nano\""),
@@ -458,18 +543,22 @@ mod tests {
         // they were written.
         let mut text = WRITTEN.to_owned();
         for change in [
-            Change::Theme("terminal".to_owned()),
+            Change::ThemeDark("terminal".to_owned()),
+            Change::Appearance(Appearance::Light),
             Change::Notifications(false),
             Change::Editor(ComposeEditor::Vim),
             Change::UndoSendSeconds(0),
             Change::RemoteImages(RemoteImages::Never),
             gigabytes(12.25),
-            Change::Theme("dark".to_owned()),
+            Change::ThemeDark("dark".to_owned()),
+            Change::Appearance(Appearance::System),
         ] {
             text = set(&text, &change).unwrap();
         }
         let config = Config::parse(&text).unwrap();
-        assert_eq!(config.ui.theme, "dark");
+        assert_eq!(config.ui.theme_for(true), "dark");
+        assert_eq!(config.ui.theme_for(false), "light");
+        assert_eq!(config.ui.appearance, Appearance::System);
         assert!(!config.ui.notifications);
         assert_eq!(config.compose.editor, ComposeEditor::Vim);
         assert_eq!(config.compose.undo_send_seconds, 0);
@@ -487,7 +576,10 @@ mod tests {
             assert!(text.contains(kept), "{kept:?} is gone from:\n{text}");
         }
         // Setting what is already so changes nothing at all.
-        assert_eq!(set(&text, &Change::Theme("dark".to_owned())).unwrap(), text);
+        assert_eq!(
+            set(&text, &Change::ThemeDark("dark".to_owned())).unwrap(),
+            text
+        );
     }
 
     #[test]
@@ -528,17 +620,27 @@ mod tests {
         // Text that would end a string in TOML is written so that it does
         // not: the file reads back as what was asked for.
         let odd = "dark\"\n[ui]\nkeymap = \"mutt";
-        let text = set(WRITTEN, &Change::Theme(odd.to_owned())).unwrap();
+        let text = set(WRITTEN, &Change::ThemeLight(odd.to_owned())).unwrap();
         let config = Config::parse(&text).unwrap();
-        assert_eq!(config.ui.theme, odd);
+        assert_eq!(config.ui.theme_for(false), odd);
         assert_eq!(config.ui.keymap, quill_core::config::KeymapPreset::Vim);
     }
 
     #[test]
     fn a_setting_written_on_one_line_with_its_section_is_changed_there() {
         let inline = "ui = { theme = \"light\", keymap = \"vim\" }   # all on one line\n";
-        let after = set(inline, &Change::Theme("dark".to_owned())).unwrap();
-        assert_eq!(after, inline.replace("\"light\"", "\"dark\""));
+        let after = set(
+            inline,
+            &Change::Keymap(quill_core::config::KeymapPreset::Mutt),
+        )
+        .unwrap();
+        assert_eq!(after, inline.replace("\"vim\"", "\"mutt\""));
+        let after = set(inline, &Change::ThemeDark("dark".to_owned())).unwrap();
+        let config = Config::parse(&after).unwrap();
+        assert_eq!(
+            (config.ui.theme_for(false), config.ui.theme_for(true)),
+            ("light", "dark")
+        );
         let after = set(inline, &Change::Threads(false)).unwrap();
         let config = Config::parse(&after).unwrap();
         assert!(!config.ui.threads);

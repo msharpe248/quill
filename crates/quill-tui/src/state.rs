@@ -41,7 +41,7 @@ use crate::setup::{
     SignInStage,
 };
 use crate::template::{self, Template};
-use crate::theme::Styles;
+use crate::theme::{Look, Styles};
 use crate::vim::{ExternalEditor, Verdict};
 use crate::{text, view};
 pub use mouse::{Mouse, MouseKind};
@@ -65,7 +65,11 @@ const MOST_ANNOUNCED_SINGLY: usize = 3;
 pub struct Env {
     pub registry: Registry,
     pub keymap: Keymap,
+    /// What the views draw with: the theme in force, for this terminal.
+    /// Made from [`Env::look`] by [`Env::restyle`], and by nothing else.
     pub styles: Styles,
+    /// Whether Quill is light or dark, and the theme for each.
+    pub look: Look,
     pub tz: TimeZone,
     /// The reader's share of the space right of the sidebar, from the config.
     pub reader_width: f32,
@@ -149,6 +153,12 @@ pub struct Env {
 }
 
 impl Env {
+    /// Draws with the theme in force from now on: after the look has
+    /// changed, in the settings or because the system's appearance has.
+    pub fn restyle(&mut self) {
+        self.styles = Styles::new(self.look.theme().clone(), self.styles.mode());
+    }
+
     /// The key to name when telling the user how to run a command: the
     /// first of its keys that can be pressed here.
     pub fn hint_key(&self, id: CommandId) -> Option<&crate::keymap::KeySeq> {
@@ -277,6 +287,14 @@ pub enum Action {
     /// The user opened, closed or did something in the host's settings
     /// window.
     Settings(SettingsAct),
+    /// The host says the system is in its dark appearance, or its light
+    /// one.
+    SystemAppearance {
+        dark: bool,
+    },
+    /// The host has put a theme file of this name in the user's `themes`
+    /// folder: the user chose it in the host's chooser.
+    ThemeImported(String),
 }
 
 /// What was done with the host's settings window.
@@ -303,6 +321,9 @@ pub struct Effects {
     /// Settings that hold from now on, for the run loop to put into
     /// [`Env`] before the next update.
     pub settings: Option<Box<Applied>>,
+    /// What the host has just said the system's appearance is, for the
+    /// run loop to put into [`Env`] likewise ([`Look::system_dark`]).
+    pub system_dark: Option<bool>,
 }
 
 impl Effects {
@@ -312,6 +333,7 @@ impl Effects {
             && self.sync.is_empty()
             && self.accounts.is_empty()
             && self.settings.is_none()
+            && self.system_dark.is_none()
     }
 }
 
@@ -324,6 +346,9 @@ pub enum HostRequest {
     Copy(String),
     /// Ask the user to choose files with the host's own panel.
     PickFiles,
+    /// Ask the user to choose a theme to import, with the host's own
+    /// chooser. Answered by [`Action::ThemeImported`], if one is.
+    PickTheme,
     /// Show files in the host's viewer, starting with the one at `index`.
     /// Each is a path and what to call it.
     Preview {
@@ -412,6 +437,9 @@ pub struct HostState {
     /// host shows beside this one, and the cells nothing paints.
     pub background: Option<(u8, u8, u8)>,
     pub foreground: Option<(u8, u8, u8)>,
+    /// Whether the settings say light, dark, or as the system is: the
+    /// host's own windows go by it.
+    pub appearance: quill_core::config::Appearance,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1450,6 +1478,14 @@ impl State {
             Action::Sync(event) => self.on_sync(env, event, &mut out),
             Action::Account(event) => self.on_account(env, event, &mut out),
             Action::Settings(act) => self.on_settings(env, act, &mut out),
+            // The run loop puts it where the next frame finds it: `env`
+            // is not this function's to change.
+            Action::SystemAppearance { dark } => {
+                if env.look.system_dark != Some(dark) {
+                    out.system_dark = Some(dark);
+                }
+            }
+            Action::ThemeImported(name) => self.on_theme_imported(env, name, &mut out),
             Action::Paste(text) => match self.context() {
                 Context::Setup => {
                     if let Some(setup) = &mut self.setup {
@@ -2427,6 +2463,7 @@ impl State {
             },
             background: env.styles.background_rgb(),
             foreground: env.styles.text_rgb(),
+            appearance: env.look.appearance,
         }
     }
 

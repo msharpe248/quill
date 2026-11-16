@@ -64,8 +64,16 @@ pub struct SavedSearch {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct UiConfig {
-    /// A built-in theme name, or the stem of a file in `themes/`.
+    /// A built-in theme name, or the name of a file in `themes/`. The one
+    /// theme there is until `theme_light` or `theme_dark` says otherwise:
+    /// each of those that is left out is this.
     pub theme: String,
+    /// Whether Quill is light, dark, or as the Mac is.
+    pub appearance: Appearance,
+    /// The theme while Quill is light. Left out, it is `theme`.
+    pub theme_light: Option<String>,
+    /// The theme while Quill is dark. Left out, it is `theme`.
+    pub theme_dark: Option<String>,
     pub keymap: KeymapPreset,
     /// The reader's share of the space right of the sidebar, in wide layouts.
     pub reader_width: f32,
@@ -90,6 +98,9 @@ impl Default for UiConfig {
     fn default() -> Self {
         Self {
             theme: "dark".to_owned(),
+            appearance: Appearance::System,
+            theme_light: None,
+            theme_dark: None,
             keymap: KeymapPreset::Vim,
             reader_width: 0.5,
             toolbar: true,
@@ -101,6 +112,79 @@ impl Default for UiConfig {
             web_reading: false,
         }
     }
+}
+
+impl UiConfig {
+    /// The name of the theme for when Quill is dark, or for when it is
+    /// light: the one said for that, and otherwise `theme`. So a config
+    /// that says only `theme`, as every config did before there was an
+    /// appearance to choose, has that one theme whatever the appearance.
+    pub fn theme_for(&self, dark: bool) -> &str {
+        let own = if dark {
+            &self.theme_dark
+        } else {
+            &self.theme_light
+        };
+        own.as_deref().unwrap_or(&self.theme)
+    }
+}
+
+/// Whether Quill is light or dark.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    /// As the Mac is, and changing with it. Only Quill's own app is told
+    /// what the Mac is; a terminal is not, and there this is dark.
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl Appearance {
+    pub const ALL: [Self; 3] = [Self::System, Self::Light, Self::Dark];
+
+    /// The word the config says it with.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::Light => "light",
+            Self::Dark => "dark",
+        }
+    }
+
+    /// Whether Quill is dark, given what the host says the system is
+    /// (`None` when there is nobody to say, as in a terminal).
+    pub fn is_dark(self, system_dark: Option<bool>) -> bool {
+        match self {
+            Self::System => system_dark.unwrap_or(true),
+            Self::Light => false,
+            Self::Dark => true,
+        }
+    }
+}
+
+/// The longest name a theme may have, in bytes.
+pub const MAX_THEME_NAME: usize = 100;
+
+/// Whether `name` could be the name of a theme of the user's own: the
+/// name of a file in `themes/`, as it stands or with `.toml` after it, and
+/// nothing that could point outside that folder or be hidden in it.
+///
+/// Themes made for Ghostty are named as people write ("Catppuccin Mocha",
+/// "Dracula+", "Jack O' Lantern"), so spaces and punctuation are part of a
+/// name. A path separator is not, nor a control character, a dot to start
+/// with, or space at either end; and no name ends in `.toml`, which would
+/// make one file answer to two names.
+pub fn is_theme_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= MAX_THEME_NAME
+        && !name.starts_with('.')
+        && name.trim() == name
+        && !name.to_ascii_lowercase().ends_with(".toml")
+        && !name
+            .chars()
+            .any(|c| c == '/' || c == '\\' || c == ':' || c.is_control())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
@@ -713,6 +797,96 @@ smtp = { host = "smtp.fastmail.com", port = 465, tls = "implicit" }
         for remote in RemoteImages::ALL {
             let text = format!("[privacy]\nremote_images = \"{}\"\n", remote.as_str());
             assert_eq!(Config::parse(&text).unwrap().privacy.remote_images, remote);
+        }
+    }
+
+    #[test]
+    fn a_config_that_says_only_theme_has_that_theme_whatever_the_appearance() {
+        // As every config was before there was an appearance to choose.
+        let old = Config::parse("[ui]\ntheme = \"light\"\n").unwrap().ui;
+        assert_eq!(old.appearance, Appearance::System);
+        assert_eq!(
+            (old.theme_light.as_deref(), old.theme_dark.as_deref()),
+            (None, None)
+        );
+        assert_eq!(
+            (old.theme_for(false), old.theme_for(true)),
+            ("light", "light")
+        );
+        // And one that says nothing has the dark theme, as it always had.
+        let none = Config::default().ui;
+        assert_eq!(
+            (none.theme_for(false), none.theme_for(true)),
+            ("dark", "dark")
+        );
+
+        // Each of the two that is said is used for its own appearance, and
+        // `theme` still stands for the one that is not.
+        let one = Config::parse("[ui]\ntheme = \"terminal\"\ntheme_light = \"Solarized Light\"\n")
+            .unwrap()
+            .ui;
+        assert_eq!(
+            (one.theme_for(false), one.theme_for(true)),
+            ("Solarized Light", "terminal")
+        );
+        let both = Config::parse(
+            "[ui]\nappearance = \"light\"\ntheme_light = \"light\"\ntheme_dark = \"Dracula\"\n",
+        )
+        .unwrap()
+        .ui;
+        assert_eq!(both.appearance, Appearance::Light);
+        assert_eq!(
+            (both.theme_for(false), both.theme_for(true)),
+            ("light", "Dracula")
+        );
+        assert!(Config::parse("[ui]\nappearance = \"dim\"\n").is_err());
+    }
+
+    #[test]
+    fn the_appearance_is_light_or_dark_or_as_the_system_is() {
+        for appearance in Appearance::ALL {
+            let text = format!("[ui]\nappearance = \"{}\"\n", appearance.as_str());
+            assert_eq!(Config::parse(&text).unwrap().ui.appearance, appearance);
+        }
+        assert!(!Appearance::Light.is_dark(Some(true)));
+        assert!(Appearance::Dark.is_dark(Some(false)));
+        assert!(Appearance::System.is_dark(Some(true)));
+        assert!(!Appearance::System.is_dark(Some(false)));
+        // With nobody to say what the system is, as in a terminal: dark.
+        assert!(Appearance::System.is_dark(None));
+    }
+
+    #[test]
+    fn a_theme_is_named_as_people_write_and_never_by_a_path() {
+        for name in [
+            "dark",
+            "solarized-dark_2",
+            "Catppuccin Mocha",
+            "Dracula+",
+            "Jack O' Lantern",
+            "Builtin Tango (Light)",
+            "caf\u{e9} 3.5",
+        ] {
+            assert!(is_theme_name(name), "{name}");
+        }
+        let long = "x".repeat(MAX_THEME_NAME + 1);
+        for name in [
+            "",
+            "../secret",
+            "a/b",
+            "/etc/passwd",
+            "a\\b",
+            "a:b",
+            ".hidden",
+            "x.toml",
+            "X.TOML",
+            " padded",
+            "padded ",
+            "two\nlines",
+            "bell\u{7}",
+            long.as_str(),
+        ] {
+            assert!(!is_theme_name(name), "{name:?}");
         }
     }
 

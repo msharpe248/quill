@@ -1,0 +1,12 @@
+{
+  "jsonrpc": "2.0",
+  "method": "state.update",
+  "params": {
+    "context": "list",
+    "enabled": [],
+    "checked": [],
+    "unread": 0,
+    "title": "Inbox",
+    "appearance": "sepia"
+  }
+}

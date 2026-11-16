@@ -15,9 +15,9 @@
 //! the window brings Quill in line with the file as it stands, whoever
 //! wrote it last.
 
-use quill_host::bridge::{SettingsDid, SettingsShow};
+use quill_host::bridge::{BUTTON_PRESS, SettingsDid, SettingsShow};
 
-use super::{Effects, Env, SettingsAct, State};
+use super::{Effects, Env, HostRequest, Notice, SettingsAct, State};
 use crate::command::CommandId;
 use crate::settings::{self, Applied, Can, Change, SettingsRead};
 use crate::setup::{AccountRequest, SignIn, SignInStage};
@@ -106,6 +106,16 @@ impl State {
                             Err(reason) => self.settings_answered(Some(reason)),
                         }
                     }
+                    // The button that imports a theme: the host has the
+                    // chooser, and says what was chosen when something is.
+                    SettingsDid::Action { action, row: None }
+                        if used.pane() == settings::Pane::General.id()
+                            && used.field() == settings::IMPORT_THEME
+                            && action == BUTTON_PRESS =>
+                    {
+                        out.host.push(HostRequest::PickTheme);
+                        self.settings_answered(None);
+                    }
                     SettingsDid::Action { action, row } => {
                         let known = used.pane() == settings::Pane::Accounts.id()
                             && used.field() == settings::ACCOUNTS;
@@ -143,6 +153,22 @@ impl State {
         }
     }
 
+    /// The host has put a theme in the user's `themes` folder, chosen in
+    /// its chooser: it becomes the theme in force, so that what was chosen
+    /// is what is seen. For a settings file with one theme for both
+    /// appearances that is the one theme; for one that has them apart, the
+    /// dark one while Quill is dark and the light one while it is light.
+    /// The service knows which the file is. It also checks that the file
+    /// copied in is a theme before the settings are made to name it, and
+    /// reads the folder again either way.
+    pub(super) fn on_theme_imported(&mut self, env: &Env, name: String, out: &mut Effects) {
+        let change = Change::ThemeInForce {
+            name,
+            dark: env.look.is_dark(),
+        };
+        out.accounts.push(AccountRequest::Settings(Some(change)));
+    }
+
     /// The host is owed the settings again, with why the last change was
     /// not made if it was not.
     fn settings_answered(&mut self, refused: Option<String>) {
@@ -169,6 +195,15 @@ impl State {
         // on if it made a change: the file was written.
         let made = matches!(changed, Some((_, Ok(()))));
         if self.settings.is_none() && !made {
+            // With no window to say it in, a change that was not made is
+            // said where everything else is: a theme imported from the
+            // menu that turned out not to be one.
+            if let Some((_, Err(reason))) = &changed {
+                self.notices.push_back(Notice::error(format!(
+                    "That was not changed. {}",
+                    text::sanitize_line(reason)
+                )));
+            }
             return;
         }
         let refused = match &changed {
@@ -226,6 +261,13 @@ impl State {
             {
                 compose.body.set_misspellings(Vec::new());
             }
+        }
+        // Another look: everything is drawn again.
+        if now.appearance != env.look.appearance
+            || read.theme_light != env.look.light
+            || read.theme_dark != env.look.dark
+        {
+            self.dirty = true;
         }
         // Other keys: half a sequence typed in the old ones means nothing
         // in the new.

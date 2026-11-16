@@ -242,7 +242,10 @@ import Testing
     }
 
     @Test func aSheetHasNoneOfTheFieldsThatReportAsTheyChange() {
-        for field in [toggle("on"), number(10), list()] {
+        let button = FormField(
+            id: "import_theme", label: "", kind: .button(title: "Import Theme\u{2026}", enabled: true))
+        for field in [toggle("on"), number(10), list(), button] {
+            #expect(field.reportsAsChanged)
             #expect(FormShow(step: "server", title: "Add an account", fields: [field], buttons: []) == nil)
         }
         // A field that does not hang together is in no form either.
@@ -251,6 +254,44 @@ import Testing
                 step: "server", title: "Add an account",
                 fields: [FormField(id: "type", label: "", kind: .choice(value: "imap", options: []))], buttons: [])
                 == nil)
+    }
+
+    @Test func aButtonOfTheSettingsSaysWhatItDoesAndIsPressedByName() throws {
+        let button = FormField(
+            id: "import_theme", label: "", kind: .button(title: "Import Theme\u{2026}", enabled: true),
+            help: "Themes made for Ghostty can be imported.")
+        let build = { (panes: [SettingsPane]) in SettingsShow(panes: panes) }
+        let shown = try #require(build([pane([button])]))
+        let line = CoreToShell.settingsShow(shown).line
+        #expect(line.contains(#""kind":"button""#))
+        #expect(line.contains(#""enabled":true"#))
+        #expect(try CoreToShell(line: line) == .settingsShow(shown))
+        #expect(button.value == nil && !button.isEditable && button.kind.name == "button")
+        // One that cannot be pressed now says so, and one with nothing on
+        // it is no button.
+        let off = FormField(id: "import_theme", label: "", kind: .button(title: "Import", enabled: false))
+        #expect(
+            try CoreToShell(line: CoreToShell.settingsShow(#require(build([pane([off])]))).line)
+                == .settingsShow(#require(build([pane([off])]))))
+        #expect(build([pane([FormField(id: "go", label: "", kind: .button(title: "", enabled: true))])]) == nil)
+        // A press is an action of that name, of no row.
+        let pressed = try #require(
+            SettingsUsed(pane: "general", field: "import_theme", did: .action(SettingsUsed.buttonPress, row: nil)))
+        #expect(
+            ShellToCore.settingsUsed(pressed).line
+                == #"{"jsonrpc":"2.0","method":"settings.used","params":{"action":"press","field":"import_theme","pane":"general"}}"#
+        )
+        // What a button may not have is refused.
+        for bad in [
+            #"{"kind":"button","id":"go","label":"","title":"Go"}"#,
+            #"{"kind":"button","id":"go","label":"","title":"Go","enabled":true,"value":"x"}"#,
+            #"{"kind":"button","id":"go","label":"","title":"Go","enabled":"yes"}"#,
+            #"{"kind":"button","id":"go","label":"","title":"Go","enabled":true,"focus":true}"#,
+        ] {
+            let line =
+                #"{"jsonrpc":"2.0","method":"settings.show","params":{"panes":[{"id":"general","title":"General","symbol":"gearshape","fields":[\#(bad)]}]}}"#
+            #expect(throws: BridgeError.self, "\(bad)") { try CoreToShell(line: line) }
+        }
     }
 
     @Test func whatIsLeftOutIsLeftOutAndAwkwardTextSurvives() throws {
@@ -308,7 +349,8 @@ import Testing
             try show(#"{"id":"p","title":"P","symbol":"at","fields":[],"html":"<b>"}"#)
         }
         // The kinds a pane has, which are not all of a sheet's.
-        let kinds = BridgeError.malformed("settings.show: a field is text, choice, static, toggle, number or list")
+        let kinds = BridgeError.malformed(
+            "settings.show: a field is text, choice, static, toggle, number, list or button")
         #expect(throws: kinds) { try show(with(#"{"kind":"slider","id":"a","label":"","value":1}"#)) }
         #expect(throws: kinds) { try show(with(#"{"kind":"secret","id":"a","label":""}"#)) }
         #expect(throws: kinds) { try show(with(#"{"kind":"code","id":"a","label":"","value":"HJKL"}"#)) }

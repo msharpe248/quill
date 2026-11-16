@@ -68,6 +68,12 @@ pub enum HostEvent {
     /// The user changed a setting in the host's settings window, or asked
     /// for something from one of its lists.
     SettingsUsed(bridge::SettingsUsed),
+    /// The Mac is in its dark appearance, or its light one: said once
+    /// the host knows, and whenever it changes.
+    SystemAppearance { dark: bool },
+    /// The host has put a theme file of this name in the `themes` folder
+    /// beside the settings file.
+    ThemeImported(String),
     /// The app is quitting: flush and exit cleanly.
     WillQuit,
     /// The shell has gone. There is nothing left to draw for.
@@ -252,6 +258,13 @@ pub trait Host: Send + Sync {
     /// choice arrives as [`HostEvent::Files`]. Only a shell has a panel.
     fn pick_files(&self) {
         self.send(CoreToShell::FilesPick(NoParams {}));
+    }
+
+    /// Asks the user to choose a theme to import, with the host's own
+    /// chooser. One that is imported arrives as
+    /// [`HostEvent::ThemeImported`]. Only a shell has a chooser.
+    fn pick_theme(&self) {
+        self.send(CoreToShell::ThemesPick(NoParams {}));
     }
 
     /// Puts text on the system clipboard, if this host can. Returns

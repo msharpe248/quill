@@ -5,9 +5,16 @@
 //! to the nearest 256-colour index when the terminal lacks true colour, and
 //! `NO_COLOR` turns colour off altogether. State is never shown by colour
 //! alone: every style here also carries a modifier or the views add a marker.
+//!
+//! A theme written for the Ghostty terminal is read too ([`ghostty`]): it
+//! has fewer colours than Quill draws with, and the rest are worked out
+//! from it, held to a measure of what can be read ([`contrast`]).
 
 use ratatui::style::{Color, Modifier, Style};
 use serde::Deserialize;
+
+pub mod contrast;
+pub mod ghostty;
 
 /// A colour as a theme file writes it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,6 +119,10 @@ pub struct Colors {
     pub border_focused: ColorSpec,
     pub selection_fg: ColorSpec,
     pub selection_bg: ColorSpec,
+    /// The bar of the selected row in a pane that does not have the
+    /// keyboard, where each word keeps its own colour. Left out, it is
+    /// `selection_bg`.
+    pub selection_inactive_bg: Option<ColorSpec>,
     pub unread: ColorSpec,
     pub starred: ColorSpec,
     pub accent: ColorSpec,
@@ -131,6 +142,7 @@ impl Default for Colors {
             border_focused: ColorSpec::Indexed(4),
             selection_fg: ColorSpec::Indexed(15),
             selection_bg: ColorSpec::Indexed(4),
+            selection_inactive_bg: None,
             unread: ColorSpec::Default,
             starred: ColorSpec::Indexed(3),
             accent: ColorSpec::Indexed(6),
@@ -198,6 +210,84 @@ impl Theme {
         Self {
             name: "terminal".to_owned(),
             colors: Colors::default(),
+        }
+    }
+
+    /// A theme from the text of a file in the user's `themes` folder, to
+    /// be known as `name`: one of Quill's own, in TOML, or one written for
+    /// Ghostty. `toml` says which the file's name makes it out to be
+    /// (`NAME.toml`, or plain `NAME`), and that is the format its mistakes
+    /// are reported in; but a file that is a good theme in the other
+    /// format is that theme, whatever it is called.
+    ///
+    /// A Quill theme names itself inside the file. A Ghostty theme has
+    /// only its file's name, so it is called `name`.
+    pub fn from_file(name: &str, text: &str, toml: bool) -> Result<Self, String> {
+        let quill = Self::parse(text).map_err(|err| err.to_string());
+        let ghostty = ghostty::parse(text).map(|theme| theme.theme(name));
+        let (named, other) = if toml {
+            (quill, ghostty)
+        } else {
+            (ghostty, quill)
+        };
+        named.or_else(|why| other.map_err(|_| why))
+    }
+
+    /// Whether the theme is a dark one: drawn on a background that white
+    /// stands out on more than black does. `None` when the theme leaves
+    /// its background to the terminal, or names one of the terminal's own
+    /// sixteen colours, which only the terminal can say the look of.
+    pub fn is_dark(&self) -> Option<bool> {
+        let background = match self.colors.background {
+            ColorSpec::Rgb(red, green, blue) => Some((red, green, blue)),
+            ColorSpec::Indexed(index) => rgb_of(Color::Indexed(index)),
+            ColorSpec::Default => None,
+        }?;
+        Some(contrast::is_dark(background))
+    }
+}
+
+/// Whether Quill is light or dark, and the theme it has for each.
+///
+/// The settings say light, dark, or as the system is; what the system is
+/// only a host can say, and only Quill's own app does. In a terminal
+/// nobody says, and "as the system is" is dark: a terminal program cannot
+/// ask what its terminal looks like and be sure of an answer, and dark is
+/// what Quill was before there was a choice.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Look {
+    /// What the settings say.
+    pub appearance: quill_core::config::Appearance,
+    /// Whether the system is dark, once a host has said.
+    pub system_dark: Option<bool>,
+    /// The theme while Quill is light.
+    pub light: Theme,
+    /// The theme while Quill is dark.
+    pub dark: Theme,
+}
+
+impl Look {
+    /// One theme whatever the appearance, which is the system's.
+    pub fn one(theme: Theme) -> Self {
+        Self {
+            appearance: quill_core::config::Appearance::System,
+            system_dark: None,
+            light: theme.clone(),
+            dark: theme,
+        }
+    }
+
+    /// Whether Quill is dark now.
+    pub fn is_dark(&self) -> bool {
+        self.appearance.is_dark(self.system_dark)
+    }
+
+    /// The theme in force.
+    pub fn theme(&self) -> &Theme {
+        if self.is_dark() {
+            &self.dark
+        } else {
+            &self.light
         }
     }
 }
@@ -306,7 +396,11 @@ impl Styles {
             Style::new().fg(fg).bg(bg)
         } else {
             // Out of focus the bar stays but the text keeps its own colour.
-            Style::new().bg(bg)
+            // A theme may have a quieter bar for that, to be read on.
+            let quiet = colors
+                .selection_inactive_bg
+                .and_then(|spec| self.color(spec));
+            Style::new().bg(quiet.unwrap_or(bg))
         }
     }
 
@@ -470,6 +564,111 @@ mod tests {
         assert!(Theme::parse("name = \"t\"\n[colors]\nborder = 256\n").is_err());
         assert!(Theme::parse("name = \"t\"\n[colors]\ntxet = \"red\"\n").is_err());
         assert!(Theme::parse("[colors]\ntext = \"red\"\n").is_err());
+    }
+
+    #[test]
+    fn a_theme_may_have_a_quieter_bar_for_a_pane_without_the_keyboard() {
+        // Without one the bar is the same in both, as it always was.
+        let dark = Styles::new(Theme::builtin("dark").unwrap(), ColorMode::TrueColor);
+        assert_eq!(dark.selected(true).bg, dark.selected(false).bg);
+        assert_eq!(dark.selected(false).fg, None);
+        for name in Theme::builtin_names() {
+            let theme = Theme::builtin(name).unwrap();
+            assert_eq!(theme.colors.selection_inactive_bg, None, "{name}");
+        }
+
+        let own = Theme::parse(
+            "name = \"t\"\n[colors]\nselection_fg = \"#ffffff\"\nselection_bg = \"#204080\"\n\
+             selection_inactive_bg = \"#303030\"\n",
+        )
+        .unwrap();
+        let styles = Styles::new(own, ColorMode::TrueColor);
+        assert_eq!(styles.selected(true).bg, Some(Color::Rgb(0x20, 0x40, 0x80)));
+        assert_eq!(styles.selected(true).fg, Some(Color::Rgb(0xff, 0xff, 0xff)));
+        assert_eq!(
+            styles.selected(false).bg,
+            Some(Color::Rgb(0x30, 0x30, 0x30))
+        );
+        assert_eq!(styles.selected(false).fg, None);
+    }
+
+    #[test]
+    fn a_file_is_a_theme_of_quills_or_of_ghosttys_whatever_it_is_called() {
+        let quill = "name = \"mine\"\n[colors]\ntext = \"#112233\"\n";
+        let ghostty = "background = #282a36\nforeground = #f8f8f2\npalette = 4=#bd93f9\n";
+        // Each under the name its format has.
+        let theme = Theme::from_file("mine", quill, true).unwrap();
+        assert_eq!(theme.name, "mine");
+        assert_eq!(theme.colors.text, ColorSpec::Rgb(0x11, 0x22, 0x33));
+        let theme = Theme::from_file("Dracula", ghostty, false).unwrap();
+        assert_eq!(theme.name, "Dracula");
+        assert_eq!(theme.colors.background, ColorSpec::Rgb(0x28, 0x2a, 0x36));
+        assert_eq!(
+            theme.colors.border_focused,
+            ColorSpec::Rgb(0xbd, 0x93, 0xf9)
+        );
+        // And each under the other's: a good theme is that theme.
+        assert_eq!(Theme::from_file("x", ghostty, true).unwrap().name, "x");
+        assert_eq!(Theme::from_file("x", quill, false).unwrap().name, "mine");
+        // What is neither is refused in the words of the format its name
+        // makes it out to be.
+        let broken = "name = \"mine\"\n[colors]\ntext = \"mauve\"\n";
+        let refused = Theme::from_file("mine", broken, true).unwrap_err();
+        assert!(refused.starts_with("theme line 3: "), "{refused}");
+        let refused = Theme::from_file("notes", "Remember the milk.\n", false).unwrap_err();
+        assert!(refused.contains("not a theme in Ghostty"), "{refused}");
+    }
+
+    #[test]
+    fn a_theme_is_dark_or_light_by_its_background_where_it_fixes_one() {
+        assert_eq!(Theme::builtin("dark").unwrap().is_dark(), Some(true));
+        assert_eq!(Theme::builtin("light").unwrap().is_dark(), Some(false));
+        // The terminal's own colours are the terminal's to say.
+        assert_eq!(Theme::terminal().is_dark(), None);
+        let own = |background: &str| {
+            Theme::parse(&format!(
+                "name = \"t\"\n[colors]\nbackground = {background}\n"
+            ))
+            .unwrap()
+            .is_dark()
+        };
+        assert_eq!(own("236"), Some(true));
+        assert_eq!(own("255"), Some(false));
+        assert_eq!(own("\"black\""), None);
+    }
+
+    #[test]
+    fn the_theme_in_force_goes_by_the_appearance_and_by_the_system_where_one_is_known() {
+        use quill_core::config::Appearance;
+
+        let mut look = Look {
+            appearance: Appearance::System,
+            system_dark: None,
+            light: Theme::builtin("light").unwrap(),
+            dark: Theme::builtin("dark").unwrap(),
+        };
+        // Nobody has said what the system is, as in a terminal: dark.
+        assert!(look.is_dark());
+        assert_eq!(look.theme().name, "dark");
+        // Quill's app says, and says again when the Mac changes.
+        look.system_dark = Some(false);
+        assert_eq!(look.theme().name, "light");
+        look.system_dark = Some(true);
+        assert_eq!(look.theme().name, "dark");
+        // Light or dark by the settings, whatever the system is.
+        look.appearance = Appearance::Light;
+        assert_eq!(look.theme().name, "light");
+        look.system_dark = None;
+        assert_eq!(look.theme().name, "light");
+        look.appearance = Appearance::Dark;
+        look.system_dark = Some(false);
+        assert_eq!(look.theme().name, "dark");
+
+        // One theme for both is that theme always.
+        let mut one = Look::one(Theme::terminal());
+        assert_eq!(one.theme().name, "terminal");
+        one.system_dark = Some(false);
+        assert_eq!(one.theme().name, "terminal");
     }
 
     #[test]

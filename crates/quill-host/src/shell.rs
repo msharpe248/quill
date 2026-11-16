@@ -179,6 +179,12 @@ fn read_loop(stream: UnixStream, events: UnboundedSender<HostEvent>) {
             Ok(ShellToCore::SettingsOpened(_)) => HostEvent::SettingsOpened,
             Ok(ShellToCore::SettingsClosed(_)) => HostEvent::SettingsClosed,
             Ok(ShellToCore::SettingsUsed(used)) => HostEvent::SettingsUsed(used),
+            Ok(ShellToCore::AppearanceChanged(changed)) => {
+                HostEvent::SystemAppearance { dark: changed.dark }
+            }
+            Ok(ShellToCore::ThemesImported(imported)) => {
+                HostEvent::ThemeImported(imported.name().to_owned())
+            }
             Ok(ShellToCore::AppWillQuit(_)) => HostEvent::WillQuit,
             Err(err) => HostEvent::Problem(unreadable(&line, &err)),
         };
@@ -268,6 +274,7 @@ mod tests {
             title: "Inbox".to_owned(),
             background: None,
             foreground: None,
+            appearance: bridge::Appearance::System,
         });
         host.close_pane();
 
@@ -294,6 +301,9 @@ mod tests {
             .write_all(
                 b"{\"jsonrpc\":\"2.0\",\"method\":\"command.run\",\"params\":{\"name\":\"view.zoom\"}}\n\n\
                   {\"jsonrpc\":\"2.0\",\"method\":\"window.resized\",\"params\":{\"columns\":147}}\n\
+                  {\"jsonrpc\":\"2.0\",\"method\":\"appearance.changed\",\"params\":{\"dark\":true}}\n\
+                  {\"jsonrpc\":\"2.0\",\"method\":\"themes.imported\",\"params\":{\"name\":\"Catppuccin Mocha\"}}\n\
+                  {\"jsonrpc\":\"2.0\",\"method\":\"themes.imported\",\"params\":{\"name\":\"../config\"}}\n\
                   {\"jsonrpc\":\"2.0\",\"method\":\"app.will_quit\",\"params\":{}}\n",
             )
             .unwrap();
@@ -302,6 +312,16 @@ mod tests {
             HostEvent::RunCommand("view.zoom".to_owned())
         );
         assert_eq!(next(&mut events).await, HostEvent::WindowColumns(147));
+        assert_eq!(
+            next(&mut events).await,
+            HostEvent::SystemAppearance { dark: true }
+        );
+        assert_eq!(
+            next(&mut events).await,
+            HostEvent::ThemeImported("Catppuccin Mocha".to_owned())
+        );
+        // A name that is a path is no theme's, and names nothing here.
+        assert!(matches!(next(&mut events).await, HostEvent::Problem(_)));
         assert_eq!(next(&mut events).await, HostEvent::WillQuit);
     }
 

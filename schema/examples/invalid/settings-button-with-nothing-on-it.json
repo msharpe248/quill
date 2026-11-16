@@ -1,0 +1,16 @@
+{
+  "jsonrpc": "2.0",
+  "method": "settings.show",
+  "params": {
+    "panes": [
+      {
+        "id": "general",
+        "title": "General",
+        "symbol": "gearshape",
+        "fields": [
+          { "kind": "button", "id": "import_theme", "label": "", "title": "", "enabled": true }
+        ]
+      }
+    ]
+  }
+}

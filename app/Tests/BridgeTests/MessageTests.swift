@@ -39,7 +39,7 @@ private enum Examples {
                 "pane.editor.json", "pane.play.json", "pane.preview.json",
                 "reading.close.json", "reading.place.json", "reading.scroll.json", "reading.show.json",
                 "settings.show.json", "spell.check.json",
-                "spell.suggest.json", "state.update.json", "thumbnail.make.json",
+                "spell.suggest.json", "state.update.json", "themes.pick.json", "thumbnail.make.json",
             ])
         for (name, text) in examples {
             let message = try CoreToShell(line: text)
@@ -54,10 +54,12 @@ private enum Examples {
         let examples = try Examples.load("shell-to-core")
         #expect(
             examples.map(\.name) == [
-                "app.will_quit.json", "command.run.json", "editor.exited.json", "files.dropped.json",
+                "app.will_quit.json", "appearance.changed.json", "command.run.json", "editor.exited.json",
+                "files.dropped.json",
                 "files.saved.json", "form.used.json", "notify.used.json", "settings.closed.json",
                 "settings.opened.json", "settings.used.json", "spell.checked.json",
-                "spell.suggested.json", "thumbnail.made.json", "url.open.json", "window.resized.json",
+                "spell.suggested.json", "themes.imported.json", "thumbnail.made.json", "url.open.json",
+                "window.resized.json",
             ])
         for (name, text) in examples {
             let message = try ShellToCore(line: text)
@@ -93,7 +95,10 @@ private enum Examples {
             "settings-list-action-with-no-title.json", "settings-field-with-the-focus.json",
             "settings-used-with-a-value-and-an-action.json", "settings-used-with-nothing-done.json",
             "settings-used-with-a-row-and-no-action.json", "settings-used-with-a-list-for-a-value.json",
-            "state-with-a-colour-that-is-a-name.json",
+            "state-with-a-colour-that-is-a-name.json", "state-with-an-appearance-of-its-own.json",
+            "appearance-that-is-not-light-or-dark.json", "theme-imported-by-a-path.json",
+            "theme-imported-with-a-hidden-name.json", "theme-imported-under-a-toml-name.json",
+            "settings-button-with-nothing-on-it.json", "form-button-field-in-a-sheet.json",
         ] {
             #expect(examples.contains { $0.name == name }, "\(name) is missing")
         }
@@ -126,8 +131,10 @@ private enum Examples {
                         unread: 12,
                         title: "Inbox (unified) - 12 unread",
                         background: "#1a1b26",
-                        foreground: "#c0caf5"
+                        foreground: "#c0caf5",
+                        appearance: .dark
                     )))
+        #expect(try CoreToShell(line: examples["themes.pick.json"]!) == .themesPick)
         #expect(try CoreToShell(line: examples["pane.close.json"]!) == .paneClose)
         #expect(try CoreToShell(line: examples["files.pick.json"]!) == .filesPick)
         #expect(
@@ -816,9 +823,97 @@ private enum Examples {
         }
     }
 
+    @Test func theAppearanceIsSaidWithTheStateAndLeftOutWhenItIsTheMacs() throws {
+        func state(_ appearance: String) -> String {
+            #"{"jsonrpc":"2.0","method":"state.update","params":{"checked":[],"context":"list","enabled":[],"title":"Inbox","unread":0\#(appearance)}}"#
+        }
+        guard case let .stateUpdate(plain) = try CoreToShell(line: state("")) else {
+            Issue.record("not a state.update")
+            return
+        }
+        // Left out: as the Mac is.
+        #expect(plain.appearance == nil)
+        #expect(try Examples.value(CoreToShell.stateUpdate(plain).line) == Examples.value(state("")))
+        for (word, appearance) in [("light", Appearance.light), ("dark", .dark), ("system", .system)] {
+            let line = state(#","appearance":"\#(word)""#)
+            #expect(
+                try CoreToShell(line: line)
+                    == .stateUpdate(
+                        StateUpdate(context: .list, enabled: [], unread: 0, title: "Inbox", appearance: appearance)))
+            #expect(
+                try Examples.value(
+                    CoreToShell.stateUpdate(
+                        StateUpdate(context: .list, enabled: [], unread: 0, title: "Inbox", appearance: appearance)
+                    ).line) == Examples.value(line))
+        }
+        for bad in [#""Dark""#, #""auto""#, #""""#, "null", "true", "1"] {
+            #expect(throws: BridgeError.self, "\(bad)") {
+                try CoreToShell(line: state(#","appearance":\#(bad)"#))
+            }
+        }
+    }
+
+    @Test func theMacsAppearanceAndAnImportedThemeGoToTheCore() throws {
+        let examples = try Dictionary(uniqueKeysWithValues: Examples.load("shell-to-core").map { ($0.name, $0.text) })
+        #expect(try ShellToCore(line: examples["appearance.changed.json"]!) == .appearanceChanged(dark: true))
+        #expect(
+            try ShellToCore(line: examples["themes.imported.json"]!)
+                == .themesImported(ThemesImported(name: "Dracula+ High Contrast")!))
+        #expect(
+            ShellToCore.appearanceChanged(dark: false).line
+                == #"{"jsonrpc":"2.0","method":"appearance.changed","params":{"dark":false}}"#)
+        #expect(
+            ShellToCore.themesImported(ThemesImported(name: "Jack O' Lantern")!).line
+                == #"{"jsonrpc":"2.0","method":"themes.imported","params":{"name":"Jack O' Lantern"}}"#)
+        for bad in [
+            #"{"jsonrpc":"2.0","method":"appearance.changed","params":{}}"#,
+            #"{"jsonrpc":"2.0","method":"appearance.changed","params":{"dark":1}}"#,
+            #"{"jsonrpc":"2.0","method":"appearance.changed","params":{"dark":true,"light":false}}"#,
+            #"{"jsonrpc":"2.0","method":"themes.imported","params":{}}"#,
+            #"{"jsonrpc":"2.0","method":"themes.imported","params":{"name":7}}"#,
+            #"{"jsonrpc":"2.0","method":"themes.imported","params":{"name":"Dracula","file":"/tmp/x"}}"#,
+            #"{"jsonrpc":"2.0","method":"themes.pick","params":{}}"#,
+        ] {
+            #expect(throws: BridgeError.self, "\(bad)") { try ShellToCore(line: bad) }
+        }
+        #expect(throws: BridgeError.self) {
+            try CoreToShell(line: #"{"jsonrpc":"2.0","method":"themes.pick","params":{"folder":"/tmp"}}"#)
+        }
+    }
+
+    @Test func aThemeIsNamedAsPeopleWriteAndNeverByAPath() {
+        for name in [
+            "Dracula", "3024 Day", "Dracula+ High Contrast", "Jack O' Lantern", "Builtin Tango (Light)", "v1.5",
+            "x", "caf\u{e9}", String(repeating: "x", count: 100),
+        ] {
+            #expect(ThemeName.isValid(name), "\(name)")
+            #expect(ThemesImported(name: name)?.name == name)
+        }
+        for name in [
+            "", "../../config.toml", "a/b", "/etc/passwd", "a\\b", "a:b", ".hidden", "..", "Dracula.toml",
+            "Dracula.TOML", " Dracula", "Dracula ", "two\nlines", "tab\there", "bell\u{7}", "del\u{7f}",
+            "nbsp\u{a0}", String(repeating: "x", count: 101), String(repeating: "\u{e9}", count: 51),
+        ] {
+            #expect(!ThemeName.isValid(name), "\(name.debugDescription)")
+            #expect(ThemesImported(name: name) == nil)
+            // Nor does one arrive over the bridge.
+            let line = ShellToCoreLine.imported(name)
+            #expect(throws: BridgeError.self, "\(name.debugDescription)") { try ShellToCore(line: line) }
+        }
+    }
+
     @Test func optionalFieldsAreLeftOutRatherThanNull() {
         let line = CoreToShell.commandsList([CommandInfo(name: "nav.next", title: "Next", keys: ["j"])]).line
         #expect(!line.contains("null"))
         #expect(!line.contains("menu"))
+    }
+}
+
+/// Lines as the shell would never write them, for the tests that check they
+/// are refused.
+enum ShellToCoreLine {
+    static func imported(_ name: String) -> String {
+        let quoted = String(decoding: (try? JSONEncoder().encode(name)) ?? Data(), as: UTF8.self)
+        return #"{"jsonrpc":"2.0","method":"themes.imported","params":{"name":\#(quoted)}}"#
     }
 }

@@ -188,6 +188,7 @@ impl Harness {
             registry: Registry::builtin(),
             keymap,
             styles: Styles::new(Theme::builtin("dark").unwrap(), mode),
+            look: quill_tui::theme::Look::one(Theme::builtin("dark").unwrap()),
             tz: TimeZone::UTC,
             reader_width: 0.5,
             images: false,
@@ -262,6 +263,11 @@ impl Harness {
             && settings.apply(&mut self.env)
         {
             self.keys_announced += 1;
+        }
+        // And what the host has said the system's appearance is.
+        if let Some(dark) = effects.system_dark.take() {
+            self.env.look.system_dark = Some(dark);
+            self.env.restyle();
         }
     }
 

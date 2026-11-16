@@ -73,19 +73,25 @@ pub fn themes_dir_in(config_dir: &Path) -> PathBuf {
 }
 
 /// Whether `name` could be the name of a theme of the user's own: the
-/// stem of a file in `themes/`, and nothing that could point outside it.
+/// name of a file in `themes/`, and nothing that could point outside it.
 pub fn is_theme_name(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    quill_core::config::is_theme_name(name)
 }
 
-/// The file of the user theme called `name` in the config folder
-/// `config_dir`, or `None` when the name could not be a file stem (so a
-/// theme name can never point outside `themes/`).
-pub fn theme_file_in(config_dir: &Path, name: &str) -> Option<PathBuf> {
-    is_theme_name(name).then(|| themes_dir_in(config_dir).join(format!("{name}.toml")))
+/// The files the user theme called `name` may be, in the config folder
+/// `config_dir`, in the order they are looked for, each with whether it
+/// is one of Quill's own, in TOML: `themes/NAME.toml`, then `themes/NAME`,
+/// which is a theme written for Ghostty. None when the name could not be
+/// a file's (so a theme name can never point outside `themes/`).
+pub fn theme_files_in(config_dir: &Path, name: &str) -> Vec<(PathBuf, bool)> {
+    if !is_theme_name(name) {
+        return Vec::new();
+    }
+    let themes = themes_dir_in(config_dir);
+    vec![
+        (themes.join(format!("{name}.toml")), true),
+        (themes.join(name), false),
+    ]
 }
 
 #[cfg(test)]
@@ -148,11 +154,28 @@ mod tests {
     fn theme_names_cannot_leave_the_themes_directory() {
         let paths = Paths::resolve(Some("/c".into()), Some("/d".into()), env(&[])).unwrap();
         assert_eq!(
-            theme_file_in(&paths.config_dir, "solarized-dark_2"),
-            Some(PathBuf::from("/c/themes/solarized-dark_2.toml"))
+            theme_files_in(&paths.config_dir, "solarized-dark_2"),
+            [
+                (PathBuf::from("/c/themes/solarized-dark_2.toml"), true),
+                (PathBuf::from("/c/themes/solarized-dark_2"), false)
+            ]
         );
-        for name in ["", "../secret", "a/b", "/etc/passwd", "x.toml", "a b"] {
-            assert_eq!(theme_file_in(&paths.config_dir, name), None, "{name}");
+        // As people name themes made for Ghostty.
+        assert_eq!(
+            theme_files_in(&paths.config_dir, "Catppuccin Mocha")[1],
+            (PathBuf::from("/c/themes/Catppuccin Mocha"), false)
+        );
+        for name in [
+            "",
+            "../secret",
+            "..",
+            "a/b",
+            "/etc/passwd",
+            "x.toml",
+            ".hidden",
+            " a",
+        ] {
+            assert_eq!(theme_files_in(&paths.config_dir, name), [], "{name}");
             assert!(!is_theme_name(name), "{name}");
         }
     }

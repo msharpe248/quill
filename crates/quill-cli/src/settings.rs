@@ -61,11 +61,17 @@ fn text_of(config_file: &Path) -> Result<String, String> {
 /// Writes one setting into the file as it stands now.
 fn make(config_file: &Path, change: &Change) -> Result<(), String> {
     let before = text_of(config_file)?;
-    // A theme is one there is: the file is not made to name another.
-    if let Change::Theme(name) = change
-        && !setup::themes_in(config_dir(config_file)).contains(name)
+    // A theme is one there is, and one that can be drawn with: the file
+    // is not made to name another. This is also where a theme the app has
+    // just copied into the folder is checked: what its file is worth is
+    // decided here, and not by whoever copied it.
+    if let Change::ThemeLight(name) | Change::ThemeDark(name) | Change::ThemeInForce { name, .. } =
+        change
     {
-        return Err(format!("There is no theme called \"{name}\"."));
+        if !crate::paths::is_theme_name(name) {
+            return Err(format!("There is no theme called \"{name}\"."));
+        }
+        setup::load_theme(config_dir(config_file), name).map_err(|none| none.why)?;
     }
     let after = config_edit::set(&before, change)?;
     if after == before {
@@ -81,7 +87,7 @@ fn make(config_file: &Path, change: &Change) -> Result<(), String> {
 fn read(config_file: &Path) -> Result<SettingsRead, String> {
     let config = Config::parse(&text_of(config_file)?).map_err(|err| err.to_string())?;
     let dir = config_dir(config_file);
-    let (theme, theme_problem) = setup::theme_named(dir, &config.ui.theme);
+    let (look, [theme_dark_problem, theme_light_problem]) = setup::look_of(dir, &config.ui);
     let (keymap, keys_problem) = setup::keymap_for(dir, config.ui.keymap, &Registry::builtin());
     Ok(SettingsRead {
         settings: Settings::of(&config),
@@ -96,8 +102,10 @@ fn read(config_file: &Path) -> Result<SettingsRead, String> {
             })
             .collect(),
         themes: setup::themes_in(dir),
-        theme,
-        theme_problem,
+        theme_light: look.light,
+        theme_light_problem,
+        theme_dark: look.dark,
+        theme_dark_problem,
         keymap,
         keys_problem,
     })
@@ -108,7 +116,7 @@ mod tests {
     use std::fs;
 
     use jiff::tz::TimeZone;
-    use quill_core::config::{ComposeEditor, KeymapPreset, RemoteImages};
+    use quill_core::config::{Appearance, ComposeEditor, KeymapPreset, RemoteImages};
     use quill_host::bridge::{FormField, FormValue, Number, SettingsShow, SettingsUsed};
     use quill_tui::app::AccountsLink;
     use quill_tui::command::CommandId;
@@ -165,7 +173,14 @@ mod tests {
         assert_eq!(read.settings, Settings::of(&Config::default()));
         assert_eq!(read.themes, ["dark", "light", "terminal"]);
         assert!(read.accounts.is_empty());
-        assert_eq!((read.theme_problem, read.keys_problem), (None, None));
+        assert_eq!(
+            (
+                read.theme_light_problem,
+                read.theme_dark_problem,
+                read.keys_problem
+            ),
+            (None, None, None)
+        );
         // Reading makes nothing on disk.
         assert!(!dir.path().join("config").exists());
     }
@@ -180,20 +195,53 @@ mod tests {
             "name = \"mine\"\n[colors]\ntext = \"#112233\"\n",
         );
         write(&dir, "themes/Solarized-2.toml", "name = \"solarized\"\n");
-        // Not themes: not a `.toml`, a name no theme can have, and one
-        // that is a built-in's own, which is that theme.
-        write(&dir, "themes/notes.txt", "");
-        write(&dir, "themes/my theme.toml", "");
+        // One made for Ghostty, under the name its file has.
+        write(
+            &dir,
+            "themes/Night Owl+",
+            "background = #1e2030\nforeground = #d0d4ea\npalette = 4=#7aa0f0\n",
+        );
+        // Not themes: a file that is neither kind, names no theme can
+        // have, and one that is a built-in's own, which is that theme.
+        write(&dir, "themes/notes.txt", "Remember the milk.\n");
+        write(&dir, "themes/.hidden.toml", "");
+        write(
+            &dir,
+            "themes/.DS_Store",
+            "background = #000000\nforeground = #ffffff\n",
+        );
         write(&dir, "themes/dark.toml", "name = \"my dark\"\n");
         write(&dir, "keys.toml", "\"message.toggle_unread\" = \"m\"\n");
 
         let read = read_of(answer(&file(&dir), None));
-        assert_eq!(read.settings.theme, "light");
+        // The one theme the file names is the theme for both appearances.
+        assert_eq!(
+            (
+                read.settings.theme_light.as_str(),
+                read.settings.theme_dark.as_str()
+            ),
+            ("light", "light")
+        );
+        assert_eq!(read.settings.appearance, Appearance::System);
+        assert_eq!(
+            (
+                read.theme_light.name.as_str(),
+                read.theme_dark.name.as_str()
+            ),
+            ("light", "light")
+        );
         assert_eq!(read.settings.keymap, KeymapPreset::Vim);
         assert_eq!(read.settings.undo_send_seconds, 10);
         assert_eq!(
             read.themes,
-            ["dark", "light", "terminal", "Solarized-2", "mine"]
+            [
+                "dark",
+                "light",
+                "terminal",
+                "Night Owl+",
+                "Solarized-2",
+                "mine"
+            ]
         );
         let accounts: Vec<(&str, &str, bool)> = read
             .accounts
@@ -223,23 +271,52 @@ mod tests {
 
         // A theme of the user's own is loaded from its file; one that
         // cannot be is stood in for, and that is said.
-        let read = read_of(answer(&file(&dir), Some(Change::Theme("mine".to_owned()))));
-        assert_eq!(read.settings.theme, "mine");
-        assert_eq!(read.theme.name, "mine");
-        assert_eq!(read.theme_problem, None);
+        let read = read_of(answer(
+            &file(&dir),
+            Some(Change::ThemeDark("mine".to_owned())),
+        ));
+        assert_eq!(read.settings.theme_dark, "mine");
+        assert_eq!(read.theme_dark.name, "mine");
+        assert_eq!(read.theme_dark_problem, None);
+        // The other appearance still has the theme the file named.
+        assert_eq!(read.settings.theme_light, "light");
+        assert_eq!(read.theme_light.name, "light");
+        // One made for Ghostty is read from its file too, and is the
+        // colours worked out from it.
+        let read = read_of(answer(
+            &file(&dir),
+            Some(Change::ThemeLight("Night Owl+".to_owned())),
+        ));
+        assert_eq!(read.theme_light.name, "Night Owl+");
+        assert_eq!(read.theme_light_problem, None);
+        assert_eq!(read.theme_light.is_dark(), Some(true));
+        assert!(text(&dir).contains("theme_light = \"Night Owl+\"\n"));
         write(
             &dir,
             "themes/mine.toml",
             "name = \"mine\"\n[colors]\ntext = \"mauve\"\n",
         );
         let read = read_of(answer(&file(&dir), None));
-        assert_eq!(read.theme.name, "dark");
+        assert_eq!(read.theme_dark.name, "dark");
         assert!(
-            read.theme_problem
+            read.theme_dark_problem
                 .as_deref()
                 .is_some_and(|problem| problem.starts_with("themes/mine.toml: ")),
             "{:?}",
-            read.theme_problem
+            read.theme_dark_problem
+        );
+        assert_eq!(read.theme_light_problem, None);
+        // A Ghostty theme that stops being one is no longer listed, and
+        // what is wrong with it is said for as long as the file names it.
+        write(&dir, "themes/Night Owl+", "background = #1e2030\n");
+        let read = read_of(answer(&file(&dir), None));
+        assert!(!read.themes.contains(&"Night Owl+".to_owned()));
+        assert_eq!(
+            read.theme_light_problem.as_deref(),
+            Some(
+                "themes/Night Owl+ is not a theme in Ghostty\u{2019}s format: it names no \
+                 background and foreground colour. Using a built-in theme."
+            )
         );
         write(&dir, "keys.toml", "\"no.such.command\" = \"x\"\n");
         let read = read_of(answer(&file(&dir), None));
@@ -307,7 +384,8 @@ mod tests {
         // The next change is made to that, not to what the window last
         // read.
         let read = read_of(answer(&file(&dir), Some(Change::Threads(false))));
-        assert_eq!(read.settings.theme, "terminal");
+        assert_eq!(read.settings.theme_light, "terminal");
+        assert_eq!(read.settings.theme_dark, "terminal");
         assert!(!read.settings.notifications && !read.settings.threads);
         assert_eq!(
             text(&dir),
@@ -364,8 +442,15 @@ mod tests {
     fn a_theme_there_is_none_of_is_not_written_into_the_file() {
         let dir = TempDir::new().unwrap();
         write(&dir, "config.toml", WRITTEN);
-        for name in ["nope", "../../etc/passwd", ""] {
-            let event = answer(&file(&dir), Some(Change::Theme(name.to_owned())));
+        // Nor is a file in the folder that is not a theme.
+        write(&dir, "themes/notes", "Remember the milk.\n");
+        for name in ["nope", "../../etc/passwd", "", "notes"] {
+            let change = if name.is_empty() {
+                Change::ThemeLight(name.to_owned())
+            } else {
+                Change::ThemeDark(name.to_owned())
+            };
+            let event = answer(&file(&dir), Some(change));
             let AccountEvent::Settings {
                 read: Ok(read),
                 changed: Some((_, Err(reason))),
@@ -373,8 +458,16 @@ mod tests {
             else {
                 panic!("{name:?} was written");
             };
-            assert!(reason.contains("There is no theme called"), "{reason}");
-            assert_eq!(read.settings.theme, "light");
+            assert!(
+                reason.contains(if name == "notes" {
+                    "themes/notes is not a theme in Ghostty\u{2019}s format"
+                } else {
+                    "There is no theme called"
+                }),
+                "{reason}"
+            );
+            assert_eq!(read.settings.theme_dark, "light");
+            assert_eq!(read.settings.theme_light, "light");
             assert_eq!(text(&dir), WRITTEN);
         }
     }
@@ -426,6 +519,11 @@ mod tests {
             if let Some(config) = config {
                 write(&dir, "config.toml", config);
             }
+            Self::in_dir(dir)
+        }
+
+        /// Over a folder that already has what the test put in it.
+        fn in_dir(dir: TempDir) -> Self {
             let paths = Paths {
                 config_dir: dir.path().join("config"),
                 data_dir: dir.path().join("data"),
@@ -451,6 +549,10 @@ mod tests {
                     && settings.apply(&mut self.env)
                 {
                     self.keys_announced += 1;
+                }
+                if let Some(dark) = effects.system_dark.take() {
+                    self.env.look.system_dark = Some(dark);
+                    self.env.restyle();
                 }
                 for request in effects.accounts {
                     match request {
@@ -510,17 +612,26 @@ mod tests {
         app.open();
         assert_eq!(app.shown().panes().len(), 5);
         assert_eq!(app.shown().problem(), None);
-        assert_eq!(app.chosen("general", "theme"), "light");
+        // The one theme the file names is shown for both appearances.
+        assert_eq!(app.chosen("general", "theme_light"), "light");
+        assert_eq!(app.chosen("general", "theme_dark"), "light");
+        assert_eq!(app.chosen("general", "appearance"), "system");
         // Opening wrote nothing.
         assert_eq!(app.text(), WRITTEN);
 
-        // The theme: drawn with from now on.
-        app.choose("general", "theme", "dark");
-        assert_eq!(app.chosen("general", "theme"), "dark");
+        // The theme for the appearance Quill has: drawn with from now on.
+        // It is written under a key of its own, and the line the user
+        // wrote is left as they wrote it.
+        app.choose("general", "theme_dark", "dark");
+        assert_eq!(app.chosen("general", "theme_dark"), "dark");
+        assert_eq!(app.chosen("general", "theme_light"), "light");
         assert_eq!(app.env.styles.theme_name(), "dark");
         assert_eq!(
             app.text(),
-            WRITTEN.replace("theme = \"light\"   #", "theme = \"dark\"   #")
+            WRITTEN.replace(
+                "# easier on the eyes\n",
+                "# easier on the eyes\ntheme_dark = \"dark\"\n"
+            )
         );
 
         // The keys: the other preset's, and the app is told them.
@@ -554,7 +665,8 @@ mod tests {
 
         // All of it is in the file, with what the user wrote around it.
         let config = Config::parse(&app.text()).unwrap();
-        assert_eq!(config.ui.theme, "dark");
+        assert_eq!(config.ui.theme_for(true), "dark");
+        assert_eq!(config.ui.theme, "light");
         assert_eq!(config.ui.keymap, KeymapPreset::Mutt);
         assert!(!config.ui.notifications && !config.ui.threads && config.ui.web_reading);
         assert_eq!(config.compose.format.as_str(), "plain");
@@ -665,7 +777,13 @@ mod tests {
             ("composing", "undo_send_seconds", whole(4_294_967_296.0)),
             ("storage", "cache_gb", whole(-0.5)),
             // Not one of the choices.
-            ("general", "theme", FormValue::Text("solarized".to_owned())),
+            (
+                "general",
+                "theme_dark",
+                FormValue::Text("solarized".to_owned()),
+            ),
+            ("general", "theme", FormValue::Text("dark".to_owned())),
+            ("general", "appearance", FormValue::Text("dim".to_owned())),
             ("general", "keymap", FormValue::Text("emacs".to_owned())),
             ("composing", "editor", FormValue::Text("emacs".to_owned())),
             (
@@ -687,7 +805,7 @@ mod tests {
                 "notifications",
                 FormValue::Text("yes".to_owned()),
             ),
-            ("general", "theme", FormValue::Flag(true)),
+            ("general", "theme_light", FormValue::Flag(true)),
             (
                 "composing",
                 "undo_send_seconds",
@@ -808,12 +926,276 @@ mod tests {
         );
         // Nothing happens by itself: the file is read when the window is
         // opened or come back to.
-        assert_eq!(app.chosen("general", "theme"), "light");
+        assert_eq!(app.chosen("general", "theme_dark"), "light");
         app.open();
-        assert_eq!(app.chosen("general", "theme"), "terminal");
+        assert_eq!(app.chosen("general", "theme_dark"), "terminal");
+        assert_eq!(app.chosen("general", "theme_light"), "terminal");
         assert_eq!(app.env.styles.theme_name(), "terminal");
         // Closed, the window is told nothing more.
         app.act(Action::Settings(SettingsAct::Closed));
         assert!(app.state.settings_shown(&app.env).is_none());
+    }
+
+    /// A dark theme and a light one, as Ghostty writes them.
+    const NIGHT: &str = "palette = 1=#f0606a\npalette = 4=#7aa0f0\nbackground = #1e2030\n\
+                         foreground = #d0d4ea\nselection-background = #3a3f5c\n\
+                         selection-foreground = #ffffff\n";
+    const PAPER: &str = "background = #fbf6e8\nforeground = #5a6068\npalette = 4=#2a5db0\n";
+
+    /// A colour as red, green and blue.
+    type Rgb = Option<(u8, u8, u8)>;
+
+    /// What the app is told of the look: the theme drawn with, and the
+    /// colours and the appearance sent to the shell with the state.
+    fn look(app: &App) -> (String, Rgb, Rgb, Appearance) {
+        let host = app.state.host_state(&app.env);
+        (
+            app.env.styles.theme_name().to_owned(),
+            host.background,
+            host.foreground,
+            host.appearance,
+        )
+    }
+
+    #[test]
+    fn an_old_config_is_drawn_as_it_always_was_whatever_the_mac_does() {
+        // `theme` and nothing newer, as every config was.
+        for (config, theme) in [
+            (Some("[ui]\ntheme = \"light\"\n"), "light"),
+            (Some("[ui]\ntheme = \"terminal\"\n"), "terminal"),
+            (Some("[ui]\nkeymap = \"mutt\"\n"), "dark"),
+            (Some(""), "dark"),
+            (None, "dark"),
+        ] {
+            let mut app = App::over(config);
+            assert_eq!(app.env.styles.theme_name(), theme, "{config:?}");
+            for dark in [false, true, false] {
+                app.act(Action::SystemAppearance { dark });
+                assert_eq!(app.env.styles.theme_name(), theme, "{config:?}");
+                assert_eq!(look(&app).3, Appearance::System);
+            }
+            // Nothing was written for any of it.
+            assert_eq!(
+                fs::read_to_string(file(&app.dir)).ok().as_deref(),
+                config,
+                "{config:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_three_appearances_each_have_their_theme_and_the_shell_is_told_its_colours() {
+        let config = "[ui]\ntheme = \"terminal\"   # was this for years\n\
+                      theme_light = \"Paper\"\ntheme_dark = \"Night Owl+\"\n";
+        let prepared = TempDir::new().unwrap();
+        write(&prepared, "themes/Night Owl+", NIGHT);
+        write(&prepared, "themes/Paper", PAPER);
+        write(&prepared, "config.toml", config);
+        let mut app = App::in_dir(prepared);
+        let night = (Some((0x1e, 0x20, 0x30)), Some((0xd0, 0xd4, 0xea)));
+        let paper = (Some((0xfb, 0xf6, 0xe8)), Some((0x5a, 0x60, 0x68)));
+
+        // As the system is, and the app has not said what that is: dark.
+        assert_eq!(
+            look(&app),
+            (
+                "Night Owl+".to_owned(),
+                night.0,
+                night.1,
+                Appearance::System
+            )
+        );
+        // The Mac is light: the light theme at once, and its colours for
+        // the app's terminals.
+        app.act(Action::SystemAppearance { dark: false });
+        assert_eq!(
+            look(&app),
+            ("Paper".to_owned(), paper.0, paper.1, Appearance::System)
+        );
+        // The Mac goes dark, as at sunset.
+        app.act(Action::SystemAppearance { dark: true });
+        assert_eq!(look(&app).0, "Night Owl+");
+
+        // Light, in the settings window: light whatever the Mac is, and
+        // the shell is told to be light too.
+        app.open();
+        app.choose("general", "appearance", "light");
+        assert_eq!(
+            look(&app),
+            ("Paper".to_owned(), paper.0, paper.1, Appearance::Light)
+        );
+        assert!(
+            app.text()
+                .ends_with("theme_dark = \"Night Owl+\"\nappearance = \"light\"\n")
+        );
+        app.act(Action::SystemAppearance { dark: true });
+        assert_eq!(look(&app).0, "Paper");
+        // Dark.
+        app.choose("general", "appearance", "dark");
+        assert_eq!(
+            look(&app),
+            ("Night Owl+".to_owned(), night.0, night.1, Appearance::Dark)
+        );
+        app.act(Action::SystemAppearance { dark: false });
+        assert_eq!(look(&app).0, "Night Owl+");
+        // And back to the system's, which is light now.
+        app.choose("general", "appearance", "system");
+        assert_eq!(
+            look(&app),
+            ("Paper".to_owned(), paper.0, paper.1, Appearance::System)
+        );
+        assert_eq!(
+            app.text(),
+            format!("{config}appearance = \"system\"\n"),
+            "the comment and the old key are as they were written"
+        );
+
+        // The theme of the appearance in force is changed and drawn with
+        // at once; the other's is changed and waits its turn.
+        app.choose("general", "theme_light", "light");
+        assert_eq!(look(&app).0, "light");
+        app.choose("general", "theme_dark", "dark");
+        assert_eq!(look(&app).0, "light");
+        app.act(Action::SystemAppearance { dark: true });
+        assert_eq!(look(&app).0, "dark");
+        // `terminal` is a theme like any other: nothing is said of its
+        // colours, and the app's terminals keep their own.
+        app.choose("general", "theme_dark", "terminal");
+        assert_eq!(
+            look(&app),
+            ("terminal".to_owned(), None, None, Appearance::System)
+        );
+    }
+
+    #[test]
+    fn in_a_terminal_the_systems_appearance_is_dark() {
+        let dir = TempDir::new().unwrap();
+        write(
+            &dir,
+            "config.toml",
+            "[ui]\ntheme_light = \"light\"\ntheme_dark = \"terminal\"\n",
+        );
+        let paths = Paths {
+            config_dir: dir.path().join("config"),
+            data_dir: dir.path().join("data"),
+        };
+        let theme = |paths: &Paths| {
+            let mut env = setup::load(paths, ColorMode::TrueColor, TimeZone::UTC).env;
+            crate::suit_host(&mut env, false, None);
+            (env.styles.theme_name().to_owned(), env.look.system_dark)
+        };
+        // Nobody says what the system is, and "system" is dark.
+        assert_eq!(theme(&paths), ("terminal".to_owned(), None));
+        // Said in the file, light is light and dark is dark.
+        write(
+            &dir,
+            "config.toml",
+            "[ui]\nappearance = \"light\"\ntheme_light = \"light\"\ntheme_dark = \"terminal\"\n",
+        );
+        assert_eq!(theme(&paths).0, "light");
+        write(
+            &dir,
+            "config.toml",
+            "[ui]\nappearance = \"dark\"\ntheme_light = \"light\"\ntheme_dark = \"terminal\"\n",
+        );
+        assert_eq!(theme(&paths).0, "terminal");
+    }
+
+    #[test]
+    fn a_theme_the_shell_imported_is_read_from_the_folder_and_selected() {
+        let mut app = App::over(Some(WRITTEN));
+        app.open();
+        let themes = |app: &App| match app.field("general", "theme_dark") {
+            FormField::Choice { options, .. } => options
+                .into_iter()
+                .map(|option| option.title)
+                .collect::<Vec<_>>(),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(themes(&app), ["Dark", "Light", "Terminal"]);
+
+        // The shell copies the file in and says so. The file has one theme
+        // for both appearances, so that is the one that changes: where it
+        // stands, and whatever the Mac is, now or later.
+        write(&app.dir, "themes/Night Owl+", NIGHT);
+        app.act(Action::ThemeImported("Night Owl+".to_owned()));
+        assert_eq!(themes(&app), ["Dark", "Light", "Terminal", "Night Owl+"]);
+        assert_eq!(app.env.styles.theme_name(), "Night Owl+");
+        assert_eq!(look(&app).1, Some((0x1e, 0x20, 0x30)));
+        assert_eq!(
+            app.text(),
+            WRITTEN.replace("theme = \"light\"   #", "theme = \"Night Owl+\"   #")
+        );
+        assert_eq!(app.shown().problem(), None);
+        // Both pop-ups show it, by a name the bridge can carry.
+        assert!(app.chosen("general", "theme_dark").starts_with("x_"));
+        assert_eq!(
+            app.chosen("general", "theme_light"),
+            app.chosen("general", "theme_dark")
+        );
+        app.act(Action::SystemAppearance { dark: false });
+        assert_eq!(app.env.styles.theme_name(), "Night Owl+");
+
+        // Once the two appearances have themes of their own, an imported
+        // theme is the theme of the one in force: the light one while the
+        // Mac is light.
+        app.choose("general", "theme_dark", "dark");
+        write(&app.dir, "themes/Paper", PAPER);
+        app.act(Action::ThemeImported("Paper".to_owned()));
+        assert_eq!(app.env.styles.theme_name(), "Paper");
+        assert!(app.text().contains("theme_light = \"Paper\"\n"));
+        assert!(app.text().contains("theme_dark = \"dark\"\n"));
+        assert!(
+            app.text()
+                .contains("theme = \"Night Owl+\"   # easier on the eyes\n")
+        );
+        // And the dark one while it is dark.
+        app.act(Action::SystemAppearance { dark: true });
+        assert_eq!(app.env.styles.theme_name(), "dark");
+        app.act(Action::ThemeImported("Night Owl+".to_owned()));
+        assert_eq!(app.env.styles.theme_name(), "Night Owl+");
+        assert!(app.text().contains("theme_dark = \"Night Owl+\"\n"));
+        assert!(app.text().contains("theme_light = \"Paper\"\n"));
+        app.act(Action::SystemAppearance { dark: false });
+
+        // A file that turns out not to be a theme is not selected, is not
+        // listed, and that is said; the settings file is as it was.
+        let before = app.text();
+        write(&app.dir, "themes/Notes", "Remember the milk.\n");
+        app.act(Action::ThemeImported("Notes".to_owned()));
+        assert_eq!(app.text(), before);
+        assert_eq!(app.env.styles.theme_name(), "Paper");
+        assert_eq!(
+            app.shown().problem(),
+            Some(
+                "That was not changed. themes/Notes is not a theme in Ghostty\u{2019}s format: it \
+                 names no background and foreground colour."
+            )
+        );
+        assert!(!themes(&app).contains(&"Notes".to_owned()));
+        // Nor one that was never copied at all.
+        app.act(Action::ThemeImported("Nowhere".to_owned()));
+        assert_eq!(app.text(), before);
+        assert_eq!(
+            app.shown().problem(),
+            Some("That was not changed. There is no theme called \"Nowhere\".")
+        );
+        // Nor one of the user's own that has a mistake in it: it is listed,
+        // so that what is wrong can be said, and is not changed to.
+        write(
+            &app.dir,
+            "themes/broken.toml",
+            "name = \"broken\"\n[colors]\ntext = \"mauve\"\n",
+        );
+        app.open();
+        assert!(themes(&app).contains(&"broken".to_owned()));
+        app.choose("general", "theme_dark", "broken");
+        assert_eq!(app.text(), before);
+        assert!(
+            app.shown().problem().is_some_and(|problem| problem
+                .starts_with("That was not changed. themes/broken.toml: theme line 3: ")),
+            "{:?}",
+            app.shown().problem()
+        );
     }
 }

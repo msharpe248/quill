@@ -61,9 +61,21 @@ let package = Package(
             name: "Forms",
             dependencies: ["Bridge"]
         ),
+        // Themes written for Ghostty, as far as the shell goes with them:
+        // finding the ones on this Mac, reading a file's few colours to
+        // show beside its name, and copying the one the user chooses into
+        // the themes folder. And whether the app's own windows are light or
+        // dark. Knows names, files and colours, never what a theme's
+        // colours are used for: that is the core's.
+        .target(
+            name: "Themes",
+            dependencies: ["Bridge"]
+        ),
         .executableTarget(
             name: "QuillApp",
-            dependencies: ["TerminalKit", "Bridge", "Panes", "Notifications", "Spelling", "Editor", "Forms"]
+            dependencies: [
+                "TerminalKit", "Bridge", "Panes", "Notifications", "Spelling", "Editor", "Forms", "Themes",
+            ]
         ),
         // What a terminal is told to look like, and nothing of libghostty:
         // these tests import TerminalKit and never the terminal itself.
@@ -94,6 +106,10 @@ let package = Package(
         .testTarget(
             name: "FormsTests",
             dependencies: ["Forms"]
+        ),
+        .testTarget(
+            name: "ThemesTests",
+            dependencies: ["Themes"]
         ),
     ],
     swiftLanguageModes: [.v6]

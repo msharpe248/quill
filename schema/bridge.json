@@ -31,7 +31,8 @@
         { "$ref": "#/$defs/reading.scroll" },
         { "$ref": "#/$defs/reading.close" },
         { "$ref": "#/$defs/reading.place" },
-        { "$ref": "#/$defs/settings.show" }
+        { "$ref": "#/$defs/settings.show" },
+        { "$ref": "#/$defs/themes.pick" }
       ]
     },
     "shellToCore": {
@@ -50,6 +51,8 @@
         { "$ref": "#/$defs/settings.opened" },
         { "$ref": "#/$defs/settings.closed" },
         { "$ref": "#/$defs/settings.used" },
+        { "$ref": "#/$defs/appearance.changed" },
+        { "$ref": "#/$defs/themes.imported" },
         { "$ref": "#/$defs/app.will_quit" }
       ]
     },
@@ -148,6 +151,10 @@
               "description": "The colour of the terminal UI's text, as #rrggbb in lower case, given to the shell's terminals as the colour of text nothing has coloured. Left out when the theme leaves it to the terminal.",
               "type": "string",
               "pattern": "^#[0-9a-f]{6}$"
+            },
+            "appearance": {
+              "description": "Whether the app is to be light, dark, or as the Mac is: what the settings say. The shell's own parts go by it: with light or dark, its windows, sheets and the reading pane are that, whatever the Mac is; with system, or left out, they are as the Mac is and change with it.",
+              "enum": ["system", "light", "dark"]
             }
           }
         }
@@ -935,7 +942,7 @@
               "type": "string"
             },
             "fields": {
-              "description": "The fields, in order. Each has a name of its own, and at most one has the focus. A sheet asks and waits for a button, so it has none of the kinds that say what the user did as they do it (toggle, number, list): those are the settings window's.",
+              "description": "The fields, in order. Each has a name of its own, and at most one has the focus. A sheet asks and waits for a button, so it has none of the kinds that say what the user did as they do it (toggle, number, list, button): those are the settings window's.",
               "type": "array",
               "maxItems": 32,
               "items": {
@@ -1141,6 +1148,20 @@
             "empty": { "type": "string" },
             "help": { "type": "string" }
           }
+        },
+        {
+          "description": "Something to press, that starts something: a button. `label` stands beside it as any field's does and may be empty; `title` is on the button. A press comes back in settings.used as the action `press`, with no row. Only the settings window has one: a sheet has buttons of its own.",
+          "type": "object",
+          "required": ["kind", "id", "label", "title", "enabled"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "button" },
+            "id": { "$ref": "#/$defs/formId" },
+            "label": { "type": "string" },
+            "title": { "type": "string", "minLength": 1 },
+            "enabled": { "type": "boolean" },
+            "help": { "type": "string" }
+          }
         }
       ]
     },
@@ -1268,7 +1289,7 @@
                         { "$ref": "#/$defs/formField" },
                         {
                           "properties": {
-                            "kind": { "enum": ["text", "choice", "static", "toggle", "number", "list"] },
+                            "kind": { "enum": ["text", "choice", "static", "toggle", "number", "list", "button"] },
                             "focus": { "const": false }
                           }
                         }
@@ -1313,7 +1334,7 @@
     },
 
     "settings.used": {
-      "description": "Shell to core. The user did something in the settings window: gave a field another value (`value`: true or false for a toggle, a number for a number, text for a text field, the name of the option for a choice), or asked for one of a list's actions (`action`, with `row` the name of the row picked when the action is done to a row). One or the other, never both. The core checks it against what it described, makes the change or does not, and answers with settings.show either way.",
+      "description": "Shell to core. The user did something in the settings window: gave a field another value (`value`: true or false for a toggle, a number for a number, text for a text field, the name of the option for a choice), or asked for one of a list's actions (`action`, with `row` the name of the row picked when the action is done to a row), or pressed a button (`action` is `press`, with no row). A value or an action, never both. The core checks it against what it described, makes the change or does not, and answers with settings.show either way.",
       "type": "object",
       "required": ["jsonrpc", "method", "params"],
       "additionalProperties": false,
@@ -1340,6 +1361,62 @@
             },
             "action": { "$ref": "#/$defs/formId" },
             "row": { "$ref": "#/$defs/formId" }
+          }
+        }
+      }
+    },
+
+    "themes.pick": {
+      "description": "Core to shell. Ask the user to choose a theme to import, with the shell's own chooser: the themes of a Ghostty installed on this Mac, or a file from anywhere. The shell copies the one chosen into the themes folder beside the settings file and says so with themes.imported; cancelling sends nothing. The shell reads a theme file only to show its colours in the chooser: what a theme is, and whether a file is one, is the core's to say.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "themes.pick" },
+        "params": { "type": "object", "additionalProperties": false }
+      }
+    },
+
+    "appearance.changed": {
+      "description": "Shell to core. Whether the Mac is in its dark appearance: sent once as the shell starts and whenever the Mac changes. The core goes by it while the settings say the appearance is the system's, and draws with its dark or its light theme accordingly.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "appearance.changed" },
+        "params": {
+          "type": "object",
+          "required": ["dark"],
+          "additionalProperties": false,
+          "properties": {
+            "dark": { "type": "boolean" }
+          }
+        }
+      }
+    },
+
+    "themes.imported": {
+      "description": "Shell to core. A theme file was put in the themes folder beside the settings file, under this name: the user chose it in the shell's chooser. The core reads the folder again, and if the file is a theme it can use, makes it the theme in force and says so with settings.show. A name is the name of a file in that folder and nothing else: no path separator or colon, no control character, no dot to start with, no space at either end, not ending in .toml, at most 100 bytes.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "themes.imported" },
+        "params": {
+          "type": "object",
+          "required": ["name"],
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100,
+              "pattern": "^[^./\\\\:\\s\\u0000-\\u001f\\u007f-\\u009f]([^/\\\\:\\u0000-\\u001f\\u007f-\\u009f]*[^/\\\\:\\s\\u0000-\\u001f\\u007f-\\u009f])?$",
+              "not": { "pattern": "\\.[tT][oO][mM][lL]$" }
+            }
           }
         }
       }

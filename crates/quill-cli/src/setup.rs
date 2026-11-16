@@ -13,7 +13,7 @@ use quill_core::config::{ComposeEditor, ComposeFormat, KeymapPreset, ReplyPositi
 use quill_tui::command::Registry;
 use quill_tui::keymap::Keymap;
 use quill_tui::state::{ComposeSettings, Env, Identity, Notice};
-use quill_tui::theme::{ColorMode, Styles, Theme};
+use quill_tui::theme::{ColorMode, Look, Styles, Theme};
 use quill_tui::vim::ExternalEditor;
 
 mod templates;
@@ -38,8 +38,8 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
         }
     };
 
-    let (theme, problem) = theme_named(&paths.config_dir, &config.ui.theme);
-    notices.extend(problem.map(Notice::error));
+    let (look, problems) = look_of(&paths.config_dir, &config.ui);
+    notices.extend(problems.into_iter().flatten().map(Notice::error));
 
     let registry = Registry::builtin();
     let (keymap, problem) = keymap_for(&paths.config_dir, config.ui.keymap, &registry);
@@ -51,7 +51,10 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
     let env = Env {
         registry,
         keymap,
-        styles: Styles::new(theme, mode),
+        // Nobody has said what the system's appearance is yet: Quill's
+        // own app does, once it is attached, and a terminal never does.
+        styles: Styles::new(look.theme().clone(), mode),
+        look,
         tz,
         reader_width: config.ui.reader_width,
         // Decided by the caller, once it knows what hosts the core.
@@ -149,73 +152,168 @@ pub fn keymap_for(
     }
 }
 
+/// Whether Quill is light or dark and the theme for each, as the config
+/// says, with why another theme stands in for the light one and for the
+/// dark one, if one does. A config that names one theme for both, as every
+/// config did before there was an appearance to choose, has it read once
+/// and whatever is wrong with it said once, under the dark one.
+pub fn look_of(
+    config_dir: &Path,
+    ui: &quill_core::config::UiConfig,
+) -> (Look, [Option<String>; 2]) {
+    let (dark, dark_problem) = theme_named(config_dir, ui.theme_for(true));
+    let (light, light_problem) = if ui.theme_for(false) == ui.theme_for(true) {
+        (dark.clone(), None)
+    } else {
+        theme_named(config_dir, ui.theme_for(false))
+    };
+    (
+        Look {
+            appearance: ui.appearance,
+            system_dark: None,
+            light,
+            dark,
+        },
+        [dark_problem, light_problem],
+    )
+}
+
 /// The theme called `name`, and why another stands in for it if one does.
 /// A theme file in `themes/` wins over a built-in of the same name, so the
-/// shipped themes can be customised by copying them.
+/// shipped themes can be customised by copying them. The file is
+/// `NAME.toml`, one of Quill's own, or plain `NAME`, one written for
+/// Ghostty; the first of those there is.
 pub fn theme_named(config_dir: &Path, name: &str) -> (Theme, Option<String>) {
-    let fallback = || {
-        Theme::builtin(name)
-            .or_else(|| Theme::builtin("dark"))
-            .unwrap_or_else(Theme::terminal)
-    };
-    let Some(file) = crate::paths::theme_file_in(config_dir, name) else {
-        return (
-            fallback(),
-            Some(format!(
-                "\"{name}\" is not a theme name. Using the dark theme."
-            )),
-        );
-    };
-    match read_optional(&file) {
-        Ok(Some(text)) => match Theme::parse(&text) {
-            Ok(theme) => (theme, None),
-            Err(err) => (
-                fallback(),
-                Some(format!(
-                    "themes/{name}.toml: {err}. Using a built-in theme."
-                )),
-            ),
-        },
-        Ok(None) => match Theme::builtin(name) {
-            Some(theme) => (theme, None),
-            None => (
-                fallback(),
-                Some(format!(
-                    "There is no theme called \"{name}\". Using the dark theme."
-                )),
-            ),
-        },
-        Err(err) => (fallback(), Some(format!("{err}. Using a built-in theme."))),
+    match load_theme(config_dir, name) {
+        Ok(theme) => (theme, None),
+        Err(NoTheme { why, instead }) => (
+            Theme::builtin(name)
+                .or_else(|| Theme::builtin("dark"))
+                .unwrap_or_else(Theme::terminal),
+            Some(format!("{why} {instead}")),
+        ),
     }
 }
 
+/// Why there is no theme to be had under a name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoTheme {
+    /// What is wrong, as a sentence.
+    pub why: String,
+    /// What is said after it where another theme stands in.
+    instead: &'static str,
+}
+
+/// The theme called `name`, or why there is none: no such theme, a name
+/// that could not be one, or a file that cannot be read as a theme.
+pub fn load_theme(config_dir: &Path, name: &str) -> Result<Theme, NoTheme> {
+    const DARK: &str = "Using the dark theme.";
+    const BUILTIN: &str = "Using a built-in theme.";
+    let files = crate::paths::theme_files_in(config_dir, name);
+    if files.is_empty() {
+        return Err(NoTheme {
+            why: format!("\"{name}\" is not a theme name."),
+            instead: DARK,
+        });
+    }
+    for (file, toml) in files {
+        // As it is said in the folder: `themes/mine.toml`, `themes/Dracula`.
+        let said = if toml {
+            format!("themes/{name}.toml:")
+        } else {
+            format!("themes/{name}")
+        };
+        let unusable = |err: String| NoTheme {
+            why: format!("{said} {err}."),
+            instead: BUILTIN,
+        };
+        return match read_theme(&file) {
+            Ok(Some(text)) => Theme::from_file(name, &text, toml).map_err(unusable),
+            Ok(None) => continue,
+            Err(err) => Err(unusable(err)),
+        };
+    }
+    Theme::builtin(name).ok_or_else(|| NoTheme {
+        why: format!("There is no theme called \"{name}\"."),
+        instead: DARK,
+    })
+}
+
 /// The themes there are to choose from, by name: the ones Quill comes
-/// with, then the user's own, which are the `.toml` files in `themes/`. A
-/// file of theirs with a built-in's name is that theme, and is not listed
-/// twice.
+/// with, then the user's own, which are the files in `themes/`. A file
+/// called `NAME.toml` is a theme called NAME, whatever is in it: one with
+/// a mistake in it is still listed, and says what is wrong when it is
+/// chosen. Any other file is listed under its whole name if it is a theme
+/// written for Ghostty, and not otherwise: a folder of themes may have
+/// notes in it. A file of theirs with a built-in's name is that theme,
+/// and is not listed twice.
 pub fn themes_in(config_dir: &Path) -> Vec<String> {
     let mut names: Vec<String> = Theme::builtin_names().map(str::to_owned).collect();
     let mut own: Vec<String> = std::fs::read_dir(crate::paths::themes_dir_in(config_dir))
         .into_iter()
         .flatten()
         .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "toml")
+        .filter_map(|entry| {
+            let path = entry.path();
+            let file = path.file_name()?.to_str()?;
+            let name = match file.strip_suffix(".toml") {
+                Some(stem) => stem.to_owned(),
+                None => {
+                    let text = read_theme(&path).ok().flatten()?;
+                    quill_tui::theme::ghostty::parse(&text).ok()?;
+                    file.to_owned()
+                }
+            };
+            (crate::paths::is_theme_name(&name) && !names.contains(&name)).then_some(name)
         })
-        .filter_map(|path| Some(path.file_stem()?.to_str()?.to_owned()))
-        .filter(|name| crate::paths::is_theme_name(name) && !names.contains(name))
         .collect();
     own.sort();
-    // More than anyone has, and as many as a pop-up is any use for.
+    own.dedup();
+    // More than anyone has, and more than a pop-up is any use for.
     own.truncate(MOST_THEMES);
     names.extend(own);
     names
 }
 
 /// The most themes of the user's own that are offered to choose from.
-const MOST_THEMES: usize = 100;
+const MOST_THEMES: usize = 500;
+
+/// The text of a theme file, `None` when there is no such file, or what
+/// is wrong with it, in words that follow its name: "is not a file". No
+/// more of it is read than a theme can be ([`MAX_THEME_BYTES`]).
+pub fn read_theme(path: &Path) -> Result<Option<String>, String> {
+    use std::io::Read;
+
+    // Looked at before it is opened: opening a pipe would wait for
+    // whoever writes to it.
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(format!("cannot be read: {err}")),
+    };
+    if !metadata.is_file() {
+        return Err("is not a file".to_owned());
+    }
+    let too_large = || format!("is larger than {} KiB", MAX_THEME_BYTES / 1024);
+    if metadata.len() > MAX_THEME_BYTES {
+        return Err(too_large());
+    }
+    // Read to the limit and no further, whatever the size was a moment ago.
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .and_then(|file| file.take(MAX_THEME_BYTES + 1).read_to_end(&mut bytes))
+        .map_err(|err| format!("cannot be read: {err}"))?;
+    if bytes.len() as u64 > MAX_THEME_BYTES {
+        return Err(too_large());
+    }
+    String::from_utf8(bytes)
+        .map(Some)
+        .map_err(|_| "is not UTF-8 text".to_owned())
+}
+
+/// A theme file larger than this is not read: the same for one of
+/// Quill's own as for one written for Ghostty.
+pub const MAX_THEME_BYTES: u64 = quill_tui::theme::ghostty::MAX_BYTES as u64;
 
 /// The file beside `config.toml` that lists the user's hooks.
 const HOOKS_FILE: &str = "hooks.toml";
@@ -380,6 +478,142 @@ mod tests {
         let loaded = load_from(&dir);
         assert!(loaded.notices.is_empty(), "{:?}", loaded.notices);
         assert_eq!(loaded.env.styles.theme_name(), "mine");
+    }
+
+    #[test]
+    fn a_theme_made_for_ghostty_is_found_by_its_files_name() {
+        let dir = TempDir::new().unwrap();
+        write(&dir, "config.toml", "[ui]\ntheme = \"Night Owl+\"\n");
+        write(
+            &dir,
+            "themes/Night Owl+",
+            "# mine\nbackground = #1e2030\nforeground = #d0d4ea\npalette = 4=#7aa0f0\n",
+        );
+        let loaded = load_from(&dir);
+        assert!(loaded.notices.is_empty(), "{:?}", loaded.notices);
+        assert_eq!(loaded.env.styles.theme_name(), "Night Owl+");
+        assert_eq!(loaded.env.styles.background_rgb(), Some((0x1e, 0x20, 0x30)));
+        // One of Quill's own under the same name is the one found first.
+        write(
+            &dir,
+            "themes/Night Owl+.toml",
+            "name = \"owl\"\n[colors]\nbackground = \"#000000\"\n",
+        );
+        assert_eq!(load_from(&dir).env.styles.theme_name(), "owl");
+        assert_eq!(
+            themes_in(&dir.path().join("config")),
+            ["dark", "light", "terminal", "Night Owl+"]
+        );
+
+        // A file that is no theme says so in Ghostty's terms, and the
+        // dark theme stands in.
+        write(&dir, "config.toml", "[ui]\ntheme = \"Notes\"\n");
+        write(&dir, "themes/Notes", "Remember the milk.\n");
+        let loaded = load_from(&dir);
+        assert_eq!(loaded.env.styles.theme_name(), "dark");
+        assert!(
+            loaded.notices[0]
+                .text
+                .starts_with("themes/Notes is not a theme in Ghostty\u{2019}s format"),
+            "{:?}",
+            loaded.notices
+        );
+        // One too large to be a theme is not read at all.
+        write(
+            &dir,
+            "themes/Notes",
+            &format!(
+                "background = #000000\nforeground = #ffffff\n{}",
+                "#\n".repeat(40_000)
+            ),
+        );
+        let loaded = load_from(&dir);
+        assert_eq!(loaded.notices.len(), 1);
+        assert!(
+            loaded.notices[0]
+                .text
+                .starts_with("themes/Notes is larger than 64 KiB"),
+            "{:?}",
+            loaded.notices
+        );
+        // Nor a folder.
+        fs::remove_file(dir.path().join("config/themes/Notes")).unwrap();
+        fs::create_dir_all(dir.path().join("config/themes/Notes")).unwrap();
+        let loaded = load_from(&dir);
+        assert!(
+            loaded.notices[0]
+                .text
+                .starts_with("themes/Notes is not a file"),
+            "{:?}",
+            loaded.notices
+        );
+    }
+
+    #[test]
+    fn the_config_names_a_theme_for_each_appearance_and_theme_stands_for_the_rest() {
+        use quill_core::config::Appearance;
+
+        let dir = TempDir::new().unwrap();
+        let look = |text: &str| {
+            write(&dir, "config.toml", text);
+            let loaded = load_from(&dir);
+            assert!(loaded.notices.is_empty(), "{:?}", loaded.notices);
+            let look = loaded.env.look;
+            (
+                look.appearance,
+                look.light.name.clone(),
+                look.dark.name.clone(),
+                loaded.env.styles.theme_name().to_owned(),
+            )
+        };
+        let all = |appearance, light: &str, dark: &str, drawn: &str| {
+            (
+                appearance,
+                light.to_owned(),
+                dark.to_owned(),
+                drawn.to_owned(),
+            )
+        };
+        // Nothing said, and `theme` alone, as every config was: one theme.
+        assert_eq!(look(""), all(Appearance::System, "dark", "dark", "dark"));
+        assert_eq!(
+            look("[ui]\ntheme = \"light\"\n"),
+            all(Appearance::System, "light", "light", "light")
+        );
+        // One of the two said: `theme` is still the other.
+        assert_eq!(
+            look("[ui]\ntheme = \"terminal\"\ntheme_light = \"light\"\n"),
+            all(Appearance::System, "light", "terminal", "terminal")
+        );
+        // Both said, and which of them Quill is. With nobody to say what
+        // the system is, as here and in a terminal, "system" is dark.
+        let both = "theme_light = \"light\"\ntheme_dark = \"terminal\"\n";
+        assert_eq!(
+            look(&format!("[ui]\n{both}")),
+            all(Appearance::System, "light", "terminal", "terminal")
+        );
+        assert_eq!(
+            look(&format!("[ui]\nappearance = \"light\"\n{both}")),
+            all(Appearance::Light, "light", "terminal", "light")
+        );
+        assert_eq!(
+            look(&format!("[ui]\nappearance = \"dark\"\n{both}")),
+            all(Appearance::Dark, "light", "terminal", "terminal")
+        );
+
+        // A theme there is none of is said once when it is named once,
+        // and for each appearance when each names its own.
+        write(&dir, "config.toml", "[ui]\ntheme = \"nope\"\n");
+        assert_eq!(load_from(&dir).notices.len(), 1);
+        write(
+            &dir,
+            "config.toml",
+            "[ui]\ntheme_light = \"nope\"\ntheme_dark = \"neither\"\n",
+        );
+        let notices = load_from(&dir).notices;
+        assert_eq!(notices.len(), 2);
+        assert!(notices[0].text.contains("\"neither\""), "{notices:?}");
+        assert!(notices[1].text.contains("\"nope\""), "{notices:?}");
     }
 
     #[test]

@@ -90,6 +90,10 @@ pub enum CoreToShell {
     /// they stand. What the user does there arrives as `settings.used`.
     #[serde(rename = "settings.show")]
     SettingsShow(SettingsShow),
+    /// Ask the user to choose a theme to import, with the shell's own
+    /// chooser. One that is imported arrives as `themes.imported`.
+    #[serde(rename = "themes.pick")]
+    ThemesPick(NoParams),
 }
 
 /// A message the shell sends to the core.
@@ -141,6 +145,14 @@ pub enum ShellToCore {
     /// asked for from one of its lists.
     #[serde(rename = "settings.used")]
     SettingsUsed(SettingsUsed),
+    /// Whether the Mac is in its dark appearance: once the shell knows,
+    /// and whenever it changes.
+    #[serde(rename = "appearance.changed")]
+    AppearanceChanged(AppearanceChanged),
+    /// A theme file was put in the `themes` folder beside the settings
+    /// file, under this name.
+    #[serde(rename = "themes.imported")]
+    ThemesImported(ThemesImported),
     /// The app is quitting: flush and exit cleanly.
     #[serde(rename = "app.will_quit")]
     AppWillQuit(NoParams),
@@ -210,6 +222,80 @@ pub struct StateUpdate {
     /// The colour of the terminal UI's text, likewise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub foreground: Option<TerminalColor>,
+    /// Whether the app is to be light, dark, or as the Mac is: what the
+    /// settings say. The shell's own parts (its title bar, sheets, the
+    /// settings window, the reading pane) go by it. Left out, it is as
+    /// the Mac is.
+    #[serde(default, skip_serializing_if = "Appearance::is_system")]
+    pub appearance: Appearance,
+}
+
+/// Whether the app is light, dark, or as the Mac is.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl Appearance {
+    fn is_system(&self) -> bool {
+        *self == Self::System
+    }
+}
+
+/// What the shell says of the Mac's appearance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AppearanceChanged {
+    /// The Mac is in its dark appearance.
+    pub dark: bool,
+}
+
+/// A theme the shell has put in the `themes` folder. It cannot be built or
+/// decoded with a name no theme can have: one that could point outside
+/// the folder, or be hidden in it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "ThemesImportedParams", into = "ThemesImportedParams")]
+pub struct ThemesImported {
+    name: String,
+}
+
+impl ThemesImported {
+    pub fn new(name: &str) -> Option<Self> {
+        quill_core::config::is_theme_name(name).then(|| Self {
+            name: name.to_owned(),
+        })
+    }
+
+    /// The theme's name: the name of its file in the folder.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ThemesImportedParams {
+    name: String,
+}
+
+impl TryFrom<ThemesImportedParams> for ThemesImported {
+    type Error = String;
+
+    fn try_from(params: ThemesImportedParams) -> Result<Self, Self::Error> {
+        Self::new(&params.name).ok_or_else(|| "not a name a theme can have".to_owned())
+    }
+}
+
+impl From<ThemesImported> for ThemesImportedParams {
+    fn from(imported: ThemesImported) -> Self {
+        Self {
+            name: imported.name,
+        }
+    }
 }
 
 /// A colour as `#rrggbb`, in lower case. It cannot be built or decoded as
@@ -1344,7 +1430,23 @@ pub enum FormField {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         help: Option<String>,
     },
+    /// Something to press, that starts something: a button. `label`
+    /// stands beside it as a field's does, and may be empty; `title` is
+    /// on the button. A press comes back in `settings.used` as the action
+    /// [`BUTTON_PRESS`], with no row.
+    Button {
+        id: String,
+        label: String,
+        title: String,
+        /// Whether it can be pressed now.
+        enabled: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        help: Option<String>,
+    },
 }
+
+/// The action a button of the settings window reports when it is pressed.
+pub const BUTTON_PRESS: &str = "press";
 
 impl FormField {
     pub fn id(&self) -> &str {
@@ -1356,7 +1458,8 @@ impl FormField {
             | Self::Code { id, .. }
             | Self::Toggle { id, .. }
             | Self::Number { id, .. }
-            | Self::List { id, .. } => id,
+            | Self::List { id, .. }
+            | Self::Button { id, .. } => id,
         }
     }
 
@@ -1369,7 +1472,8 @@ impl FormField {
             | Self::Code { label, .. }
             | Self::Toggle { label, .. }
             | Self::Number { label, .. }
-            | Self::List { label, .. } => label,
+            | Self::List { label, .. }
+            | Self::Button { label, .. } => label,
         }
     }
 
@@ -1379,7 +1483,7 @@ impl FormField {
     pub fn reports_as_changed(&self) -> bool {
         matches!(
             self,
-            Self::Toggle { .. } | Self::Number { .. } | Self::List { .. }
+            Self::Toggle { .. } | Self::Number { .. } | Self::List { .. } | Self::Button { .. }
         )
     }
 
@@ -1402,6 +1506,11 @@ impl FormField {
             Self::Toggle { title, .. } => {
                 if title.is_empty() {
                     return Err("a toggle says what it switches".to_owned());
+                }
+            }
+            Self::Button { title, .. } => {
+                if title.is_empty() {
+                    return Err("a button says what it does".to_owned());
                 }
             }
             Self::Number {
@@ -1462,7 +1571,8 @@ impl FormField {
             | Self::Code { .. }
             | Self::Toggle { .. }
             | Self::Number { .. }
-            | Self::List { .. } => None,
+            | Self::List { .. }
+            | Self::Button { .. } => None,
         }
     }
 
@@ -1484,7 +1594,8 @@ impl FormField {
             | Self::Code { .. }
             | Self::Toggle { .. }
             | Self::Number { .. }
-            | Self::List { .. } => false,
+            | Self::List { .. }
+            | Self::Button { .. } => false,
         }
     }
 
@@ -1498,7 +1609,8 @@ impl FormField {
             | Self::Code { help, .. }
             | Self::Toggle { help, .. }
             | Self::Number { help, .. }
-            | Self::List { help, .. } => help.as_deref(),
+            | Self::List { help, .. }
+            | Self::Button { help, .. } => help.as_deref(),
         }
     }
 }
@@ -2838,6 +2950,150 @@ mod tests {
         }
     }
 
+    fn button_field(id: &str, title: &str) -> FormField {
+        FormField::Button {
+            id: id.to_owned(),
+            label: String::new(),
+            title: title.to_owned(),
+            enabled: true,
+            help: None,
+        }
+    }
+
+    #[test]
+    fn a_button_of_the_settings_says_what_it_does_and_is_pressed_by_name() {
+        let shown = SettingsShow::new(settings(vec![pane(
+            "general",
+            vec![button_field("import_theme", "Import Theme\u{2026}")],
+        )]))
+        .unwrap();
+        let field = shown.field("general", "import_theme").unwrap();
+        assert_eq!((field.id(), field.label()), ("import_theme", ""));
+        assert_eq!(
+            (field.value(), field.focus(), field.help()),
+            (None, false, None)
+        );
+        let sent = encode(&CoreToShell::SettingsShow(shown.clone())).unwrap();
+        assert!(sent.contains(r#""kind":"button""#), "{sent}");
+        assert_eq!(
+            decode::<CoreToShell>(&sent).unwrap(),
+            CoreToShell::SettingsShow(shown)
+        );
+        // One with nothing on it is not a button.
+        assert!(
+            SettingsShow::new(settings(vec![pane(
+                "general",
+                vec![button_field("go", "")]
+            )]))
+            .is_none()
+        );
+        // A press comes back as an action, with no row.
+        let pressed = SettingsUsed::action("general", "import_theme", BUTTON_PRESS, None).unwrap();
+        assert_eq!(
+            pressed.did(),
+            &SettingsDid::Action {
+                action: "press".to_owned(),
+                row: None
+            }
+        );
+    }
+
+    #[test]
+    fn the_appearance_is_said_with_the_state_and_left_out_when_it_is_the_systems() {
+        let state = |appearance: &str| {
+            format!(
+                r#"{{"jsonrpc":"2.0","method":"state.update","params":{{"context":"list","enabled":[],"checked":[],"unread":0,"title":"Inbox"{appearance}}}}}"#
+            )
+        };
+        let CoreToShell::StateUpdate(plain) = decode(&state("")).unwrap() else {
+            panic!("not a state.update");
+        };
+        assert_eq!(plain.appearance, Appearance::System);
+        assert_eq!(encode(&CoreToShell::StateUpdate(plain)).unwrap(), state(""));
+        for (word, appearance) in [("light", Appearance::Light), ("dark", Appearance::Dark)] {
+            let line = state(&format!(r#","appearance":"{word}""#));
+            let CoreToShell::StateUpdate(update) = decode(&line).unwrap() else {
+                panic!("not a state.update");
+            };
+            assert_eq!(update.appearance, appearance);
+            assert_eq!(encode(&CoreToShell::StateUpdate(update)).unwrap(), line);
+        }
+        // Said outright, the system's is read too.
+        let CoreToShell::StateUpdate(said) = decode(&state(r#","appearance":"system""#)).unwrap()
+        else {
+            panic!("not a state.update");
+        };
+        assert_eq!(said.appearance, Appearance::System);
+        for bad in ["Dark", "auto", ""] {
+            let line = state(&format!(r#","appearance":"{bad}""#));
+            assert!(decode::<CoreToShell>(&line).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_macs_appearance_and_an_imported_theme_come_from_the_shell() {
+        let line = r#"{"jsonrpc":"2.0","method":"appearance.changed","params":{"dark":false}}"#;
+        assert_eq!(
+            decode::<ShellToCore>(line).unwrap(),
+            ShellToCore::AppearanceChanged(AppearanceChanged { dark: false })
+        );
+        let imported = |name: &str| {
+            let name = serde_json::to_string(name).unwrap();
+            format!(r#"{{"jsonrpc":"2.0","method":"themes.imported","params":{{"name":{name}}}}}"#)
+        };
+        let schema: Value = serde_json::from_str(&read(&schema_dir().join("bridge.json"))).unwrap();
+        let schema = jsonschema::validator_for(&schema).unwrap();
+        // As people name themes.
+        for name in [
+            "Dracula",
+            "3024 Day",
+            "Dracula+ High Contrast",
+            "Jack O' Lantern",
+            "Builtin Tango (Light)",
+            "v1.5",
+            "x",
+            "caf\u{e9}",
+        ] {
+            let line = imported(name);
+            let ShellToCore::ThemesImported(theme) = decode(&line).unwrap() else {
+                panic!("not themes.imported");
+            };
+            assert_eq!(theme.name(), name);
+            assert_eq!(encode(&ShellToCore::ThemesImported(theme)).unwrap(), line);
+            let value: Value = serde_json::from_str(&line).unwrap();
+            assert!(schema.is_valid(&value), "the schema refuses {name:?}");
+            assert!(ThemesImported::new(name).is_some());
+        }
+        // Never a path, a hidden file, or a name with something unseen in
+        // it: by the type and by the schema alike.
+        let long = "x".repeat(101);
+        for name in [
+            "",
+            "../../config.toml",
+            "a/b",
+            "/etc/passwd",
+            "a\\b",
+            "a:b",
+            ".hidden",
+            "..",
+            "Dracula.toml",
+            "Dracula.TOML",
+            " Dracula",
+            "Dracula ",
+            "two\nlines",
+            "tab\there",
+            "bell\u{7}",
+            "del\u{7f}",
+            long.as_str(),
+        ] {
+            let line = imported(name);
+            assert!(decode::<ShellToCore>(&line).is_err(), "{name:?}");
+            assert!(ThemesImported::new(name).is_none(), "{name:?}");
+            let value: Value = serde_json::from_str(&line).unwrap();
+            assert!(!schema.is_valid(&value), "the schema accepts {name:?}");
+        }
+    }
+
     fn pane(id: &str, fields: Vec<FormField>) -> SettingsPane {
         SettingsPane {
             id: id.to_owned(),
@@ -2862,6 +3118,7 @@ mod tests {
             toggle("on", true),
             number(10.0, 0.0, None, 1.0, 0),
             list(&[], &[]),
+            button_field("import_theme", "Import Theme\u{2026}"),
         ] {
             assert!(field.reports_as_changed());
             assert!(FormShow::new(form(vec![field], Vec::new())).is_none());

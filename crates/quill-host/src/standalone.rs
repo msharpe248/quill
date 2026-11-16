@@ -108,6 +108,9 @@ impl Host for StandaloneHost {
             // Nor a settings window: in a terminal the settings are the
             // file, and this is never sent here.
             | CoreToShell::SettingsShow(_)
+            // Nor a chooser of themes: `quill theme import` is how one is
+            // imported from a terminal.
+            | CoreToShell::ThemesPick(_)
             | CoreToShell::SpellCheck(_)
             | CoreToShell::SpellSuggest(_)
             | CoreToShell::NotifyPost(_)

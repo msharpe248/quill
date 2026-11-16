@@ -48,7 +48,7 @@ open target/app/Quill.app
 
 The script builds the Rust core and the Swift shell, assembles `target/app/Quill.app`, and signs it ad hoc with the App Sandbox on. The app opens your own mail, and the form for adding an account when there is none; `Quill.app/Contents/MacOS/Quill --demo` opens the demo mailbox instead. The app keeps its config and mail in its own container, apart from those of `quill` run in a terminal.
 
-Settings… in the Quill menu (`cmd-,`) opens a settings window for the settings changed most; see "The Settings window".
+Settings… in the Quill menu (`cmd-,`) opens a settings window for the settings changed most; see "The Settings window". The app is light, dark or as the Mac is, with a theme for each, and Import Theme… in the same menu brings in any theme made for Ghostty; see "Themes".
 
 Around the terminal the app adds a menu bar and toolbar built from the core's commands, the mailbox name and unread count in the title bar, the unread count on the Dock icon, and a second pane beside the terminal for looking at attachments and playing sound and video. `esc` closes the pane, and `cmd-]` moves focus between the panes.
 
@@ -591,9 +591,13 @@ quill read 4127                    # by the id list and search print
 quill read 4127 --raw > message.eml
 echo "Running late." | quill send --to ana.ruiz@example.com --subject "Today"
 quill sync                         # fetch, carry out what is queued, send, stop
+quill theme list --ghostty         # the themes there are, and Ghostty's to import
+quill theme import "Catppuccin Mocha"
 ```
 
 `list`, `search` and `read` look at the mail already on this Mac and reach no server. `send` checks the message as the compose screen would and puts it in the Outbox; it goes at the next sync, from the app if it is running or from `quill sync`. `--account NAME` chooses which account sends, and `--attach FILE` attaches. `quill sync` exits with an error if anything could not be done, and says what.
+
+`quill theme` lists the themes Quill has and imports one made for Ghostty; see "Themes".
 
 JSON times are RFC 3339 in UTC. What mail says is printed safely: control characters and escape sequences never reach your terminal, and in JSON they are escaped as JSON escapes them.
 
@@ -605,7 +609,7 @@ Quill looks in `~/Library/Application Support/Quill/config/`:
 |---|---|
 | `config.toml` | Settings. See the example in the spec. In the app, the Settings window changes it for you (below). A file Quill makes is yours alone to read (0600); one that is there keeps its permissions. |
 | `keys.toml` | Key overrides, on top of the chosen preset. |
-| `themes/NAME.toml` | Your own themes, selected with `theme = "NAME"`. |
+| `themes/` | Your own themes: `NAME.toml` in Quill's own format, or a file called `NAME` written for Ghostty. See "Themes". |
 | `templates/NAME.md`, `templates/NAME.txt` | Text to put into messages. See "Templates". |
 | `hooks.toml` | Programs a message can be given to. See "Hooks". |
 
@@ -619,7 +623,10 @@ In the app, Settings… in the Quill menu (`cmd-,`) opens a settings window. It 
 
 | Pane | Settings | Key in `config.toml` | Takes effect |
 |---|---|---|---|
-| General | Theme | `theme` under `[ui]` | At once |
+| General | Appearance: System, Light or Dark | `appearance` under `[ui]` | At once, the app's own windows included |
+| | Light theme | `theme_light` under `[ui]` | At once |
+| | Dark theme | `theme_dark` under `[ui]` | At once |
+| | Import Theme… | a file in `themes/`, and the theme in force | At once |
 | | Keys: Vim or Mutt | `keymap` under `[ui]` | At once, menus included |
 | | Show a notification when mail arrives | `notifications` under `[ui]` | At once |
 | | List the messages of a conversation together | `threads` under `[ui]` | At once |
@@ -710,7 +717,49 @@ Mail of a POP3 account is never cleared this way: this Mac may have the only cop
 
 ### Themes
 
-Three themes ship: `dark` (the default), `light`, and `terminal`, which uses only your terminal's own sixteen colours. In the app the terminal is Quill's own, and its colours are light or dark as the Mac is. To make your own, copy [`dark.toml`](crates/quill-tui/themes/dark.toml) into `themes/` under a new name and edit it. Colours you leave out come from the `terminal` theme.
+Three themes ship: `dark` (the default), `light`, and `terminal`, which uses only your terminal's own sixteen colours. In the app the terminal is Quill's own, and its colours are light or dark as the app is. Any theme made for the [Ghostty](https://ghostty.org) terminal can be used as well, and your own themes are files in the `themes` folder beside `config.toml`.
+
+**Light, dark, or as the Mac is.** Three keys under `[ui]` say which theme is drawn with:
+
+```toml
+[ui]
+appearance = "system"         # or "light", or "dark"
+theme_light = "GitHub Light Default"
+theme_dark = "Dracula"
+```
+
+- `appearance` says whether Quill is light or dark. `"system"`, the default, follows the Mac: in the app, when the Mac changes between light and dark, Quill changes theme with it, at once. With `"light"` or `"dark"` Quill is that whatever the Mac is, and so are the app's own parts: the title bar and toolbar, sheets, the Settings window, and the web reading pane with the pages Quill makes for it (a message with no HTML, "No message selected"). A sender's own HTML is shown as the sender styled it.
+- `theme_light` and `theme_dark` name the theme for each. Either may be any theme, `terminal` included; nothing stops a dark theme being the light one.
+- `theme`, the key there has always been, is the theme for whichever of the two is not said. So a config that says only `theme = "light"` has that one theme whatever the appearance, exactly as before, and a config that says nothing has `dark`.
+- **In a terminal nobody says what the Mac is**, and `"system"` is dark there: Quill draws with `theme_dark`. A terminal program cannot ask its terminal what it looks like and rely on the answer. Say `appearance = "light"` to have the light theme in a terminal.
+
+In the app all of this is in Settings, General: Appearance, Light theme, Dark theme. Each pop-up lists the three themes Quill comes with and every theme in your `themes` folder, by name.
+
+**Importing a theme made for Ghostty.** In the app, Import Theme… (in Settings, General, and in the Quill menu) opens a chooser with every theme of a Ghostty installed on this Mac: type to search by name, show only the dark ones or the light ones, and each row has a patch of the theme's colours. Import copies the theme into your `themes` folder and makes it the theme in force: the one theme, if your settings have one for both appearances, and otherwise the theme of the appearance Quill has at that moment. Other… imports a theme file from anywhere.
+
+Ghostty's themes are looked for in `/Applications/Ghostty.app`, then in `~/Applications/Ghostty.app`, then in `~/.config/ghostty/themes`, where Ghostty keeps themes of your own. The app is sandboxed: it can read the first, and may not read your home folder, so for a theme kept there use Other…, which opens on that folder.
+
+From a shell, for Quill in a terminal:
+
+```sh
+quill theme list                   # Quill's themes, and which the settings name
+quill theme list --ghostty         # and the themes made for Ghostty on this Mac
+quill theme import Dracula         # by name, in any case
+quill theme import ~/Downloads/some-theme
+```
+
+`import` copies the file into `themes` and says which line to put in `config.toml` to use it; it does not change your settings. It also takes one of Quill's own `.toml` themes by its path. Both commands take `--json`.
+
+**The files.** A file in `themes/` is a theme in one of two formats:
+
+- `NAME.toml` is one of Quill's own. Copy [`dark.toml`](crates/quill-tui/themes/dark.toml) under a new name and edit it. A colour is `"#rrggbb"`, an ANSI name (`"blue"`, `"bright-black"`), a 256-colour index, or `"default"` for the terminal's own; colours you leave out come from the `terminal` theme. `selection_inactive_bg` is optional: the bar of the selected row in a pane that does not have the keyboard, where it should differ from `selection_bg`.
+- A file with any other name is a theme written for Ghostty, called what the file is called (`Catppuccin Mocha`, `Dracula+`): lines of `key = value` with `background`, `foreground`, `palette = N=COLOUR` for the sixteen colours a terminal program names, and `selection-background` and `selection-foreground`. A colour is `#rrggbb`, `rrggbb`, `#rgb` or `rgb`; a colour by name is not read. Blank lines, `#` comments and every other key are skipped. A file that names no background and foreground is not a theme, and neither is one larger than 64 KB.
+
+A theme of yours with the name of one Quill comes with takes its place. A name is a file's name and nothing more: no `/`, no `:`, no dot to start with.
+
+**How a Ghostty theme becomes Quill's colours.** A terminal theme has fewer colours than Quill draws with, so the rest are worked out. The palette goes where the `terminal` theme puts it, so Quill looks as it does in a Ghostty of that theme: blue for the border of the pane with the keyboard, cyan for headings, magenta for keys, red for errors, yellow for the star, and blue, green, yellow and magenta for the accounts. The selected row of that pane is the theme's own selection. Dim text is the text colour moved toward the background, and never the palette's "bright black", which in many themes is the background itself.
+
+What that would leave unreadable is put right. The measure is the contrast ratio of WCAG 2. Text, an unread row and the words on the selected row have at least 4.5 on what they are drawn on; dim text, coloured words and marks, and the focused border have at least 3; the other borders have 1.5. A colour that falls short is replaced by the bright one of its pair in the palette if that reads, and otherwise moved toward the text colour only as far as it takes. Text that itself has less than 4.5 on its background is moved toward white or black. Every one of the 819 themes Ghostty 1.4.0 ships comes out within those bars; 374 of them need at least one colour moved.
 
 Hex colours fall back to the nearest of 256 colours when the terminal does not report true colour. Setting `NO_COLOR` turns colour off; the cursor, focus and message state stay visible through markers, borders and text attributes.
 

@@ -86,3 +86,81 @@ fn the_headless_commands_are_in_the_help() {
         "{stdout}"
     );
 }
+
+#[test]
+fn a_theme_is_listed_and_imported_from_a_shell() {
+    let dir = tempfile::tempdir().unwrap();
+    let theme = |args: &[&str]| {
+        quill()
+            .arg("theme")
+            .args(args)
+            .env("QUILL_CONFIG_DIR", dir.path().join("config"))
+            .env("QUILL_DATA_DIR", dir.path().join("data"))
+            // A home with no Ghostty of its own in it.
+            .env("HOME", dir.path().join("home"))
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let output = quill().args(["theme", "--help"]).output().unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        stdout.contains("list") && stdout.contains("import"),
+        "{stdout}"
+    );
+
+    // With nothing of the user's own: the three Quill comes with.
+    let output = theme(&["list"]);
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let names: Vec<&str> = stdout
+        .lines()
+        .filter_map(|line| line.split_whitespace().next())
+        .collect();
+    assert_eq!(names, ["dark", "light", "terminal"], "{stdout}");
+    // Listing makes nothing.
+    assert!(!dir.path().join("config").exists());
+
+    // A theme file written here, in Ghostty's format, by its path.
+    let source = dir.path().join("Harbour Fog");
+    std::fs::write(
+        &source,
+        "background = #e8ecef\nforeground = #2c3a47\npalette = 4=#2a5db0\n",
+    )
+    .unwrap();
+    let output = theme(&["import", source.to_str().unwrap()]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(output.status.success(), "{stdout}");
+    assert!(
+        stdout.contains("Imported \"Harbour Fog\"")
+            && stdout.contains("It is a light theme.")
+            && stdout.contains("    theme_light = \"Harbour Fog\""),
+        "{stdout}"
+    );
+    let copy = dir.path().join("config/themes/Harbour Fog");
+    assert_eq!(
+        std::fs::read(&copy).unwrap(),
+        std::fs::read(&source).unwrap()
+    );
+    // No settings file was written: selecting it is the user's to do.
+    assert!(!dir.path().join("config/config.toml").exists());
+
+    let output = theme(&["list", "--json"]);
+    let listed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let themes = listed["themes"].as_array().unwrap();
+    assert_eq!(themes.len(), 4);
+    assert_eq!(themes[3]["name"], "Harbour Fog");
+    assert_eq!(themes[3]["appearance"], "light");
+
+    // What is not a theme is refused, and nothing is copied.
+    let notes = dir.path().join("notes");
+    std::fs::write(&notes, "Remember the milk.\n").unwrap();
+    for what in [notes.to_str().unwrap(), "No Such Theme Anywhere 7f3a"] {
+        let output = theme(&["import", what]);
+        assert!(!output.status.success(), "{what}");
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.starts_with("quill: "), "{stderr}");
+    }
+    assert!(!dir.path().join("config/themes/notes").exists());
+}

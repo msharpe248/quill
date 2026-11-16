@@ -1,0 +1,18 @@
+{
+  "jsonrpc": "2.0",
+  "method": "form.show",
+  "params": {
+    "step": "server",
+    "title": "Add an account: the server",
+    "fields": [
+      {
+        "kind": "button",
+        "id": "look_up",
+        "label": "",
+        "title": "Look Up the Server",
+        "enabled": true
+      }
+    ],
+    "buttons": []
+  }
+}

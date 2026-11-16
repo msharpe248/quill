@@ -883,7 +883,10 @@ fn the_host_is_told_what_applies_where_the_focus_is() {
         title,
         background,
         foreground,
+        appearance,
     } = harness.state.host_state(&harness.env);
+    // As the system is, until the settings say otherwise.
+    assert_eq!(appearance, quill_core::config::Appearance::System);
     assert_eq!(context, Context::List);
     // Nothing that is switched on and off is on.
     assert!(checked.is_empty());

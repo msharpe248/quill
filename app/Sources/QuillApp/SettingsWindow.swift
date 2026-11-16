@@ -59,6 +59,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// has none to show.
     private static let unreadable = "unreadable"
     private static let fileButtonTitle = "Open Settings File\u{2026}"
+    /// The tag of a button that is pressed, and is not a checkbox.
+    private static let pushButton = 1
 
     init(
         memory: any SettingsPaneMemory, keepsPlace: Bool, send: @escaping (ShellToCore) -> Void,
@@ -512,6 +514,14 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             let label = Self.wrapping(value, width: width, color: .labelColor)
             label.identifier = identifier
             return label
+        case let .button(title, enabled):
+            let button = NSButton(title: title, target: self, action: #selector(pressedButton(_:)))
+            button.identifier = identifier
+            button.isEnabled = enabled
+            // Told apart from a checkbox, which is a button too.
+            button.tag = Self.pushButton
+            controls[key] = button
+            return button
         // Settings have no secret and no code, and a list is laid out by
         // itself: the core sends none of these here.
         case .secret, .code, .list:
@@ -722,6 +732,13 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         tell(.settingsUsed(used))
     }
 
+    /// A button of the core's was pressed: the core is told which, and
+    /// decides what that starts.
+    @objc private func pressedButton(_ sender: NSButton) {
+        guard let (pane, field) = place(of: sender), let used = model.pressButton(field, of: pane) else { return }
+        tell(.settingsUsed(used))
+    }
+
     @objc private func openSettingsFile(_: Any?) {
         openFile()
     }
@@ -743,7 +760,12 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     func set(_ name: String, to value: String) -> Bool {
         guard isOpen, let control = controls[name], control.isEnabled else { return false }
         if let popup = control as? NSPopUpButton {
-            guard let index = popup.itemArray.firstIndex(where: { $0.representedObject as? String == value }) else {
+            // By the option's name, or by what it is called: something
+            // the user named (a theme) has a name here that is made up.
+            guard
+                let index = popup.itemArray.firstIndex(where: { $0.representedObject as? String == value })
+                    ?? popup.itemArray.firstIndex(where: { $0.title == value })
+            else {
                 return false
             }
             popup.selectItem(at: index)
@@ -751,7 +773,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         } else if let field = control as? NSTextField {
             field.stringValue = value
             _ = field.sendAction(field.action, to: field.target)
-        } else if let box = control as? NSButton {
+        } else if let box = control as? NSButton, box.tag != Self.pushButton {
             guard ["on", "off"].contains(value) else { return false }
             box.state = value == "on" ? .on : .off
             toggled(box)
@@ -784,10 +806,13 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         return true
     }
 
-    /// Presses a button of a list (`pane.field.action`). False when there
-    /// is none, or it cannot be pressed now.
+    /// Presses a button of a list (`pane.field.action`), or a button that
+    /// is a field of its own (`pane.field`). False when there is none, or
+    /// it cannot be pressed now.
     func press(_ name: String) -> Bool {
-        guard isOpen, let button = controls[name] as? NSButton, button.isEnabled else { return false }
+        guard isOpen, let button = controls[name] as? NSButton, button.isEnabled,
+            name.split(separator: ".").count == 3 || button.tag == Self.pushButton
+        else { return false }
         button.performClick(nil)
         return true
     }
@@ -822,7 +847,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
                     shows = field.stringValue
                 } else if let button = control as? NSButton {
                     shows =
-                        name.split(separator: ".").count == 3
+                        name.split(separator: ".").count == 3 || button.tag == Self.pushButton
                         ? (button.isEnabled ? "enabled" : "disabled") : (button.state == .on ? "on" : "off")
                 } else {
                     shows = "?"

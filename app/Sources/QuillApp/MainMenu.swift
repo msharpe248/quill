@@ -27,6 +27,12 @@ enum MainMenu {
             withTitle: "Reveal Settings File in Finder", action: #selector(MainWindowController.revealConfig(_:)),
             keyEquivalent: "")
         revealConfig.target = panes
+        // A theme made for Ghostty is chosen and copied in by the shell,
+        // as a vimrc is: the core cannot be shown a file the user chose.
+        let importTheme = app.addItem(
+            withTitle: "Import Theme\u{2026}", action: #selector(MainWindowController.importTheme(_:)),
+            keyEquivalent: "")
+        importTheme.target = panes
         // The vimrc for writing mail in Vim is copied in by the shell: the
         // core cannot be shown a file outside the sandbox, and has no need
         // of this one.
