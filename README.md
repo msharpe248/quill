@@ -6,15 +6,26 @@ The full design is in [the spec](Quill%20Terminal%20Email%20Client%20Spec.md). C
 
 ## Status
 
-Milestone 0, the core skeleton, is in place: the Rust workspace, the local store with migrations, config loading, themes, keymaps, and a three-pane terminal UI over a demo mailbox.
+Every milestone in the spec, M0 to M10, is built. M0 to M4 and POP3 have passed the tests the spec sets for them, against mail servers run on this Mac. The rest has been tested as far as it can be without real provider accounts, and waits to be tried on them. None of it has yet been through a day of real use.
 
-Milestone 1, the app shell, is in place too. `Quill.app` runs the core in its own libghostty terminal inside the App Sandbox, builds its menus and toolbar from the core's command list, shows files in a Quick Look pane beside the terminal, and draws images inline with the Kitty graphics protocol. App Store validation is deferred until there is a developer account to sign with.
+| Milestone | What it is | Where it stands |
+|---|---|---|
+| M0 to M4 | The core, the app shell, IMAP, writing and sending, HTML and media | Built, and accepted by the spec's tests on a local server |
+| M7 | POP3 | Built, and accepted the same way |
+| M5 | Signing in with Microsoft or Google; Microsoft Graph | Built. Tested against stand-in servers only |
+| M6 | Search, the palette, the mouse, push, conversations, notifications, mail links, spell check | Built. Notifications and being the default mail program are untried |
+| M8 | Snooze, send later, templates, saved searches, unsubscribe, invitations, rules, commands from a shell, hooks | Built. Unsubscribing and invitation replies have met no real server |
+| M9 | Writing mail in Vim | Works in a terminal with your own Vim. The app's pane is unseen: there is no Vim in the app yet |
+| M10 | Exchange on your own servers (EWS) | Built. Tested against a stand-in only |
 
-Milestone 2, reading mail over IMAP, is built. Add an account from inside Quill (`A`): type its address, confirm the server Quill finds, give the password, and its mail syncs into the local store and reads offline. HTML mail is drawn as styled text: headings, lists, emphasis, quotes and simple tables, with links numbered and listed at the end of the message. `t` switches a message between its HTML and its plain text when it came as both. `o` lists a message's links to open one in your browser, and in the app or a terminal that supports hyperlinks, cmd-click on a link's text opens it too. Quill opens only `http`, `https` and `mailto` links.
+What needs a person, in the order it is worth doing:
 
-Milestone 3, writing and sending, is built. `c` writes a new message, `r`, `R` and `f` reply, reply to all and forward, and the message is written in the reader's place with an editor that follows macOS text keys. Mail is sent over SMTP from an Outbox that holds it for ten seconds, in which `U` takes it back. `e`, `d` and `m` archive, delete and move, also undoable, and all of it works offline and is carried out when the server is next reachable.
+1. **Register Quill with Microsoft and Google** and put the two client ids in the config: [docs/oauth.md](docs/oauth.md) has the steps. Then `S` on an account, or `quill account sign-in`, signs in. Nothing here has yet met a real Microsoft 365 or Gmail mailbox.
+2. **Run `app/build-vim.sh`**, then `app/build-app.sh`, to put Vim into the app. The script downloads Vim's source at a pinned commit and compiles it, which is why it was left to be run by hand. Read it first; it is short.
+3. **Allow notifications** when the app first asks, and make Quill the default mail program in Mail's settings if you want `mailto:` links to come here.
+4. **An Apple Developer account**, for signing and App Store validation. Deferred from M1, and the last thing outstanding.
 
-Microsoft accounts with OAuth arrive in M5.
+[DECISIONS.md](DECISIONS.md) says under each milestone exactly what was verified, what was not, and what was left unbuilt.
 
 ## Try it
 

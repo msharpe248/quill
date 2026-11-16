@@ -394,7 +394,7 @@ Not verified: against real mail (the owner's is not read while they are away). N
 - **`ammonia` 4.2.5 (MIT/Apache-2.0) sanitizes HTML** before it reaches the web view or a browser, as the spec names it. It brings `cssparser` and `dtoa-short`, which are MPL-2.0. The licence list in `deny.toml` is unchanged; those two crates are allowed by name. MPL-2.0 is file-level: Quill uses both unmodified, their source is public, and nothing in it reaches Quill's own files. It is compatible with selling the app and with any licence the open-source question in the spec might settle on.
 - **`image` 0.25.10 (MIT/Apache-2.0) decodes PNG, JPEG, GIF and WebP** for inline pictures, with only those four formats switched on. HEIC, PDF pages and video frames are pictured by the shell (`thumbnail.make`), which has the system's decoders.
 
-## M5, OAuth and Microsoft Graph (in progress)
+## M5, OAuth and Microsoft Graph (built, not yet accepted)
 
 ### Microsoft Graph
 
@@ -431,7 +431,7 @@ Built in `quill-auth` and tested against a local stand-in. No real provider was 
 - **Not built:** checking that the account signed in is the address typed; revoking the token at the provider when an account is removed; honouring `Retry-After` on the token endpoint.
 - **Remembered, to confirm with real registrations:** the endpoints; that a public client registered with `http://localhost` is accepted on any port; that the exchange and refresh work without a `scope` field; that Google's token endpoint wants the client secret alongside PKCE; that Google refresh tokens for an app in testing expire after seven days, which would look like a weekly request to sign in again.
 
-## M6, daily driver (in progress)
+## M6, daily driver (built, not yet accepted)
 
 ### Push
 
@@ -563,7 +563,7 @@ Accepted 2026-11-15: repeated polls never duplicate or lose a message under each
 - **A POP3 account is written into `config.toml` by hand.** The form for adding an account makes IMAP accounts.
 - **Not built:** a cap on the blob cache does not exist yet; when it does, it must never evict a POP3 account's messages, which are the only copies. Junk has no local folder.
 
-## M8, P1 features (in progress)
+## M8, P1 features (built, not yet accepted)
 
 ### Headless commands
 
@@ -618,16 +618,33 @@ Accepted 2026-11-15: repeated polls never duplicate or lose a message under each
 - **`{{placeholders}}` Quill knows are filled**: `to`, `to_name`, `first_name`, `from_name`, `date`, `subject`. One it does not know, or cannot fill, is left as written and the first of them is selected, to type over. Filling is a single pass: a value is never read again for placeholders. `{{first_name}}` is not guessed from a bare address.
 - **Nothing in a template is run, included or fetched.**
 
-## M9, the Vim option (in progress)
+### Hooks
+
+- **A hook is a program of the user's, given the message they are on.** They are listed in `hooks.toml` beside the config, read once at startup by the binary and handed to the UI. `|` lists them and runs the one chosen; there is one key for the list, not a key for each hook as the spec has it, because a key that runs a program without showing which is a poor trade for one keystroke.
+- **A hook is an argv, never a line for a shell**, and its program is named by its absolute path, not looked for on `PATH`. Nothing of a message is ever put into the command. A file with any mistake in it loads no hooks at all: a file half understood is not one to run programs from.
+- **The message is on standard input**, raw or as a few headers and the plain text. Three headers are also in the environment (`QUILL_SUBJECT`, `QUILL_FROM`, `QUILL_MESSAGE_ID`), each made one line with control characters removed and cut to 1 KiB; the rest of the environment is `PATH`, `HOME` and `LANG` and nothing else of Quill's.
+- **A hook has no terminal of its own, thirty seconds, and a process group of its own**, so that what it starts is stopped with it. The first 64 KiB of what it prints is kept and the first line shown; the rest is read and thrown away so the program can finish. One runs at a time, off the UI task and the store worker.
+- **Nothing runs by itself**: not when mail arrives, not when a message is opened, and a rule cannot name a hook. A program run on mail a stranger sent, with nobody watching, is not something the spec asks for and not something to add in passing.
+- **Hooks are off in the app.** The sandbox allows no program outside the bundle, and the command says so there instead of failing.
+- **Known and left:** a hook that opens `/dev/tty` itself can still write on Quill's screen (it is in the terminal's session); Quill redraws over it. `hooks.toml` is not reloaded while Quill runs.
+
+## M9, the Vim option (built, not yet accepted)
 
 - **The draft file is headers, a blank line and the body**, as mutt has it (`quill_store::draft_file`): `From` (shown, never read back), `To`, `Cc`, `Bcc`, `Subject`, and an `Attach:` line per file. Reading it back is forgiving of what a person does to a file (case, order, missing fields, continued lines, no headers at all) and strict about what a file may say: a header Quill does not know is dropped, not sent; what the message answers and which account sends it are not an editor buffer's to change. An `Attach:` line naming a file the draft already has keeps it; one naming a path attaches that file; deleting the line removes the attachment.
 - **The plugin (`app/Resources/vim/quill.vim`) and Quill talk through small files** in a folder of the draft's own, not over a Vim channel as the spec has it: `verdict`, written by the plugin as Vim quits (send, postpone, discard); `command`, written by Quill and looked for by the plugin three times a second, which is how Send in the toolbar reaches a message being written in Vim; `contacts`, for address completion. Files need no socket, no listening port and no `+channel` in the Vim that is shipped, and they work the same in a terminal with the user's own Vim.
 - **`:QuillSend`, `:QuillPostpone`, `:QuillDiscard`, `:QuillAttach` and address completion** (`ctrl-x ctrl-u` on a recipient line) are the plugin's. `:wq` with no verdict hands the draft back for Quill to ask; `:cq` cancels and keeps the draft as it was. The plugin runs no program and touches no network. Tried headlessly with the Vim on this Mac (9.2): attach, a refused attach, completion and send.
 - **In the app, Vim runs in a second terminal pane** (`pane.editor`, answered by `editor.exited`). The shell looks for Vim only inside the bundle (`Contents/Helpers/vim`, with its runtime and the plugin under `Contents/Resources/vim`), and refuses any of them that resolves outside it. A build with no Vim answers at once that it did not run.
-- **Vim is started with an argv and an environment built from nothing**: `vim -N -u <imported vimrc or DEFAULTS> -i NONE -n -c <a constant that sources the plugin from $VIM> -- <draft>`, with `VIM`, `VIMRUNTIME`, `QUILL_DRAFT_DIR`, `HOME` (the container), `TMPDIR`, `TERM`, the locale, and `SHELL=/usr/bin/false`. No path is ever written into a command for Vim to parse, and nothing of the user's environment is passed on. `:!` and `:shell` do nothing: programs cannot be run from the sandbox, and the import dialog says so.
+- **Vim is started with an argv and an environment built from nothing**: `vim -N -u <imported vimrc or DEFAULTS> -i NONE -n --cmd <modelines off> -c <a constant that sources the plugin from $VIM> -- <draft>`, with `VIM`, `VIMRUNTIME`, `QUILL_DRAFT_DIR`, `HOME` (the container), `TMPDIR`, `TERM`, the locale, and `SHELL=/usr/bin/false`. No path is ever written into a command for Vim to parse, and nothing of the user's environment is passed on. `:!` and `:shell` do nothing: programs cannot be run from the sandbox, and the import dialog says so.
 - **Closing the pane is "save and close", not "kill"**: escape, then `:wqa`, typed to Vim as keys; a hangup two seconds later if it has not gone, and a kill a second after that. With no verdict left behind, Quill asks what to do with the draft. A vimrc that remaps `:` can defeat the typed keys; then the two seconds pass and what was not written is lost. Keys typed into a terminal cannot be made proof against mappings.
 - **While Vim runs no other pane opens over it**, and a second request for an editor is refused: a viewer must never end a message being written.
 - **"Import vimrc" copies one file** (at most 1 MB) to `vim/vimrc` in Quill's config folder, after saying that Vim runs inside the app's sandbox, so settings and plugins that run other programs or read files elsewhere will not work. A scripted run shows neither the alert nor the panel.
+- **The core's side (`quill-tui/src/vim.rs`).** `compose.vim` (`ctrl-v`, `cmd-shift-e` in the app) hands over the message being written; `editor = "vim"` under `[compose]` sends every message there as it opens. The message is saved as a draft first, so nothing written depends on Vim. Each edit has a folder of its own (mode 0700, files 0600) in this run's folder in the temporary directory, beside the files taken out of messages to view. It is removed when the draft is taken back, whether or not it could be read, and with the rest when Quill quits; nothing is read from, written into or removed from a folder Quill did not make.
+- **What comes back is checked as if it had been written in Quill.** `:QuillSend` goes through the same doubts (no subject, a forgotten attachment) and the same outbox and undo; a doubt, or an `Attach:` line naming a file that cannot be attached, leaves the message open in Quill saying why, and it is neither sent nor put away. `:wq` with no verdict brings it back open; `:cq`, or a Vim that ends on a signal, leaves the message as it was before Vim. A draft file over 8 MiB is not read.
+- **In a terminal Quill runs the user's own Vim**: `vim` on `PATH`, or `$QUILL_VIM`, found before the terminal is given up so that having none costs a line saying so. It is a child on the same terminal, started from an argv (`vim -N --cmd <modelines off> -c <source the plugin from $QUILL_DRAFT_DIR> -- <draft>`), with the user's own vimrc and environment: it is their Vim and their terminal. Quill stops reading keys and drawing while it runs, and goes on fetching and sending. The plugin is copied into the draft's folder for it.
+- **Modelines are off for the draft, in the terminal and in the app.** A message quotes other people's words, and a quoted line shaped like a modeline would otherwise set options in the user's Vim. It is an autocommand before the buffer is read, so a vimrc with `set modeline` does not undo it, in a group of its own, so a vimrc that starts with a bare `autocmd!` does not clear it. Both were tried against the Vim on this Mac; without the group the second one let the modeline through.
+- **Send and Save while Vim runs** write the `command` file, and Vim does as it would for `:QuillSend` or `:QuillPostpone`.
+- **Tested** with a stand-in editor and with the Vim on this Mac, each in a terminal of the test's own with a scratch home, config and data. **Not tested:** the same through the app's pane, for want of a Vim in the bundle.
+- **Not built:** Vim as an `Editor` behind the trait (nothing of Vim lives in the core's process, so it is a different thing from the built-in editor, not another implementation of it); a channel between Vim and Quill; live spell marks or address completion from the store beyond the list written out at the start (the 300 people written to most).
 - **Not seen working.** There is no Vim in the bundle (below), so the pane, its focus and resizing, the polite stop, and the sandboxed Vim itself are untried. Checked in the real app: the main terminal and the other panes still work after the changes this needed to the terminal and process code, a build without Vim says so, and a scripted vimrc import lands in a scratch config folder with private permissions.
 - **`app/build-vim.sh` builds the Vim to ship**: Vim's source at one pinned commit (a tag can be moved), terminal-only, with no scripting languages, GUI, clipboard, networking, channels or terminal emulator, and its runtime trimmed of the manual, other languages, spelling lists and the plugins that fetch or unpack. **It has not been run.** Fetching and compiling other people's code is not something to do unattended; it is for the owner to run and look at. Until then the app has no Vim in it.
 
