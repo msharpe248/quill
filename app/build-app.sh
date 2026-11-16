@@ -19,9 +19,11 @@
 # the Keychain and it asks once. This script never makes an identity: that
 # is for whoever owns the Keychain.
 #
-# The bundle lands in target/app/Quill.app. There is no Vim in it: mail is
-# written in the Vim that comes with macOS, or in the user's own by way of a
-# script of theirs.
+# The bundle lands in target/app/Quill.app, or where QUILL_APP_OUT says: the
+# bundle of a Quill that is running must not be built over, so a build made
+# to check something while one is open goes somewhere else. There is no Vim
+# in it: mail is written in the Vim that comes with macOS, or in the user's
+# own by way of a script of theirs.
 set -euo pipefail
 
 configuration="${1:-debug}"
@@ -30,7 +32,7 @@ identity="${QUILL_SIGN_IDENTITY:--}"
 # With CDPATH set, `cd` prints the directory it lands in; keep that out of $root.
 unset CDPATH
 root="$(cd "$(dirname "$0")/.." >/dev/null && pwd)"
-out="$root/target/app/Quill.app"
+out="${QUILL_APP_OUT:-$root/target/app/Quill.app}"
 
 # Until the Xcode licence is accepted, `swift` under Xcode refuses to run.
 # The Command Line Tools carry the same compiler and can build the package.
@@ -54,6 +56,9 @@ cp "$root/target/release/quill" "$out/Contents/Helpers/quill"
 # SwiftPM resource bundles. A signed app cannot carry them at its root, which
 # is where SwiftPM looks by default; libghostty-spm looks in Resources first.
 find "$products" -maxdepth 1 -name '*.bundle' -exec cp -R {} "$out/Contents/Resources/" \;
+# The app's icon, made from the pictures of it at each size.
+iconutil --convert icns --output "$out/Contents/Resources/Quill.icns" \
+    "$root/app/Resources/icon/Quill.iconset"
 # Quill's side of writing a message in Vim.
 mkdir -p "$out/Contents/Resources/vim"
 cp "$root/app/Resources/vim/quill.vim" "$out/Contents/Resources/vim/quill.vim"

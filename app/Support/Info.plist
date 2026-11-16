@@ -8,6 +8,10 @@
 	<string>Quill</string>
 	<key>CFBundleExecutable</key>
 	<string>Quill</string>
+	<!-- Quill.icns in Resources, which the build makes from
+	     app/Resources/icon/Quill.iconset. -->
+	<key>CFBundleIconFile</key>
+	<string>Quill</string>
 	<!-- A placeholder until the app has a developer account to belong to. -->
 	<key>CFBundleIdentifier</key>
 	<string>dev.quill.Quill</string>
