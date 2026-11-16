@@ -5,12 +5,16 @@
 
 use std::fs;
 use std::io::{self, Write};
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
 use quill_core::config::{Config, TlsMode};
 use quill_tui::settings::{Change, Written};
 use quill_tui::setup::{AccountDraft, ServerDraft, SignInDraft};
 use toml_edit::{ArrayOfTables, DocumentMut, InlineTable, Item, Table, Value, value};
+
+/// The permissions of a config Quill makes: the user's alone.
+const PRIVATE: u32 = 0o600;
 
 /// `text` with one more `[[account]]`. `fingerprint`, when given, pins the
 /// IMAP server's certificate.
@@ -195,14 +199,32 @@ fn checked(text: String) -> Result<String, String> {
 
 /// Replaces the file at `path` with `text`, all or nothing: it is written
 /// beside the old one and moved into place.
+///
+/// A file that was there keeps the permissions it had. One made here is
+/// the user's alone to read and write, whatever the umask: it says which
+/// servers they use and under which names.
 pub fn write(path: &Path, text: &str) -> io::Result<()> {
     let dir = path
         .parent()
         .ok_or_else(|| io::Error::other("the config file has no directory"))?;
     fs::create_dir_all(dir)?;
+    let mode = match fs::metadata(path) {
+        Ok(existing) => existing.permissions().mode() & 0o7777,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => PRIVATE,
+        Err(err) => return Err(err),
+    };
     let partial = dir.join(format!(".config.toml.{}", std::process::id()));
     let result = (|| {
-        let mut file = fs::File::create(&partial)?;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(PRIVATE)
+            .open(&partial)?;
+        // Said outright as well: the mode asked for above is cut down by
+        // the umask, and is not applied at all to a file left behind by an
+        // earlier attempt.
+        file.set_permissions(fs::Permissions::from_mode(mode))?;
         file.write_all(text.as_bytes())?;
         file.sync_all()?;
         fs::rename(&partial, path)
@@ -666,5 +688,48 @@ mod tests {
             .map(|entry| entry.unwrap().file_name())
             .collect();
         assert_eq!(left, ["config.toml"]);
+    }
+
+    fn mode(path: &Path) -> u32 {
+        fs::metadata(path).unwrap().permissions().mode() & 0o7777
+    }
+
+    #[test]
+    fn a_config_quill_makes_is_the_users_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config").join("config.toml");
+        write(&path, "first\n").unwrap();
+        assert_eq!(mode(&path), 0o600);
+        // And stays so when it is written again.
+        write(&path, "second\n").unwrap();
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "second\n");
+    }
+
+    #[test]
+    fn a_config_that_was_there_keeps_its_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        for kept in [0o644, 0o640, 0o600] {
+            fs::write(&path, "theirs\n").unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(kept)).unwrap();
+            write(&path, "changed\n").unwrap();
+            assert_eq!(mode(&path), kept, "{kept:o}");
+            assert_eq!(fs::read_to_string(&path).unwrap(), "changed\n");
+        }
+    }
+
+    #[test]
+    fn a_file_left_by_an_earlier_attempt_does_not_lend_its_permissions() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let partial = dir
+            .path()
+            .join(format!(".config.toml.{}", std::process::id()));
+        fs::write(&partial, "half\n").unwrap();
+        fs::set_permissions(&partial, fs::Permissions::from_mode(0o666)).unwrap();
+        write(&path, "whole\n").unwrap();
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "whole\n");
     }
 }

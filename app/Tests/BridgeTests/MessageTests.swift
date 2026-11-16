@@ -93,6 +93,7 @@ private enum Examples {
             "settings-list-action-with-no-title.json", "settings-field-with-the-focus.json",
             "settings-used-with-a-value-and-an-action.json", "settings-used-with-nothing-done.json",
             "settings-used-with-a-row-and-no-action.json", "settings-used-with-a-list-for-a-value.json",
+            "state-with-a-colour-that-is-a-name.json",
         ] {
             #expect(examples.contains { $0.name == name }, "\(name) is missing")
         }
@@ -123,13 +124,53 @@ private enum Examples {
                         enabled: ["nav.next", "nav.open", "message.toggle_star", "view.zoom"],
                         checked: ["view.web_reading"],
                         unread: 12,
-                        title: "Inbox (unified) - 12 unread"
+                        title: "Inbox (unified) - 12 unread",
+                        background: "#1a1b26",
+                        foreground: "#c0caf5"
                     )))
         #expect(try CoreToShell(line: examples["pane.close.json"]!) == .paneClose)
         #expect(try CoreToShell(line: examples["files.pick.json"]!) == .filesPick)
         #expect(
             try CoreToShell(line: examples["clipboard.write.json"]!)
                 == .clipboardWrite(text: "Are you free on Thursday?\nThe usual place, 12:30."))
+    }
+
+    @Test func theTerminalsColoursAreSixHexDigitsOrLeftOut() throws {
+        func state(_ colours: String) -> String {
+            #"{"jsonrpc":"2.0","method":"state.update","params":{"context":"list","enabled":[],"#
+                + #""checked":[],"unread":0,"title":"Inbox"\#(colours)}}"#
+        }
+        // Left out: the terminals keep their own colours, and nothing is
+        // said of them on the way back either.
+        let plain = try CoreToShell(line: state(""))
+        #expect(plain == .stateUpdate(StateUpdate(context: .list, enabled: [], unread: 0, title: "Inbox")))
+        #expect(!plain.line.contains("background") && !plain.line.contains("foreground"))
+
+        let both = try CoreToShell(line: state(##","background":"#fafafa","foreground":"#383a42""##))
+        guard case let .stateUpdate(coloured) = both else {
+            Issue.record("not a state.update")
+            return
+        }
+        #expect(coloured.background == "#fafafa" && coloured.foreground == "#383a42")
+        #expect(try CoreToShell(line: both.line) == both)
+        // One without the other is said as it is.
+        guard case let .stateUpdate(half) = try CoreToShell(line: state(##","background":"#000000""##)) else {
+            Issue.record("not a state.update")
+            return
+        }
+        #expect(half.background == "#000000" && half.foreground == nil)
+
+        for bad in [
+            #""blue""#, ##""#fff""##, ##""#1A1B26""##, #""1a1b26""#, ##""#1a1b2g""##, ##""#1a1b26ff""##, #""""#,
+            #""default""#, "7", "null", ##"["#1a1b26"]"##, ##""#1a1b26\nkeybind = all""##,
+        ] {
+            #expect(throws: BridgeError.self, "background \(bad)") {
+                try CoreToShell(line: state(#","background":\#(bad)"#))
+            }
+            #expect(throws: BridgeError.self, "foreground \(bad)") {
+                try CoreToShell(line: state(#","foreground":\#(bad)"#))
+            }
+        }
     }
 
     @Test func filesForThePanesDecodeToWhatTheySay() throws {

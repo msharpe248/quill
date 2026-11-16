@@ -78,6 +78,10 @@ import WebKit
 /// window size every time, and neither reads nor writes the user's own
 /// defaults.
 ///
+/// So are the colours the terminals were last given, the core's and the
+/// editor's alike: the background and the text of the core's theme, or
+/// `its own` for each one the theme leaves to the terminal.
+///
 /// The reading pane is in the dump: whether web reading is on, the page the
 /// core last asked it to show (its title, the last of its path, whether it
 /// may load remote content, how far it has loaded, how often it was
@@ -543,6 +547,8 @@ enum DebugScript {
         }
         // terminal: 147 columns, 45 rows, cells 16 px at 2.0x, view 1180.0 pt of 1180.0
         lines.append("terminal: \(controller.gridSummary)")
+        // terminal colours: background #1a1b26, foreground #c0caf5
+        lines.append("terminal colours: \(controller.terminalColours)")
         // window columns: 147 (core told 147)
         let room = controller.windowColumns.map(String.init) ?? "unknown"
         let told = controller.windowColumnsSent.map(String.init) ?? "nothing"

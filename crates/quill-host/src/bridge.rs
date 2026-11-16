@@ -200,6 +200,56 @@ pub struct StateUpdate {
     pub unread: u32,
     /// The window title.
     pub title: String,
+    /// The colour the terminal UI is drawn on. Any other terminal the
+    /// shell shows beside it (the editor's) is given the same, and so are
+    /// the cells the core does not paint. Left out when the theme leaves
+    /// the background to the terminal: the shell's terminals then keep
+    /// their own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<TerminalColor>,
+    /// The colour of the terminal UI's text, likewise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub foreground: Option<TerminalColor>,
+}
+
+/// A colour as `#rrggbb`, in lower case. It cannot be built or decoded as
+/// anything else: a name or a place in a palette means whatever the
+/// terminal reading it says, and this is for telling a terminal what to be.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct TerminalColor(String);
+
+impl TerminalColor {
+    pub fn rgb(red: u8, green: u8, blue: u8) -> Self {
+        Self(format!("#{red:02x}{green:02x}{blue:02x}"))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for TerminalColor {
+    type Error = String;
+
+    fn try_from(color: String) -> Result<Self, Self::Error> {
+        let digits = color.strip_prefix('#').unwrap_or_default();
+        if digits.len() == 6
+            && digits
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        {
+            Ok(Self(color))
+        } else {
+            Err("not a #rrggbb colour".to_owned())
+        }
+    }
+}
+
+impl From<TerminalColor> for String {
+    fn from(color: TerminalColor) -> Self {
+        color.0
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -2432,6 +2482,52 @@ mod tests {
                 "ShellToCore accepts {name}"
             );
         }
+    }
+
+    #[test]
+    fn a_terminals_colours_are_six_hex_digits_or_left_out() {
+        let state = |colours: &str| {
+            format!(
+                r#"{{"jsonrpc":"2.0","method":"state.update","params":{{"context":"list","enabled":[],"checked":[],"unread":0,"title":"Inbox"{colours}}}}}"#
+            )
+        };
+        // Left out, nothing is said: the terminals keep their own.
+        let CoreToShell::StateUpdate(plain) = decode(&state("")).unwrap() else {
+            panic!("not a state.update");
+        };
+        assert_eq!((&plain.background, &plain.foreground), (&None, &None));
+        assert_eq!(encode(&CoreToShell::StateUpdate(plain)).unwrap(), state(""));
+
+        let both = state(r##","background":"#1a1b26","foreground":"#c0caf5""##);
+        let CoreToShell::StateUpdate(coloured) = decode(&both).unwrap() else {
+            panic!("not a state.update");
+        };
+        assert_eq!(
+            coloured.background,
+            Some(TerminalColor::rgb(0x1a, 0x1b, 0x26))
+        );
+        assert_eq!(
+            coloured.foreground.as_ref().map(TerminalColor::as_str),
+            Some("#c0caf5")
+        );
+        assert_eq!(encode(&CoreToShell::StateUpdate(coloured)).unwrap(), both);
+
+        for bad in [
+            "blue",
+            "#fff",
+            "#1A1B26",
+            "1a1b26",
+            "#1a1b2g",
+            "#1a1b26ff",
+            "",
+            "default",
+        ] {
+            let line = state(&format!(r#","background":"{bad}""#));
+            assert!(decode::<CoreToShell>(&line).is_err(), "{bad}");
+            let line = state(&format!(r#","foreground":"{bad}""#));
+            assert!(decode::<CoreToShell>(&line).is_err(), "{bad}");
+        }
+        assert!(decode::<CoreToShell>(&state(r#","background":7"#)).is_err());
     }
 
     #[test]

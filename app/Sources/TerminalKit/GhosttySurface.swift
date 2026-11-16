@@ -60,11 +60,11 @@ final class GhosttySurface: TerminalSurface {
             // One that asks for what is already so changes nothing, and the
             // terminals that are running are not disturbed.
             if appearance != Self.sharedAppearance {
-                _ = shared.setTerminalConfiguration(Self.configuration(for: appearance))
-                Self.sharedAppearance = appearance
+                Self.apply(appearance, to: shared)
             }
         } else {
-            controller = TerminalController(configuration: Self.configuration(for: appearance))
+            controller = TerminalController(
+                configuration: Self.configuration(for: appearance), theme: Self.theme(for: appearance))
             Self.shared = controller
             Self.sharedAppearance = appearance
         }
@@ -141,8 +141,16 @@ final class GhosttySurface: TerminalSurface {
     }
 
     func setAppearance(_ appearance: TerminalAppearance) {
-        _ = controller.setTerminalConfiguration(Self.configuration(for: appearance))
-        Self.sharedAppearance = appearance
+        guard appearance != Self.sharedAppearance else { return }
+        Self.apply(appearance, to: controller)
+    }
+
+    /// Has every surface look as `appearance` says, the ones that are
+    /// running included.
+    private static func apply(_ appearance: TerminalAppearance, to controller: TerminalController) {
+        _ = controller.setTerminalConfiguration(configuration(for: appearance))
+        _ = controller.setTheme(theme(for: appearance))
+        sharedAppearance = appearance
     }
 
     func visibleText() -> String? {
@@ -185,8 +193,6 @@ final class GhosttySurface: TerminalSurface {
                 builder.withFontFamily(family)
             }
             builder.withFontSize(appearance.fontSize)
-            builder.withBackground(appearance.background)
-            builder.withForeground(appearance.foreground)
             builder.withWindowPaddingX(0)
             builder.withWindowPaddingY(0)
             // Ghostty's own shortcuts (cmd-c, cmd-a, cmd-z, cmd-enter and the
@@ -194,6 +200,36 @@ final class GhosttySurface: TerminalSurface {
             // program could see them. The program inside is the whole app:
             // every key is its or the menus', so the terminal keeps none.
             builder.withCustom("keybind", "clear")
+        }
+    }
+
+    /// The terminal's colours, for the Mac in its light appearance and in
+    /// its dark one.
+    ///
+    /// libghostty puts a theme's colours over the configuration's, and its
+    /// own theme is light or dark as the Mac is. So a background and a
+    /// foreground that are asked for are written here, into both halves, or
+    /// they would not hold; and both halves are then the set of colours
+    /// that can be read on that background, whatever the Mac is in. With
+    /// no background asked for the terminal keeps its own two sets.
+    private static func theme(for appearance: TerminalAppearance) -> TerminalTheme {
+        func withDefaults(_ base: TerminalConfiguration) -> TerminalConfiguration {
+            TerminalConfiguration(startingFrom: base) { builder in
+                if let background = appearance.checkedBackground {
+                    builder.withBackground(background)
+                }
+                if let foreground = appearance.checkedForeground {
+                    builder.withForeground(foreground)
+                }
+            }
+        }
+        switch appearance.palette {
+        case .followsMac:
+            return TerminalTheme(light: withDefaults(.alabaster), dark: withDefaults(.afterglow))
+        case .dark:
+            return TerminalTheme(light: withDefaults(.afterglow), dark: withDefaults(.afterglow))
+        case .light:
+            return TerminalTheme(light: withDefaults(.alabaster), dark: withDefaults(.alabaster))
         }
     }
 }

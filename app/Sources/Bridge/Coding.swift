@@ -731,6 +731,12 @@ public extension CoreToShell {
             guard state.unread >= 0 else {
                 throw BridgeError.malformed("state.update: unread is negative")
             }
+            for (key, colour) in [("background", state.background), ("foreground", state.foreground)] {
+                try envelope.requireNotNull(key)
+                if let colour, !StateUpdate.isColor(colour) {
+                    throw BridgeError.malformed("state.update: \(key) is not a #rrggbb colour")
+                }
+            }
             self = .stateUpdate(state)
         case "pane.preview":
             let params = try envelope.decode(PanePreviewParams.self, allowing: PanePreview.allowedKeys)

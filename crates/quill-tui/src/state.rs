@@ -407,6 +407,11 @@ pub struct HostState {
     pub checked: Vec<CommandId>,
     pub unread: u32,
     pub title: String,
+    /// The colour the screen is drawn on and the colour of its text, as
+    /// red, green and blue, where the theme fixes them: for a terminal the
+    /// host shows beside this one, and the cells nothing paints.
+    pub background: Option<(u8, u8, u8)>,
+    pub foreground: Option<(u8, u8, u8)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2420,6 +2425,8 @@ impl State {
             } else {
                 mailbox
             },
+            background: env.styles.background_rgb(),
+            foreground: env.styles.text_rgb(),
         }
     }
 

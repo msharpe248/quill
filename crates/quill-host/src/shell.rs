@@ -266,6 +266,8 @@ mod tests {
             checked: Vec::new(),
             unread: 12,
             title: "Inbox".to_owned(),
+            background: None,
+            foreground: None,
         });
         host.close_pane();
 

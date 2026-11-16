@@ -532,6 +532,8 @@ impl Io<'_> {
                 .collect(),
             unread: current.unread,
             title: current.title.clone(),
+            background: current.background.map(terminal_color),
+            foreground: current.foreground.map(terminal_color),
         });
         self.last_host_state = Some(current);
     }
@@ -655,6 +657,11 @@ impl Io<'_> {
             let _ = injected.send(Action::PictureLoaded { id, size });
         });
     }
+}
+
+/// A colour as the bridge says it.
+fn terminal_color((red, green, blue): (u8, u8, u8)) -> bridge::TerminalColor {
+    bridge::TerminalColor::rgb(red, green, blue)
 }
 
 /// Every command as the host sees it: its name, title, keys and placement.

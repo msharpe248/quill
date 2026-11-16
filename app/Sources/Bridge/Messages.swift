@@ -142,16 +142,38 @@ public struct StateUpdate: Equatable, Sendable, Codable {
     public var unread: Int
     /// The window title.
     public var title: String
+    /// The colour the terminal UI is drawn on, as `#rrggbb`: every terminal
+    /// the shell shows is given it as the colour of a cell nothing has
+    /// painted. Left out when the theme leaves the background to the
+    /// terminal, and the terminals then keep their own.
+    public var background: String?
+    /// The colour of the terminal UI's text, likewise.
+    public var foreground: String?
 
-    public init(context: Context, enabled: [String], checked: [String] = [], unread: Int, title: String) {
+    public init(
+        context: Context, enabled: [String], checked: [String] = [], unread: Int, title: String,
+        background: String? = nil, foreground: String? = nil
+    ) {
         self.context = context
         self.enabled = enabled
         self.checked = checked
         self.unread = unread
         self.title = title
+        self.background = background
+        self.foreground = foreground
     }
 
-    static let allowedKeys: Set<String> = ["context", "enabled", "checked", "unread", "title"]
+    static let allowedKeys: Set<String> = [
+        "context", "enabled", "checked", "unread", "title", "background", "foreground",
+    ]
+
+    /// Whether `text` is a colour as the bridge says one: `#` and six hex
+    /// digits in lower case.
+    static func isColor(_ text: String) -> Bool {
+        let digits = text.utf8.dropFirst()
+        return text.hasPrefix("#") && digits.count == 6
+            && digits.allSatisfy { (0x30...0x39).contains($0) || (0x61...0x66).contains($0) }
+    }
 }
 
 public enum Context: String, Equatable, Sendable, Codable {

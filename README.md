@@ -497,7 +497,7 @@ What comes back is checked as if it had been written in Quill. A send that raise
 
 **In a terminal** Quill runs your own Vim, the `vim` on your `PATH`, with your own vimrc, in the terminal Quill is in, and takes the terminal back when Vim quits. Mail goes on being fetched and sent meanwhile. `QUILL_VIM` names another program to run in its place; it is started the same way. With no Vim to run, the message stays in Quill's editor and says so. Modelines are switched off for the draft, so a line of quoted mail cannot set options in your Vim.
 
-**In the app** the editor runs in a pane beside the terminal. The app has no editor of this kind inside it; it runs one that comes with macOS, inside its own sandbox, or your own Vim by a script:
+**In the app** the editor runs in a pane beside the terminal, on the background and with the text colour of Quill's theme, and it changes with the theme. The app has no editor of this kind inside it; it runs one that comes with macOS, inside its own sandbox, or your own Vim by a script:
 
 - `editor = "vim"` or `"nano"`: the one that comes with macOS. Nothing to build or install, and nothing of your own setup either.
 - `editor = "script"`: your own Vim, the one you use in a terminal, with your vimrc and your plugins. The app is sandboxed and cannot start it, so macOS does, by running a script of yours. See below.
@@ -595,7 +595,7 @@ Quill looks in `~/Library/Application Support/Quill/config/`:
 
 | File | Purpose |
 |---|---|
-| `config.toml` | Settings. See the example in the spec. In the app, the Settings window changes it for you (below). |
+| `config.toml` | Settings. See the example in the spec. In the app, the Settings window changes it for you (below). A file Quill makes is yours alone to read (0600); one that is there keeps its permissions. |
 | `keys.toml` | Key overrides, on top of the chosen preset. |
 | `themes/NAME.toml` | Your own themes, selected with `theme = "NAME"`. |
 | `templates/NAME.md`, `templates/NAME.txt` | Text to put into messages. See "Templates". |
@@ -702,7 +702,7 @@ Mail of a POP3 account is never cleared this way: this Mac may have the only cop
 
 ### Themes
 
-Three themes ship: `dark` (the default), `light`, and `terminal`, which uses only your terminal's own sixteen colours. To make your own, copy [`dark.toml`](crates/quill-tui/themes/dark.toml) into `themes/` under a new name and edit it. Colours you leave out come from the `terminal` theme.
+Three themes ship: `dark` (the default), `light`, and `terminal`, which uses only your terminal's own sixteen colours. In the app the terminal is Quill's own, and its colours are light or dark as the Mac is. To make your own, copy [`dark.toml`](crates/quill-tui/themes/dark.toml) into `themes/` under a new name and edit it. Colours you leave out come from the `terminal` theme.
 
 Hex colours fall back to the nearest of 256 colours when the terminal does not report true colour. Setting `NO_COLOR` turns colour off; the cursor, focus and message state stay visible through markers, borders and text attributes.
 

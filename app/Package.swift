@@ -65,6 +65,12 @@ let package = Package(
             name: "QuillApp",
             dependencies: ["TerminalKit", "Bridge", "Panes", "Notifications", "Spelling", "Editor", "Forms"]
         ),
+        // What a terminal is told to look like, and nothing of libghostty:
+        // these tests import TerminalKit and never the terminal itself.
+        .testTarget(
+            name: "TerminalKitTests",
+            dependencies: ["TerminalKit"]
+        ),
         .testTarget(
             name: "BridgeTests",
             dependencies: ["Bridge"]

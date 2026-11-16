@@ -881,11 +881,18 @@ fn the_host_is_told_what_applies_where_the_focus_is() {
         checked,
         unread,
         title,
+        background,
+        foreground,
     } = harness.state.host_state(&harness.env);
     assert_eq!(context, Context::List);
     // Nothing that is switched on and off is on.
     assert!(checked.is_empty());
     assert_eq!((unread, title.as_str()), (12, "Inbox (unified)"));
+    // The dark theme's own background and text.
+    assert_eq!(
+        (background, foreground),
+        (Some((0x1a, 0x1b, 0x26)), Some((0xc0, 0xca, 0xf5)))
+    );
     assert!(enabled.contains(&CommandId::MessageToggleStar));
     assert!(enabled.contains(&CommandId::NavOpen));
     // Nothing to go back to from the list.

@@ -40,24 +40,64 @@ public struct TerminalCommand: Sendable, Equatable {
     }
 }
 
-/// How a terminal surface looks. Colours are `#rrggbb`. Every surface in the
-/// app looks the same: an appearance given to one is given to all.
+/// How a terminal surface looks. Every surface in the app looks the same:
+/// an appearance given to one is given to all.
+///
+/// `background` and `foreground` are the colours of a cell the program has
+/// not painted and of text it has not coloured, as `#rrggbb`. Left out,
+/// they are the terminal's own, which are light or dark as the Mac is.
 public struct TerminalAppearance: Sendable, Equatable {
     public var fontFamily: String?
     public var fontSize: Float
-    public var background: String
-    public var foreground: String
+    public var background: String?
+    public var foreground: String?
 
     public init(
         fontFamily: String? = nil,
         fontSize: Float = 13,
-        background: String = "#1a1b26",
-        foreground: String = "#c0caf5"
+        background: String? = nil,
+        foreground: String? = nil
     ) {
         self.fontFamily = fontFamily
         self.fontSize = fontSize
         self.background = background
         self.foreground = foreground
+    }
+
+    /// Which of the terminal's two sets of colours goes with this
+    /// appearance: the sixteen a program names (`red`, `bright-black`), the
+    /// cursor and the selection.
+    enum Palette: Equatable {
+        /// The Mac's: light or dark as it is, and changing with it.
+        case followsMac
+        /// The ones made to be read on a dark background, or on a light
+        /// one, whichever the Mac is in.
+        case dark, light
+    }
+
+    /// The set that can be read on the background asked for. A background
+    /// of the terminal's own is the Mac's, and so are its colours.
+    var palette: Palette {
+        guard let background = Self.channels(of: background) else { return .followsMac }
+        // How bright the eye takes it for, from 0 to 255.
+        let (red, green, blue) = (Double(background.red), Double(background.green), Double(background.blue))
+        return 0.299 * red + 0.587 * green + 0.114 * blue < 128 ? .dark : .light
+    }
+
+    /// The background as it may be given to the terminal: `#rrggbb` and
+    /// nothing else, whatever was handed in.
+    var checkedBackground: String? { Self.channels(of: background) == nil ? nil : background }
+
+    /// The foreground, likewise.
+    var checkedForeground: String? { Self.channels(of: foreground) == nil ? nil : foreground }
+
+    /// The red, green and blue of a `#rrggbb` colour, or nil for anything
+    /// else.
+    static func channels(of colour: String?) -> (red: UInt8, green: UInt8, blue: UInt8)? {
+        guard let colour, colour.utf8.count == 7, colour.hasPrefix("#") else { return nil }
+        let digits = colour.dropFirst()
+        guard digits.allSatisfy(\.isHexDigit), let value = UInt32(digits, radix: 16) else { return nil }
+        return (UInt8(value >> 16 & 0xff), UInt8(value >> 8 & 0xff), UInt8(value & 0xff))
     }
 }
 

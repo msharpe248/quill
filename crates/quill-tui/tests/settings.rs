@@ -503,6 +503,36 @@ fn the_settings_that_hold_at_once_do_and_the_two_that_wait_do_not() {
 
 /// The demo mailbox with a conversation of three at the top of the Work
 /// inbox, a message from someone else arriving in the middle of it.
+#[test]
+fn the_host_is_told_the_colours_of_the_theme_from_the_moment_it_is_changed() {
+    // What the app gives its terminals to match: the editor's pane beside
+    // Quill's own, and the cells Quill does not paint.
+    let mut window = Window::new(CONFIG);
+    window.open();
+    let colours = |window: &Window| {
+        let state = window.harness.state.host_state(&window.harness.env);
+        (state.background, state.foreground)
+    };
+    assert_eq!(
+        colours(&window),
+        (Some((0x1a, 0x1b, 0x26)), Some((0xc0, 0xca, 0xf5)))
+    );
+    window.choose("general", "theme", "light");
+    assert_eq!(
+        colours(&window),
+        (Some((0xfa, 0xfa, 0xfa)), Some((0x38, 0x3a, 0x42)))
+    );
+    // The terminal's own colours: nothing is said, and the app's
+    // terminals keep theirs.
+    window.choose("general", "theme", "terminal");
+    assert_eq!(colours(&window), (None, None));
+    window.choose("general", "theme", "dark");
+    assert_eq!(
+        colours(&window),
+        (Some((0x1a, 0x1b, 0x26)), Some((0xc0, 0xca, 0xf5)))
+    );
+}
+
 fn with_a_conversation() -> Harness {
     let mut harness = Harness::with_accounts(200, 60);
     let inbox = harness

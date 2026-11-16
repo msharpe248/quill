@@ -253,6 +253,20 @@ impl Styles {
         self.fg(self.theme.colors.text)
     }
 
+    /// The colour the screen is drawn on, as red, green and blue, for a
+    /// host that shows another terminal beside this one and wants it to
+    /// match. `None` when the theme leaves the background to the terminal,
+    /// or names one of the terminal's own sixteen colours, which only the
+    /// terminal can say the meaning of; and with colour switched off.
+    pub fn background_rgb(&self) -> Option<(u8, u8, u8)> {
+        self.color(self.theme.colors.background).and_then(rgb_of)
+    }
+
+    /// The colour of body text, likewise.
+    pub fn text_rgb(&self) -> Option<(u8, u8, u8)> {
+        self.color(self.theme.colors.text).and_then(rgb_of)
+    }
+
     pub fn dim(&self) -> Style {
         let style = self.fg(self.theme.colors.dim);
         if self.mode == ColorMode::None {
@@ -334,10 +348,31 @@ impl Styles {
     }
 }
 
+/// The steps of each channel in the 6x6x6 cube of the xterm 256-colour
+/// palette.
+const LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
+
+/// What a colour as drawn is in red, green and blue: itself, or its entry
+/// in the cube or the grey ramp of the xterm 256-colour palette. `None` for
+/// the 16 ANSI colours, which every terminal sets for itself.
+fn rgb_of(color: Color) -> Option<(u8, u8, u8)> {
+    match color {
+        Color::Rgb(r, g, b) => Some((r, g, b)),
+        Color::Indexed(index @ 16..=231) => {
+            let cube = usize::from(index - 16);
+            Some((LEVELS[cube / 36], LEVELS[cube / 6 % 6], LEVELS[cube % 6]))
+        }
+        Color::Indexed(index @ 232..) => {
+            let grey = 8 + 10 * (index - 232);
+            Some((grey, grey, grey))
+        }
+        _ => None,
+    }
+}
+
 /// The closest entry of the xterm 256-colour palette, from the 6x6x6 cube and
 /// the grey ramp. The 16 ANSI colours are skipped because terminals remap them.
 fn nearest_256(r: u8, g: u8, b: u8) -> u8 {
-    const LEVELS: [u8; 6] = [0, 95, 135, 175, 215, 255];
     let nearest_level = |value: u8| {
         LEVELS
             .iter()
@@ -477,6 +512,48 @@ mod tests {
         let none = Styles::new(theme, ColorMode::None);
         assert_eq!(none.text().fg, None);
         assert_eq!(none.base().bg, None);
+    }
+
+    #[test]
+    fn a_host_is_told_the_colours_the_screen_is_drawn_in() {
+        let of = |theme: Theme, mode| {
+            let styles = Styles::new(theme, mode);
+            (styles.background_rgb(), styles.text_rgb())
+        };
+        let dark = Theme::builtin("dark").unwrap();
+        assert_eq!(
+            of(dark.clone(), ColorMode::TrueColor),
+            (Some((0x1a, 0x1b, 0x26)), Some((0xc0, 0xca, 0xf5)))
+        );
+        assert_eq!(
+            of(Theme::builtin("light").unwrap(), ColorMode::TrueColor),
+            (Some((0xfa, 0xfa, 0xfa)), Some((0x38, 0x3a, 0x42)))
+        );
+        // The terminal's own colours are the terminal's to say.
+        assert_eq!(of(Theme::terminal(), ColorMode::TrueColor), (None, None));
+        assert_eq!(of(dark.clone(), ColorMode::None), (None, None));
+
+        // With 256 colours the screen is drawn in the nearest of them, and
+        // that is the colour told: what is drawn, not what was asked for.
+        let (background, text) = of(dark, ColorMode::Ansi256);
+        let (r, g, b) = background.unwrap();
+        assert_eq!(rgb_of(Color::Indexed(nearest_256(r, g, b))), background);
+        assert_ne!(background, Some((0x1a, 0x1b, 0x26)));
+        assert!(text.is_some());
+
+        // A place in the palette: the cube and the greys are the same in
+        // every terminal, the first sixteen are not.
+        let own =
+            Theme::parse("name = \"t\"\n[colors]\nbackground = 236\ntext = \"bright-white\"\n")
+                .unwrap();
+        assert_eq!(of(own, ColorMode::TrueColor), (Some((48, 48, 48)), None));
+        assert_eq!(rgb_of(Color::Indexed(16)), Some((0, 0, 0)));
+        assert_eq!(rgb_of(Color::Indexed(196)), Some((255, 0, 0)));
+        assert_eq!(rgb_of(Color::Indexed(231)), Some((255, 255, 255)));
+        assert_eq!(rgb_of(Color::Indexed(232)), Some((8, 8, 8)));
+        assert_eq!(rgb_of(Color::Indexed(255)), Some((238, 238, 238)));
+        assert_eq!(rgb_of(Color::Indexed(15)), None);
+        assert_eq!(rgb_of(Color::Reset), None);
     }
 
     #[test]

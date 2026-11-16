@@ -47,6 +47,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     /// The columns the core was last told the window has room for.
     private(set) var windowColumnsSent: Int?
 
+    /// How the terminals look: the core's own, and the editor's beside it.
+    /// The colours are the ones the core last said its theme has, so that
+    /// an editor is not a light box beside a dark Quill.
+    private var terminalAppearance = TerminalAppearance()
+
     /// The Vim in the editor pane, while one is running.
     private var editor: RunningEditor?
     /// The one place there is for an editor, and what became of the last.
@@ -412,6 +417,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             window?.title = state.title.isEmpty ? "Quill" : state.title
             window?.subtitle = state.unread > 0 ? "\(state.unread) unread" : ""
             NSApp.dockTile.badgeLabel = state.unread > 0 ? String(state.unread) : nil
+            setTerminalColours(background: state.background, foreground: state.foreground)
         case let .panePreview(preview):
             let items = preview.items.map { PreviewItem(url: URL(fileURLWithPath: $0.path), title: $0.title) }
             guard let deck = PreviewDeck(items: items, index: preview.index) else { break }
@@ -1043,6 +1049,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         closePane()
     }
 
+    // MARK: - The terminals' colours
+
+    /// Gives every terminal the colours of the core's theme, as the colours
+    /// of what no program has painted: the edge of the core's own terminal,
+    /// and all of an editor's that sets no colours. A theme that leaves
+    /// them to the terminal says none, and the terminals keep their own,
+    /// which are light or dark as the Mac is. The terminals share one look,
+    /// so an editor that is running changes with the rest.
+    private func setTerminalColours(background: String?, foreground: String?) {
+        var appearance = terminalAppearance
+        appearance.background = background
+        appearance.foreground = foreground
+        guard appearance != terminalAppearance else { return }
+        terminalAppearance = appearance
+        surface.setAppearance(appearance)
+    }
+
     // MARK: - The editor pane
 
     /// Runs Vim on a draft, in a terminal pane of its own: the one that
@@ -1091,7 +1114,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             temporaryDirectory: NSTemporaryDirectory(),
             base: ProcessInfo.processInfo.environment
         )
-        let terminal = makeTerminalSurface()
+        // As the core's terminal looks now: a surface made with another
+        // look would give that look to both.
+        let terminal = makeTerminalSurface(appearance: terminalAppearance)
         let running = RunningEditor(
             surface: terminal, pane: EditorPane(title: request.title, terminal: terminal.view), kind: found.kind)
         editor = running
@@ -1330,6 +1355,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             words.append("header: " + page.header.joined(separator: " | "))
         }
         return words.joined(separator: ", ")
+    }
+
+    /// The colours the terminals were last given, for the dump.
+    var terminalColours: String {
+        "background \(terminalAppearance.background ?? "its own"), "
+            + "foreground \(terminalAppearance.foreground ?? "its own")"
     }
 
     /// The reading pane's web view, for the picture in the dump.

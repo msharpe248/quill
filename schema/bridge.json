@@ -138,6 +138,16 @@
             "title": {
               "description": "The window title.",
               "type": "string"
+            },
+            "background": {
+              "description": "The colour the terminal UI is drawn on, as #rrggbb in lower case. The shell gives it to every terminal it shows as the colour of a cell nothing has painted: the core's own, and the editor's beside it. Left out when the theme leaves the background to the terminal; the shell's terminals then keep their own colours.",
+              "type": "string",
+              "pattern": "^#[0-9a-f]{6}$"
+            },
+            "foreground": {
+              "description": "The colour of the terminal UI's text, as #rrggbb in lower case, given to the shell's terminals as the colour of text nothing has coloured. Left out when the theme leaves it to the terminal.",
+              "type": "string",
+              "pattern": "^#[0-9a-f]{6}$"
             }
           }
         }
