@@ -15,13 +15,13 @@ Every milestone in the spec, M0 to M10, is built. M0 to M4 and POP3 have passed 
 | M5 | Signing in with Microsoft or Google; Microsoft Graph | Built. Tested against stand-in servers only |
 | M6 | Search, the palette, the mouse, push, conversations, notifications, mail links, spell check | Built. Notifications and being the default mail program are untried |
 | M8 | Snooze, send later, templates, saved searches, unsubscribe, invitations, rules, commands from a shell, hooks | Built. Unsubscribing and invitation replies have met no real server |
-| M9 | Writing mail in Vim | Works in a terminal with your own Vim. The app's pane is unseen: there is no Vim in the app yet |
+| M9 | Writing mail in Vim | Works in a terminal with your own Vim, and in the app with the Vim that comes with macOS (`vim = "system"`). A Vim built into the app waits for `app/build-vim.sh` |
 | M10 | Exchange on your own servers (EWS) | Built. Tested against a stand-in only |
 
 What needs a person, in the order it is worth doing:
 
 1. **Register Quill with Microsoft and Google** and put the two client ids in the config: [docs/oauth.md](docs/oauth.md) has the steps. Then `S` on an account, or `quill account sign-in`, signs in. Nothing here has yet met a real Microsoft 365 or Gmail mailbox.
-2. **Run `app/build-vim.sh`**, then `app/build-app.sh`, to put Vim into the app. The script downloads Vim's source at a pinned commit and compiles it, which is why it was left to be run by hand. Read it first; it is short.
+2. **Choose the app's Vim.** `vim = "system"` under `[compose]` uses the one macOS has, today, with nothing to build. To ship a Vim inside the app instead, run `app/build-vim.sh` and then `app/build-app.sh`: the script downloads Vim's source at a pinned commit and compiles it, which is why it was left to be run by hand. Read it first; it is short.
 3. **Allow notifications** when the app first asks, and make Quill the default mail program in Mail's settings if you want `mailto:` links to come here.
 4. **An Apple Developer account**, for signing and App Store validation. Deferred from M1, and the last thing outstanding.
 
@@ -405,6 +405,7 @@ A message can be written in Vim instead of the editor above. `ctrl-v` (or `cmd-s
 ```toml
 [compose]
 editor = "vim"    # "builtin" by default
+vim = "system"    # in the app: the Vim that comes with macOS. "bundled" by default
 ```
 
 Vim is given the message as a file: the header fields, an empty line, then the body.
@@ -436,7 +437,14 @@ What comes back is checked as if it had been written in Quill. A send that raise
 
 **In a terminal** Quill runs your own Vim, the `vim` on your `PATH`, with your own vimrc, in the terminal Quill is in, and takes the terminal back when Vim quits. Mail goes on being fetched and sent meanwhile. `QUILL_VIM` names another program to run in its place; it is started the same way. With no Vim to run, the message stays in Quill's editor and says so. Modelines are switched off for the draft, so a line of quoted mail cannot set options in your Vim.
 
-**In the app** Vim is one inside the app, in a pane beside the terminal, and nothing of your own setup is used unless you bring it in: "Import vimrc…" in the Quill menu copies one file. That Vim runs inside the app's sandbox, so settings and plugins that run other programs or read files elsewhere do not work there. Send and Save in the menus and toolbar reach it: Vim does as it would for `:QuillSend` or `:QuillPostpone`. `esc` in Quill asks it to save and close, and the message comes back open. The Vim that goes into the app is built by `app/build-vim.sh`, which has not been run yet. An app built without it says it has no Vim, and the message stays in Quill's editor.
+**In the app** Vim runs in a pane beside the terminal, inside the app's sandbox, and there are two it can be:
+
+- `vim = "system"`: the Vim that comes with macOS, `/usr/bin/vim`. Nothing to build or install. It is the only program outside itself that the app ever starts, and only when the config asks for it.
+- `vim = "bundled"` (the default): a Vim built into the app by `app/build-vim.sh`, which has not been run yet. An app built without it says it has no Vim, and the message stays in Quill's editor.
+
+A Vim you installed yourself, Homebrew's for one, cannot be used in the app: the sandbox refuses to start it. For that Vim, with all of your own setup, run `quill tui` in a terminal.
+
+Either way the sandbox keeps `~/.vimrc` and `~/.vim` out of reach, so nothing of your own setup is used unless you bring it in: "Import vimrc…" in the Quill menu copies one file. Settings and plugins that run other programs or read files elsewhere do not work there. Send and Save in the menus and toolbar reach Vim: it does as it would for `:QuillSend` or `:QuillPostpone`. `esc` in Quill asks it to save and close, and the message comes back open.
 
 ## Rules for arriving mail
 

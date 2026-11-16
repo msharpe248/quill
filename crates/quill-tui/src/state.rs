@@ -98,6 +98,9 @@ pub struct Env {
     /// Quill's app does. In a terminal Quill runs the user's own Vim
     /// there, and gives it a copy of the plugin.
     pub editor_pane: bool,
+    /// Whether that pane is to run the Vim that comes with macOS rather
+    /// than one built into the app (`vim = "system"`).
+    pub system_vim: bool,
     /// The program a terminal runs as Vim, when it is not to be `vim`.
     pub vim_program: Option<std::ffi::OsString>,
     /// The user's programs that a message can be given to, from
@@ -310,6 +313,9 @@ pub enum HostRequest {
         path: PathBuf,
         dir: PathBuf,
         title: String,
+        /// In Quill's app: the Vim that comes with macOS, not the app's
+        /// own.
+        system_vim: bool,
     },
     /// Close the host's pane. With Vim in it, that is asking Vim to save
     /// and go.
@@ -2546,7 +2552,7 @@ impl State {
     }
 
     /// The draft file is written: have Vim run on it.
-    fn on_edit_ready(&mut self, dir: PathBuf, path: PathBuf, out: &mut Effects) {
+    fn on_edit_ready(&mut self, env: &Env, dir: PathBuf, path: PathBuf, out: &mut Effects) {
         match (&mut self.compose, &mut self.vim) {
             (Some(compose), Some(edit)) if compose.away == Some(Away::Leaving) => {
                 compose.away = Some(Away::InVim);
@@ -2557,7 +2563,12 @@ impl State {
                 } else {
                     text::sanitize_line(subject)
                 };
-                out.host.push(HostRequest::EditDraft { path, dir, title });
+                out.host.push(HostRequest::EditDraft {
+                    path,
+                    dir,
+                    title,
+                    system_vim: env.system_vim,
+                });
             }
             // The message it was for has gone.
             _ => {
@@ -2588,8 +2599,12 @@ impl State {
             // Said in the message's own pane, where the next key clears
             // it: the message is still there to write.
             compose.error = Some(
-                if env.editor_pane {
-                    "This copy of Quill has no Vim inside it, so the message stays here."
+                if env.editor_pane && env.system_vim {
+                    "The Vim that comes with macOS could not be started, so the message \
+                     stays here."
+                } else if env.editor_pane {
+                    "This copy of Quill has no Vim inside it, so the message stays here. \
+                     `vim = \"system\"` under [compose] uses the one that comes with macOS."
                 } else {
                     "Vim could not be started, so the message stays here. Quill runs \
                      the `vim` on your PATH."
@@ -4180,7 +4195,7 @@ impl State {
                     after.attach_failed = true;
                 }
             }
-            DataEvent::EditReady { dir, path } => self.on_edit_ready(dir, path, out),
+            DataEvent::EditReady { dir, path } => self.on_edit_ready(env, dir, path, out),
             DataEvent::EditFailed(reason) => {
                 self.vim = None;
                 if let Some(compose) = &mut self.compose

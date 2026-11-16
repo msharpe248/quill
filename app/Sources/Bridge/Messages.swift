@@ -515,25 +515,37 @@ public struct SpellSuggested: Equatable, Sendable, Codable {
     static let allowedKeys: Set<String> = ["id", "words"]
 }
 
-/// A draft file for the shipped Vim to edit, and the draft's own folder,
-/// where Vim and the core leave each other notes. The shell passes the
-/// folder to Vim in the environment and does nothing else with it.
+/// Which Vim the shell is to run. The core says which of the two; it never
+/// names a program by its path.
+public enum EditorVim: String, Equatable, Sendable, Codable {
+    /// The one built into the app.
+    case bundled
+    /// The one that comes with macOS, which the user has asked for in
+    /// their config.
+    case system
+}
+
+/// A draft file for Vim to edit, and the draft's own folder, where Vim and
+/// the core leave each other notes. The shell passes the folder to Vim in
+/// the environment and does nothing else with it.
 public struct PaneEditor: Equatable, Sendable, Codable {
     /// The draft file.
     public let path: String
     /// The draft's own folder.
     public let dir: String
     public let title: String
+    public let vim: EditorVim
 
     /// `nil` unless both paths are absolute.
-    public init?(path: String, dir: String, title: String) {
+    public init?(path: String, dir: String, title: String, vim: EditorVim = .bundled) {
         guard path.hasPrefix("/"), dir.hasPrefix("/") else { return nil }
         self.path = path
         self.dir = dir
         self.title = title
+        self.vim = vim
     }
 
-    static let allowedKeys: Set<String> = ["path", "dir", "title"]
+    static let allowedKeys: Set<String> = ["path", "dir", "title", "vim"]
 }
 
 /// How the editor ended.

@@ -1,8 +1,10 @@
 import Bridge
 import Foundation
 
-/// How the shipped Vim is started on a draft: the program, its arguments,
-/// the whole of its environment and the folder it starts in.
+/// How Vim is started on a draft: the program, its arguments, the whole of
+/// its environment and the folder it starts in. The same for the Vim in the
+/// app and the one that comes with macOS, but for how each finds its own
+/// files and Quill's plugin.
 ///
 /// The draft's path and its folder come from outside the shell. Each is an
 /// argument or an environment value, whole: neither is ever written into a
@@ -30,13 +32,17 @@ public struct VimLaunch: Equatable, Sendable {
     /// `source file` with the path written into it, where a space, a quote
     /// or a `%` in the name of the folder the app is installed in would be
     /// read as part of the command.
+    public static let loadPlugin = "execute 'source' fnameescape($VIM . '/quill.vim')"
+
+    /// The same for the Vim that comes with macOS, whose `$VIM` is its own
+    /// and must stay so: the plugin's place is in a variable of Quill's.
+    public static let loadPluginForSystemVim = "execute 'source' fnameescape($QUILL_VIM_PLUGIN)"
+
     /// Run before any file is read: modelines are off for every buffer.
     /// In a group of its own, because a vimrc that starts with a bare
     /// `autocmd!` clears every command that is in no group.
     public static let noModelines =
         "augroup QuillNoModelines | execute 'autocmd BufReadPre * setlocal nomodeline' | augroup END"
-
-    public static let loadPlugin = "execute 'source' fnameescape($VIM . '/quill.vim')"
 
     /// A program that does nothing and fails. Vim is told this is the shell,
     /// so `:!` and `:shell` start nothing: no program is run from Vim.
@@ -47,16 +53,7 @@ public struct VimLaunch: Equatable, Sendable {
     /// `VIMINIT`, `EXINIT`, `SHELL` or `PATH` of the user's reaches Vim.
     public static let inherited = ["LANG", "LC_ALL", "LC_CTYPE", "TZ"]
 
-    /// - Parameters:
-    ///   - vim: the Vim in the app's bundle.
-    ///   - draft: the file to edit and its folder, as the core named them.
-    ///   - vimrc: the user's imported vimrc, if they have one.
-    ///   - term: `TERM`, as the main terminal has it.
-    ///   - home: the app's own home folder: inside the sandbox, its
-    ///     container.
-    ///   - temporaryDirectory: the app's own temporary folder.
-    ///   - base: the shell's environment, from which only `inherited` is
-    ///     taken.
+    /// The Vim in the app's bundle, on a draft.
     public init(
         vim: ShippedVim,
         draft: PaneEditor,
@@ -66,11 +63,45 @@ public struct VimLaunch: Equatable, Sendable {
         temporaryDirectory: String,
         base: [String: String]
     ) {
-        executable = vim.binary
+        self.init(
+            vim: .shipped(vim), draft: draft, vimrc: vimrc, term: term, home: home,
+            temporaryDirectory: temporaryDirectory, base: base)
+    }
+
+    /// - Parameters:
+    ///   - vim: the Vim to run: the app's own, or the one macOS has.
+    ///   - draft: the file to edit and its folder, as the core named them.
+    ///   - vimrc: the user's imported vimrc, if they have one.
+    ///   - term: `TERM`, as the main terminal has it.
+    ///   - home: the app's own home folder: inside the sandbox, its
+    ///     container.
+    ///   - temporaryDirectory: the app's own temporary folder.
+    ///   - base: the shell's environment, from which only `inherited` is
+    ///     taken.
+    public init(
+        vim: VimToRun,
+        draft: PaneEditor,
+        vimrc: URL?,
+        term: String,
+        home: String,
+        temporaryDirectory: String,
+        base: [String: String]
+    ) {
+        let loadPlugin: String
+        switch vim {
+        case let .shipped(shipped):
+            executable = shipped.binary
+            loadPlugin = Self.loadPlugin
+        case let .system(system):
+            executable = system.binary
+            loadPlugin = Self.loadPluginForSystemVim
+        }
         arguments = [
             // A vimrc named with -u leaves Vim behaving as vi did, which no
             // vimrc written for Vim expects. -N says otherwise first.
             "-N",
+            // Naming a vimrc, or none, also keeps Vim from reading the one
+            // macOS has for everybody.
             "-u", vimrc?.path ?? Self.defaults,
             // No viminfo file and no swap file: nothing is kept of a
             // message but the draft.
@@ -80,7 +111,7 @@ public struct VimLaunch: Equatable, Sendable {
             // that looks like a modeline must not set options here,
             // whatever the vimrc says about modelines.
             "--cmd", Self.noModelines,
-            "-c", Self.loadPlugin,
+            "-c", loadPlugin,
             // Whatever follows is a file, even if it were to start with a
             // dash or a plus.
             "--",
@@ -97,8 +128,14 @@ public struct VimLaunch: Equatable, Sendable {
         environment["HOME"] = home
         environment["TMPDIR"] = temporaryDirectory
         environment["SHELL"] = Self.noShell
-        environment["VIM"] = vim.home.path
-        environment["VIMRUNTIME"] = vim.runtime.path
+        switch vim {
+        case let .shipped(shipped):
+            environment["VIM"] = shipped.home.path
+            environment["VIMRUNTIME"] = shipped.runtime.path
+        case let .system(system):
+            // It knows where its own files are. Only the plugin is Quill's.
+            environment["QUILL_VIM_PLUGIN"] = system.plugin.path
+        }
         // The plugin reads the draft's folder from here.
         environment["QUILL_DRAFT_DIR"] = draft.dir
         self.environment = environment

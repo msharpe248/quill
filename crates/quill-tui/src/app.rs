@@ -364,8 +364,13 @@ impl Io<'_> {
                 // Quill's own app runs the Vim inside it, in a pane, and
                 // answers when it has gone. The app is sandboxed: when it
                 // will not, nothing here runs a Vim in its place.
-                HostRequest::EditDraft { path, dir, title } if self.host.is_shell() => {
-                    if !self.host.edit_draft(&path, &dir, &title) {
+                HostRequest::EditDraft {
+                    path,
+                    dir,
+                    title,
+                    system_vim,
+                } if self.host.is_shell() => {
+                    if !self.host.edit_draft(&path, &dir, &title, system_vim) {
                         let _ = self.injected.send(Action::EditorExited {
                             ran: false,
                             status: 0,
@@ -889,6 +894,7 @@ mod tests {
             templates: Vec::new(),
             spell_check: false,
             editor_pane: false,
+            system_vim: false,
             vim_program: None,
             hooks: Vec::new(),
             hooks_enabled: false,

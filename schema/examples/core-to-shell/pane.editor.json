@@ -4,6 +4,7 @@
   "params": {
     "path": "/Users/robin/Library/Containers/dev.quill.Quill/Data/tmp/quill-edit-812/message.quill",
     "dir": "/Users/robin/Library/Containers/dev.quill.Quill/Data/tmp/quill-edit-812",
-    "title": "Re: Q4 roadmap"
+    "title": "Re: Q4 roadmap",
+    "vim": "bundled"
   }
 }

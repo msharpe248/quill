@@ -754,17 +754,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     // MARK: - The editor pane
 
-    /// Runs the Vim that ships in the app on a draft, in a terminal pane of
-    /// its own. The core is always answered: now, when nothing is started,
-    /// and otherwise when Vim ends.
+    /// Runs Vim on a draft, in a terminal pane of its own: the one that
+    /// ships in the app, or the one that comes with macOS when the user has
+    /// asked for that. The core is always answered: now, when nothing is
+    /// started, and otherwise when Vim ends.
     private func openEditor(_ request: PaneEditor) {
-        var vim: ShippedVim?
+        var vim: VimToRun?
         if !editorSlot.isRunning {
             do {
-                // In the app's own bundle and nowhere else.
-                vim = try ShippedVim(inBundle: Bundle.main.bundleURL)
+                // In the app's own bundle, or the one place macOS keeps
+                // its own, and nowhere else.
+                vim = try VimToRun(request.vim, inBundle: Bundle.main.bundleURL)
             } catch {
-                NSLog("Quill: this build has no Vim to run: %@", String(describing: error))
+                NSLog("Quill: there is no Vim to run: %@", String(describing: error))
             }
         }
         switch editorSlot.request(title: request.title, available: vim != nil) {
@@ -785,7 +787,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         }
     }
 
-    private func startEditor(_ vim: ShippedVim, on request: PaneEditor) {
+    private func startEditor(_ vim: VimToRun, on request: PaneEditor) {
         let launch = VimLaunch(
             vim: vim,
             draft: request,

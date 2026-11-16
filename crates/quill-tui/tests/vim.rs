@@ -105,6 +105,7 @@ fn the_message_goes_out_as_a_draft_file_and_vim_is_asked_to_run_on_it() {
             path: path.clone(),
             dir: dir.clone(),
             title: "Lunch".to_owned(),
+            system_vim: false,
         }]
     );
     assert_eq!(path, dir.join("message.quill"));
@@ -158,6 +159,47 @@ fn quills_own_app_has_the_plugin_already() {
     let (path, dir) = in_vim(&mut harness);
     assert!(path.is_file());
     assert!(!dir.join("quill.vim").exists());
+}
+
+#[test]
+fn quills_own_app_is_asked_for_the_vim_the_config_names() {
+    for system_vim in [false, true] {
+        let mut harness = wide();
+        harness.env.editor_pane = true;
+        harness.env.system_vim = system_vim;
+        let (path, dir) = in_vim(&mut harness);
+        let asked: Vec<&HostRequest> = harness
+            .host_requests
+            .iter()
+            .filter(|request| matches!(request, HostRequest::EditDraft { .. }))
+            .collect();
+        assert_eq!(
+            asked,
+            [&HostRequest::EditDraft {
+                path,
+                dir: dir.clone(),
+                title: "Lunch".to_owned(),
+                system_vim,
+            }]
+        );
+        // And is told what to do about it when the app has none to run.
+        harness.act(Action::EditorExited {
+            ran: false,
+            status: 0,
+        });
+        assert_eq!(away(&harness), None);
+        assert!(!dir.exists());
+        let screen = harness.screen();
+        if system_vim {
+            assert!(
+                screen.contains("The Vim that comes with macOS could not be started"),
+                "{screen}"
+            );
+        } else {
+            assert!(screen.contains("has no Vim inside it"), "{screen}");
+            assert!(screen.contains("vim = \"system\""), "{screen}");
+        }
+    }
 }
 
 #[test]

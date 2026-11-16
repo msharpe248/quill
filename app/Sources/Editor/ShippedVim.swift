@@ -4,8 +4,9 @@ import Foundation
 /// The Vim that ships inside the app, for writing a message in Vim.
 ///
 /// It is looked for in the app's own bundle and nowhere else: not on the
-/// `PATH`, not in `/usr/bin`. The shell never starts a program from outside
-/// its bundle, and a build without a Vim in it has no Vim option.
+/// `PATH`, not in `/usr/bin`. A build without a Vim in it has no Vim of its
+/// own; the user can ask for the one that comes with macOS instead
+/// (`SystemVim`), and that is the only other program the shell starts.
 public struct ShippedVim: Equatable, Sendable {
     /// Why a bundle has no Vim that may be run.
     public enum Problem: Error, Equatable, CustomStringConvertible {
@@ -63,7 +64,7 @@ public struct ShippedVim: Equatable, Sendable {
 
     /// Throws unless `part` is there, is a folder or a file as wanted, and
     /// is inside `root` once every link on the way to it has been followed.
-    private static func check(_ part: URL, _ name: String, inside root: String, isFolder: Bool) throws {
+    static func check(_ part: URL, _ name: String, inside root: String, isFolder: Bool) throws {
         guard let real = realPath(part.path) else {
             throw Problem.missing(name)
         }
@@ -81,7 +82,7 @@ public struct ShippedVim: Equatable, Sendable {
     }
 
     /// The path with every link followed, if all of it exists.
-    private static func realPath(_ path: String) -> String? {
+    static func realPath(_ path: String) -> String? {
         guard let resolved = realpath(path, nil) else { return nil }
         defer { free(resolved) }
         return String(cString: resolved)

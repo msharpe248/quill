@@ -242,6 +242,7 @@ private struct PaneEditorParams: Codable {
     var path: String
     var dir: String
     var title: String
+    var vim: String
 }
 
 private struct EditorExitedParams: Codable {
@@ -411,7 +412,10 @@ public extension CoreToShell {
             self = .spellSuggest(suggest)
         case "pane.editor":
             let params = try envelope.decode(PaneEditorParams.self, allowing: PaneEditor.allowedKeys)
-            guard let editor = PaneEditor(path: params.path, dir: params.dir, title: params.title) else {
+            guard let vim = EditorVim(rawValue: params.vim) else {
+                throw BridgeError.malformed("pane.editor: vim is bundled or system, never a program")
+            }
+            guard let editor = PaneEditor(path: params.path, dir: params.dir, title: params.title, vim: vim) else {
                 throw BridgeError.malformed("pane.editor: the path and the dir must be absolute")
             }
             self = .paneEditor(editor)

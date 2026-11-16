@@ -4,6 +4,7 @@
   "params": {
     "path": "message.quill",
     "dir": "/tmp/quill-edit-1",
-    "title": "x"
+    "title": "x",
+    "vim": "bundled"
   }
 }

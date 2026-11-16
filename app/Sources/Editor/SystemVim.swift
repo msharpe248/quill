@@ -1,0 +1,89 @@
+import Bridge
+import Darwin
+import Foundation
+
+/// The Vim that comes with macOS, for a user who has asked for it
+/// (`vim = "system"` under `[compose]`).
+///
+/// It is the one program outside the app's bundle that the shell ever
+/// starts, and it is named here, by a constant: never by the core, the
+/// config, the environment or the `PATH`. The App Sandbox lets an app run
+/// what macOS itself ships in `/usr/bin`, and the Vim so started is inside
+/// the same sandbox as the app. A Vim the user installed themselves
+/// (Homebrew's, say) cannot be started from the sandbox at all.
+///
+/// Quill's plugin still comes from the app's bundle.
+public struct SystemVim: Equatable, Sendable {
+    /// Where macOS keeps its Vim.
+    public static let path = "/usr/bin/vim"
+    /// Where what macOS ships lives. With every link followed, the program
+    /// must still be in here.
+    public static let systemRoot = "/usr"
+
+    /// Why this Mac's own Vim will not be run.
+    public enum Problem: Error, Equatable, CustomStringConvertible {
+        /// There is nothing where macOS keeps its Vim.
+        case missing(String)
+        /// Something is there that is not a program that may be run.
+        case unusable(String)
+        /// It is a link to something that macOS did not put there.
+        case notTheSystems(String)
+
+        public var description: String {
+            switch self {
+            case let .missing(path): "there is no \(path) on this Mac"
+            case let .unusable(path): "\(path) is not a program that can be run"
+            case let .notTheSystems(path): "\(path) leads to a program that is not macOS's own"
+            }
+        }
+    }
+
+    /// The program.
+    public let binary: URL
+    /// Quill's side of writing a message in Vim, in the app's bundle.
+    public let plugin: URL
+
+    /// The Vim of this Mac and the plugin in this bundle. Throws unless the
+    /// program is there, is a program that may be run, and is the system's
+    /// with every link followed, and the plugin is inside the bundle.
+    public init(inBundle bundle: URL) throws {
+        try self.init(inBundle: bundle, binary: Self.path, within: Self.systemRoot)
+    }
+
+    /// As above, with the program and the folder it must be in named, for
+    /// tests: nothing else calls this.
+    init(inBundle bundle: URL, binary path: String, within systemRoot: String) throws {
+        guard let root = ShippedVim.realPath(bundle.path) else {
+            throw ShippedVim.Problem.missing(ShippedVim.pluginPath)
+        }
+        binary = URL(fileURLWithPath: path)
+        plugin = bundle.appendingPathComponent(ShippedVim.pluginPath)
+        guard let system = ShippedVim.realPath(systemRoot), let real = ShippedVim.realPath(path) else {
+            throw Problem.missing(path)
+        }
+        guard real.hasPrefix(system.hasSuffix("/") ? system : system + "/") else {
+            throw Problem.notTheSystems(path)
+        }
+        var status = stat()
+        guard stat(real, &status) == 0, status.st_mode & S_IFMT == S_IFREG, access(real, X_OK) == 0 else {
+            throw Problem.unusable(path)
+        }
+        try ShippedVim.check(plugin, ShippedVim.pluginPath, inside: root, isFolder: false)
+    }
+}
+
+/// The Vim a draft is to be edited in.
+public enum VimToRun: Equatable, Sendable {
+    /// The one built into the app, with its own runtime files.
+    case shipped(ShippedVim)
+    /// The one that comes with macOS, which finds its own runtime files.
+    case system(SystemVim)
+
+    /// The Vim the core asked for, if this app and this Mac have it.
+    public init(_ asked: EditorVim, inBundle bundle: URL) throws {
+        switch asked {
+        case .bundled: self = .shipped(try ShippedVim(inBundle: bundle))
+        case .system: self = .system(try SystemVim(inBundle: bundle))
+        }
+    }
+}

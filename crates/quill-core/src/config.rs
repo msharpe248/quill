@@ -110,6 +110,8 @@ pub enum KeymapPreset {
 #[serde(default, deny_unknown_fields)]
 pub struct ComposeConfig {
     pub editor: ComposeEditor,
+    /// Which Vim Quill's own app runs. A terminal runs the user's own.
+    pub vim: ComposeVim,
     pub format: ComposeFormat,
     pub reply_position: ReplyPosition,
     pub spell_check: bool,
@@ -120,6 +122,7 @@ impl Default for ComposeConfig {
     fn default() -> Self {
         Self {
             editor: ComposeEditor::Builtin,
+            vim: ComposeVim::Bundled,
             format: ComposeFormat::Markdown,
             reply_position: ReplyPosition::Above,
             spell_check: true,
@@ -134,6 +137,19 @@ pub enum ComposeEditor {
     #[default]
     Builtin,
     Vim,
+}
+
+/// The Vim that Quill's own app writes a message in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ComposeVim {
+    /// The one built into the app, when the build has one.
+    #[default]
+    Bundled,
+    /// The one that comes with macOS, `/usr/bin/vim`, run inside the
+    /// app's sandbox. The only program outside the app that Quill's app
+    /// ever starts, and only when the user asks for it here.
+    System,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
@@ -496,7 +512,8 @@ font = "JetBrains Mono"
 font_size = 13
 
 [compose]
-editor = "builtin"        # "vim" once the bundled Vim milestone lands
+editor = "builtin"        # or "vim"
+vim = "bundled"           # in the app: or "system", the Vim that comes with macOS
 format = "markdown"       # or "plain"
 reply_position = "above"  # or "below"
 spell_check = true

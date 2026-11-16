@@ -669,13 +669,26 @@ impl From<NotifyUsed> for NotifyUsedParams {
     }
 }
 
-/// A draft file for the shipped Vim to edit, and the draft's own folder.
+/// A draft file for the shell's Vim to edit, and the draft's own folder.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PaneEditor {
     pub path: AbsolutePath,
     pub dir: AbsolutePath,
     pub title: String,
+    /// Which Vim to run.
+    pub vim: EditorVim,
+}
+
+/// Which Vim the shell runs: the one built into the app, or the one that
+/// comes with macOS. There is no third: the shell is never given a path
+/// to a program.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EditorVim {
+    #[default]
+    Bundled,
+    System,
 }
 
 /// How the editor ended. `ran` is false when it could not be started.

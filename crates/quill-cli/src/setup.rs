@@ -9,7 +9,7 @@ use std::path::Path;
 
 use jiff::tz::TimeZone;
 use quill_core::config::Config;
-use quill_core::config::{ComposeEditor, ComposeFormat, ReplyPosition};
+use quill_core::config::{ComposeEditor, ComposeFormat, ComposeVim, ReplyPosition};
 use quill_tui::command::Registry;
 use quill_tui::keymap::Keymap;
 use quill_tui::state::{ComposeSettings, Env, Identity, Notice};
@@ -110,6 +110,9 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
         spell_check: false,
         // And only it has a Vim of its own; anywhere else the user's is run.
         editor_pane: false,
+        // Asked for in the config, and meant only where there is a pane:
+        // a terminal runs the user's own Vim whatever this says.
+        system_vim: config.compose.vim == ComposeVim::System,
         vim_program: None,
         hooks,
         // And whether programs may be run at all: not in Quill's own app.
@@ -388,6 +391,30 @@ mod tests {
         assert!(loaded.env.compose.vim);
         write(&dir, "config.toml", "[compose]\neditor = \"builtin\"\n");
         assert!(!load_from(&dir).env.compose.vim);
+    }
+
+    #[test]
+    fn the_config_says_which_vim_the_app_runs() {
+        let dir = TempDir::new().unwrap();
+        assert!(!load_from(&dir).env.system_vim);
+        write(&dir, "config.toml", "[compose]\nvim = \"system\"\n");
+        let loaded = load_from(&dir);
+        assert!(loaded.notices.is_empty(), "{:?}", loaded.notices);
+        assert!(loaded.env.system_vim);
+        // Asking for Vim and saying which are separate things.
+        assert!(!loaded.env.compose.vim);
+        write(&dir, "config.toml", "[compose]\nvim = \"bundled\"\n");
+        assert!(!load_from(&dir).env.system_vim);
+        // It is one of two words, never a program: a path is a mistake in
+        // the config, said as one, and not a Vim to run.
+        write(
+            &dir,
+            "config.toml",
+            "[compose]\nvim = \"/opt/homebrew/bin/nvim\"\n",
+        );
+        let loaded = load_from(&dir);
+        assert!(!loaded.env.system_vim);
+        assert!(!loaded.notices.is_empty());
     }
 
     #[test]

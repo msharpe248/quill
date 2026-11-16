@@ -784,7 +784,7 @@
     },
 
     "pane.editor": {
-      "description": "Core to shell. Run the Vim that ships in the app on a draft file, in a terminal pane of its own. `dir` is the draft's own folder, where Vim and the core leave each other notes; the shell passes it to Vim in the environment and does nothing else with it. Answered by editor.exited when Vim ends, or at once if it could not be started.",
+      "description": "Core to shell. Run Vim on a draft file, in a terminal pane of its own. `vim` says which: `bundled` is the one built into the app, `system` the one that comes with macOS (/usr/bin/vim), which the user has to have asked for in their config. The core never names a program by its path. `dir` is the draft's own folder, where Vim and the core leave each other notes; the shell passes it to Vim in the environment and does nothing else with it. Answered by editor.exited when Vim ends, or at once if it could not be started.",
       "type": "object",
       "required": ["jsonrpc", "method", "params"],
       "additionalProperties": false,
@@ -793,19 +793,20 @@
         "method": { "const": "pane.editor" },
         "params": {
           "type": "object",
-          "required": ["path", "dir", "title"],
+          "required": ["path", "dir", "title", "vim"],
           "additionalProperties": false,
           "properties": {
             "path": { "type": "string", "pattern": "^/" },
             "dir": { "type": "string", "pattern": "^/" },
-            "title": { "type": "string" }
+            "title": { "type": "string" },
+            "vim": { "enum": ["bundled", "system"] }
           }
         }
       }
     },
 
     "editor.exited": {
-      "description": "Shell to core. The answer to pane.editor. `ran` is false when Vim could not be started (this build has none in it); `status` is then 0. Otherwise `status` is what Vim exited with: 0 for a normal exit, anything else for :cq or a crash.",
+      "description": "Shell to core. The answer to pane.editor. `ran` is false when Vim could not be started (this build has none in it, or the one asked for is not there); `status` is then 0. Otherwise `status` is what Vim exited with: 0 for a normal exit, anything else for :cq or a crash.",
       "type": "object",
       "required": ["jsonrpc", "method", "params"],
       "additionalProperties": false,

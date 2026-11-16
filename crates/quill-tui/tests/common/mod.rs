@@ -150,6 +150,7 @@ impl Harness {
             spell_check: false,
             // As in a terminal: Vim is the user's own, and programs run.
             editor_pane: false,
+            system_vim: false,
             vim_program: None,
             hooks: Vec::new(),
             hooks_enabled: true,
