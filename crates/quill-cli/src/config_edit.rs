@@ -33,14 +33,18 @@ pub fn add_account(
 }
 
 /// `text` with one more `[[account]]` that signs in with Microsoft: a
-/// `graph` account, with the application it signs in as. `oauth_tenant` is
-/// written only when the draft names one.
+/// `graph` account. The application it signs in as is written only when it
+/// is not Quill's own, which an account that names none uses anyway; and
+/// `oauth_tenant` only when the draft names one.
 pub fn add_sign_in_account(text: &str, draft: &SignInDraft) -> Result<String, String> {
     let mut account = Table::new();
     account["name"] = value(&draft.name);
     account["type"] = value("graph");
     account["address"] = value(&draft.address);
-    account["oauth_client_id"] = value(&draft.application_id);
+    let application = draft.application_id.trim();
+    if !application.is_empty() && application != crate::oauth::MICROSOFT_APPLICATION {
+        account["oauth_client_id"] = value(application);
+    }
     if let Some(tenant) = &draft.tenant {
         account["oauth_tenant"] = value(tenant);
     }

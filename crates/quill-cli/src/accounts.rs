@@ -561,7 +561,7 @@ imap = { host = "mail.example.com", tls = "starttls", username = "rvale" }
     }
 
     #[test]
-    fn a_graph_account_is_built_when_it_names_its_application() {
+    fn a_graph_account_is_built_with_its_own_application_or_quills() {
         let mut store = Store::open_in_memory().unwrap();
         let text = r#"
 [[account]]
@@ -576,25 +576,29 @@ type = "graph"
 address = "robin@example.org"
 "#;
         let prepared = prepare(&config(text), &mut store, &secrets(), true).unwrap();
-        assert_eq!(prepared.accounts.len(), 1);
+        // The one that names no application signs in as Quill itself.
+        assert_eq!(prepared.accounts.len(), 2);
         assert_eq!(prepared.accounts[0].name, "Work");
+        assert_eq!(prepared.accounts[1].name, "Other");
         assert!(prepared.accounts[0].sender.is_some());
         assert!(prepared.accounts[0].server_saves_sent);
-        // The one without an application says what is missing, and is not
-        // in the store.
-        assert_eq!(prepared.notices.len(), 1);
         assert!(
-            prepared.notices[0]
-                .text
-                .starts_with("Other cannot sync: it has no `oauth_client_id`"),
-            "{}",
-            prepared.notices[0].text
+            !prepared
+                .notices
+                .iter()
+                .any(|notice| notice.text.contains("oauth_client_id")),
+            "{:?}",
+            prepared.notices
         );
         let stored = store.accounts().unwrap();
-        assert_eq!(stored.len(), 1);
+        assert_eq!(stored.len(), 2);
         assert_eq!(
             (stored[0].name.as_str(), stored[0].kind.as_str()),
             ("Work", "graph")
+        );
+        assert_eq!(
+            (stored[1].name.as_str(), stored[1].kind.as_str()),
+            ("Other", "graph")
         );
     }
 

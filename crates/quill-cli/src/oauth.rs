@@ -34,6 +34,17 @@ pub fn wanted(account: &AccountConfig) -> bool {
     account.kind == AccountType::Graph || account.auth == AuthMethod::Oauth
 }
 
+/// The application Quill is registered as with Microsoft, which every
+/// Microsoft account signs in through unless its config names another
+/// (`oauth_client_id`).
+///
+/// The owner registered it on 2026-11-15 as a public client, for any
+/// organisation's accounts and personal ones. It is not a secret: a
+/// desktop application cannot keep one, and this id is in the address of
+/// every sign-in page Quill opens. It says which application is asking,
+/// and proves nothing.
+pub const MICROSOFT_APPLICATION: &str = "1f673243-3634-498b-8b7f-2425ba6f2490";
+
 /// How the account signs in with OAuth, from its config: `None` for an
 /// account that uses a password, and the reason for one whose settings
 /// cannot work.
@@ -41,13 +52,18 @@ pub fn setup(account: &AccountConfig) -> Result<Option<OAuthSetup>, String> {
     if !wanted(account) {
         return Ok(None);
     }
+    // Quill is registered with Microsoft, and with nobody else.
+    let mut own_application = None;
     let mut provider = match account.kind {
-        AccountType::Graph => match account.oauth_tenant.as_deref() {
-            Some(tenant) => {
-                OAuthProvider::microsoft_tenant(tenant).map_err(|err| err.to_string())?
+        AccountType::Graph => {
+            own_application = Some(MICROSOFT_APPLICATION);
+            match account.oauth_tenant.as_deref() {
+                Some(tenant) => {
+                    OAuthProvider::microsoft_tenant(tenant).map_err(|err| err.to_string())?
+                }
+                None => OAuthProvider::microsoft(),
             }
-            None => OAuthProvider::microsoft(),
-        },
+        }
         // Mail servers that take a token in place of a password: Gmail's.
         // A Microsoft 365 mailbox is a `graph` account instead.
         AccountType::Imap => {
@@ -82,6 +98,7 @@ pub fn setup(account: &AccountConfig) -> Result<Option<OAuthSetup>, String> {
         .as_deref()
         .map(str::trim)
         .filter(|id| !id.is_empty())
+        .or(own_application)
         .ok_or(
             "it has no `oauth_client_id`: the id of the application registered for Quill with the provider (see docs/oauth.md)",
         )?;
@@ -316,12 +333,14 @@ mod tests {
 
     #[test]
     fn settings_that_cannot_work_say_why() {
+        // Google has no application of Quill's: a mail server account that
+        // signs in with OAuth has to name one.
         let no_id = account(
-            "[[account]]\nname = \"Work\"\ntype = \"graph\"\naddress = \"robin@example.com\"\n",
+            "[[account]]\nname = \"Mail\"\ntype = \"imap\"\naddress = \"robin@example.com\"\nauth = \"oauth\"\nimap = { host = \"imap.example.com\" }\n",
         );
         assert!(setup(&no_id).unwrap_err().contains("oauth_client_id"));
         let blank = account(
-            "[[account]]\nname = \"Work\"\ntype = \"graph\"\naddress = \"robin@example.com\"\noauth_client_id = \"  \"\n",
+            "[[account]]\nname = \"Mail\"\ntype = \"imap\"\naddress = \"robin@example.com\"\nauth = \"oauth\"\noauth_client_id = \"  \"\nimap = { host = \"imap.example.com\" }\n",
         );
         assert!(setup(&blank).unwrap_err().contains("oauth_client_id"));
         let tenant = account(&format!("{GRAPH}oauth_tenant = \"not a tenant/\"\n"));
@@ -330,6 +349,27 @@ mod tests {
             "[[account]]\nname = \"Old\"\ntype = \"pop3\"\naddress = \"robin@example.com\"\nauth = \"oauth\"\noauth_client_id = \"x\"\n",
         );
         assert!(setup(&pop).unwrap_err().contains("pop3"));
+    }
+
+    #[test]
+    fn a_microsoft_account_signs_in_as_quill_unless_it_names_another_application() {
+        // The id is a GUID, as Microsoft's are.
+        assert_eq!(MICROSOFT_APPLICATION.len(), 36);
+        assert!(
+            MICROSOFT_APPLICATION
+                .chars()
+                .all(|letter| letter.is_ascii_hexdigit() || letter == '-')
+        );
+        for text in [
+            "[[account]]\nname = \"Work\"\ntype = \"graph\"\naddress = \"robin@example.com\"\n",
+            "[[account]]\nname = \"Work\"\ntype = \"graph\"\naddress = \"robin@example.com\"\noauth_client_id = \"  \"\n",
+        ] {
+            let found = setup(&account(text)).unwrap().unwrap();
+            assert_eq!(found.client.id, MICROSOFT_APPLICATION, "{text}");
+        }
+        // One named in the config is the one used.
+        let named = setup(&account(GRAPH)).unwrap().unwrap();
+        assert_eq!(named.client.id, "app-1");
     }
 
     #[test]

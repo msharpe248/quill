@@ -316,9 +316,10 @@ impl Service {
         }
     }
 
-    /// The application id an account in the config already signs in to
-    /// Microsoft with, if there is one: the same registration serves every
-    /// account, so the form offers it again.
+    /// The application id the form offers for a Microsoft account: the one
+    /// an account in the config already signs in with, if any names one
+    /// (the same registration serves every account), and otherwise Quill's
+    /// own.
     async fn microsoft_application(self: &Arc<Self>) -> Option<String> {
         let service = Arc::clone(self);
         // The config file blocks.
@@ -336,6 +337,7 @@ impl Service {
         .await
         .ok()
         .flatten()
+        .or_else(|| Some(oauth::MICROSOFT_APPLICATION.to_owned()))
     }
 
     fn register(&self, account: &AccountConfig) -> Result<LocalAccountId, String> {
@@ -1232,6 +1234,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_microsoft_account_with_no_application_of_its_own_signs_in_as_quill() {
+        // Left empty, or left as Quill's own id: either way the config
+        // names no application, and the account uses Quill's.
+        for (name, application) in [("Empty", "  "), ("Quills", oauth::MICROSOFT_APPLICATION)] {
+            let rig = Rig::new();
+            let saved = rig
+                .service
+                .handle(AccountRequest::SaveSignIn {
+                    draft: SignInDraft {
+                        name: name.to_owned(),
+                        address: "sam@example.com".to_owned(),
+                        application_id: application.to_owned(),
+                        tenant: None,
+                    },
+                })
+                .await;
+            assert_eq!(saved, AccountEvent::Saved(Ok(name.to_owned())));
+            assert_eq!(
+                config_text(&rig),
+                format!(
+                    "[[account]]\nname = \"{name}\"\ntype = \"graph\"\naddress = \"sam@example.com\"\n"
+                )
+            );
+            let config = rig.config();
+            let setup = oauth::setup(&config.accounts[0]).unwrap().unwrap();
+            assert_eq!(setup.client.id, oauth::MICROSOFT_APPLICATION);
+        }
+    }
+
+    #[tokio::test]
     async fn a_microsoft_account_that_cannot_be_is_refused_and_nothing_is_written() {
         let rig = Rig::new();
         let before = "[[account]]\nname = \"Personal\"\ntype = \"imap\"\naddress = \"robin@example.org\"\nimap = { host = \"mail.example.org\" }\n\n\
@@ -1269,21 +1301,6 @@ mod tests {
                 .await,
         );
         assert!(reason.contains("tenant"), "{reason}");
-        // An application id that is none.
-        let reason = refused(
-            rig.service
-                .handle(AccountRequest::SaveSignIn {
-                    draft: SignInDraft {
-                        name: "Second".to_owned(),
-                        address: "sam@example.com".to_owned(),
-                        application_id: "  ".to_owned(),
-                        tenant: None,
-                    },
-                })
-                .await,
-        );
-        assert!(reason.contains("oauth_client_id"), "{reason}");
-
         // None of it changed the file or listed an account.
         assert_eq!(config_text(&rig), before);
         assert!(rig.store.accounts().unwrap().is_empty());
@@ -1321,10 +1338,11 @@ mod tests {
             address: "sam@example.com".to_owned(),
         };
 
-        // No config at all, and nothing to offer.
+        // No config at all: Quill's own application is offered.
+        let quills = Some(oauth::MICROSOFT_APPLICATION);
         let rig = Rig::new();
         let found = discovered(rig.service.handle(look.clone()).await);
-        assert_eq!(found.microsoft_application, None);
+        assert_eq!(found.microsoft_application.as_deref(), quills);
 
         // Only an application registered with Microsoft is offered: not
         // the one a Gmail account signs in to Google as.
@@ -1333,7 +1351,7 @@ mod tests {
             "[[account]]\nname = \"Mail\"\ntype = \"imap\"\naddress = \"robin@example.org\"\nauth = \"oauth\"\noauth_client_id = \"google-app\"\nimap = { host = \"mail.example.org\" }\n",
         );
         let found = discovered(rig.service.handle(look.clone()).await);
-        assert_eq!(found.microsoft_application, None);
+        assert_eq!(found.microsoft_application.as_deref(), quills);
 
         // A Microsoft account's is, trimmed; one with none is passed over.
         write_config(
@@ -1347,11 +1365,11 @@ mod tests {
         assert_eq!(found.draft.address, "sam@example.com");
         assert!(!found.found);
 
-        // A config that cannot be read offers nothing, and discovery
-        // still answers.
+        // A config that cannot be read still gets Quill's own, and
+        // discovery still answers.
         write_config(&rig, "[ui\ntheme = ");
         let found = discovered(rig.service.handle(look).await);
-        assert_eq!(found.microsoft_application, None);
+        assert_eq!(found.microsoft_application.as_deref(), quills);
     }
 
     #[tokio::test]
