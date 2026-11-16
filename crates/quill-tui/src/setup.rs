@@ -235,6 +235,9 @@ pub enum Preference {
     WebReading(bool),
     /// `sidebar` under `[ui]`: whether the accounts pane is on show.
     Sidebar(bool),
+    /// `editor_tips` under `[compose]`: whether what an editor's keys do
+    /// is said above it.
+    EditorTips(bool),
 }
 
 /// The answers.

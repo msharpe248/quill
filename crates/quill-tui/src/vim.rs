@@ -32,6 +32,9 @@ pub const PLUGIN_FILE: &str = "quill.vim";
 const VERDICT_FILE: &str = "verdict";
 const COMMAND_FILE: &str = "command";
 const CONTACTS_FILE: &str = "contacts";
+/// Its being there says the draft file is the message's text and nothing
+/// else: the fields above it are still Quill's, in its own pane.
+const BODY_ONLY_FILE: &str = "body-only";
 /// What every draft's folder is called, before its number.
 const FOLDER_PREFIX: &str = "edit-";
 
@@ -98,6 +101,18 @@ pub fn body_line(draft: &str) -> u32 {
         .unwrap_or(1)
 }
 
+/// How much of a message an editor is given.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Share {
+    /// All of it: the header fields, an empty line, the text. For an
+    /// editor that has the whole terminal, where nothing of Quill's is on
+    /// show beside it.
+    Whole,
+    /// The text alone. For an editor that runs in the text's place in
+    /// Quill's own pane, with the fields still Quill's above it.
+    Body,
+}
+
 /// Makes a folder for one edit and writes the draft into it: the draft
 /// file, the people to complete addresses from, and with `plugin` a copy
 /// of the plugin for a Vim that is not Quill's own.
@@ -107,6 +122,7 @@ pub fn hand_out(
     account: LocalAccountId,
     content: &DraftContent,
     plugin: bool,
+    share: Share,
 ) -> Result<HandedOut, String> {
     let Some(view_dir) = &files.view_dir else {
         return Err("There is nowhere to put a draft for Vim.".to_owned());
@@ -153,10 +169,23 @@ pub fn hand_out(
         .collect();
 
     let path = dir.join(DRAFT_FILE);
-    let draft = draft_file::write(content, &from);
-    let body_line = body_line(&draft);
+    let (draft, body_line) = match share {
+        Share::Whole => {
+            let draft = draft_file::write(content, &from);
+            let body_line = body_line(&draft);
+            (draft, body_line)
+        }
+        // A file ends its last line.
+        Share::Body if content.body.is_empty() || content.body.ends_with('\n') => {
+            (content.body.clone(), 1)
+        }
+        Share::Body => (format!("{}\n", content.body), 1),
+    };
     let written = (|| {
         write_own(&path, draft.as_bytes())?;
+        if share == Share::Body {
+            write_own(&dir.join(BODY_ONLY_FILE), b"")?;
+        }
         write_own(&dir.join(CONTACTS_FILE), contacts.as_bytes())?;
         if plugin {
             write_own(&dir.join(PLUGIN_FILE), PLUGIN.as_bytes())?;
@@ -180,6 +209,11 @@ pub fn hand_out(
 /// plugin said to do with it, and removes the folder. `before` is the
 /// draft as it was written out. The folder goes whether or not the draft
 /// could be read.
+///
+/// A draft that went out as its text alone comes back as that: the file
+/// is the text, whatever it looks like, and everything else is as it was
+/// in `before`. Whether it did is read from the folder, which Quill made,
+/// and never from the file.
 pub fn take_back(
     files: &Files,
     dir: &Path,
@@ -192,11 +226,28 @@ pub fn take_back(
     let verdict = read_limited(&dir.join(VERDICT_FILE), 64)
         .ok()
         .and_then(|bytes| Verdict::read(&String::from_utf8_lossy(&bytes)));
+    let body_only = fs::symlink_metadata(dir.join(BODY_ONLY_FILE)).is_ok();
     let _ = fs::remove_dir_all(dir);
     let bytes = read.map_err(|why| format!("What was written in Vim cannot be read: {why}."))?;
     // Whatever encoding the file was saved in, what can be read of it is
     // kept: a message is not lost to one stray byte.
     let text = String::from_utf8_lossy(&bytes);
+    if body_only {
+        // As a whole draft's text is read: ended once, if it is there
+        // at all.
+        let mut body = text.replace("\r\n", "\n").trim_end_matches('\n').to_owned();
+        if !body.is_empty() {
+            body.push('\n');
+        }
+        let file = DraftFile {
+            content: DraftContent {
+                body,
+                ..before.clone()
+            },
+            attach: Vec::new(),
+        };
+        return Ok((file, verdict));
+    }
     Ok((draft_file::read(&text, before), verdict))
 }
 
@@ -475,11 +526,62 @@ mod tests {
     }
 
     #[test]
+    fn a_draft_that_goes_out_as_its_text_alone_comes_back_as_text_whatever_it_looks_like() {
+        let scratch = tempfile::tempdir().unwrap();
+        let files = files(&scratch);
+        let (store, account) = store();
+        let out = hand_out(&store, &files, account, &draft(), false, Share::Body).unwrap();
+        // The file is the text, the folder says so, and an editor starts
+        // on its first line.
+        assert_eq!(
+            fs::read_to_string(&out.path).unwrap(),
+            "Ana,\n\nHere it is.\n"
+        );
+        assert_eq!(out.body_line, 1);
+        for name in [DRAFT_FILE, CONTACTS_FILE, BODY_ONLY_FILE] {
+            assert_eq!(mode(&out.dir.join(name)), 0o600, "{name}");
+        }
+        // Untouched, it reads back as it went out.
+        let (file, verdict) = take_back(&files, &out.dir, &draft()).unwrap();
+        assert_eq!((file.content, verdict), (draft(), None));
+        assert!(!out.dir.exists());
+
+        // What looks like fields is text: nothing in the file changes who
+        // the message is to, what it is called or what is attached to it.
+        let out = hand_out(&store, &files, account, &draft(), false, Share::Body).unwrap();
+        let written =
+            "To: mallory@example.net\r\nSubject: Other\r\nAttach: /etc/passwd\r\n\r\nHello.\n\n\n";
+        fs::write(&out.path, written).unwrap();
+        fs::write(out.dir.join(VERDICT_FILE), "send\n").unwrap();
+        let (file, verdict) = take_back(&files, &out.dir, &draft()).unwrap();
+        assert_eq!(verdict, Some(Verdict::Send));
+        assert!(file.attach.is_empty());
+        assert_eq!(
+            file.content,
+            DraftContent {
+                body: "To: mallory@example.net\nSubject: Other\nAttach: /etc/passwd\n\nHello.\n"
+                    .to_owned(),
+                ..draft()
+            }
+        );
+
+        // A text with nothing in it is an empty file, and comes back so.
+        let empty = DraftContent {
+            body: String::new(),
+            ..draft()
+        };
+        let out = hand_out(&store, &files, account, &empty, false, Share::Body).unwrap();
+        assert_eq!(fs::read_to_string(&out.path).unwrap(), "");
+        let (file, _) = take_back(&files, &out.dir, &empty).unwrap();
+        assert_eq!(file.content, empty);
+    }
+
+    #[test]
     fn a_draft_goes_out_to_a_private_folder_and_comes_back_the_same() {
         let scratch = tempfile::tempdir().unwrap();
         let files = files(&scratch);
         let (store, account) = store();
-        let out = hand_out(&store, &files, account, &draft(), true).unwrap();
+        let out = hand_out(&store, &files, account, &draft(), true, Share::Whole).unwrap();
 
         // Only the user can enter the folder or read what is in it.
         assert_eq!(out.dir.parent(), files.view_dir.as_deref());
@@ -516,7 +618,7 @@ mod tests {
         let scratch = tempfile::tempdir().unwrap();
         let files = files(&scratch);
         let (store, account) = store();
-        let out = hand_out(&store, &files, account, &draft(), false).unwrap();
+        let out = hand_out(&store, &files, account, &draft(), false, Share::Whole).unwrap();
         // Quill's own Vim has the plugin already.
         assert!(!out.dir.join(PLUGIN_FILE).exists());
         fs::write(
@@ -545,13 +647,13 @@ mod tests {
         let scratch = tempfile::tempdir().unwrap();
         let files = files(&scratch);
         let (store, account) = store();
-        let first = hand_out(&store, &files, account, &draft(), false).unwrap();
-        let second = hand_out(&store, &files, account, &draft(), false).unwrap();
+        let first = hand_out(&store, &files, account, &draft(), false, Share::Whole).unwrap();
+        let second = hand_out(&store, &files, account, &draft(), false, Share::Whole).unwrap();
         assert_ne!(first.dir, second.dir);
         drop_folder(&files, &first.dir);
         assert!(!first.dir.exists() && second.dir.exists());
         // A folder that was already there is never taken over.
-        let third = hand_out(&store, &files, account, &draft(), false).unwrap();
+        let third = hand_out(&store, &files, account, &draft(), false, Share::Whole).unwrap();
         assert!(third.dir != second.dir && third.dir.exists());
     }
 
@@ -561,14 +663,14 @@ mod tests {
         let files = files(&scratch);
         let (store, account) = store();
 
-        let out = hand_out(&store, &files, account, &draft(), false).unwrap();
+        let out = hand_out(&store, &files, account, &draft(), false, Share::Whole).unwrap();
         fs::remove_file(&out.path).unwrap();
         let problem = take_back(&files, &out.dir, &draft()).unwrap_err();
         assert!(problem.starts_with("What was written in Vim cannot be read"));
         assert!(!out.dir.exists());
 
         // A link in the file's place is not followed.
-        let out = hand_out(&store, &files, account, &draft(), false).unwrap();
+        let out = hand_out(&store, &files, account, &draft(), false, Share::Whole).unwrap();
         let elsewhere = scratch.path().join("elsewhere");
         fs::write(&elsewhere, "To: mallory@example.com\n\nNot the draft.\n").unwrap();
         fs::remove_file(&out.path).unwrap();
@@ -577,7 +679,7 @@ mod tests {
         assert!(elsewhere.exists());
 
         // Bytes that are not text lose only themselves.
-        let out = hand_out(&store, &files, account, &draft(), false).unwrap();
+        let out = hand_out(&store, &files, account, &draft(), false, Share::Whole).unwrap();
         fs::write(&out.path, b"To: ana.ruiz@example.com\n\nCaf\xe9 at ten.\n").unwrap();
         let (file, _) = take_back(&files, &out.dir, &draft()).unwrap();
         assert_eq!(file.content.body, "Caf\u{fffd} at ten.\n");
@@ -607,7 +709,17 @@ mod tests {
         assert!(other.join(DRAFT_FILE).exists() && inside.exists());
         // With nowhere to put files, nothing is handed out at all.
         let (store, account) = store();
-        assert!(hand_out(&store, &Files::default(), account, &draft(), true).is_err());
+        assert!(
+            hand_out(
+                &store,
+                &Files::default(),
+                account,
+                &draft(),
+                true,
+                Share::Whole
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -615,7 +727,7 @@ mod tests {
         let scratch = tempfile::tempdir().unwrap();
         let files = files(&scratch);
         let (store, account) = store();
-        let out = hand_out(&store, &files, account, &draft(), false).unwrap();
+        let out = hand_out(&store, &files, account, &draft(), false, Share::Whole).unwrap();
         tell(&files, &out.dir, Verdict::Postpone).unwrap();
         assert_eq!(
             fs::read_to_string(out.dir.join(COMMAND_FILE)).unwrap(),
@@ -681,7 +793,7 @@ mod tests {
             next_cursor: SyncCursor("c1".to_owned()),
         };
         store.apply_delta(folder, &delta).unwrap();
-        let out = hand_out(&store, &files, account, &draft(), false).unwrap();
+        let out = hand_out(&store, &files, account, &draft(), false, Share::Whole).unwrap();
         let contacts = fs::read_to_string(out.dir.join(CONTACTS_FILE)).unwrap();
         let lines: Vec<&str> = contacts.lines().collect();
         // Each is one line, whatever a sender called themselves.

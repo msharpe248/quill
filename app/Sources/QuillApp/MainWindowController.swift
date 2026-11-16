@@ -22,6 +22,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     var onCommandsChanged: (() -> Void)?
 
     private let surface: any TerminalSurface
+    /// The core's terminal, with an editor's laid over it while a message
+    /// is being written in one.
+    private let terminalStack: TerminalStack
     private let options: LaunchOptions
     private let splitView = DividerSplitView()
     private var bridge: BridgeServer?
@@ -53,8 +56,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     /// an editor is not a light box beside a dark Quill.
     private var terminalAppearance = TerminalAppearance()
 
-    /// The Vim in the editor pane, while one is running.
+    /// The editor that has the text of the message being written, while
+    /// one is running: in a terminal of its own, laid over the core's.
     private var editor: RunningEditor?
+    /// Where the core last said the editor goes, and whether it has the
+    /// keys. Kept for an editor that has yet to start.
+    private(set) var editorPlace = EditorPlace.hidden
+    private var mouseMonitor: Any?
     /// The one place there is for an editor, and what became of the last.
     private(set) var editorSlot = EditorSlot()
     /// What waits for the editor to end: the core being told to stop.
@@ -297,6 +305,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     init(options: LaunchOptions) {
         self.options = options
         surface = makeTerminalSurface()
+        terminalStack = TerminalStack(terminal: surface.view)
         dividerMemory =
             options.isScripted ? TransientDividerMemory() : DefaultsDividerMemory(defaults: .standard)
         settingsPaneMemory =
@@ -344,7 +353,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
         splitView.isVertical = true
         splitView.dividerStyle = .thin
-        splitView.addArrangedSubview(surface.view)
+        splitView.addArrangedSubview(terminalStack)
         window.contentView = splitView
 
         let toolbar = NSToolbar(identifier: "QuillMain")
@@ -365,6 +374,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         surface.onGridChange = { [weak self] _ in
             self?.reportWindowColumns()
             self?.placeReadingDivider()
+            // The editor's place is said in cells: with cells of another
+            // size it is somewhere else.
+            self?.placeEditor()
         }
         splitView.onDividerMoved = { [weak self] in self?.dividerMoved() }
         splitView.onDividerDoubleClicked = { [weak self] in self?.dividerReset() }
@@ -380,18 +392,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         // While a pane has the keyboard, esc closes it and the pane has
         // first call on the few keys it uses; every other key goes on to
         // the viewer inside it. The terminal handles its own keys, and so
-        // does the editor pane, where esc is Vim's. Only this window's keys
-        // are looked at: a player gone full screen has a window of its own,
-        // where esc means leave full screen.
+        // does an editor laid over it, where esc is Vim's. Only this
+        // window's keys are looked at: a player gone full screen has a
+        // window of its own, where esc means leave full screen.
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self, event.window === window, let pane, paneHasFocus, !pane.takesEveryKey,
+            guard let self, event.window === window, let pane, paneHasFocus,
                 let key = PaneKey(event: event)
             else { return event }
             if key == .escape {
                 // The reading pane is not the user's to close: esc gives
                 // the keys back to the terminal, where the list is.
                 if isReadingPane {
-                    surface.focus()
+                    focusTerminal()
                 } else {
                     closePane()
                 }
@@ -406,9 +418,38 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         fatalError("init(coder:) is not used")
     }
 
+    /// A click on a terminal while an editor is laid over the core's. Which
+    /// of the two has the keys is the core's to say, and a click is how the
+    /// user says it to the core. On the editor, when the core has the keys:
+    /// the core is asked to go to the text, as its command does. On the
+    /// core's terminal: the core hears the click itself, and whatever it
+    /// makes of it, the keys end up where it last said.
+    private func watchClicksOnTheTerminals() {
+        mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            guard let self, event.window === window, editor != nil, window?.attachedSheet == nil else {
+                return event
+            }
+            let point = terminalStack.convert(event.locationInWindow, from: nil)
+            guard terminalStack.bounds.contains(point) else { return event }
+            if terminalStack.editorIsShown(at: point) {
+                if !editorPlace.keys {
+                    commands.run(named: Self.goToTextCommand)
+                }
+            } else {
+                DispatchQueue.main.async { [weak self] in self?.giveKeysAsTheCoreSaid() }
+            }
+            return event
+        }
+    }
+
+    /// The core's command that puts the cursor in the text of the message
+    /// being written: what a click on the editor means.
+    static let goToTextCommand = "compose.body"
+
     override func showWindow(_ sender: Any?) {
         super.showWindow(sender)
         surface.focus()
+        watchClicksOnTheTerminals()
         startCore()
         DebugScript.runIfAsked(options, on: self)
         if notifier == nil {
@@ -511,7 +552,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         case let .filesSave(save):
             saveCopy(of: URL(fileURLWithPath: save.path), offering: save.name)
         case .paneClose:
-            closePane()
+            // An editor is what the core means while one is running: it
+            // is asked to save and leave, and the core hears when it has.
+            if editor != nil {
+                stopEditor()
+            } else {
+                closePane()
+            }
         case let .linkOpen(open):
             openLink(open.url)
         case let .clipboardWrite(text):
@@ -548,6 +595,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         case let .readingPlace(place):
             readingColumnsAsked = place.columns
             placeReadingDivider()
+        case let .editorPlace(place):
+            editorPlace = place
+            placeEditor()
         }
     }
 
@@ -860,13 +910,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     /// Puts a pane beside the terminal, in place of any pane already there,
     /// and gives it the keyboard.
     private func show(_ newPane: PaneView) {
-        // Vim keeps the pane while it runs: putting a viewer in its place
-        // would end a message being written.
-        if editor != nil, !(newPane is EditorPane) {
-            NSLog("Quill: a pane was not opened: a message is being written in the editor pane")
-            newPane.tearDown()
-            return
-        }
         newPane.onClose = { [weak self] in self?.closePane() }
         // A page still loading for the reading pane has no pane to go
         // into now. The latest is loaded afresh when this one goes.
@@ -875,7 +918,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         // pane leaves the terminal the larger share.
         var divider = splitView.bounds.width * 0.58
         if let old = pane {
-            divider = surface.view.frame.width
+            divider = terminalStack.frame.width
             old.tearDown()
             old.removeFromSuperview()
         }
@@ -897,14 +940,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     /// Closes the pane, whoever asks: its close button, the menu, `esc` in
-    /// a viewer, or the core. The editor pane is not taken away from under
-    /// Vim: Vim is asked to save and leave, and the pane goes when it has.
+    /// a viewer, or the core.
     private func closePane() {
-        guard let old = pane else { return }
-        if old is EditorPane {
-            stopEditor()
-            return
-        }
+        guard pane != nil else { return }
         // The reading pane goes when the core says web reading is off,
         // and by nothing else.
         if isReadingPane {
@@ -918,7 +956,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         pane = nil
         old.tearDown()
         old.removeFromSuperview()
-        surface.focus()
+        focusTerminal()
         // The place is empty: the reading pane has it back, on the page
         // the core last asked for, and where the reading pane goes,
         // wherever the divider of the pane that has gone was left.
@@ -1049,7 +1087,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     private func placeReadingDivider() {
         guard isReadingPane, !splitView.isDividerHeld else { return }
         let width = readingTerminalWidth
-        if abs(surface.view.frame.width - width) >= 0.5 {
+        if abs(terminalStack.frame.width - width) >= 0.5 {
             splitView.setPosition(width, ofDividerAt: 0)
         }
     }
@@ -1061,7 +1099,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     private func dividerMoved() {
         guard isReadingPane, let cells else { return }
         dividerMemory.columns = ReadingDivider.columns(
-            draggedTo: surface.view.frame.width, width: splitView.bounds.width,
+            draggedTo: terminalStack.frame.width, width: splitView.bounds.width,
             divider: splitView.dividerThickness, cells: cells)
         placeReadingDivider()
     }
@@ -1086,7 +1124,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         old.removeFromSuperview()
         place(incoming)
         if hadFocus {
-            surface.focus()
+            focusTerminal()
         }
     }
 
@@ -1124,7 +1162,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     @objc func focusNextPane(_: Any?) {
         guard let pane else { return }
         if paneHasFocus {
-            surface.focus()
+            focusTerminal()
         } else {
             focus(pane)
         }
@@ -1207,12 +1245,87 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             + "core told \(told)"
     }
 
-    // MARK: - The editor pane
+    // MARK: - The editor
 
-    /// Runs Vim on a draft, in a terminal pane of its own: the one that
-    /// comes with macOS, or the user's own by their script when they have
-    /// asked for that. The core is always answered: now, when nothing is
-    /// started, and otherwise when Vim ends.
+    /// The keys go to the terminal: to the editor laid over it, when the
+    /// core has said the editor has them, and otherwise to the core's own.
+    private func focusTerminal() {
+        if let editor, editorPlace.keys, terminalStack.editorIsShown {
+            editor.surface.focus()
+        } else {
+            surface.focus()
+        }
+    }
+
+    private var editorHasFocus: Bool {
+        guard let editor, let responder = window?.firstResponder as? NSView else { return false }
+        return responder.isDescendant(of: editor.surface.view)
+    }
+
+    private var coreTerminalHasFocus: Bool {
+        guard let responder = window?.firstResponder as? NSView else { return false }
+        return responder.isDescendant(of: surface.view)
+    }
+
+    /// Has whichever terminal has the keys be the one the core said, when
+    /// it is one of the two that has them. A pane the user is in keeps
+    /// them, and so does a sheet.
+    private func giveKeysAsTheCoreSaid() {
+        guard editor != nil, window?.attachedSheet == nil, editorHasFocus || coreTerminalHasFocus else { return }
+        focusTerminal()
+    }
+
+    /// Puts the editor's terminal over the cells the core said, or out of
+    /// sight when it said none, and gives the keys to the terminal it said
+    /// has them. The shell decides none of it: the place is the core's
+    /// cells turned into points.
+    private func placeEditor() {
+        guard let editor else {
+            terminalStack.hideEditor()
+            return
+        }
+        let size = surface.grid.flatMap {
+            CellSize(widthPixels: $0.cellWidthPixels, heightPixels: $0.cellHeightPixels, scale: $0.scale)
+        }
+        if let cells = editorPlace.cells, let size {
+            let frames = EditorOverlay.frames(
+                column: cells.column, row: cells.row, columns: cells.columns, rows: cells.rows,
+                covered: cells.covered, cells: size)
+            terminalStack.showEditor(shown: frames.shown, whole: frames.whole)
+            // A terminal draws its cursor solid until it has once had the
+            // keys and lost them. An editor that starts without them is
+            // given them and has them taken back, so that the one solid
+            // cursor in the window is where the typing goes.
+            if !editor.hasBeenShown {
+                editor.hasBeenShown = true
+                if !editorPlace.keys, coreTerminalHasFocus {
+                    editor.surface.focus()
+                    surface.focus()
+                }
+            }
+        } else {
+            // Its keys go with it: nobody types into what they cannot see.
+            let hadKeys = editorHasFocus
+            terminalStack.hideEditor()
+            if hadKeys {
+                surface.focus()
+            }
+        }
+        // A terminal that has the keys gives them to the other when the
+        // core says so. The first time, there is nothing to take them from
+        // but the core's own terminal, which has had them all along.
+        if editorPlace.keys, terminalStack.editorIsShown, coreTerminalHasFocus {
+            editor.surface.focus()
+        } else if !editorPlace.keys, editorHasFocus {
+            surface.focus()
+        }
+    }
+
+    /// Runs an editor on the text of a message, in a terminal of its own
+    /// laid over the core's: the Vim or nano that comes with macOS, or the
+    /// user's own by their script when they have asked for that. The core
+    /// is always answered: now, when nothing is started, and otherwise when
+    /// the editor ends.
     private func openEditor(_ request: PaneEditor) {
         var found: EditorToRun?
         if !editorSlot.isRunning {
@@ -1258,8 +1371,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         // As the core's terminal looks now: a surface made with another
         // look would give that look to both.
         let terminal = makeTerminalSurface(appearance: terminalAppearance)
-        let running = RunningEditor(
-            surface: terminal, pane: EditorPane(title: request.title, terminal: terminal.view), kind: found.kind)
+        let running = RunningEditor(surface: terminal, kind: found.kind)
         editor = running
         terminal.onExit = { [weak self, weak running] exit in
             guard let self, let running else { return }
@@ -1269,7 +1381,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         terminal.onOpenLink = { [weak self] address in
             self?.openLink(address)
         }
-        show(running.pane)
+        // Over the core's terminal, where the core has said, or out of
+        // sight until it does. It starts once it has a size.
+        terminalStack.put(editor: terminal.view)
+        placeEditor()
         // Raw from the start, as the core's terminal is: inside the sandbox
         // Vim cannot change its terminal's modes itself.
         terminal.start(
@@ -1285,11 +1400,19 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             ))
     }
 
-    /// Vim has ended, or never started: the pane goes, the keyboard is the
-    /// terminal's again, and the core is told how it went.
+    /// The editor has ended, or never started: its terminal goes, the
+    /// keyboard is the core's terminal's again if the editor had it, and
+    /// the core is told how it went.
     private func editorDidExit(_ exit: TerminalExit, of ended: RunningEditor) {
         guard let running = editor, running === ended else { return }
+        let hadKeys = editorHasFocus
         editor = nil
+        terminalStack.removeEditor()
+        // Where the next one goes is for the core to say afresh.
+        editorPlace = .hidden
+        if hadKeys {
+            surface.focus()
+        }
         let ending: EditorEnding
         switch exit {
         case let .exited(code):
@@ -1299,9 +1422,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         case let .failedToStart(reason):
             NSLog("Quill: Vim could not be started: %@", reason)
             ending = .failedToStart
-        }
-        if pane === running.pane {
-            removePane()
         }
         if let answer = editorSlot.ended(ending) {
             bridge?.send(.editorExited(answer))
@@ -1319,7 +1439,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     private func stopEditor() {
         guard let running = editor, !running.isStopping else { return }
         running.isStopping = true
-        running.pane.setClosing()
         running.surface.sendKeys(PoliteStop.leaveMode(for: running.kind))
         Task { [weak self, weak running] in
             try? await Task.sleep(for: .seconds(PoliteStop.pause))
@@ -1552,7 +1671,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     /// that says how many columns the window has room for agrees with it.
     var gridSummary: String {
         guard let grid = surface.grid else { return "not measured" }
-        let width = surface.view.frame.width
+        let width = terminalStack.frame.width
         return "\(grid.columns) columns, \(grid.rows) rows, cells \(grid.cellWidthPixels) px at \(grid.scale)x, "
             + "view \(width) pt of \(splitView.bounds.width)"
     }
@@ -1575,7 +1694,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     /// scripted run that drags it with mouse events of its own.
     func dividerDrag(toColumns columns: Int) -> (from: NSPoint, to: NSPoint)? {
         guard pane != nil, let cells else { return nil }
-        let terminal = surface.view.frame
+        let terminal = terminalStack.frame
         let from = splitView.convert(
             NSPoint(x: terminal.maxX + splitView.dividerThickness / 2, y: splitView.bounds.midY), to: nil)
         return (from, NSPoint(x: from.x + cells.width(forColumns: columns) - terminal.width, y: from.y))
@@ -1614,8 +1733,35 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         return nil
     }
 
-    /// The editor pane's screen as text, while Vim is running.
+    /// The editor's screen as text, while one is running.
     var editorText: String? { editor?.surface.visibleText() }
+
+    /// The middle of the editor where it is seen, in the window: for a
+    /// scripted run to click there. Nil when no editor is on show.
+    var editorPoint: NSPoint? {
+        terminalStack.editorFrame.map {
+            terminalStack.convert(NSPoint(x: $0.midX, y: $0.midY), to: nil)
+        }
+    }
+
+    /// Where the editor is, for a scripted run's dump: what the core said,
+    /// where that put it, how many cells it came to, and who has the keys.
+    var editorPlaceSummary: String {
+        guard let editor else { return "no editor" }
+        let said =
+            editorPlace.cells.map {
+                "column \($0.column) row \($0.row), \($0.columns) by \($0.rows), \($0.covered) covered"
+            } ?? "nowhere"
+        let seen =
+            terminalStack.editorFrame.map {
+                "at \($0.minX),\($0.minY) \($0.width) by \($0.height) pt"
+            } ?? "not shown"
+        let grid = editor.surface.grid.map { "\($0.columns) columns, \($0.rows) rows" } ?? "not measured"
+        let keys =
+            editorHasFocus ? "the editor" : coreTerminalHasFocus ? "the terminal" : "neither terminal"
+        return "\(said); \(seen); \(grid); keys said for \(editorPlace.keys ? "the editor" : "the terminal"), "
+            + "with \(keys)"
+    }
 
     /// Types into the editor pane, as keys. False when no Vim is running.
     func typeIntoEditor(_ text: String) -> Bool {
@@ -1708,19 +1854,91 @@ final class DividerSplitView: NSSplitView {
     }
 }
 
-/// The Vim in the editor pane: its terminal, and the pane around it.
+/// The editor that has the text of a message: its terminal.
 @MainActor
 private final class RunningEditor {
     let surface: any TerminalSurface
-    let pane: EditorPane
     /// Which editor it is: each is asked to leave in its own keys.
     let kind: EditorKind
     /// The editor has been asked to save and leave.
     var isStopping = false
+    /// It has been put on show at least once.
+    var hasBeenShown = false
 
-    init(surface: any TerminalSurface, pane: EditorPane, kind: EditorKind) {
+    init(surface: any TerminalSurface, kind: EditorKind) {
         self.surface = surface
-        self.pane = pane
         self.kind = kind
     }
+}
+
+/// A view whose y grows downwards, as a terminal's rows do.
+private class FlippedView: NSView {
+    override var isFlipped: Bool { true }
+}
+
+/// The core's terminal, and over it the terminal of an editor that has the
+/// text of the message being written.
+///
+/// The editor's terminal is a view of its own, in front of the core's, in
+/// an opening that shows as much of it as the core has not drawn over.
+/// Where the opening is and how much it shows are for whoever owns this to
+/// say: nothing here knows what a cell is.
+@MainActor
+private final class TerminalStack: FlippedView {
+    private let opening = FlippedView()
+    private var editor: NSView?
+
+    init(terminal: NSView) {
+        super.init(frame: .zero)
+        terminal.frame = bounds
+        terminal.autoresizingMask = [.width, .height]
+        addSubview(terminal)
+        opening.isHidden = true
+        opening.wantsLayer = true
+        opening.layer?.masksToBounds = true
+        addSubview(opening)
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        fatalError("init(coder:) is not used")
+    }
+
+    /// Takes an editor's terminal, out of sight until it is given a place.
+    func put(editor view: NSView) {
+        removeEditor()
+        editor = view
+        opening.addSubview(view)
+    }
+
+    func removeEditor() {
+        editor?.removeFromSuperview()
+        editor = nil
+        opening.isHidden = true
+    }
+
+    /// Shows the editor: `shown` is the part of it to be seen, in this
+    /// view's points from its top left, and `whole` the editor's own frame
+    /// inside that part.
+    func showEditor(shown: CGRect, whole: CGRect) {
+        guard let editor else { return }
+        opening.frame = shown
+        editor.frame = whole
+        opening.isHidden = shown.height <= 0 || shown.width <= 0
+    }
+
+    func hideEditor() {
+        opening.isHidden = true
+    }
+
+    var editorIsShown: Bool { editor != nil && !opening.isHidden }
+
+    /// Whether the editor is what is seen at `point`, in this view's own
+    /// points.
+    func editorIsShown(at point: NSPoint) -> Bool {
+        editorIsShown && opening.frame.contains(point)
+    }
+
+    /// Where the editor is seen, in this view's points from its top left.
+    var editorFrame: CGRect? { editorIsShown ? opening.frame : nil }
 }

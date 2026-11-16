@@ -134,6 +134,10 @@ pub struct Compose {
     /// The message is being written in Vim. Until it is back, nothing
     /// typed here changes it: what is here is what it was when it left.
     pub away: Option<Away>,
+    /// The editor it is away in has the text alone, and runs in the
+    /// text's place in this pane: the fields above are still here, and
+    /// still to be typed in. So in Quill's own app, and nowhere else.
+    pub embedded: bool,
     /// The header fields have changed since the last save. The body keeps
     /// its own account of that.
     touched: bool,
@@ -166,6 +170,7 @@ impl Compose {
             error: prefill.note,
             sending: false,
             away: None,
+            embedded: false,
             touched: false,
         }
     }
@@ -259,9 +264,10 @@ impl Compose {
     /// Takes the people found for what was typed. An answer for something
     /// typed over since is dropped.
     pub fn offer(&mut self, typed: String, people: Vec<Contact>) {
-        // Nor is anyone offered for a message that has gone to Vim since
-        // the question was asked: there is no field here to complete.
-        if self.away.is_some()
+        // Nor is anyone offered for a message that has gone to Vim, fields
+        // and all, since the question was asked: there is no field here to
+        // complete.
+        if !self.fields_in_reach()
             || self.address_in_progress() != Some(typed.as_str())
             || people.is_empty()
         {
@@ -295,6 +301,54 @@ impl Compose {
         };
         input.set(format!("{kept}{written}, "));
         self.touched = true;
+    }
+
+    /// Whether what is typed here has nowhere to go: the message is in
+    /// an editor, and the cursor is not in a field that is still here.
+    pub fn out_of_reach(&self) -> bool {
+        self.away.is_some()
+            && !(self.embedded && (self.field != Field::Body || self.attaching.is_some()))
+    }
+
+    /// Whether the header fields are still here to be typed in.
+    pub fn fields_in_reach(&self) -> bool {
+        self.away.is_none() || self.embedded
+    }
+
+    /// Whether an editor outside Quill is running in the text's place.
+    pub fn editor_in_place(&self) -> bool {
+        self.embedded && self.away == Some(Away::InVim)
+    }
+
+    /// Puts the cursor in the text, from wherever it is.
+    pub fn go_to_body(&mut self) {
+        self.completion = None;
+        self.attaching = None;
+        self.field = Field::Body;
+    }
+
+    /// Puts the cursor in the fields above the text, if it is in the
+    /// text: in the last of them, the one next to it.
+    pub fn go_to_fields(&mut self) {
+        if self.field == Field::Body {
+            self.completion = None;
+            self.attaching = None;
+            self.field = Field::Subject;
+        }
+    }
+
+    /// Takes the text back from an editor that was given the text alone.
+    /// The fields are as they are here: they never left.
+    pub fn take_body_back(&mut self, written: &str) {
+        self.doubts.clear();
+        self.error = None;
+        // As [`Compose::take_back`] has it: a last line break is not a
+        // change, and what is put in can be undone here.
+        let body = self.body.text();
+        if written.trim_end_matches('\n') != body.trim_end_matches('\n') {
+            self.body.select_all();
+            self.body.insert(written);
+        }
     }
 
     /// Takes the message back from an editor that is not Quill's own:
@@ -346,7 +400,7 @@ impl Compose {
     /// Pasted text goes where the cursor is. In an address field what is
     /// now being typed is looked up, as if it had been typed.
     pub fn paste(&mut self, text: &str) -> Did {
-        if self.away.is_some() {
+        if self.out_of_reach() {
             return Did::Handled;
         }
         self.error = None;
@@ -411,7 +465,7 @@ impl Compose {
     /// Takes a key. `accounts` is how many accounts there are to send
     /// from; the From field moves between them.
     pub fn key(&mut self, chord: KeyChord, accounts: &[LocalAccountId]) -> Did {
-        if self.away.is_some() {
+        if self.out_of_reach() {
             // The message is in Vim. A key that would have been typing
             // goes nowhere; one held with ctrl or cmd may be a command.
             let held = chord.mods.ctrl || chord.mods.cmd || chord.mods.alt;

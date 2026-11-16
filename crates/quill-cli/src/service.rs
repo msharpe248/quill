@@ -166,6 +166,7 @@ fn remember(config_file: &Path, preference: Preference) -> Result<(), String> {
     let after = match preference {
         Preference::WebReading(on) => config_edit::set_web_reading(&before, on)?,
         Preference::Sidebar(on) => config_edit::set_sidebar(&before, on)?,
+        Preference::EditorTips(on) => config_edit::set_editor_tips(&before, on)?,
     };
     if after == before {
         return Ok(());
@@ -1856,6 +1857,18 @@ mod tests {
             assert!(config_text(&rig).contains(&format!("\nsidebar = {shown}\n")));
         }
         assert!(config_text(&rig).contains("theme = \"light\"   # easier on the eyes"));
+
+        // And that an editor's keys have been explained, under the
+        // section it belongs to.
+        assert!(rig.config().compose.editor_tips);
+        assert_eq!(
+            rig.service
+                .handle(AccountRequest::Remember(Preference::EditorTips(false)))
+                .await,
+            AccountEvent::Remembered(Ok(()))
+        );
+        assert!(!rig.config().compose.editor_tips);
+        assert!(config_text(&rig).contains("[compose]\neditor_tips = false\n"));
 
         // A config Quill cannot read is left exactly as it is, and the
         // reason comes back.

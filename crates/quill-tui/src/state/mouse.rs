@@ -185,11 +185,29 @@ impl State {
         let (Some(rect), Some(compose)) = (rect, &mut self.compose) else {
             return;
         };
-        // Being sent, or in Vim: there is nothing here to point at.
-        if compose.sending || compose.away.is_some() {
+        // Being sent, or all of it in an editor: there is nothing here to
+        // point at.
+        if compose.sending || !compose.fields_in_reach() {
             return;
         }
         let body = layout::compose_body(rect, compose);
+        // An editor has the text and the fields are still here: a click
+        // on the text is the editor's (the host sees to its keys), and
+        // the wheel has nothing here to turn.
+        let text_away = compose.away.is_some();
+        if text_away && wheel.is_some() {
+            return;
+        }
+        if text_away
+            && mouse.kind == MouseKind::Press
+            && body.contains(Position::new(mouse.column, mouse.row))
+        {
+            compose.go_to_body();
+            return;
+        }
+        if text_away && mouse.kind != MouseKind::Press {
+            return;
+        }
         if let Some(motion) = wheel {
             let rows = WHEEL_ROWS as isize;
             compose

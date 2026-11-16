@@ -42,7 +42,7 @@ use crate::setup::{
 };
 use crate::template::{self, Template};
 use crate::theme::{Look, Styles};
-use crate::vim::{ExternalEditor, Verdict};
+use crate::vim::{self, ExternalEditor, Verdict};
 use crate::{text, view};
 pub use mouse::{Mouse, MouseKind};
 
@@ -148,6 +148,10 @@ pub struct Env {
     /// The accounts pane is on show as Quill starts: `sidebar` under
     /// `[ui]` in the config.
     pub sidebar: bool,
+    /// What an editor's own keys do is said above it, where it runs in a
+    /// message's pane: `editor_tips` under `[compose]`. Quill switches it
+    /// off itself once it has been shown for one message.
+    pub editor_tips: bool,
     /// The room downloaded mail was given as Quill started, in gigabytes
     /// (`cache_gb` under `[storage]`; 0 is no limit). The sync engine was
     /// told once, so this is what holds until Quill is started again,
@@ -780,6 +784,19 @@ pub struct HookPicker {
     pub total: usize,
 }
 
+/// Where an editor that has a message's text goes on the terminal's
+/// screen, for a host that lays it over the terminal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EditorSpot {
+    /// The cells it has. `None`: it is not on show.
+    pub place: Option<ratatui::layout::Rect>,
+    /// How many of its rows, from the top, something drawn here lies
+    /// over: the people on offer under an address being typed.
+    pub covered: u16,
+    /// It has the keys.
+    pub keys: bool,
+}
+
 /// A message handed to Vim: what is needed to take it back.
 #[derive(Debug)]
 struct VimEdit {
@@ -788,6 +805,8 @@ struct VimEdit {
     handed: DraftContent,
     /// The draft's own folder, once it is made.
     dir: Option<PathBuf>,
+    /// It was given the text alone: the fields never left.
+    body_only: bool,
 }
 
 /// What to do with a message that has come back from Vim, once the files
@@ -1265,6 +1284,15 @@ pub struct State {
     /// The user has switched the accounts pane the other way from the
     /// one Quill started with.
     sidebar_flipped: bool,
+    /// What an editor's keys do is said above it. Worked out from the
+    /// config and [`State::tips_asked`] at every update.
+    pub editor_tips: bool,
+    /// The user has asked for that to be shown or hidden, whatever the
+    /// config says.
+    tips_asked: Option<bool>,
+    /// It has been on show above an editor: once that message is done
+    /// with it has been seen, and is not shown again unasked.
+    tips_seen: bool,
     /// How many columns the host's window has room for, once it has said:
     /// the terminal's own while it has the window to itself, and more
     /// than that while a pane of the host's stands beside it.
@@ -1336,6 +1364,9 @@ impl State {
             web_flipped: false,
             sidebar_hidden: false,
             sidebar_flipped: false,
+            editor_tips: false,
+            tips_asked: None,
+            tips_seen: false,
             window_columns: None,
             follow: Follow::default(),
             sign_in: None,
@@ -1427,6 +1458,7 @@ impl State {
         // And so is whether there is a pane to read mail in.
         self.web_reading = self.web_reading_wanted(env);
         self.sidebar_hidden = env.sidebar == self.sidebar_flipped;
+        self.editor_tips = self.tips_asked.unwrap_or(env.editor_tips);
         match action {
             Action::Key(chord) => self.on_key(env, chord, &mut out),
             Action::Command(id) => self.run(env, id, &mut out),
@@ -1623,6 +1655,15 @@ impl State {
         if std::mem::take(&mut self.vim_wanted) {
             self.start_vim(env, &mut out);
         }
+        // What the editor's keys do has been on show for a whole message:
+        // it has been seen, and is not shown again unless it is asked for.
+        if self.tips_seen && self.compose.is_none() {
+            self.tips_seen = false;
+            self.tips_asked = Some(false);
+            self.editor_tips = false;
+            out.accounts
+                .push(AccountRequest::Remember(Preference::EditorTips(false)));
+        }
         self.follow_selection(env, &mut out);
         self.settle_notifications(&mut out);
         // With no accounts there is nothing to read: offer to add one,
@@ -1778,8 +1819,11 @@ impl State {
             && let Some(compose) = &mut self.compose
         {
             match id {
-                // In Vim, the message has no field here to move to.
-                CommandId::FocusNext | CommandId::FocusPrev if compose.away.is_some() => return,
+                // In an editor that has all of it, the message has no
+                // field here to move to.
+                CommandId::FocusNext | CommandId::FocusPrev if !compose.fields_in_reach() => {
+                    return;
+                }
                 CommandId::FocusNext => {
                     compose.move_field(true);
                     return;
@@ -1967,7 +2011,70 @@ impl State {
                 }
                 None => self.send(env, None, out),
             },
-            CommandId::ComposeVim => self.start_vim(env, out),
+            // From an editor running in the text's place, the other one
+            // is Quill's own: the editor is asked to save and go, and what
+            // it wrote comes back here.
+            CommandId::ComposeVim
+                if self.compose.as_ref().is_some_and(Compose::editor_in_place) =>
+            {
+                out.host.push(HostRequest::ClosePane);
+                self.flash = Some((
+                    format!(
+                        "Asked {} to save and hand the message back.",
+                        env.external.name()
+                    ),
+                    false,
+                ));
+            }
+            CommandId::ComposeVim => {
+                // Asked for by hand, the editor is where the keys are
+                // wanted: with the fields still here, the cursor goes to
+                // the text it is about to have.
+                if env.editor_pane
+                    && let Some(compose) = &mut self.compose
+                {
+                    compose.go_to_body();
+                }
+                self.start_vim(env, out);
+            }
+            CommandId::ComposeFields | CommandId::ComposeBody => {
+                let up = id == CommandId::ComposeFields;
+                let accounts: Vec<LocalAccountId> =
+                    self.accounts.iter().map(|account| account.id).collect();
+                if let Some(compose) = &mut self.compose {
+                    if compose.away.is_some() {
+                        // An editor has the text: between it and the
+                        // fields that are still here.
+                        if up {
+                            compose.go_to_fields();
+                        } else {
+                            compose.go_to_body();
+                        }
+                    } else {
+                        // In Quill's own editor these keys are the ends of
+                        // the text, as they are in any text on a Mac. Run
+                        // from a menu, the command is that key.
+                        let key = if up { Key::Up } else { Key::Down };
+                        let mods = Mods {
+                            cmd: true,
+                            ..Mods::default()
+                        };
+                        compose.key(KeyChord { key, mods }, &accounts);
+                    }
+                }
+            }
+            CommandId::ComposeTips => {
+                let shown = !self.editor_tips;
+                self.tips_asked = Some(shown);
+                self.editor_tips = shown;
+                // Asked for, it is there for this message; and put away,
+                // it is not shown unasked again.
+                self.tips_seen = shown;
+                if !shown {
+                    out.accounts
+                        .push(AccountRequest::Remember(Preference::EditorTips(false)));
+                }
+            }
             CommandId::MessageHook => {
                 if let Some(message) = self.hook_message() {
                     self.hooks = Some(HookPicker {
@@ -2319,14 +2426,25 @@ impl State {
                 })
             }
             // Everything else about writing waits for it to come back.
-            CommandId::ComposeSendLater | CommandId::ComposeVim => self
+            CommandId::ComposeSendLater => self
                 .compose
                 .as_ref()
                 .is_some_and(|compose| !compose.sending && compose.away.is_none()),
-            CommandId::ComposeAttach | CommandId::ComposeBcc => self
+            // To the other editor: to the one outside from Quill's own,
+            // and back from one that is running in the text's place.
+            CommandId::ComposeVim => self.compose.as_ref().is_some_and(|compose| {
+                !compose.sending && (compose.away.is_none() || compose.editor_in_place())
+            }),
+            // The fields are still here while an editor has the text
+            // alone, and so is what is done to them.
+            CommandId::ComposeAttach | CommandId::ComposeBcc => {
+                self.compose.as_ref().is_none_or(Compose::fields_in_reach)
+            }
+            CommandId::ComposeFields | CommandId::ComposeBody => self
                 .compose
                 .as_ref()
-                .is_none_or(|compose| compose.away.is_none()),
+                .is_some_and(|compose| !compose.sending && compose.fields_in_reach()),
+            CommandId::ComposeTips => self.compose.as_ref().is_some_and(Compose::editor_in_place),
             CommandId::MessageHook => {
                 env.hooks_enabled && !env.hooks.is_empty() && self.hook_message().is_some()
             }
@@ -3032,6 +3150,11 @@ impl State {
             });
         }
         compose.away = Some(Away::Leaving);
+        // Where the host has a place for an editor, it runs in the text's
+        // place and is given the text alone. In a terminal it has the
+        // whole screen, and the whole message.
+        compose.embedded = env.editor_pane;
+        let body_only = compose.embedded;
         out.data.push(DataRequest::EditOut {
             account: compose.account,
             content: Box::new(content.clone()),
@@ -3041,10 +3164,16 @@ impl State {
             // has a use for it.
             plugin: env.external.is_vim()
                 && (!env.editor_pane || env.external == ExternalEditor::Script),
+            share: if body_only {
+                vim::Share::Body
+            } else {
+                vim::Share::Whole
+            },
         });
         self.vim = Some(VimEdit {
             handed: content,
             dir: None,
+            body_only,
         });
         self.templates = None;
         self.suggestions = None;
@@ -3064,6 +3193,7 @@ impl State {
             (Some(compose), Some(edit)) if compose.away == Some(Away::Leaving) => {
                 compose.away = Some(Away::InVim);
                 edit.dir = Some(dir.clone());
+                self.tips_seen |= compose.embedded && self.editor_tips;
                 let subject = compose.subject.text().trim();
                 let title = if subject.is_empty() {
                     compose.title.to_owned()
@@ -3172,7 +3302,11 @@ impl State {
         else {
             return;
         };
-        compose.take_back(file.content, edit.handed.attachments.len());
+        if edit.body_only {
+            compose.take_body_back(&file.content.body);
+        } else {
+            compose.take_back(file.content, edit.handed.attachments.len());
+        }
         if verdict == Some(Verdict::Discard) {
             // Thrown away, files and all: nothing more is attached to it.
             compose.away = None;
@@ -4485,6 +4619,36 @@ impl State {
             // Laid out again, for the reader that is drawn here now.
             self.reader.wrap_width = None;
             self.flash = Some((format!("Messages are shown as text.{key}"), false));
+        }
+    }
+
+    /// Where the editor that has the text of the message being written
+    /// goes, for a host that lays it over the terminal, and whether it
+    /// has the keys. It is on show only while nothing of Quill's is
+    /// drawn over the message's pane: a list to choose from, the help or
+    /// a question takes its place, and the keys with it.
+    pub fn editor_spot(&self, env: &Env) -> EditorSpot {
+        let Some(compose) = self
+            .compose
+            .as_ref()
+            .filter(|compose| compose.editor_in_place())
+        else {
+            return EditorSpot::default();
+        };
+        if self.context() != Context::Compose {
+            return EditorSpot::default();
+        }
+        let areas = layout::compute(self, self.size, env.reader_width);
+        let Some(pane) = areas.reader else {
+            return EditorSpot::default();
+        };
+        let Some(place) = view::compose::editor_rect(pane, compose, env, self.editor_tips) else {
+            return EditorSpot::default();
+        };
+        EditorSpot {
+            place: Some(place),
+            covered: view::compose::rows_over(pane, compose, place),
+            keys: compose.field == Field::Body && compose.attaching.is_none() && !compose.sending,
         }
     }
 

@@ -1,0 +1,8 @@
+{
+  "jsonrpc": "2.0",
+  "method": "editor.place",
+  "params": {
+    "place": { "column": 70, "row": 7, "columns": 76, "rows": 0, "covered": 0 },
+    "keys": false
+  }
+}

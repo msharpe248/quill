@@ -86,6 +86,10 @@ pub enum CoreToShell {
     /// beside it.
     #[serde(rename = "reading.place")]
     ReadingPlace(ReadingPlace),
+    /// Where the editor of `pane.editor` goes on the terminal's screen,
+    /// and whether it has the keys.
+    #[serde(rename = "editor.place")]
+    EditorPlace(EditorPlace),
     /// What the settings window shows: every pane with its settings as
     /// they stand. What the user does there arrives as `settings.used`.
     #[serde(rename = "settings.show")]
@@ -715,6 +719,96 @@ impl ReadingPlace {
 
     pub fn columns(self) -> u16 {
         self.columns
+    }
+}
+
+/// Where the editor that `pane.editor` started goes, said in the
+/// terminal's own cells, and whether it has the keys.
+///
+/// The editor runs in a terminal of its own that the shell lays over the
+/// core's, exactly over the cells where the text of the message being
+/// written would be drawn. The core says which cells those are, and says
+/// again whenever they change. With no cells the editor is not on show
+/// (something of the core's is drawn where it would be) and cannot have
+/// the keys; it goes on running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "EditorPlaceParams", into = "EditorPlaceParams")]
+pub struct EditorPlace {
+    cells: Option<EditorCells>,
+    keys: bool,
+}
+
+/// The cells an editor has: a rectangle of the terminal's screen, from
+/// its top left, and how many of its rows from the top the core has
+/// drawn something over. Those rows are not shown; the editor is not
+/// made smaller for them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EditorCells {
+    pub column: u16,
+    pub row: u16,
+    pub columns: u16,
+    pub rows: u16,
+    pub covered: u16,
+}
+
+impl EditorPlace {
+    /// The editor is not on show, and the terminal has the keys.
+    pub fn hidden() -> Self {
+        Self {
+            cells: None,
+            keys: false,
+        }
+    }
+
+    /// The editor in these cells. `None` for a rectangle with no columns
+    /// or no rows: an editor is never run in nothing.
+    pub fn at(cells: EditorCells, keys: bool) -> Option<Self> {
+        (cells.columns > 0 && cells.rows > 0).then_some(Self {
+            cells: Some(cells),
+            keys,
+        })
+    }
+
+    pub fn cells(self) -> Option<EditorCells> {
+        self.cells
+    }
+
+    /// Whether what is typed goes to the editor.
+    pub fn keys(self) -> bool {
+        self.keys
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EditorPlaceParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    place: Option<EditorCells>,
+    keys: bool,
+}
+
+impl TryFrom<EditorPlaceParams> for EditorPlace {
+    type Error = String;
+
+    fn try_from(params: EditorPlaceParams) -> Result<Self, Self::Error> {
+        match params.place {
+            Some(cells) => Self::at(cells, params.keys)
+                .ok_or_else(|| "an editor's place has at least one column and one row".to_owned()),
+            None if params.keys => {
+                Err("an editor that is not on show cannot have the keys".to_owned())
+            }
+            None => Ok(Self::hidden()),
+        }
+    }
+}
+
+impl From<EditorPlace> for EditorPlaceParams {
+    fn from(place: EditorPlace) -> Self {
+        Self {
+            place: place.cells,
+            keys: place.keys,
+        }
     }
 }
 
@@ -2769,6 +2863,65 @@ mod tests {
             decode::<CoreToShell>("not json"),
             Err(BridgeError::Malformed(_))
         ));
+    }
+
+    #[test]
+    fn an_editors_place_is_cells_of_the_screen_or_nowhere_and_never_keys_without_a_place() {
+        let cells = EditorCells {
+            column: 70,
+            row: 7,
+            columns: 76,
+            rows: 30,
+            covered: 2,
+        };
+        let place = EditorPlace::at(cells, true).unwrap();
+        assert_eq!((place.cells(), place.keys()), (Some(cells), true));
+        let line = encode(&CoreToShell::EditorPlace(place)).unwrap();
+        assert_eq!(
+            line,
+            r#"{"jsonrpc":"2.0","method":"editor.place","params":{"place":{"column":70,"row":7,"columns":76,"rows":30,"covered":2},"keys":true}}"#
+        );
+        assert_eq!(
+            decode::<CoreToShell>(&line).unwrap(),
+            CoreToShell::EditorPlace(place)
+        );
+        let hidden = encode(&CoreToShell::EditorPlace(EditorPlace::hidden())).unwrap();
+        assert_eq!(
+            hidden,
+            r#"{"jsonrpc":"2.0","method":"editor.place","params":{"keys":false}}"#
+        );
+        assert_eq!(
+            decode::<CoreToShell>(&hidden).unwrap(),
+            CoreToShell::EditorPlace(EditorPlace::hidden())
+        );
+        // Nothing to run an editor in.
+        for (columns, rows) in [(0, 30), (76, 0)] {
+            assert!(
+                EditorPlace::at(
+                    EditorCells {
+                        columns,
+                        rows,
+                        ..cells
+                    },
+                    false
+                )
+                .is_none()
+            );
+        }
+        for bad in [
+            r#"{}"#,
+            r#"{"keys":true}"#,
+            r#"{"keys":"yes"}"#,
+            r#"{"keys":false,"place":{"column":70,"row":7,"columns":0,"rows":30,"covered":0}}"#,
+            r#"{"keys":false,"place":{"column":70,"row":7,"columns":76,"rows":0,"covered":0}}"#,
+            r#"{"keys":false,"place":{"column":70,"row":7,"columns":76,"rows":30}}"#,
+            r#"{"keys":false,"place":{"column":-1,"row":7,"columns":76,"rows":30,"covered":0}}"#,
+            r#"{"keys":false,"place":{"column":70,"row":7,"columns":76,"rows":30,"covered":0,"points":9}}"#,
+            r#"{"keys":false,"hidden":true}"#,
+        ] {
+            let line = format!(r#"{{"jsonrpc":"2.0","method":"editor.place","params":{bad}}}"#);
+            assert!(decode::<CoreToShell>(&line).is_err(), "{bad}");
+        }
     }
 
     #[test]

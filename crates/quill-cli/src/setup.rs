@@ -124,6 +124,7 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
         web_pane: false,
         web_reading: config.ui.web_reading,
         sidebar: config.ui.sidebar,
+        editor_tips: config.compose.editor_tips,
         // What the sync engine is told once, as it starts.
         cache_gb: config.storage.cache_gb,
     };

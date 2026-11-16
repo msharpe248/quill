@@ -222,6 +222,7 @@ impl Harness {
             web_pane: false,
             web_reading: false,
             sidebar: true,
+            editor_tips: true,
             cache_gb: 5.0,
         };
         adjust(&mut env);

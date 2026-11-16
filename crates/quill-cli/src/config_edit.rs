@@ -121,6 +121,13 @@ pub fn set_sidebar(text: &str, on: bool) -> Result<String, String> {
     set_value(text, "ui", "sidebar", Value::from(on))
 }
 
+/// `text` with `editor_tips` under `[compose]` set: whether what an
+/// editor's keys do is said above it. Written once they have been shown
+/// for one message, and when the user puts them away.
+pub fn set_editor_tips(text: &str, on: bool) -> Result<String, String> {
+    set_value(text, "compose", "editor_tips", Value::from(on))
+}
+
 /// `text` with one setting given another value: what was changed in the
 /// app's settings window. The line is changed where it stands, with the
 /// comment on it kept; a setting the file does not have yet is added to

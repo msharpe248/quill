@@ -164,11 +164,13 @@ pub enum DataRequest {
     },
     /// Write the message being written out as a draft file for Vim, in a
     /// folder of its own. `plugin`: put a copy of Quill's Vim plugin
-    /// beside it, for a Vim that is not Quill's own.
+    /// beside it, for a Vim that is not Quill's own. `share`: all of the
+    /// message, or its text alone.
     EditOut {
         account: LocalAccountId,
         content: Box<DraftContent>,
         plugin: bool,
+        share: vim::Share,
     },
     /// Vim has gone: read the draft file and what Vim said to do with it,
     /// and remove the folder. `before` is the draft as it was written out.
@@ -641,7 +643,8 @@ fn run(
             account,
             content,
             plugin,
-        } => match vim::hand_out(store, files, account, &content, plugin) {
+            share,
+        } => match vim::hand_out(store, files, account, &content, plugin, share) {
             Ok(out) => vec![DataEvent::EditReady {
                 dir: out.dir,
                 path: out.path,

@@ -198,6 +198,9 @@ pub enum CommandId {
     ComposeBcc,
     ComposeTemplate,
     ComposeVim,
+    ComposeFields,
+    ComposeBody,
+    ComposeTips,
     ComposeSpellSuggest,
     ComposeSpellNext,
     EditCopy,
@@ -798,6 +801,32 @@ impl Registry {
                     Some(Menu::Message),
                     COMPOSE,
                 ),
+                // The two keys below are the ends of the text in Quill's
+                // own editor, and still are: see `State::run`.
+                spec(
+                    ComposeFields,
+                    "compose.fields",
+                    "Go to the fields above the text",
+                    Message,
+                    Some(Menu::Message),
+                    COMPOSE,
+                ),
+                spec(
+                    ComposeBody,
+                    "compose.body",
+                    "Go to the text",
+                    Message,
+                    Some(Menu::Message),
+                    COMPOSE,
+                ),
+                spec(
+                    ComposeTips,
+                    "compose.tips",
+                    "Show what the editor's keys do",
+                    Message,
+                    Some(Menu::Help),
+                    COMPOSE,
+                ),
                 spec(
                     ComposeSpellSuggest,
                     "compose.spell_suggest",
@@ -1078,11 +1107,28 @@ pub fn hints_in_vim() -> &'static [Hint] {
             label: "save draft",
             only_enabled: true,
         },
+        // Where the editor has the text alone and the fields are still
+        // here: between the two, and to Quill's own editor.
+        Hint {
+            commands: &[ComposeFields],
+            label: "fields",
+            only_enabled: true,
+        },
+        Hint {
+            commands: &[ComposeBody],
+            label: "text",
+            only_enabled: true,
+        },
         Hint {
             commands: &[NavBack],
             // Shown as "close Vim", "close nano" and so on: the bottom
             // bar names the editor that has the message.
             label: "close the editor",
+            only_enabled: true,
+        },
+        Hint {
+            commands: &[ComposeVim],
+            label: "Quill's editor",
             only_enabled: true,
         },
     ];

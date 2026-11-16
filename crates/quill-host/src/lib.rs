@@ -247,6 +247,12 @@ pub trait Host: Send + Sync {
         }
     }
 
+    /// Says where the editor that has a message's text goes on the
+    /// terminal's screen, and whether it has the keys.
+    fn editor_place(&self, place: bridge::EditorPlace) {
+        self.send(CoreToShell::EditorPlace(place));
+    }
+
     /// Tells the host what its settings window shows: every pane, with
     /// its settings as they stand. What the user does there arrives as
     /// [`HostEvent::SettingsUsed`]. Only a shell has such a window: in a

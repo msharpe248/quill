@@ -204,6 +204,48 @@ private struct ColumnsParams: Codable {
     var columns: Int
 }
 
+private struct EditorPlaceParams: Codable {
+    struct Cells: Codable {
+        var column: Int
+        var row: Int
+        var columns: Int
+        var rows: Int
+        var covered: Int
+    }
+
+    var place: Cells?
+    var keys: Bool
+
+    init(_ place: EditorPlace) {
+        self.place = place.cells.map {
+            Cells(column: $0.column, row: $0.row, columns: $0.columns, rows: $0.rows, covered: $0.covered)
+        }
+        keys = place.keys
+    }
+}
+
+/// The editor's place as the bridge says it: cells that a screen can have
+/// and nothing beside them, or none, and never the keys with none.
+private func checkedEditorPlace(_ params: EditorPlaceParams, as raw: JSONValue?) throws -> EditorPlace {
+    guard let said = params.place else {
+        guard !params.keys else {
+            throw BridgeError.malformed("editor.place: an editor that is not on show cannot have the keys")
+        }
+        return .hidden
+    }
+    let extra = Set((raw?.object ?? [:]).keys).subtracting(EditorPlace.Cells.allowedKeys)
+    guard extra.isEmpty else {
+        throw BridgeError.malformed("editor.place: unexpected \(extra.sorted().joined(separator: ", "))")
+    }
+    guard
+        let cells = EditorPlace.Cells(
+            column: said.column, row: said.row, columns: said.columns, rows: said.rows, covered: said.covered)
+    else {
+        throw BridgeError.malformed("editor.place: a place is cells of the screen, at least one column and one row")
+    }
+    return EditorPlace(cells: cells, keys: params.keys)
+}
+
 private struct ThumbnailMakeParams: Codable {
     var id: Int
     var path: String
@@ -955,6 +997,10 @@ public extension CoreToShell {
                 throw BridgeError.malformed("reading.place: columns must be from 1 to 65535")
             }
             self = .readingPlace(place)
+        case "editor.place":
+            let params = try envelope.decode(EditorPlaceParams.self, allowing: EditorPlace.allowedKeys)
+            try envelope.requireNotNull("place")
+            self = try .editorPlace(checkedEditorPlace(params, as: envelope.params.object?["place"]))
         case "settings.show":
             self = try .settingsShow(SettingsShow(params: envelope.params))
         case "themes.pick":
@@ -1011,6 +1057,8 @@ public extension CoreToShell {
             encodeLine(method: "reading.close", params: NoParams())
         case let .readingPlace(place):
             encodeLine(method: "reading.place", params: place)
+        case let .editorPlace(place):
+            encodeLine(method: "editor.place", params: EditorPlaceParams(place))
         case let .settingsShow(settings):
             encodeLine(method: "settings.show", params: settings.json)
         case .themesPick:

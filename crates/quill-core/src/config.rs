@@ -220,6 +220,10 @@ pub struct ComposeConfig {
     pub reply_position: ReplyPosition,
     pub spell_check: bool,
     pub undo_send_seconds: u32,
+    /// Say what an editor's own keys do above it, where it runs in the
+    /// message's pane (Quill's app). Quill switches this off itself once
+    /// it has been shown for one message.
+    pub editor_tips: bool,
 }
 
 impl Default for ComposeConfig {
@@ -230,6 +234,7 @@ impl Default for ComposeConfig {
             reply_position: ReplyPosition::Above,
             spell_check: true,
             undo_send_seconds: 10,
+            editor_tips: true,
         }
     }
 }

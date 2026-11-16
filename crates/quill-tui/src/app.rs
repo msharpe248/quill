@@ -130,6 +130,7 @@ pub async fn run(
         last_form: None,
         last_settings: None,
         last_place: None,
+        last_editor: None,
         images: Images::default(),
         thumbnails: std::collections::HashMap::new(),
         editor_wanted: None,
@@ -171,6 +172,9 @@ struct Io<'a> {
     last_settings: Option<(u64, bridge::SettingsShow)>,
     /// The place the host was last told its reading pane has.
     last_place: Option<u16>,
+    /// Where the host was last told the editor that has a message's text
+    /// goes.
+    last_editor: Option<crate::state::EditorSpot>,
     images: Images,
     /// Pictures the host has been asked to make, by the id asked under,
     /// and where each will be written.
@@ -575,6 +579,40 @@ impl Io<'_> {
         self.last_place = current;
     }
 
+    /// Tells the host where the editor that has the text of the message
+    /// being written goes, and whether it has the keys, when either has
+    /// changed. Only a host that runs editors itself is told.
+    fn mirror_editor(&mut self, state: &State, env: &Env) {
+        if !env.editor_pane {
+            return;
+        }
+        let current = state.editor_spot(env);
+        if self.last_editor == Some(current) {
+            return;
+        }
+        // Nothing has been said yet and there is nothing to say.
+        if self.last_editor.is_none() && current.place.is_none() {
+            return;
+        }
+        let place = current
+            .place
+            .and_then(|rect| {
+                bridge::EditorPlace::at(
+                    bridge::EditorCells {
+                        column: rect.x,
+                        row: rect.y,
+                        columns: rect.width,
+                        rows: rect.height,
+                        covered: current.covered,
+                    },
+                    current.keys,
+                )
+            })
+            .unwrap_or_else(bridge::EditorPlace::hidden);
+        self.host.editor_place(place);
+        self.last_editor = Some(current);
+    }
+
     /// Has the host show the form or question in front as it now is,
     /// where the host is the one that shows them: the whole form whenever
     /// any of it has changed, and word to put it away when it is over.
@@ -792,6 +830,7 @@ async fn event_loop(
         io.mirror_form(&state, env);
         io.mirror_settings(&state, env);
         io.mirror_place(&state, env);
+        io.mirror_editor(&state, env);
 
         let spelling_due = state
             .spell_check_due(env)
@@ -1120,6 +1159,7 @@ mod tests {
             web_pane: false,
             web_reading: false,
             sidebar: true,
+            editor_tips: true,
             cache_gb: 5.0,
         }
     }

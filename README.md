@@ -382,7 +382,7 @@ Files are written to a private folder that is removed when Quill quits, under na
 | `cmd-shift-a` or `ctrl-t` | Attach a file. The app shows its file panel; a terminal asks for the path, typed or pasted |
 | `cmd-shift-b` or `ctrl-o` | Add blind copies (Bcc) |
 | `cmd-shift-t` or `ctrl-r` | Insert a template, when there are any |
-| `cmd-shift-e` or `ctrl-v` | Write the message in Vim. See "Writing in Vim" |
+| `cmd-shift-e` or `ctrl-v` | Write the message in Vim, or come back from it. See "Writing in Vim" |
 | `cmd-shift-g` or `ctrl-g` | Other spellings of the misspelt word at the cursor (in the app) |
 | `cmd-;` or `ctrl-y` | Go to the next misspelt word (in the app) |
 | `esc` | Close. What you wrote is kept in Drafts |
@@ -479,9 +479,9 @@ editor = "vim"
 | `mg` | Not available: it crashes as it starts inside the app's sandbox | Your own `mg` |
 | `script` | Your own Vim, through `editor-command.sh` (below) | Your own `vim` |
 
-It is one of these words and never the path of a program. Vim has Quill's commands in it, described next. nano, Pico and mg have none: write the message, save it and leave (`ctrl-x` in nano and Pico, which Quill starts so that leaving saves; `ctrl-x ctrl-s` then `ctrl-x ctrl-c` in mg), and it comes back to Quill open, to send from there. The cursor starts where the message's body does, past the header fields.
+It is one of these words and never the path of a program. Vim has Quill's commands in it, described next. nano, Pico and mg have none: write the message, save it and leave (`ctrl-x` in nano and Pico, which Quill starts so that leaving saves; `ctrl-x ctrl-s` then `ctrl-x ctrl-c` in mg), and it comes back to Quill's own editor, to send from there.
 
-Vim is given the message as a file: the header fields, an empty line, then the body.
+How much of the message the editor is given depends on where Quill is running. **In the app** it is given the text alone, and runs in the text's place in the message's pane, under the fields: see "In the app" below. **In a terminal** it has the whole terminal and the whole message, as a file: the header fields, an empty line, then the body.
 
 ```
 From: Work <you@example.com>
@@ -494,28 +494,44 @@ Attach: roadmap.pdf
 Ana,
 ```
 
-Change any of it. `From` is there to be read: which account sends is not decided in Vim. Each attached file has an `Attach:` line; delete the line to take the file off, and add a line with a path to attach another. A header Quill does not know is dropped, not sent.
+In a terminal, change any of it. `From` is there to be read: which account sends is not decided in Vim. Each attached file has an `Attach:` line; delete the line to take the file off, and add a line with a path to attach another. A header Quill does not know is dropped, not sent.
 
 | In Vim | Does |
 |---|---|
 | `:QuillSend` | Saves the message and sends it, with the same checks and the same undo as sending from Quill |
 | `:QuillPostpone` | Saves it as a draft and closes it |
 | `:QuillDiscard` | Throws it away |
-| `:QuillAttach PATH` | Adds the `Attach:` line for a file |
-| `ctrl-x ctrl-u` on a To, Cc or Bcc line | Completes an address from the people you write to most |
-| `:wq` | Brings the message back to Quill, open, for you to send, save or close |
+| `:QuillAttach PATH` | In a terminal, adds the `Attach:` line for a file. In the app, attach from Quill |
+| `ctrl-x ctrl-u` on a To, Cc or Bcc line | In a terminal, completes an address from the people you write to most |
+| `:wq` | Brings the message into Quill's own editor, open, for you to send, save or close. `cmd-shift-e` (`ctrl-v`) takes it to Vim again |
 | `:cq` | Never mind: the message is as it was before Vim |
 
 What comes back is checked as if it had been written in Quill. A send that raises a question (no subject, say) leaves the message open with the question; a file that cannot be attached leaves it open saying why, and it is not sent or put away without the file. The message is saved as a draft before Vim starts, so nothing written so far depends on Vim.
 
 **In a terminal** Quill runs your own Vim, the `vim` on your `PATH`, with your own vimrc, in the terminal Quill is in, and takes the terminal back when Vim quits. Mail goes on being fetched and sent meanwhile. `QUILL_VIM` names another program to run in its place; it is started the same way. With no Vim to run, the message stays in Quill's editor and says so. Modelines are switched off for the draft, so a line of quoted mail cannot set options in your Vim.
 
-**In the app** the editor runs in a pane beside the terminal, on the background and with the text colour of Quill's theme, and it changes with the theme. The app has no editor of this kind inside it; it runs one that comes with macOS, inside its own sandbox, or your own Vim by a script:
+**In the app** the editor runs inside the message's pane. The fields (From, To, Cc, Subject, the files attached) stay where they are, still Quill's, with addresses offered as you type; the editor has the place of the text under them and is given the text alone, on the background and with the text colour of Quill's theme. It is running as the message opens. A new message starts with the cursor in To; a reply starts in the editor. With the web reading pane on, the message you are answering stays on show beside it.
+
+| Key | Does |
+|---|---|
+| `cmd-↑` | Goes to the fields above the editor. `tab` and `shift-tab` move between them |
+| `cmd-↓` | Goes back to the editor. So does `tab` from the subject, and a click on either goes there |
+| `cmd-shift-e` | From the editor: asks it to save and hands the text to Quill's own editor. From Quill's editor: takes the text to your editor again |
+| `cmd-enter`, `cmd-s` | Send, and save as a draft, from the fields or from inside Vim |
+| `cmd-/` | Shows or hides what the editor's keys do (also Help > Show What the Editor's Keys Do) |
+
+With Quill's own editor in the pane, `cmd-↑` and `cmd-↓` are the ends of the text, as they always were.
+
+What the editor's keys do is said above it for the first message you write this way, and not again unless you ask with `cmd-/`: Quill writes `editor_tips = false` under `[compose]` once it has been shown. While a list, the help or a question is drawn over the pane, the editor is out of sight until it has gone, and goes on running.
+
+What the editor writes is the text and only the text: a line that looks like `To:` or `Attach:` is a line of the message. Send Later and templates wait until the text is back in Quill's editor.
+
+The app has no editor of this kind inside it; it runs one that comes with macOS, inside its own sandbox, or your own Vim by a script:
 
 - `editor = "vim"` or `"nano"`: the one that comes with macOS. Nothing to build or install, and nothing of your own setup either.
 - `editor = "script"`: your own Vim, the one you use in a terminal, with your vimrc and your plugins. The app is sandboxed and cannot start it, so macOS does, by running a script of yours. See below.
 
-Send and Save in the menus and toolbar reach Vim: it does as it would for `:QuillSend` or `:QuillPostpone`. They do not reach nano, which has to hand the message back first. `esc` in Quill, or closing the pane, asks the editor to save and close, in its own keys, and the message comes back open.
+Send and Save in the menus and toolbar reach Vim: it does as it would for `:QuillSend` or `:QuillPostpone`. They do not reach nano, which has to hand the text back first. `esc` in the fields asks the editor to save and close, in its own keys, and the text comes back into Quill's own editor.
 
 **Your own Vim, through `editor-command.sh`.** macOS gives every sandboxed app one folder of scripts that it will run for the app outside the sandbox: `~/Library/Application Scripts/dev.quill.Quill/`. Only you can put a script there; the app can read the folder and cannot write to it. Quill runs the one called `editor-command.sh`. To set it up:
 
@@ -691,7 +707,9 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `compose.send_later` | Send the message being written at a time you type |
 | `compose.attach`, `compose.bcc` | Attach a file; add blind copies |
 | `compose.template` | Put a template into the message being written |
-| `compose.vim` | Write the message being written in another editor: Vim, unless `editor` names another |
+| `compose.vim` | Write the message being written in another editor: Vim, unless `editor` names another. In the app, from that editor, back to Quill's own |
+| `compose.fields`, `compose.body` | In the app, with an editor in the message's pane: go to the fields above it, and back to the text |
+| `compose.tips` | In the app, show or hide what that editor's keys do |
 | `compose.spell_suggest`, `compose.spell_next` | List other spellings of the misspelt word at the cursor; go to the next misspelt word |
 | `edit.undo` | Undo the last move, deletion or send |
 | `search.start` | Search |
@@ -790,7 +808,7 @@ The IMAP backend's tests run against a real server: install Dovecot (`brew insta
 
 The shell and the core talk over a bridge defined in `schema/bridge.json`. The example messages in `schema/examples` are tested from both sides; change the schema, both sets of types and the examples together.
 
-The app can be driven without a person, for checks that need the real window: `Quill --script "wait:2;menu:message.toggle_star;press:cmd-j" --dump-screen out.txt` performs the steps, then writes the terminal's text, the shell's state and a picture of the window (`out.txt.png`). Inside the sandbox the file must be in the app's container. `app/Sources/QuillApp/DebugScript.swift` lists the steps. A sheet on the window is in the dump too, whichever question it is asking (its step, what it says, and each field with what it holds; a password, and a code to sign in with, as `<secret>`), is drawn into the picture where it lies and saved by itself as `out.txt.sheet.png`; `sheetset:FIELD=VALUE` and `sheetpress:BUTTON` work it. `snap:NAME` writes the dump as it stands in the middle of a script (`out.txt.NAME`, and its picture), so one launch can check several states; the dump says whether the web reading pane is on and what it shows, and gives the widths to check its place by: the terminal's columns, the columns the window has room for, where the core says the pane goes, where the divider was left, and the width of each pane drawn in the terminal. `divider:COLUMNS` drags the divider and `divider:reset` double-clicks it. `notice:COMMAND` clicks a button of the bar above the page in the reading pane, by its command. `clicktext:TEXT` clicks the terminal where that text first is on its screen (`clicktext:2,TEXT` for the second place). A scripted run starts at the same window size every time and keeps a dragged divider for the run only; it neither reads nor writes your saved window or divider. The settings window is worked with `settings:open`, `settingspane:PANE`, `settingsset:PANE.FIELD=VALUE`, `settingsstep:PANE.FIELD=up`, `settingspick:PANE.FIELD=TITLE`, `settingspress:PANE.FIELD.ACTION`, `settingskey:KEY` and `settings:close`; the dump says what it shows and what the core was told, its picture is `out.txt.settings.png`, and the pane it was last on is kept for the run only.
+The app can be driven without a person, for checks that need the real window: `Quill --script "wait:2;menu:message.toggle_star;press:cmd-j" --dump-screen out.txt` performs the steps, then writes the terminal's text, the shell's state and a picture of the window (`out.txt.png`). Inside the sandbox the file must be in the app's container. `app/Sources/QuillApp/DebugScript.swift` lists the steps. A sheet on the window is in the dump too, whichever question it is asking (its step, what it says, and each field with what it holds; a password, and a code to sign in with, as `<secret>`), is drawn into the picture where it lies and saved by itself as `out.txt.sheet.png`; `sheetset:FIELD=VALUE` and `sheetpress:BUTTON` work it. `snap:NAME` writes the dump as it stands in the middle of a script (`out.txt.NAME`, and its picture), so one launch can check several states; the dump says whether the web reading pane is on and what it shows, and gives the widths to check its place by: the terminal's columns, the columns the window has room for, where the core says the pane goes, where the divider was left, and the width of each pane drawn in the terminal. `divider:COLUMNS` drags the divider and `divider:reset` double-clicks it. `notice:COMMAND` clicks a button of the bar above the page in the reading pane, by its command. `clicktext:TEXT` clicks the terminal where that text first is on its screen (`clicktext:2,TEXT` for the second place). `clickeditor:` clicks the editor that has the text of the message being written, `typeeditor:TEXT` types into it, and the dump says where the core put it, the cells it came to and which terminal has the keys. A scripted run starts at the same window size every time and keeps a dragged divider for the run only; it neither reads nor writes your saved window or divider. The settings window is worked with `settings:open`, `settingspane:PANE`, `settingsset:PANE.FIELD=VALUE`, `settingsstep:PANE.FIELD=up`, `settingspick:PANE.FIELD=TITLE`, `settingspress:PANE.FIELD.ACTION`, `settingskey:KEY` and `settings:close`; the dump says what it shows and what the core was told, its picture is `out.txt.settings.png`, and the pane it was last on is kept for the run only.
 
 The UI is covered by snapshot tests of whole screens at 80x24 and 200x60 (`crates/quill-tui/tests/snapshots.rs`). When a change to the UI is intended, regenerate them with `INSTA_UPDATE=always cargo test -p quill-tui` or review them with `cargo insta review`, and read the diff before committing.
 

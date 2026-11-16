@@ -21,6 +21,9 @@ import WebKit
 /// - `clicktext:TEXT` click the terminal where this text first is on its
 ///   screen, with mouse events sent to the window; `clicktext:2,TEXT` clicks
 ///   the second place it is at. The pointer is not moved
+/// - `clickeditor:`   click the middle of the editor that has the text of
+///   the message being written, where it lies over the terminal, with mouse
+///   events sent to the window. The pointer is not moved
 /// - `notice:COMMAND` click the button of a core command in the notice above
 ///   the page in the reading pane
 /// - `item:TITLE`     choose one of the shell's own menu items, by its title
@@ -41,8 +44,9 @@ import WebKit
 ///   been chosen in the panel; inside the sandbox it must be in the app's
 ///   container. Neither the alert nor the panel is ever shown to a script:
 ///   the menu item itself is answered as if the user had cancelled
-/// - `typeeditor:TEXT` type text into the editor pane, as keys and not as a
-///   paste, while Vim is running there
+/// - `typeeditor:TEXT` type text into the editor that has the text of the
+///   message being written, as keys and not as a paste, wherever the
+///   keyboard is
 /// - `sheetset:FIELD=VALUE` put a value in a field of the form in the sheet,
 ///   by the field's name, as typing it does; for a pop-up the value is the
 ///   option's name, and choosing it tells the core, as choosing it by hand
@@ -148,8 +152,9 @@ import WebKit
 /// has one (`--core-env QUILL_CONFIG_DIR=...`), in its `vim` folder, and
 /// only otherwise in the user's own.
 ///
-/// The editor pane is the real one, running the Vim that comes with macOS
-/// inside the sandbox, and it reaches nothing outside the window. One case
+/// The editor is the real one, the Vim that comes with macOS running inside
+/// the sandbox in a terminal laid over the core's, and it reaches nothing
+/// outside the window. One case
 /// does reach outside: a config
 /// that says `editor = "script"` has the user's own `editor-command.sh` run,
 /// outside the sandbox, as it would be for them. A scripted run only does
@@ -165,8 +170,9 @@ import WebKit
 ///
 /// `press:` reaches whatever has the keyboard, a pane as well as the
 /// terminal: `press:right` steps a Quick Look pane, `press:space` plays or
-/// pauses a player, `press:esc` closes any pane but the editor's, where every
-/// key is Vim's.
+/// pauses a player, `press:esc` closes a viewer's pane. While the editor has
+/// the keyboard every key is its own, `esc` too; a `cmd` key that a menu has
+/// is still the menu's.
 ///
 /// With `--dump-screen`, the terminal's text and the shell's state are
 /// written to the file afterwards and the app quits.
@@ -282,6 +288,14 @@ enum DebugScript {
                 postMouse(.leftMouseUp, at: at, clicks: 1, in: window)
             } else {
                 note("\(text.debugDescription) is not on the terminal's screen to click")
+            }
+            try? await Task.sleep(for: .milliseconds(400))
+        case "clickeditor":
+            if let window = controller.window, let at = controller.editorPoint {
+                postMouse(.leftMouseDown, at: at, clicks: 1, in: window)
+                postMouse(.leftMouseUp, at: at, clicks: 1, in: window)
+            } else {
+                note("no editor on show to click")
             }
             try? await Task.sleep(for: .milliseconds(400))
         case "notice":
@@ -704,6 +718,9 @@ enum DebugScript {
         // A Vim ended by a signal is "exited" with the signal below zero.
         lines.append("editor: \(controller.editorSlot.summary)")
         lines.append("editor requests: \(controller.editorSlot.requests)")
+        // editor place: column 70 row 7, 76 by 30, 0 covered; at 595.0,122.5 646.0 by 525.0 pt; 76 columns,
+        // 30 rows; keys said for the editor, with the editor
+        lines.append("editor place: \(controller.editorPlaceSummary)")
         // vimrc: none | imported, 1234 bytes
         // vimrc imports: /path (imported, 1234 bytes); /path (refused: the file is larger than 1 MB); removed
         lines.append("vimrc: \(controller.vimrc.size.map { "imported, \($0) bytes" } ?? "none")")

@@ -114,13 +114,17 @@ public struct TerminalGrid: Equatable, Sendable {
     public var rows: Int
     /// The width of one cell, in the screen's own pixels: a whole number.
     public var cellWidthPixels: Int
+    /// The height of one cell, in the screen's own pixels: a whole number,
+    /// as its width is.
+    public var cellHeightPixels: Int
     /// How many of those pixels there are to a point.
     public var scale: CGFloat
 
-    public init(columns: Int, rows: Int, cellWidthPixels: Int, scale: CGFloat) {
+    public init(columns: Int, rows: Int, cellWidthPixels: Int, cellHeightPixels: Int, scale: CGFloat) {
         self.columns = columns
         self.rows = rows
         self.cellWidthPixels = cellWidthPixels
+        self.cellHeightPixels = cellHeightPixels
         self.scale = scale
     }
 }

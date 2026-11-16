@@ -31,6 +31,7 @@
         { "$ref": "#/$defs/reading.scroll" },
         { "$ref": "#/$defs/reading.close" },
         { "$ref": "#/$defs/reading.place" },
+        { "$ref": "#/$defs/editor.place" },
         { "$ref": "#/$defs/settings.show" },
         { "$ref": "#/$defs/themes.pick" }
       ]
@@ -386,6 +387,39 @@
       }
     },
 
+    "editor.place": {
+      "description": "Core to shell. Where the editor of pane.editor goes, and whether it has the keys. The editor runs in a terminal of its own that the shell lays over the core's terminal, exactly over the cells `place` names: where the text of the message being written would be drawn, under the fields the core still draws. Cells are counted from the top left of the terminal's screen, from 0. `covered` is how many of the place's rows, from its top, the core has drawn something over (the people offered under an address being typed): the shell does not show those rows of the editor, and does not make the editor smaller for them. With no `place` the editor is not on show, because something of the core's is drawn where it would be, and goes on running. `keys` is whether what is typed goes to the editor; otherwise it goes to the core's terminal. An editor that is not on show never has the keys. Sent whenever any of it changes; the shell keeps the last, for an editor that has yet to start, and decides nothing itself.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "editor.place" },
+        "params": {
+          "type": "object",
+          "required": ["keys"],
+          "additionalProperties": false,
+          "properties": {
+            "keys": { "type": "boolean" },
+            "place": {
+              "type": "object",
+              "required": ["column", "row", "columns", "rows", "covered"],
+              "additionalProperties": false,
+              "properties": {
+                "column": { "type": "integer", "minimum": 0, "maximum": 65535 },
+                "row": { "type": "integer", "minimum": 0, "maximum": 65535 },
+                "columns": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                "rows": { "type": "integer", "minimum": 1, "maximum": 65535 },
+                "covered": { "type": "integer", "minimum": 0, "maximum": 65535 }
+              }
+            }
+          },
+          "if": { "properties": { "keys": { "const": true } } },
+          "then": { "required": ["place"] }
+        }
+      }
+    },
+
     "thumbnail.make": {
       "description": "Core to shell. Make a PNG thumbnail of a file (a picture the core cannot decode, the first page of a PDF, the poster frame of a video) and write it to `out`. Answered by thumbnail.made with the same id.",
       "type": "object",
@@ -533,7 +567,7 @@
     },
 
     "pane.close": {
-      "description": "Core to shell. Close the second pane and return focus to the terminal.",
+      "description": "Core to shell. While an editor started by pane.editor is running: ask it to save what has been written and leave, in its own keys, as someone at the keyboard would; editor.exited follows. Otherwise: close the second pane and return focus to the terminal.",
       "type": "object",
       "required": ["jsonrpc", "method", "params"],
       "additionalProperties": false,
@@ -907,7 +941,7 @@
     },
 
     "pane.editor": {
-      "description": "Core to shell. Run an editor on a draft file, in a terminal pane of its own. `editor` says which. `vim` and `nano` are the ones that come with macOS (/usr/bin/vim, and /usr/bin/nano, which is Pico), run inside the sandbox; `script` is the user's own Vim, by way of the script they keep in the app's scripts folder (editor-command.sh), which macOS runs outside the sandbox and which the user has to have asked for in their config. The app has no editor of this kind inside it. The core never names a program by its path. `line` is the line of the file the message's body starts on, counting from 1: nano is started with the cursor there, past the header fields (Vim's plugin sees to it for Vim). `dir` is the draft's own folder, where Vim and the core leave each other notes; the shell passes it to Vim in the environment and does nothing else with it. Answered by editor.exited when Vim ends, or at once if it could not be started.",
+      "description": "Core to shell. Run an editor on a draft file, in a terminal of its own that is laid over the core's where editor.place says. The file is the text of the message alone: the fields above it are still the core's, drawn in its own terminal. `editor` says which. `vim` and `nano` are the ones that come with macOS (/usr/bin/vim, and /usr/bin/nano, which is Pico), run inside the sandbox; `script` is the user's own Vim, by way of the script they keep in the app's scripts folder (editor-command.sh), which macOS runs outside the sandbox and which the user has to have asked for in their config. The app has no editor of this kind inside it. The core never names a program by its path. `line` is the line of the file the editor's cursor starts on, counting from 1: with the text alone in the file, the first. `title` is what the message is called, for the shell to name the editor by where it names it at all. `dir` is the draft's own folder, where Vim and the core leave each other notes; the shell passes it to Vim in the environment and does nothing else with it. Answered by editor.exited when Vim ends, or at once if it could not be started.",
       "type": "object",
       "required": ["jsonrpc", "method", "params"],
       "additionalProperties": false,

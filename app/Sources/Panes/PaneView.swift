@@ -9,9 +9,6 @@ public enum PaneKind: String, Sendable, CaseIterable {
     /// Sanitized HTML, in a web view that runs no script and loads nothing
     /// from the network unless it was told it may: the reading pane.
     case web
-    /// A terminal of its own, running the Vim that ships in the app on a
-    /// message being written.
-    case editor
 }
 
 /// A key a pane may have a use for while it has the keyboard focus. Every
@@ -68,8 +65,7 @@ public struct PaneNotice: Equatable, Sendable {
 }
 
 /// The second pane: a header with a title and a close button, over one
-/// native viewer. `PreviewPane`, `PlayerPane` and `WebPane` are the viewers;
-/// `EditorPane` holds a terminal instead.
+/// native viewer. `PreviewPane`, `PlayerPane` and `WebPane` are the viewers.
 ///
 /// A pane knows a file and what to call it. It does not know what a message
 /// is, and it never closes itself: it asks through `onClose`.
@@ -313,11 +309,6 @@ public class PaneView: NSView {
     /// it; false leaves it to the viewer inside. `esc` is not offered here:
     /// closing is the window's business, whatever the pane.
     public func handleKey(_: PaneKey) -> Bool { false }
-
-    /// Whether every key pressed while the pane has the focus belongs to
-    /// what is inside it, `esc` included: the window then takes none of
-    /// them, neither to close the pane nor to offer to `handleKey`.
-    public var takesEveryKey: Bool { false }
 
     /// The pane's state in a few words, for a scripted run's dump.
     public var summary: String { message.map { "says \"\($0)\"" } ?? "" }

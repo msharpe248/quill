@@ -33,7 +33,8 @@ private enum Examples {
         let examples = try Examples.load("core-to-shell")
         #expect(
             examples.map(\.name) == [
-                "clipboard.write.json", "commands.list.json", "file.open.json", "files.pick.json",
+                "clipboard.write.json", "commands.list.json", "editor.place.json", "file.open.json",
+                "files.pick.json",
                 "files.save.json", "form.close.json", "form.show.json", "link.open.json", "notify.clear.json",
                 "notify.post.json", "pane.close.json",
                 "pane.editor.json", "pane.play.json", "pane.preview.json",
@@ -101,6 +102,7 @@ private enum Examples {
             "appearance-that-is-not-light-or-dark.json", "theme-imported-by-a-path.json",
             "theme-imported-with-a-hidden-name.json", "theme-imported-under-a-toml-name.json",
             "settings-button-with-nothing-on-it.json", "form-button-field-in-a-sheet.json",
+            "editor-place-with-the-keys-and-nowhere-to-be.json", "editor-place-with-no-rows.json",
         ] {
             #expect(examples.contains { $0.name == name }, "\(name) is missing")
         }
@@ -288,6 +290,35 @@ private enum Examples {
         #expect(throws: BridgeError.self) { try CoreToShell(line: extra) }
         let closing = #"{"jsonrpc":"2.0","method":"reading.close","params":{"now":true}}"#
         #expect(throws: BridgeError.self) { try CoreToShell(line: closing) }
+    }
+
+    @Test func anEditorsPlaceIsCellsOfTheScreenOrNowhereAndNeverTheKeysWithoutAPlace() throws {
+        let examples = try Dictionary(uniqueKeysWithValues: Examples.load("core-to-shell").map { ($0.name, $0.text) })
+        let cells = try #require(EditorPlace.Cells(column: 70, row: 7, columns: 76, rows: 30, covered: 2))
+        #expect(
+            try CoreToShell(line: examples["editor.place.json"]!)
+                == .editorPlace(EditorPlace(cells: cells, keys: true)))
+        let hidden = #"{"jsonrpc":"2.0","method":"editor.place","params":{"keys":false}}"#
+        #expect(try CoreToShell(line: hidden) == .editorPlace(.hidden))
+        #expect(try Examples.value(CoreToShell.editorPlace(.hidden).line) == Examples.value(hidden))
+        #expect(EditorPlace.hidden.cells == nil && !EditorPlace.hidden.keys)
+
+        // Nothing to run an editor in, or nowhere a screen has.
+        #expect(EditorPlace.Cells(column: 70, row: 7, columns: 0, rows: 30, covered: 0) == nil)
+        #expect(EditorPlace.Cells(column: 70, row: 7, columns: 76, rows: 0, covered: 0) == nil)
+        #expect(EditorPlace.Cells(column: -1, row: 7, columns: 76, rows: 30, covered: 0) == nil)
+        #expect(EditorPlace.Cells(column: 70, row: 7, columns: 65536, rows: 30, covered: 0) == nil)
+        for bad in [
+            #"{}"#, #"{"keys":true}"#, #"{"keys":"yes"}"#, #"{"keys":false,"place":null}"#,
+            #"{"keys":false,"place":{"column":70,"row":7,"columns":0,"rows":30,"covered":0}}"#,
+            #"{"keys":false,"place":{"column":70,"row":7,"columns":76,"rows":30}}"#,
+            #"{"keys":false,"place":{"column":70.5,"row":7,"columns":76,"rows":30,"covered":0}}"#,
+            #"{"keys":false,"place":{"column":70,"row":7,"columns":76,"rows":30,"covered":0,"points":9}}"#,
+            #"{"keys":false,"hidden":true}"#,
+        ] {
+            let line = #"{"jsonrpc":"2.0","method":"editor.place","params":\#(bad)}"#
+            #expect(throws: BridgeError.self, "\(bad)") { try CoreToShell(line: line) }
+        }
     }
 
     @Test func thePlaceOfTheReadingPaneIsAWholeNumberOfColumnsBothWays() throws {

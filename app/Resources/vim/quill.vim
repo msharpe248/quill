@@ -12,9 +12,17 @@
 "             toolbar reaches a message being written here.
 "   contacts  written by Quill before Vim starts: one address to a line,
 "             for completion.
+"   body-only written by Quill before Vim starts, in its own app: the
+"             draft file is the text of the message and nothing else.
+"             The fields are still Quill's, above the editor, and so is
+"             attaching a file.
 "
 " :cq leaves without a verdict and with an error, which Quill reads as
 " "never mind": the draft is kept as it was.
+"
+" Inside Quill's app the Vim that comes with macOS runs as rvim does,
+" whatever it was started as: delete(), rename() and mkdir() are refused
+" there. So nothing here uses them. A file that is done with is emptied.
 "
 " Nothing here runs a program, reads outside g:quill_dir (but for a file
 " the user names to attach, which is only checked for), or touches the
@@ -32,6 +40,8 @@ let g:loaded_quill = 1
 
 let s:save_cpo = &cpo
 set cpo&vim
+
+let s:body_only = filereadable(g:quill_dir . '/body-only')
 
 function! s:Verdict(word) abort
   call writefile([a:word], g:quill_dir . '/verdict')
@@ -61,6 +71,10 @@ endfunction
 
 " Names a file to attach: an Attach: line at the end of the headers.
 function! s:Attach(path) abort
+  if s:body_only
+    echomsg 'Quill: attach it from Quill, above: its Attach command.'
+    return
+  endif
   let l:path = fnamemodify(expand(a:path), ':p')
   if !filereadable(l:path)
     echohl ErrorMsg | echomsg 'Quill: there is no file at ' . l:path | echohl None
@@ -116,7 +130,11 @@ function! s:Poll(timer) abort
     return
   endif
   let l:word = get(readfile(l:file, '', 1), 0, '')
-  call delete(l:file)
+  if l:word ==# ''
+    return
+  endif
+  " Taken: emptied, not deleted, which a restricted Vim may not do.
+  call writefile([], l:file)
   if index(['send', 'postpone', 'discard'], l:word) >= 0
     call s:Finish(l:word)
   endif
@@ -135,6 +153,10 @@ setlocal completefunc=QuillComplete
 " Start where there is something to write: the first empty header, or
 " the body.
 function! s:Start() abort
+  if s:body_only
+    call cursor(1, 1)
+    return
+  endif
   let l:end = s:EndOfHeaders()
   let l:number = 1
   while l:end > 0 && l:number < l:end

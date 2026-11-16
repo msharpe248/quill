@@ -105,6 +105,9 @@ impl Host for StandaloneHost {
             | CoreToShell::ReadingScroll(_)
             | CoreToShell::ReadingClose(_)
             | CoreToShell::ReadingPlace(_)
+            // Nor a terminal of its own to lay an editor over this one:
+            // here an editor has the whole terminal.
+            | CoreToShell::EditorPlace(_)
             // Nor a settings window: in a terminal the settings are the
             // file, and this is never sent here.
             | CoreToShell::SettingsShow(_)

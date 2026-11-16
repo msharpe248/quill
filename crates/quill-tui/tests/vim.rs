@@ -17,9 +17,10 @@ use std::process::{Command, Stdio};
 use common::Harness;
 use quill_store::{DraftState, Outgoing};
 use quill_tui::command::{CommandId, Context};
-use quill_tui::compose::Away;
+use quill_tui::compose::{Away, Field};
 use quill_tui::editor::Editor;
-use quill_tui::state::{Action, HostRequest};
+use quill_tui::setup::{AccountRequest, Preference};
+use quill_tui::state::{Action, HostRequest, Mouse, MouseKind};
 use quill_tui::vim::ExternalEditor;
 
 /// Wide enough that nothing in the compose pane is cut short.
@@ -188,7 +189,8 @@ fn quills_own_app_is_asked_for_the_editor_the_config_names() {
                 dir: dir.clone(),
                 title: "Lunch".to_owned(),
                 editor,
-                body_line: 7,
+                // The file is the text alone: it starts on its first line.
+                body_line: 1,
             }]
         );
         // The Vim the app starts itself finds the plugin in the app. The
@@ -198,13 +200,10 @@ fn quills_own_app_is_asked_for_the_editor_the_config_names() {
             dir.join("quill.vim").exists(),
             editor == ExternalEditor::Script
         );
-        // The pane says where the message is and how it comes back, in
-        // that editor's own terms.
+        // Above the editor's place, the pane says how the text comes
+        // back, in that editor's own terms.
         let screen = harness.screen();
-        assert!(
-            screen.contains(&format!("being written in {}.", editor.name())),
-            "{screen}"
-        );
+        assert!(screen.contains("Quill's own editor"), "{screen}");
         assert_eq!(screen.contains(":QuillSend"), editor.is_vim(), "{screen}");
         assert_eq!(
             screen.contains("ctrl-x"),
@@ -977,6 +976,309 @@ fn a_message_in_vim_is_not_put_aside_for_another() {
 
 // --- The real plugin, under the Vim on this machine -----------------------
 
+/// Quill's own app, where an editor runs in the text's place in the
+/// message's pane.
+fn in_the_app() -> Harness {
+    let mut harness = wide();
+    harness.env.editor_pane = true;
+    harness
+}
+
+fn field(harness: &Harness) -> Field {
+    harness.state.compose.as_ref().unwrap().field
+}
+
+fn tips_remembered(harness: &Harness) -> Vec<bool> {
+    harness
+        .account_requests
+        .iter()
+        .filter_map(|request| match request {
+            AccountRequest::Remember(Preference::EditorTips(on)) => Some(*on),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn in_the_app_the_editor_has_the_text_alone_and_the_fields_stay_where_they_are() {
+    let mut harness = in_the_app();
+    let (path, dir) = in_vim(&mut harness);
+    assert_eq!(away(&harness), Some(Away::InVim));
+    // The file is the text and nothing else, and the folder says so.
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "Are you free on *Thursday*?\n"
+    );
+    assert!(dir.join("body-only").exists());
+
+    // The fields are still drawn, with what is in them, and nothing says
+    // the message is somewhere else.
+    let screen = harness.screen();
+    assert!(harness.row_with("To:").contains("priya.nair@example.com"));
+    assert!(harness.row_with("Subject:").contains("Lunch"));
+    assert!(
+        !screen.contains("This message is being written in Vim."),
+        "{screen}"
+    );
+    // The text is not drawn here: its place is the editor's.
+    assert!(!screen.contains("Are you free"), "{screen}");
+
+    // The editor is given the text's place, and has the keys: the cursor
+    // was in the text.
+    let spot = harness.state.editor_spot(&harness.env);
+    let place = spot.place.unwrap();
+    assert!(spot.keys);
+    assert_eq!(spot.covered, 0);
+    let areas =
+        quill_tui::layout::compute(&harness.state, harness.state.size, harness.env.reader_width);
+    let pane = areas.reader.unwrap();
+    // Inside the pane's border and padding, below the fields, to its foot.
+    assert_eq!(place.x, pane.x + 2);
+    assert_eq!(place.width, pane.width - 4);
+    assert_eq!(place.y + place.height, pane.y + pane.height - 1);
+    assert!(place.y > pane.y + 5 && place.height >= 3);
+    // No cursor of Quill's is drawn while the editor has the keys.
+    assert_eq!(harness.cursor(), None);
+}
+
+#[test]
+fn in_the_app_the_fields_are_typed_in_while_the_editor_runs_and_what_it_wrote_joins_them() {
+    let mut harness = in_the_app();
+    let (path, dir) = in_vim(&mut harness);
+
+    // Up to the fields: the cursor is in the subject, and the keys are
+    // Quill's.
+    harness.keys("cmd-up");
+    assert_eq!(field(&harness), Field::Subject);
+    assert!(!harness.state.editor_spot(&harness.env).keys);
+    assert!(harness.state.editor_spot(&harness.env).place.is_some());
+    assert!(harness.cursor().is_some());
+    harness.type_text(" on Friday");
+    assert!(harness.row_with("Subject:").contains("Lunch on Friday"));
+    // Tab and shift-tab go between the fields, as with Quill's own editor.
+    harness.keys("shift-tab");
+    assert_eq!(field(&harness), Field::Cc);
+    harness.type_text("sam.lee@example.com");
+    harness.keys("escape");
+    assert_eq!(away(&harness), Some(Away::InVim));
+
+    // And down to the text again: the keys are the editor's.
+    harness.keys("cmd-down");
+    assert_eq!(field(&harness), Field::Body);
+    assert!(harness.state.editor_spot(&harness.env).keys);
+
+    // The editor writes other text and says to send. What goes is the
+    // fields as they are here now, with the text as the editor left it.
+    // A first line that looks like a field is text all the same.
+    vim_writes(
+        &path,
+        &dir,
+        "Subject: not a field\n\nFriday instead?\n",
+        Some("send"),
+    );
+    harness.vim_exits(0);
+    let (_, raw) = outgoing(&mut harness);
+    assert!(raw.contains("Subject: Lunch on Friday\r\n"), "{raw}");
+    assert!(raw.contains("sam.lee@example.com"), "{raw}");
+    assert!(raw.contains("Subject: not a field"), "{raw}");
+    assert!(raw.contains("Friday instead?"), "{raw}");
+    assert!(!raw.contains("Thursday"), "{raw}");
+}
+
+#[test]
+fn in_the_app_wq_brings_the_text_into_quills_editor_and_the_command_goes_back_and_forth() {
+    let mut harness = in_the_app();
+    let (path, dir) = in_vim(&mut harness);
+    harness.keys("cmd-up");
+    harness.type_text("!");
+
+    // `:wq`: the text is here, in Quill's own editor, and the fields are
+    // as they were left here.
+    vim_writes(&path, &dir, "Friday instead?\n", None);
+    harness.vim_exits(0);
+    assert_eq!(away(&harness), None);
+    assert!(harness.screen().contains("Friday instead?"));
+    assert!(harness.row_with("Subject:").contains("Lunch!"));
+    assert!(harness.state.editor_spot(&harness.env).place.is_none());
+
+    // The command takes it to the editor again, as it stands.
+    harness.keys("ctrl-v");
+    let (again, folder) = harness.in_vim().unwrap();
+    assert_eq!(away(&harness), Some(Away::InVim));
+    assert_eq!(
+        std::fs::read_to_string(&again).unwrap(),
+        "Friday instead?\n"
+    );
+
+    // And from the editor, the same command asks it to save and hand the
+    // text back: the other editor is Quill's own.
+    assert!(
+        harness
+            .state
+            .is_enabled(&harness.env, CommandId::ComposeVim)
+    );
+    let before = harness.host_requests.len();
+    harness.act(Action::Command(CommandId::ComposeVim));
+    assert_eq!(&harness.host_requests[before..], [HostRequest::ClosePane]);
+    assert!(status(&harness).contains("Asked Vim to save and hand the message back."));
+    assert_eq!(away(&harness), Some(Away::InVim));
+    vim_writes(&again, &folder, "Saturday, then.\n", None);
+    harness.vim_exits(0);
+    assert_eq!(away(&harness), None);
+    assert!(harness.screen().contains("Saturday, then."));
+}
+
+#[test]
+fn in_the_app_what_the_editors_keys_do_is_said_once_and_then_only_when_asked_for() {
+    let mut harness = in_the_app();
+    let (path, dir) = in_vim(&mut harness);
+    // The first message written in an editor: above it, what its keys do
+    // and which of Quill's still work.
+    let screen = harness.screen();
+    assert!(screen.contains(":QuillSend sends the message"), "{screen}");
+    assert!(screen.contains("goes to the fields above"), "{screen}");
+    let with_tips = harness.state.editor_spot(&harness.env).place.unwrap();
+    assert!(tips_remembered(&harness).is_empty());
+
+    // That message done with, it has been seen: remembered, and the next
+    // message has the editor from the rule down.
+    vim_writes(&path, &dir, "Friday instead?\n", Some("discard"));
+    harness.vim_exits(0);
+    assert_eq!(harness.state.context(), Context::List);
+    assert_eq!(tips_remembered(&harness), [false]);
+    in_vim(&mut harness);
+    let screen = harness.screen();
+    assert!(!screen.contains(":QuillSend"), "{screen}");
+    let without = harness.state.editor_spot(&harness.env).place.unwrap();
+    assert!(without.y < with_tips.y);
+    assert_eq!(without.y + without.height, with_tips.y + with_tips.height);
+
+    // Asked for, it is there again, and the editor is given what is left;
+    // asked again, it goes.
+    assert!(
+        harness
+            .state
+            .is_enabled(&harness.env, CommandId::ComposeTips)
+    );
+    harness.keys("cmd-/");
+    assert!(harness.screen().contains(":QuillSend sends the message"));
+    assert_eq!(
+        harness.state.editor_spot(&harness.env).place.unwrap(),
+        with_tips
+    );
+    harness.keys("cmd-/");
+    assert!(!harness.screen().contains(":QuillSend"));
+    assert_eq!(
+        harness.state.editor_spot(&harness.env).place.unwrap(),
+        without
+    );
+
+    // With Quill's own editor there is nothing to say and the command is
+    // off; and a config that says not to is obeyed from the start.
+    let mut own = in_the_app();
+    write_to_priya(&mut own);
+    assert!(!own.state.is_enabled(&own.env, CommandId::ComposeTips));
+    let mut told = in_the_app();
+    told.env.editor_tips = false;
+    in_vim(&mut told);
+    assert!(!told.screen().contains(":QuillSend"));
+}
+
+#[test]
+fn in_the_app_the_editor_gives_way_to_whatever_quill_draws_over_it() {
+    let mut harness = in_the_app();
+    harness.env.editor_tips = false;
+    in_vim(&mut harness);
+    let place = harness.state.editor_spot(&harness.env).place.unwrap();
+
+    // The people on offer under an address are drawn over the editor's
+    // top rows: it is told how many, and is no smaller for them.
+    harness.keys("cmd-up shift-tab");
+    assert_eq!(field(&harness), Field::Cc);
+    harness.type_text("e");
+    let people = harness
+        .state
+        .compose
+        .as_ref()
+        .unwrap()
+        .completion
+        .as_ref()
+        .map_or(0, |completion| completion.people.len());
+    assert!(people >= 3, "{people}");
+    let spot = harness.state.editor_spot(&harness.env);
+    assert_eq!(spot.place, Some(place));
+    // Under Cc come the subject and the rule, then the text.
+    assert_eq!(usize::from(spot.covered), people - 2);
+    assert!(!spot.keys);
+    harness.keys("escape");
+    assert_eq!(harness.state.editor_spot(&harness.env).covered, 0);
+
+    // The help is drawn over the pane: the editor is not on show, and
+    // has no keys, until the help has gone.
+    harness.keys("cmd-down");
+    assert!(harness.state.editor_spot(&harness.env).keys);
+    harness.act(Action::Command(CommandId::HelpToggle));
+    let hidden = harness.state.editor_spot(&harness.env);
+    assert_eq!((hidden.place, hidden.keys), (None, false));
+    harness.act(Action::Command(CommandId::HelpToggle));
+    let back = harness.state.editor_spot(&harness.env);
+    assert_eq!((back.place, back.keys), (Some(place), true));
+}
+
+#[test]
+fn in_the_app_a_click_on_a_field_or_on_the_text_takes_the_keys_there() {
+    let mut harness = in_the_app();
+    in_vim(&mut harness);
+    let place = harness.state.editor_spot(&harness.env).place.unwrap();
+    let areas =
+        quill_tui::layout::compute(&harness.state, harness.state.size, harness.env.reader_width);
+    let pane = areas.reader.unwrap();
+    let click = |harness: &mut Harness, column, row| {
+        harness.act(Action::Mouse(Mouse {
+            kind: MouseKind::Press,
+            column,
+            row,
+        }));
+    };
+    // The To field is the second row inside the pane.
+    click(&mut harness, pane.x + 12, pane.y + 2);
+    assert_eq!(field(&harness), Field::To);
+    assert!(!harness.state.editor_spot(&harness.env).keys);
+    // A click that reaches Quill over the text means the text.
+    click(&mut harness, place.x + 3, place.y + 1);
+    assert_eq!(field(&harness), Field::Body);
+    assert!(harness.state.editor_spot(&harness.env).keys);
+    // And the app's own word for that click is the command.
+    harness.keys("cmd-up");
+    harness.act(Action::Command(CommandId::ComposeBody));
+    assert_eq!(field(&harness), Field::Body);
+}
+
+#[test]
+fn in_quills_own_editor_the_two_keys_are_still_the_ends_of_the_text() {
+    for app in [false, true] {
+        let mut harness = wide();
+        harness.env.editor_pane = app;
+        write_to_priya(&mut harness);
+        harness.keys("enter");
+        harness.type_text("Second line.");
+        // By the key, and as the app's menu runs the command.
+        harness.keys("cmd-up");
+        assert_eq!(field(&harness), Field::Body, "{app}");
+        harness.type_text("First. ");
+        harness.act(Action::Command(CommandId::ComposeBody));
+        assert_eq!(field(&harness), Field::Body, "{app}");
+        harness.type_text(" Last.");
+        harness.act(Action::Command(CommandId::ComposeFields));
+        harness.type_text("Very ");
+        let body = harness.state.compose.as_ref().unwrap().body.text();
+        assert_eq!(
+            body, "Very First. Are you free on *Thursday*?\nSecond line. Last.",
+            "{app}"
+        );
+    }
+}
+
 /// The Vim on PATH, or `None` (with a note) when there is none.
 fn real_vim() -> Option<PathBuf> {
     let found = quill_tui::vim::find_program(
@@ -1162,15 +1464,27 @@ fn send_from_outside_reaches_a_real_vim_through_the_command_file() {
         eprintln!("skipped: there is no /usr/bin/script to give Vim a terminal");
         return;
     }
+    // As any Vim, and as the one that comes with macOS is inside Quill's
+    // app, where it runs restricted whatever it was started as: there it
+    // may not delete a file, and the plugin must not need to.
+    for restricted in [false, true] {
+        send_from_outside(&vim, script, restricted);
+    }
+}
+
+fn send_from_outside(vim: &Path, script: &Path, restricted: bool) {
     let mut harness = wide();
     let (path, dir) = in_vim(&mut harness);
 
     // Vim as a terminal gets it, with no vimrc, waiting for keys that
     // never come.
-    let started = quill_tui::vim::command(ExternalEditor::Vim, &vim, &path, &dir, 1);
+    let started = quill_tui::vim::command(ExternalEditor::Vim, vim, &path, &dir, 1);
     let mut command = Command::new(script);
-    command.args(["-q", "/dev/null"]).arg(&vim);
+    command.args(["-q", "/dev/null"]).arg(vim);
     command.args(["-u", "NONE", "-i", "NONE"]);
+    if restricted {
+        command.arg("-Z");
+    }
     command.args(started.get_args());
     for (name, value) in started.get_envs() {
         command.env(name, value.unwrap());
@@ -1195,7 +1509,7 @@ fn send_from_outside_reaches_a_real_vim_through_the_command_file() {
         if began.elapsed() > std::time::Duration::from_secs(20) {
             child.kill().unwrap();
             child.wait().unwrap();
-            panic!("Vim did not act on the command file");
+            panic!("Vim did not act on the command file (restricted: {restricted})");
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     };

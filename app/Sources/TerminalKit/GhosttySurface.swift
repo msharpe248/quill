@@ -83,11 +83,13 @@ final class GhosttySurface: TerminalSurface {
     /// libghostty has measured the view: what the rest of the app may know
     /// of it is the grid, in cells, and the width of a cell.
     private func measured(_ metrics: TerminalGridMetrics) {
-        guard metrics.columns > 0, metrics.rows > 0, metrics.cellWidthPixels > 0 else { return }
+        guard metrics.columns > 0, metrics.rows > 0, metrics.cellWidthPixels > 0, metrics.cellHeightPixels > 0
+        else { return }
         let scale = terminalView.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
         let measured = TerminalGrid(
             columns: Int(metrics.columns), rows: Int(metrics.rows),
-            cellWidthPixels: Int(metrics.cellWidthPixels), scale: scale)
+            cellWidthPixels: Int(metrics.cellWidthPixels), cellHeightPixels: Int(metrics.cellHeightPixels),
+            scale: scale)
         guard measured != grid else { return }
         grid = measured
         onGridChange?(measured)

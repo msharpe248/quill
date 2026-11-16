@@ -1,7 +1,7 @@
 //! `view(State)`: draws the state and changes nothing.
 
 mod attachments;
-mod compose;
+pub mod compose;
 mod folders;
 pub mod help;
 mod hooks;

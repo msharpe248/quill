@@ -89,7 +89,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
             let keys = keys.join("/");
             // The editor a message can be handed to, and the way back
             // from it, are called by that editor's name.
-            let label = if hint.commands == [CommandId::ComposeVim] {
+            let label = if !in_vim && hint.commands == [CommandId::ComposeVim] {
                 env.external.name()
             } else if in_vim && hint.commands == [CommandId::NavBack] {
                 env.external.close_hint()

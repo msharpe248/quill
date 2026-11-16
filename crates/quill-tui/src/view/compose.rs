@@ -9,7 +9,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Padding;
 
 use super::pane_block;
-use crate::compose::{Away, Field};
+use crate::compose::{Away, Compose, Field};
 use crate::editor::{SpanKind, ViewSpan};
 use crate::input::LineInput;
 use crate::layout;
@@ -45,7 +45,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         return;
     }
     let width = usize::from(inner.width);
-    if let Some(away) = compose.away {
+    // In an editor that has all of it, there is nothing of the message
+    // here. One that has the text alone leaves the fields where they are.
+    if let Some(away) = compose.away.filter(|_| !compose.embedded) {
         in_vim(frame, inner, away, env);
         return;
     }
@@ -168,9 +170,20 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         frame.render_widget(Line::styled("─".repeat(width), styles.dim()), rect);
     }
 
-    // The body, as the editor laid it out for exactly this space.
+    // The body, as the editor laid it out for exactly this space. With
+    // the text in an editor outside Quill, the space is that editor's:
+    // the host lays it over these cells, and what is drawn here is only
+    // seen while it is not there.
     let body = layout::compose_body(area, compose);
-    for (offset, line) in compose.body_view.lines.iter().enumerate() {
+    if let Some(away) = compose.away {
+        text_away(frame, area, state, env, away);
+    }
+    let lines: &[_] = if compose.away.is_some() {
+        &[]
+    } else {
+        &compose.body_view.lines
+    };
+    for (offset, line) in lines.iter().enumerate() {
         let Some(row) = u16::try_from(offset).ok().filter(|row| *row < body.height) else {
             break;
         };
@@ -185,6 +198,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         );
     }
     if typing
+        && compose.away.is_none()
         && compose.field == Field::Body
         && let Some((column, row)) = compose.body_view.cursor
     {
@@ -293,6 +307,140 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
             );
         }
     }
+}
+
+/// The fewest rows and columns an editor is run in. In less, the text's
+/// place says so and the editor is not on show.
+const EDITOR_LEAST: (u16, u16) = (20, 3);
+
+/// What is said above an editor that runs in the text's place: what its
+/// own keys do with the message, and the keys of Quill's that still work.
+/// Each a line, wrapped to `width`.
+pub fn tips(env: &Env, width: usize) -> Vec<String> {
+    let editor = env.external;
+    let key = |id, otherwise: &str| {
+        env.hint_key(id)
+            .map_or_else(|| otherwise.to_owned(), |key| key.to_string())
+    };
+    let its_own = if editor.is_vim() {
+        ":QuillSend sends the message, :QuillPostpone saves it as a draft and closes it, \
+         :QuillDiscard throws it away. :wq brings it into Quill's own editor."
+            .to_owned()
+    } else if editor == ExternalEditor::Mg {
+        "ctrl-x ctrl-s saves the message, and ctrl-x ctrl-c then brings it into Quill's own \
+         editor, to send."
+            .to_owned()
+    } else {
+        "ctrl-x saves the message and brings it into Quill's own editor, to send.".to_owned()
+    };
+    let quills = format!(
+        "{} goes to the fields above and {} comes back. {} is Quill's own editor. {} hides this.",
+        key(crate::command::CommandId::ComposeFields, "A click"),
+        key(crate::command::CommandId::ComposeBody, "a click"),
+        key(
+            crate::command::CommandId::ComposeVim,
+            "Write in Another Editor"
+        ),
+        key(crate::command::CommandId::ComposeTips, "The Help menu"),
+    );
+    [its_own, quills]
+        .iter()
+        .flat_map(|words| text::wrap(words, width.max(1)))
+        .collect()
+}
+
+/// The rows the tips take above the editor, with the rule under them:
+/// none when they are not shown or would leave the editor no room.
+fn tips_rows(body: Rect, env: &Env, tips_on: bool) -> u16 {
+    if !tips_on {
+        return 0;
+    }
+    let rows = u16::try_from(tips(env, usize::from(body.width)).len() + 1).unwrap_or(u16::MAX);
+    if body.height >= rows.saturating_add(EDITOR_LEAST.1 + 2) {
+        rows
+    } else {
+        0
+    }
+}
+
+/// The cells an editor that has the text is given, in the message's pane
+/// at `area`: the text's place, below the tips. `None` when there is not
+/// room for an editor in it.
+pub fn editor_rect(area: Rect, compose: &Compose, env: &Env, tips_on: bool) -> Option<Rect> {
+    let body = layout::compose_body(area, compose);
+    let tips = tips_rows(body, env, tips_on);
+    let rect = Rect::new(body.x, body.y + tips, body.width, body.height - tips);
+    (rect.width >= EDITOR_LEAST.0 && rect.height >= EDITOR_LEAST.1).then_some(rect)
+}
+
+/// The row of the pane a header field is drawn on, counting from the
+/// first inside the border.
+fn field_row(compose: &Compose, field: Field) -> Option<u16> {
+    let bcc = compose.field == Field::Bcc || !compose.bcc.is_empty();
+    match field {
+        Field::From => Some(0),
+        Field::To => Some(1),
+        Field::Cc => Some(2),
+        Field::Bcc => bcc.then_some(3),
+        Field::Subject => Some(3 + u16::from(bcc)),
+        Field::Body => None,
+    }
+}
+
+/// How many of the rows of `place`, from its top, the people on offer
+/// under an address being typed are drawn over.
+pub fn rows_over(area: Rect, compose: &Compose, place: Rect) -> u16 {
+    let (Some(completion), Some(row)) = (&compose.completion, field_row(compose, compose.field))
+    else {
+        return 0;
+    };
+    let people = u16::try_from(completion.people.len()).unwrap_or(u16::MAX);
+    // Inside the border, under the field.
+    let end = area.y.saturating_add(1 + row + 1).saturating_add(people);
+    end.saturating_sub(place.y).min(place.height)
+}
+
+/// What is drawn in the text's place while an editor outside Quill has
+/// the text: the tips, when they are on, and under them a line for while
+/// the editor is not there, on its way out or back or with no room to be
+/// in. Where the editor goes nothing is drawn: a part of it that is
+/// covered for a moment shows what is under it.
+fn text_away(frame: &mut Frame, area: Rect, state: &State, env: &Env, away: Away) {
+    let Some(compose) = &state.compose else {
+        return;
+    };
+    let styles = &env.styles;
+    let body = layout::compose_body(area, compose);
+    let name = env.external.name();
+    let width = usize::from(body.width);
+    let rows = tips_rows(body, env, state.editor_tips);
+    if rows > 0 {
+        for (offset, words) in tips(env, width).iter().enumerate() {
+            frame.render_widget(
+                Line::styled(text::truncate(words, width), styles.dim()),
+                Rect::new(body.x, body.y + offset as u16, body.width, 1),
+            );
+        }
+        frame.render_widget(
+            Line::styled("─".repeat(width), styles.dim()),
+            Rect::new(body.x, body.y + rows - 1, body.width, 1),
+        );
+    }
+    if body.height <= rows {
+        return;
+    }
+    let said = match away {
+        Away::Leaving => format!("Handing the text to {name}…"),
+        Away::Returning => format!("Reading back what was written in {name}…"),
+        Away::InVim if editor_rect(area, compose, env, state.editor_tips).is_none() => {
+            format!("There is no room here for {name}. Make the window larger, or zoom this pane.")
+        }
+        Away::InVim => return,
+    };
+    frame.render_widget(
+        Line::styled(text::truncate(&said, width), styles.dim()),
+        Rect::new(body.x, body.y + rows, body.width, 1),
+    );
 }
 
 /// What the pane says while the message is in Vim: where it is, and how

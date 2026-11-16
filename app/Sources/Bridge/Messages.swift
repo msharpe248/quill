@@ -61,6 +61,9 @@ public enum CoreToShell: Equatable, Sendable {
     /// Where the reading pane stands: how many columns the terminal keeps
     /// beside it.
     case readingPlace(ReadingPlace)
+    /// Where the editor of `paneEditor` goes on the terminal's screen, and
+    /// whether it has the keys.
+    case editorPlace(EditorPlace)
     /// What the settings window shows: every pane with its settings as they
     /// stand. What the user does there goes back as `settingsUsed`.
     case settingsShow(SettingsShow)
@@ -438,6 +441,60 @@ public struct ReadingPlace: Equatable, Sendable, Codable {
     }
 
     static let allowedKeys: Set<String> = ["columns"]
+}
+
+/// Where the editor that `paneEditor` started goes, said in the terminal's
+/// own cells, and whether it has the keys.
+///
+/// The editor runs in a terminal of its own, laid over the core's exactly
+/// over these cells: where the text of the message being written would be
+/// drawn. With no cells it is not on show, and cannot have the keys. Why
+/// it is these cells, or none, is the core's business.
+public struct EditorPlace: Equatable, Sendable {
+    /// A rectangle of the terminal's screen, counted in cells from its top
+    /// left, and how many of its rows from the top the core has drawn
+    /// something over: those rows are not shown.
+    public struct Cells: Equatable, Sendable {
+        public let column: Int
+        public let row: Int
+        public let columns: Int
+        public let rows: Int
+        public let covered: Int
+
+        /// `nil` unless each is a number a terminal's screen can have, and
+        /// there is at least one column and one row.
+        public init?(column: Int, row: Int, columns: Int, rows: Int, covered: Int) {
+            let cell = 0...65535
+            guard cell.contains(column), cell.contains(row), cell.contains(covered),
+                ReadingPlace.range.contains(columns), ReadingPlace.range.contains(rows)
+            else { return nil }
+            self.column = column
+            self.row = row
+            self.columns = columns
+            self.rows = rows
+            self.covered = covered
+        }
+
+        static let allowedKeys: Set<String> = ["column", "row", "columns", "rows", "covered"]
+    }
+
+    public let cells: Cells?
+    /// Whether what is typed goes to the editor.
+    public let keys: Bool
+
+    /// The editor is not on show, and the terminal has the keys.
+    public static let hidden = EditorPlace(cells: nil, keys: false)
+
+    public init(cells: Cells, keys: Bool) {
+        self.init(cells: Optional(cells), keys: keys)
+    }
+
+    private init(cells: Cells?, keys: Bool) {
+        self.cells = cells
+        self.keys = keys
+    }
+
+    static let allowedKeys: Set<String> = ["place", "keys"]
 }
 
 /// How many columns the terminal would have if it had the whole window:
