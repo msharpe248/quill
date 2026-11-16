@@ -13,19 +13,30 @@ public struct TerminalCommand: Sendable, Equatable {
     /// App Sandbox a program may not change its terminal's modes. Only the
     /// side that owns the PTY may, and that is this module.
     public var rawTerminal: Bool
+    /// The program is one of the user's own scripts, in the app's scripts
+    /// folder, and macOS is asked to run it there, outside the App Sandbox.
+    ///
+    /// Nothing but a file in that folder can be run this way, and only the
+    /// user can put one there. Its environment and the folder it starts in
+    /// are macOS's to decide: `environment` and `workingDirectory` are not
+    /// used. It is outside the sandbox, so it sets its terminal's modes
+    /// itself and `rawTerminal` is not used either.
+    public var userScript: Bool
 
     public init(
         executable: URL,
         arguments: [String] = [],
         environment: [String: String] = [:],
         workingDirectory: URL? = nil,
-        rawTerminal: Bool = false
+        rawTerminal: Bool = false,
+        userScript: Bool = false
     ) {
         self.executable = executable
         self.arguments = arguments
         self.environment = environment
         self.workingDirectory = workingDirectory
         self.rawTerminal = rawTerminal
+        self.userScript = userScript
     }
 }
 

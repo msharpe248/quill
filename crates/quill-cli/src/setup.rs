@@ -10,6 +10,7 @@ use std::path::Path;
 use jiff::tz::TimeZone;
 use quill_core::config::Config;
 use quill_core::config::{ComposeEditor, ComposeFormat, ComposeVim, ReplyPosition};
+use quill_host::bridge::EditorVim;
 use quill_tui::command::Registry;
 use quill_tui::keymap::Keymap;
 use quill_tui::state::{ComposeSettings, Env, Identity, Notice};
@@ -112,7 +113,11 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
         editor_pane: false,
         // Asked for in the config, and meant only where there is a pane:
         // a terminal runs the user's own Vim whatever this says.
-        system_vim: config.compose.vim == ComposeVim::System,
+        app_vim: match config.compose.vim {
+            ComposeVim::Bundled => EditorVim::Bundled,
+            ComposeVim::System => EditorVim::System,
+            ComposeVim::Script => EditorVim::Script,
+        },
         vim_program: None,
         hooks,
         // And whether programs may be run at all: not in Quill's own app.
@@ -396,15 +401,19 @@ mod tests {
     #[test]
     fn the_config_says_which_vim_the_app_runs() {
         let dir = TempDir::new().unwrap();
-        assert!(!load_from(&dir).env.system_vim);
+        assert_eq!(load_from(&dir).env.app_vim, EditorVim::Bundled);
         write(&dir, "config.toml", "[compose]\nvim = \"system\"\n");
         let loaded = load_from(&dir);
         assert!(loaded.notices.is_empty(), "{:?}", loaded.notices);
-        assert!(loaded.env.system_vim);
+        assert_eq!(loaded.env.app_vim, EditorVim::System);
         // Asking for Vim and saying which are separate things.
         assert!(!loaded.env.compose.vim);
+        write(&dir, "config.toml", "[compose]\nvim = \"script\"\n");
+        let loaded = load_from(&dir);
+        assert!(loaded.notices.is_empty(), "{:?}", loaded.notices);
+        assert_eq!(loaded.env.app_vim, EditorVim::Script);
         write(&dir, "config.toml", "[compose]\nvim = \"bundled\"\n");
-        assert!(!load_from(&dir).env.system_vim);
+        assert_eq!(load_from(&dir).env.app_vim, EditorVim::Bundled);
         // It is one of two words, never a program: a path is a mistake in
         // the config, said as one, and not a Vim to run.
         write(
@@ -413,7 +422,7 @@ mod tests {
             "[compose]\nvim = \"/opt/homebrew/bin/nvim\"\n",
         );
         let loaded = load_from(&dir);
-        assert!(!loaded.env.system_vim);
+        assert_eq!(loaded.env.app_vim, EditorVim::Bundled);
         assert!(!loaded.notices.is_empty());
     }
 

@@ -523,6 +523,9 @@ public enum EditorVim: String, Equatable, Sendable, Codable {
     /// The one that comes with macOS, which the user has asked for in
     /// their config.
     case system
+    /// The user's own, by way of the script they keep in the app's scripts
+    /// folder, which they have asked for in their config.
+    case script
 }
 
 /// A draft file for Vim to edit, and the draft's own folder, where Vim and

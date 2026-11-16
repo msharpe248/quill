@@ -680,15 +680,17 @@ pub struct PaneEditor {
     pub vim: EditorVim,
 }
 
-/// Which Vim the shell runs: the one built into the app, or the one that
-/// comes with macOS. There is no third: the shell is never given a path
-/// to a program.
+/// Which Vim the shell runs: the one built into the app, the one that
+/// comes with macOS, or the user's own by way of the script they keep in
+/// the app's scripts folder. It is one of these words: the shell is never
+/// given a path to a program.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EditorVim {
     #[default]
     Bundled,
     System,
+    Script,
 }
 
 /// How the editor ended. `ran` is false when it could not be started.

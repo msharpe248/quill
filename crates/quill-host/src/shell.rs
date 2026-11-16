@@ -53,7 +53,7 @@ impl Host for ShellHost {
         let _ = self.events.send(event);
     }
 
-    fn edit_draft(&self, path: &Path, dir: &Path, title: &str, system_vim: bool) -> bool {
+    fn edit_draft(&self, path: &Path, dir: &Path, title: &str, vim: bridge::EditorVim) -> bool {
         match (
             bridge::AbsolutePath::new(path),
             bridge::AbsolutePath::new(dir),
@@ -63,11 +63,7 @@ impl Host for ShellHost {
                     path,
                     dir,
                     title: title.to_owned(),
-                    vim: if system_vim {
-                        bridge::EditorVim::System
-                    } else {
-                        bridge::EditorVim::Bundled
-                    },
+                    vim,
                 }));
                 true
             }

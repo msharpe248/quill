@@ -368,9 +368,9 @@ impl Io<'_> {
                     path,
                     dir,
                     title,
-                    system_vim,
+                    vim,
                 } if self.host.is_shell() => {
-                    if !self.host.edit_draft(&path, &dir, &title, system_vim) {
+                    if !self.host.edit_draft(&path, &dir, &title, vim) {
                         let _ = self.injected.send(Action::EditorExited {
                             ran: false,
                             status: 0,
@@ -894,7 +894,7 @@ mod tests {
             templates: Vec::new(),
             spell_check: false,
             editor_pane: false,
-            system_vim: false,
+            app_vim: quill_host::bridge::EditorVim::Bundled,
             vim_program: None,
             hooks: Vec::new(),
             hooks_enabled: false,

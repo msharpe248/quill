@@ -43,7 +43,10 @@ import Notifications
 ///
 /// The editor pane is the real one when the build has a Vim in it, and it
 /// reaches nothing outside the window. In a build without one, the dump
-/// says the editor is not available.
+/// says the editor is not available. One case does reach outside: a config
+/// that says `vim = "script"` has the user's own `editor-command.sh` run,
+/// outside the sandbox, as it would be for them. A scripted run only does
+/// that when the config it is pointed at asks for it.
 ///
 /// No notification is ever shown to a script, and the user is never asked
 /// whether Quill may show them: what the core asked for is written to the

@@ -27,6 +27,12 @@ enum MainMenu {
         // The vimrc for writing mail in Vim is copied in by the shell: the
         // core cannot be shown a file outside the sandbox, and has no need
         // of this one.
+        // Where the user's own script for their own Vim goes: a folder the
+        // app can read and only the user can write to.
+        let scriptFolder = app.addItem(
+            withTitle: "Show Editor Script Folder",
+            action: #selector(MainWindowController.showEditorScriptFolder(_:)), keyEquivalent: "")
+        scriptFolder.target = panes
         let importVimrc = app.addItem(
             withTitle: "Import vimrc\u{2026}", action: #selector(MainWindowController.importVimrc(_:)),
             keyEquivalent: "")

@@ -1,0 +1,53 @@
+#!/bin/sh
+# on-terminal PROGRAM [ARGUMENT...]
+#
+# Runs a program with the terminal it was started on as its own.
+#
+# Quill hands this file's path to editor-command.sh, the script of yours that
+# macOS runs outside Quill's sandbox when a message is to be written in your
+# own Vim. A script run that way has Quill's pane as its input and output
+# and nothing more: no TERM, and no controlling terminal. Without the
+# second, Vim is never told that the pane has changed size, nothing it runs
+# can open /dev/tty, and it is not hung up on when the pane closes. This
+# puts both right and then becomes the program.
+#
+# It is a script and not a program of Quill's because everything compiled
+# inside the app is made to run in the sandbox, and this must not be.
+
+# What Quill's panes are. Keep it the same as CoreLocator.term in the shell.
+TERM=xterm-256color
+export TERM
+
+[ "$#" -gt 0 ] || {
+    echo "usage: on-terminal PROGRAM [ARGUMENT...]" >&2
+    exit 64
+}
+
+# A session of its own with the terminal as its controlling one takes two
+# calls a shell cannot make. Perl comes with macOS; without it the program
+# runs all the same, as it would have without this file.
+if [ -x /usr/bin/perl ]; then
+    exec /usr/bin/perl -e '
+        use strict;
+        use POSIX ();
+        my $child = fork();
+        if (!defined $child) {
+            exec { $ARGV[0] } @ARGV;
+            exit 127;
+        }
+        if ($child) {
+            # The half that waits, so that whoever started this hears how
+            # the program ended.
+            waitpid($child, 0);
+            exit(($? & 127) ? 128 + ($? & 127) : $? >> 8);
+        }
+        # A process that leads its group cannot start a session; a child
+        # of one can. 0x20007461 is TIOCSCTTY.
+        POSIX::setsid();
+        ioctl(STDIN, 0x20007461, 0);
+        exec { $ARGV[0] } @ARGV;
+        print STDERR "on-terminal: cannot run $ARGV[0]: $!\n";
+        exit 127;
+    ' "$@"
+fi
+exec "$@"

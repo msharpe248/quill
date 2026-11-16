@@ -169,11 +169,11 @@ pub trait Host: Send + Sync {
     /// Runs the host's own Vim on a draft file, in a pane of its own, if
     /// this host has one. `dir` is the draft's folder, where the editor
     /// and the core leave each other notes. Returns whether the host took
-    /// it on: when not, the caller runs an editor itself. `system_vim`
-    /// asks for the Vim that comes with macOS instead of the host's own.
+    /// it on: when not, the caller runs an editor itself. `vim`
+    /// says which Vim, of those the host can run.
     /// The answer is [`HostEvent::EditorExited`].
-    fn edit_draft(&self, path: &Path, dir: &Path, title: &str, system_vim: bool) -> bool {
-        let _ = (path, dir, title, system_vim);
+    fn edit_draft(&self, path: &Path, dir: &Path, title: &str, vim: bridge::EditorVim) -> bool {
+        let _ = (path, dir, title, vim);
         false
     }
 

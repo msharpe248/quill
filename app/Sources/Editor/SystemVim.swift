@@ -78,12 +78,20 @@ public enum VimToRun: Equatable, Sendable {
     case shipped(ShippedVim)
     /// The one that comes with macOS, which finds its own runtime files.
     case system(SystemVim)
+    /// Whichever one the user's own script starts, outside the sandbox.
+    case script(UserEditorScript)
 
     /// The Vim the core asked for, if this app and this Mac have it.
-    public init(_ asked: EditorVim, inBundle bundle: URL) throws {
+    /// `scriptsFolder` is where the user's own script would be.
+    public init(_ asked: EditorVim, inBundle bundle: URL, scriptsFolder: URL?) throws {
         switch asked {
         case .bundled: self = .shipped(try ShippedVim(inBundle: bundle))
         case .system: self = .system(try SystemVim(inBundle: bundle))
+        case .script:
+            guard let scriptsFolder else {
+                throw UserEditorScript.Problem.missing(UserEditorScript.name)
+            }
+            self = .script(try UserEditorScript(inScriptsFolder: scriptsFolder, bundle: bundle))
         }
     }
 }

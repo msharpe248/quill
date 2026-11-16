@@ -147,9 +147,14 @@ pub enum ComposeVim {
     #[default]
     Bundled,
     /// The one that comes with macOS, `/usr/bin/vim`, run inside the
-    /// app's sandbox. The only program outside the app that Quill's app
-    /// ever starts, and only when the user asks for it here.
+    /// app's sandbox. A program outside the app, started only when the
+    /// user asks for it here.
     System,
+    /// The user's own Vim, with all of their own setup, by way of a
+    /// script they have put in the app's scripts folder
+    /// (`editor-command.sh`). macOS runs that script outside the app's
+    /// sandbox; it is the user's and not Quill's.
+    Script,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
@@ -513,7 +518,8 @@ font_size = 13
 
 [compose]
 editor = "builtin"        # or "vim"
-vim = "bundled"           # in the app: or "system", the Vim that comes with macOS
+vim = "bundled"           # in the app: or "system" (the Vim that comes with macOS),
+                          # or "script" (your own, through editor-command.sh)
 format = "markdown"       # or "plain"
 reply_position = "above"  # or "below"
 spell_check = true

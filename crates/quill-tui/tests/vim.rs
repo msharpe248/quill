@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use common::Harness;
+use quill_host::bridge::EditorVim;
 use quill_store::{DraftState, Outgoing};
 use quill_tui::command::{CommandId, Context};
 use quill_tui::compose::Away;
@@ -105,7 +106,7 @@ fn the_message_goes_out_as_a_draft_file_and_vim_is_asked_to_run_on_it() {
             path: path.clone(),
             dir: dir.clone(),
             title: "Lunch".to_owned(),
-            system_vim: false,
+            vim: EditorVim::Bundled,
         }]
     );
     assert_eq!(path, dir.join("message.quill"));
@@ -163,10 +164,10 @@ fn quills_own_app_has_the_plugin_already() {
 
 #[test]
 fn quills_own_app_is_asked_for_the_vim_the_config_names() {
-    for system_vim in [false, true] {
+    for vim in [EditorVim::Bundled, EditorVim::System, EditorVim::Script] {
         let mut harness = wide();
         harness.env.editor_pane = true;
-        harness.env.system_vim = system_vim;
+        harness.env.app_vim = vim;
         let (path, dir) = in_vim(&mut harness);
         let asked: Vec<&HostRequest> = harness
             .host_requests
@@ -179,10 +180,15 @@ fn quills_own_app_is_asked_for_the_vim_the_config_names() {
                 path,
                 dir: dir.clone(),
                 title: "Lunch".to_owned(),
-                system_vim,
+                vim,
             }]
         );
-        // And is told what to do about it when the app has none to run.
+        // A Vim the app starts itself finds the plugin in the app. The
+        // user's own, run by their script, is given a copy beside the
+        // draft, as in a terminal.
+        assert_eq!(dir.join("quill.vim").exists(), vim == EditorVim::Script);
+        // And the user is told what to do about it when there is none to
+        // run.
         harness.act(Action::EditorExited {
             ran: false,
             status: 0,
@@ -190,14 +196,19 @@ fn quills_own_app_is_asked_for_the_vim_the_config_names() {
         assert_eq!(away(&harness), None);
         assert!(!dir.exists());
         let screen = harness.screen();
-        if system_vim {
-            assert!(
+        match vim {
+            EditorVim::Bundled => {
+                assert!(screen.contains("has no Vim inside it"), "{screen}");
+                assert!(screen.contains("vim = \"system\""), "{screen}");
+            }
+            EditorVim::System => assert!(
                 screen.contains("The Vim that comes with macOS could not be started"),
                 "{screen}"
-            );
-        } else {
-            assert!(screen.contains("has no Vim inside it"), "{screen}");
-            assert!(screen.contains("vim = \"system\""), "{screen}");
+            ),
+            EditorVim::Script => {
+                assert!(screen.contains("editor-command.sh"), "{screen}");
+                assert!(screen.contains("Show Editor Script Folder"), "{screen}");
+            }
         }
     }
 }

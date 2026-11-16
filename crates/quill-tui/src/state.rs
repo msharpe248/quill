@@ -9,6 +9,7 @@ use std::path::PathBuf;
 
 use jiff::tz::TimeZone;
 use quill_core::types::{FolderRole, LocalAccountId, LocalFolderId, LocalMessageId};
+use quill_host::bridge::EditorVim;
 use quill_mime::html::Line;
 use quill_mime::{BodyFormat, ReplyPosition};
 use quill_store::{AccountRow, DraftContent, DraftId, FolderRow, Mailbox, MessageRow};
@@ -98,9 +99,10 @@ pub struct Env {
     /// Quill's app does. In a terminal Quill runs the user's own Vim
     /// there, and gives it a copy of the plugin.
     pub editor_pane: bool,
-    /// Whether that pane is to run the Vim that comes with macOS rather
-    /// than one built into the app (`vim = "system"`).
-    pub system_vim: bool,
+    /// Which Vim that pane is to run: the one built into the app, the one
+    /// that comes with macOS, or the user's own by their script (`vim`
+    /// under `[compose]`).
+    pub app_vim: EditorVim,
     /// The program a terminal runs as Vim, when it is not to be `vim`.
     pub vim_program: Option<std::ffi::OsString>,
     /// The user's programs that a message can be given to, from
@@ -313,9 +315,8 @@ pub enum HostRequest {
         path: PathBuf,
         dir: PathBuf,
         title: String,
-        /// In Quill's app: the Vim that comes with macOS, not the app's
-        /// own.
-        system_vim: bool,
+        /// In Quill's app: which Vim.
+        vim: EditorVim,
     },
     /// Close the host's pane. With Vim in it, that is asking Vim to save
     /// and go.
@@ -2538,9 +2539,10 @@ impl State {
         out.data.push(DataRequest::EditOut {
             account: compose.account,
             content: Box::new(content.clone()),
-            // Quill's own Vim has the plugin beside it; the user's is
-            // given a copy.
-            plugin: !env.editor_pane,
+            // A Vim the app starts itself is told where the plugin is in
+            // the app; the user's own, in a terminal or by their script,
+            // is given a copy beside the draft.
+            plugin: !env.editor_pane || env.app_vim == EditorVim::Script,
         });
         self.vim = Some(VimEdit {
             handed: content,
@@ -2567,7 +2569,7 @@ impl State {
                     path,
                     dir,
                     title,
-                    system_vim: env.system_vim,
+                    vim: env.app_vim,
                 });
             }
             // The message it was for has gone.
@@ -2599,7 +2601,11 @@ impl State {
             // Said in the message's own pane, where the next key clears
             // it: the message is still there to write.
             compose.error = Some(
-                if env.editor_pane && env.system_vim {
+                if env.editor_pane && env.app_vim == EditorVim::Script {
+                    "Quill found no editor-command.sh it can run, so the message stays \
+                     here. \"Show Editor Script Folder\" in the Quill menu shows where \
+                     it goes."
+                } else if env.editor_pane && env.app_vim == EditorVim::System {
                     "The Vim that comes with macOS could not be started, so the message \
                      stays here."
                 } else if env.editor_pane {

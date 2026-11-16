@@ -91,18 +91,20 @@ final class GhosttySurface: TerminalSurface {
         pendingCommand = nil
         let session = session
         let startedAt = DispatchTime.now()
+        let passOutput: @Sendable (Data) -> Void = { data in session.receive(data) }
+        let passExit: @Sendable (TerminalExit) -> Void = { [weak self] exit in
+            let elapsed = DispatchTime.now().uptimeNanoseconds - startedAt.uptimeNanoseconds
+            let code: UInt32 = if case let .exited(code) = exit { UInt32(code) } else { 1 }
+            session.finish(exitCode: code, runtimeMilliseconds: elapsed / 1_000_000)
+            Task { @MainActor in self?.onExit?(exit) }
+        }
         do {
-            link.process = try PTYProcess(
-                command: command,
-                size: viewport,
-                onOutput: { data in session.receive(data) },
-                onExit: { [weak self] exit in
-                    let elapsed = DispatchTime.now().uptimeNanoseconds - startedAt.uptimeNanoseconds
-                    let code: UInt32 = if case let .exited(code) = exit { UInt32(code) } else { 1 }
-                    session.finish(exitCode: code, runtimeMilliseconds: elapsed / 1_000_000)
-                    Task { @MainActor in self?.onExit?(exit) }
-                }
-            )
+            if command.userScript {
+                link.process = try PTYUserScript(
+                    command: command, size: viewport, onOutput: passOutput, onExit: passExit)
+            } else {
+                link.process = try PTYProcess(command: command, size: viewport, onOutput: passOutput, onExit: passExit)
+            }
             // A resize may have landed between reading the viewport and now.
             if let latest = link.viewport, latest != viewport {
                 link.process?.resize(latest)
@@ -202,11 +204,11 @@ private final class DropAwareTerminalView: TerminalView {
 /// the surface.
 private final class Link: @unchecked Sendable {
     private let lock = NSLock()
-    private var storedProcess: PTYProcess?
+    private var storedProcess: (any TerminalProgram)?
     private var storedViewport: PTYProcess.Size?
     private var firstViewportHandler: (@Sendable () -> Void)?
 
-    var process: PTYProcess? {
+    var process: (any TerminalProgram)? {
         get { lock.withLock { storedProcess } }
         set { lock.withLock { storedProcess = newValue } }
     }

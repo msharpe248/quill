@@ -764,7 +764,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             do {
                 // In the app's own bundle, or the one place macOS keeps
                 // its own, and nowhere else.
-                vim = try VimToRun(request.vim, inBundle: Bundle.main.bundleURL)
+                vim = try VimToRun(
+                    request.vim, inBundle: Bundle.main.bundleURL, scriptsFolder: editorScriptFolder)
             } catch {
                 NSLog("Quill: there is no Vim to run: %@", String(describing: error))
             }
@@ -819,7 +820,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 arguments: launch.arguments,
                 environment: launch.environment,
                 workingDirectory: launch.workingDirectory,
-                rawTerminal: true
+                // The user's own script is outside the sandbox, and the Vim
+                // it starts sets its terminal's modes as in any terminal.
+                rawTerminal: !launch.userScript,
+                userScript: launch.userScript
             ))
     }
 
@@ -901,6 +905,23 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     @objc func revealConfig(_: Any?) {
         makeConfigFolder()
         revealer(configFolder)
+    }
+
+    // MARK: - The user's editor script
+
+    /// The folder macOS runs the user's own scripts from, for this app:
+    /// `~/Library/Application Scripts/<the app's id>/`. The app can read it
+    /// and cannot write to it. `nil` if macOS will not say where it is.
+    var editorScriptFolder: URL? {
+        try? FileManager.default.url(
+            for: .applicationScriptsDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+    }
+
+    /// Shows where `editor-command.sh` goes. Putting it there is the
+    /// user's to do: the sandbox keeps the app from writing to the folder.
+    @objc func showEditorScriptFolder(_: Any?) {
+        guard let folder = editorScriptFolder else { return }
+        revealer(folder)
     }
 
     // MARK: - The user's vimrc

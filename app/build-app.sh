@@ -44,6 +44,11 @@ find "$products" -maxdepth 1 -name '*.bundle' -exec cp -R {} "$out/Contents/Reso
 # app/build-vim.sh has left one in target/vim.
 mkdir -p "$out/Contents/Resources/vim"
 cp "$root/app/Resources/vim/quill.vim" "$out/Contents/Resources/vim/quill.vim"
+# For a user who writes in their own Vim through a script of their own: the
+# helper that script is handed, and a script to start from.
+cp "$root/app/Resources/vim/on-terminal" "$out/Contents/Resources/vim/on-terminal"
+cp "$root/app/Resources/vim/editor-command.sh" "$out/Contents/Resources/vim/editor-command.sh"
+chmod 755 "$out/Contents/Resources/vim/on-terminal" "$out/Contents/Resources/vim/editor-command.sh"
 vim="$root/target/vim"
 if [ -x "$vim/vim" ] && [ -d "$vim/runtime" ]; then
     cp "$vim/vim" "$out/Contents/Helpers/vim"

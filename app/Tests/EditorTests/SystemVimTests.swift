@@ -30,7 +30,7 @@ struct SystemVimTests {
         #expect(vim.plugin.path == bundle.path + "/Contents/Resources/vim/quill.vim")
         // The bundle has no Vim of its own, and that is still so.
         #expect(throws: ShippedVim.Problem.missing("Contents/Helpers/vim")) { try ShippedVim(inBundle: bundle) }
-        #expect(throws: ShippedVim.Problem.self) { try VimToRun(.bundled, inBundle: bundle) }
+        #expect(throws: ShippedVim.Problem.self) { try VimToRun(.bundled, inBundle: bundle, scriptsFolder: nil) }
     }
 
     @Test func nothingThereAFolderOrAFileThatMayNotBeRunIsRefused() throws {
