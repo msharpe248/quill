@@ -322,6 +322,19 @@ impl Io<'_> {
                     title,
                     remote,
                 } => self.host.web(&path, &title, remote),
+                // Only ever asked for where the host has the pane.
+                HostRequest::Reading {
+                    path,
+                    title,
+                    remote,
+                    header,
+                } => self.host.reading_show(&path, &title, remote, header),
+                HostRequest::ScrollReading { down } => self.host.reading_scroll(if down {
+                    bridge::ScrollBy::PageDown
+                } else {
+                    bridge::ScrollBy::PageUp
+                }),
+                HostRequest::CloseReading => self.host.reading_close(),
                 HostRequest::Notify {
                     id,
                     title,
@@ -483,6 +496,12 @@ impl Io<'_> {
                 .filter_map(|id| env.registry.get(*id))
                 .map(|spec| spec.name.to_owned())
                 .collect(),
+            checked: current
+                .checked
+                .iter()
+                .filter_map(|id| env.registry.get(*id))
+                .map(|spec| spec.name.to_owned())
+                .collect(),
             unread: current.unread,
             title: current.title.clone(),
         });
@@ -631,6 +650,8 @@ async fn event_loop(
 ) -> io::Result<()> {
     let size = step("cannot read the terminal size", terminal.size())?;
     let mut state = State::new((size.width, size.height), now());
+    // Before the first frame: what the host has decides what is drawn.
+    state.update(env, Action::Resize(size.width, size.height));
     for notice in notices {
         state.update(env, Action::Notify(notice));
     }
@@ -648,6 +669,10 @@ async fn event_loop(
     // When a key last arrived. Spelling is checked once the keys have
     // been quiet for a moment, never as each one is typed.
     let mut last_typed = tokio::time::Instant::now();
+    // The move of the list's cursor that the web reading pane is waiting
+    // out, and when it was made. A page is asked for once the cursor has
+    // rested, never for each message passed on the way.
+    let mut resting: Option<(u64, tokio::time::Instant)> = None;
     loop {
         // Redraw only on change, and never over Vim.
         if state.dirty && away.is_none() {
@@ -670,6 +695,11 @@ async fn event_loop(
         let spelling_due = state
             .spell_check_due(env)
             .then(|| last_typed + TYPING_PAUSE);
+        resting = state.settle_due().map(|moves| match resting {
+            Some((timed, since)) if timed == moves => (moves, since),
+            _ => (moves, tokio::time::Instant::now()),
+        });
+        let settle_due = resting.map(|(_, since)| since + SETTLE_PAUSE);
         let action = tokio::select! {
             event = next_input(&mut input) => match event {
                 Some(Ok(event)) => translate(event),
@@ -731,6 +761,7 @@ async fn event_loop(
             Some(action) = inbound.injected.recv() => Some(action),
             _ = clock.tick() => Some(Action::ClockTick(now())),
             () = quiet_until(spelling_due) => Some(Action::TypingPaused),
+            () = quiet_until(settle_due) => Some(Action::SelectionSettled),
         };
         if matches!(action, Some(Action::Key(_) | Action::Paste(_))) {
             last_typed = tokio::time::Instant::now();
@@ -850,6 +881,12 @@ fn retake(mouse: bool) -> io::Result<DefaultTerminal> {
 /// checked.
 const TYPING_PAUSE: Duration = Duration::from_millis(400);
 
+/// How long the list's cursor rests on a message before the web reading
+/// pane shows it: longer than the gap between the repeats of a held key,
+/// so that holding `j` renders nothing on the way, and short enough that a
+/// single press still feels answered at once.
+const SETTLE_PAUSE: Duration = Duration::from_millis(150);
+
 /// Waits until `at`, or for ever when there is nothing to wait for.
 async fn quiet_until(at: Option<tokio::time::Instant>) {
     match at {
@@ -932,6 +969,8 @@ mod tests {
             vim_program: None,
             hooks: Vec::new(),
             hooks_enabled: false,
+            web_pane: false,
+            web_reading: false,
         }
     }
 

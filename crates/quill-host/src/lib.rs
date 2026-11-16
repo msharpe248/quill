@@ -201,6 +201,29 @@ pub trait Host: Send + Sync {
         self.send(CoreToShell::FormClose(NoParams {}));
     }
 
+    /// Shows a sanitized HTML file in the reading pane, the web view that
+    /// stands in the reader's place while web reading is on, with `header`
+    /// as lines of plain text above it. Only a shell has one: a caller
+    /// asks this of a host that said it was one. Nothing is shown for a
+    /// path that is not absolute or a header the pane has no room for.
+    fn reading_show(&self, path: &Path, title: &str, remote: bool, header: Vec<String>) {
+        if let Some(show) = AbsolutePath::new(path)
+            .and_then(|path| bridge::ReadingShow::new(path, title, remote, reading_header(header)))
+        {
+            self.send(CoreToShell::ReadingShow(show));
+        }
+    }
+
+    /// Scrolls what the reading pane shows.
+    fn reading_scroll(&self, by: bridge::ScrollBy) {
+        self.send(CoreToShell::ReadingScroll(bridge::ReadingScroll { by }));
+    }
+
+    /// Takes the reading pane away.
+    fn reading_close(&self) {
+        self.send(CoreToShell::ReadingClose(NoParams {}));
+    }
+
     /// Hands an event straight back to the core, for a host that can
     /// answer a request without anyone else's help.
     fn send_back(&self, event: HostEvent);
@@ -229,6 +252,27 @@ pub trait Host: Send + Sync {
             self.send(CoreToShell::LinkOpen(bridge::LinkOpen { url }));
         }
     }
+}
+
+/// The lines for above a page in the reading pane, made to fit what the
+/// bridge carries: no line empty, too long or with a control character in
+/// it, and no more lines than there is room for. A page is never kept
+/// back for what is said above it.
+fn reading_header(lines: Vec<String>) -> Vec<String> {
+    lines
+        .into_iter()
+        .map(|line| {
+            let mut line: String = line.chars().filter(|c| !c.is_control()).collect();
+            let mut end = line.len().min(bridge::MAX_READING_HEADER_BYTES);
+            while !line.is_char_boundary(end) {
+                end -= 1;
+            }
+            line.truncate(end);
+            line
+        })
+        .filter(|line| !line.is_empty())
+        .take(bridge::MAX_READING_HEADER_LINES)
+        .collect()
 }
 
 fn pane_file(path: &Path, title: &str) -> Option<PaneFile> {

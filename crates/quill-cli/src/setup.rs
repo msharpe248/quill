@@ -128,6 +128,10 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
         hooks,
         // And whether programs may be run at all: not in Quill's own app.
         hooks_enabled: false,
+        // And only it has a web view pane to read mail in. What the config
+        // says is kept for it.
+        web_pane: false,
+        web_reading: config.ui.web_reading,
     };
     Loaded {
         config,
@@ -278,6 +282,19 @@ mod tests {
         // Loading creates nothing on disk.
         assert!(!dir.path().join("config").exists());
         assert!(!dir.path().join("data").exists());
+    }
+
+    #[test]
+    fn web_reading_starts_as_the_config_says_and_off_without_it() {
+        let dir = TempDir::new().unwrap();
+        let loaded = load_from(&dir);
+        assert!(!loaded.env.web_reading);
+        // Never by itself: only Quill's own window has the pane.
+        assert!(!loaded.env.web_pane);
+        write(&dir, "config.toml", "[ui]\nweb_reading = true\n");
+        let loaded = load_from(&dir);
+        assert!(loaded.env.web_reading && !loaded.env.web_pane);
+        assert!(loaded.notices.is_empty(), "{:?}", loaded.notices);
     }
 
     #[test]

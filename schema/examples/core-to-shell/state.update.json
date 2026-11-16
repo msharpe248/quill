@@ -4,6 +4,7 @@
   "params": {
     "context": "list",
     "enabled": ["nav.next", "nav.open", "message.toggle_star", "view.zoom"],
+    "checked": ["view.web_reading"],
     "unread": 12,
     "title": "Inbox (unified) - 12 unread"
   }

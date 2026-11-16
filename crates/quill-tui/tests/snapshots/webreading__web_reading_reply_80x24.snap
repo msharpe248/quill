@@ -1,0 +1,28 @@
+---
+source: crates/quill-tui/tests/webreading.rs
+expression: harness.screen()
+---
+┌ [1] Accounts ──┐┏ [3] Reply ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+│> Unified    11 │┃ From:    robin.vale@example.com  (Personal)                ┃
+│  Work          │┃ To:      Peter Vale <peter.vale@example.com>               ┃
+│    Inbox     8 │┃ Cc:                                                        ┃
+│    Drafts      │┃ Subject: Re: Sunday dinner                                 ┃
+│    Sent        │┃ ────────────────────────────────────────────────────────── ┃
+│    Archive     │┃                                                            ┃
+│    Trash       │┃                                                            ┃
+│  Personal      │┃ On Sat 14 Nov 2026 08:35, Peter Vale wrote:                ┃
+│    Inbox     3 │┃ > Your mother wants to know whether you are coming on      ┃
+│    Drafts      │┃ Sunday and whether you are bringing anyone. I want to      ┃
+│    Sent        │┃ know whether you still have my drill.                      ┃
+│    Archive     │┃ >                                                          ┃
+│    Trash       │┃ > Dad                                                      ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+│                │┃                                                            ┃
+└────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+ cmd-enter send  cmd-s save draft  cmd-A attach  tab next field  esc close

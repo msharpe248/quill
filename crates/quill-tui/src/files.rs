@@ -383,6 +383,76 @@ pub fn web_page(
     })
 }
 
+/// Writes a message's text as a page of its own, for the web reading pane
+/// to show when the message's downloaded copy is not at hand: the same
+/// page a message with no HTML gets, from the same sanitizer. It loads
+/// nothing and names nothing.
+pub fn text_page(
+    files: &Files,
+    message: LocalMessageId,
+    title: &str,
+    text: &str,
+) -> Result<WebPage, FileProblem> {
+    let Some(view_dir) = &files.view_dir else {
+        return Err(FileProblem(
+            "There is nowhere to put files for viewing.".to_owned(),
+        ));
+    };
+    let folder = view_dir.join(format!("m{}", message.0));
+    private_dir(view_dir)?;
+    private_dir(&folder)?;
+    own_page(
+        &folder.join("text"),
+        title,
+        &format!("<pre>{}</pre>", escape_html(text)),
+    )
+}
+
+/// Writes words of Quill's own as a page, for the web reading pane to show
+/// while it has no message: that none is selected, or that this one is
+/// still on its way.
+pub fn note_page(files: &Files, text: &str) -> Result<WebPage, FileProblem> {
+    let Some(view_dir) = &files.view_dir else {
+        return Err(FileProblem(
+            "There is nowhere to put files for viewing.".to_owned(),
+        ));
+    };
+    private_dir(view_dir)?;
+    own_page(
+        &view_dir.join("note"),
+        "",
+        &format!(
+            "<p style=\"text-align:center;margin-top:30vh;opacity:.6\">{}</p>",
+            escape_html(text)
+        ),
+    )
+}
+
+/// Writes `html`, which is Quill's own and still goes through the
+/// sanitizer every page goes through, as `message.html` in `page_dir`.
+fn own_page(page_dir: &Path, title: &str, html: &str) -> Result<WebPage, FileProblem> {
+    let no_parts = |_: &str| -> Option<String> { None };
+    let sanitized = quill_mime::sanitize::sanitize(
+        html,
+        &quill_mime::sanitize::Options {
+            remote: false,
+            cid_file: &no_parts,
+            title,
+        },
+    );
+    private_dir(page_dir)?;
+    let path = page_dir.join("message.html");
+    write_private(&path, sanitized.html.as_bytes())
+        .map_err(|err| FileProblem(format!("The page cannot be written: {err}.")))?;
+    Ok(WebPage {
+        path,
+        title: title.to_owned(),
+        remote: false,
+        blocked: 0,
+        sender: None,
+    })
+}
+
 fn escape_html(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {

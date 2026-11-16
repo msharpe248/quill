@@ -75,7 +75,16 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
         dialog: None,
     };
 
-    let show_main = |areas: &mut Areas, rect: Rect| match state.main_pane {
+    // With web reading on the message is in the host's pane, not here:
+    // the accounts and the list are what is drawn, at any width, and only
+    // a message being written takes the list's place.
+    let web = state.web_reading;
+    let main_pane = if web && state.compose.is_none() {
+        MainPane::List
+    } else {
+        state.main_pane
+    };
+    let show_main = |areas: &mut Areas, rect: Rect| match main_pane {
         MainPane::List => areas.list = Some(rect),
         MainPane::Reader => areas.reader = Some(rect),
     };
@@ -88,6 +97,14 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
         }
     } else {
         match mode {
+            LayoutMode::Wide if web => {
+                let sidebar = (width / 6).clamp(MEDIUM_SIDEBAR, 28);
+                areas.sidebar = Some(Rect::new(0, 0, sidebar, body_height));
+                show_main(
+                    &mut areas,
+                    Rect::new(sidebar, 0, width - sidebar, body_height),
+                );
+            }
             LayoutMode::Wide => {
                 let sidebar = (width / 6).clamp(MEDIUM_SIDEBAR, 28);
                 let rest = width - sidebar;
@@ -373,6 +390,29 @@ mod tests {
         let (list, reader) = split(0.25);
         assert!(reader < list);
         assert_eq!(list + reader, 172);
+    }
+
+    #[test]
+    fn with_web_reading_on_no_reader_is_drawn_at_any_width() {
+        for (width, sidebar) in [(200, 28), (120, 20), (100, 18), (80, 18)] {
+            let mut state = state(Pane::List, MainPane::List);
+            state.web_reading = true;
+            let areas = compute(&state, (width, 40), 0.5);
+            assert_eq!(areas.sidebar, Some(Rect::new(0, 0, sidebar, 39)));
+            assert_eq!(areas.list, Some(Rect::new(sidebar, 0, width - sidebar, 39)));
+            assert_eq!(areas.reader, None);
+            // Whichever main pane was showing before it was switched on.
+            state.main_pane = MainPane::Reader;
+            state.focus = Pane::Sidebar;
+            let areas = compute(&state, (width, 40), 0.5);
+            assert!(areas.list.is_some() && areas.reader.is_none());
+        }
+        // Too narrow for the sidebar beside it: the list alone.
+        let mut state = state(Pane::List, MainPane::List);
+        state.web_reading = true;
+        let areas = compute(&state, (50, 20), 0.5);
+        assert_eq!(areas.list, Some(Rect::new(0, 0, 50, 19)));
+        assert_eq!((areas.sidebar, areas.reader), (None, None));
     }
 
     #[test]

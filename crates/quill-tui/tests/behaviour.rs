@@ -866,10 +866,13 @@ fn the_host_is_told_what_applies_where_the_focus_is() {
     let HostState {
         context,
         enabled,
+        checked,
         unread,
         title,
     } = harness.state.host_state(&harness.env);
     assert_eq!(context, Context::List);
+    // Nothing that is switched on and off is on.
+    assert!(checked.is_empty());
     assert_eq!((unread, title.as_str()), (12, "Inbox (unified)"));
     assert!(enabled.contains(&CommandId::MessageToggleStar));
     assert!(enabled.contains(&CommandId::NavOpen));

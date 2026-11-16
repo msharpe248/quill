@@ -42,7 +42,7 @@ use quill_auth::{Keychain, SecretStore};
 use quill_core::config::{AccountConfig, Config};
 use quill_store::{BlobStore, Store};
 use quill_sync::SyncOptions;
-use quill_tui::app::{AccountsLink, SyncLink};
+use quill_tui::app::SyncLink;
 use quill_tui::theme::ColorMode;
 use quill_tui::{app, demo};
 
@@ -311,7 +311,13 @@ async fn tui(args: TuiArgs) -> anyhow::Result<()> {
         demo::seed(&mut store, app::now())
             .await
             .context("cannot fill the demo mailbox")?;
-        (store, SyncLink::none(), AccountsLink::none())
+        // No accounts to add or sign in to. What the user chooses in the UI
+        // is still remembered, in the config this run was pointed at.
+        (
+            store,
+            SyncLink::none(),
+            service::spawn_remembering(paths.config_file()),
+        )
     } else {
         create_private_dir(&paths.data_dir)
             .with_context(|| format!("cannot create {}", paths.data_dir.display()))?;
@@ -402,6 +408,9 @@ fn suit_host(env: &mut quill_tui::state::Env, shell: bool, vim: Option<std::ffi:
     // The app is sandboxed and starts no program outside its bundle, so
     // hooks run only in a terminal.
     env.hooks_enabled = !shell;
+    // And a web view pane that can stand in the reader's place. A
+    // terminal has none, whatever the config says about reading in one.
+    env.web_pane = shell;
 }
 
 /// `quill account ...`: the saved passwords and sign-ins of the configured
@@ -583,6 +592,7 @@ mod tests {
         assert!(env.cmd_keys && env.file_panel && env.thumbnails && env.spell_check);
         assert!(env.editor_pane && env.account_sheet);
         assert!(!env.hooks_enabled);
+        assert!(env.web_pane);
         assert_eq!(env.vim_program, None);
 
         // In a terminal: the user's own Vim, and their hooks.
@@ -591,6 +601,7 @@ mod tests {
         assert!(!env.cmd_keys && !env.file_panel && !env.thumbnails && !env.spell_check);
         assert!(!env.editor_pane && !env.account_sheet);
         assert!(env.hooks_enabled);
+        assert!(!env.web_pane);
         assert_eq!(env.vim_program, Some("/opt/homebrew/bin/nvim".into()));
         suit_host(&mut env, false, Some("".into()));
         assert_eq!(env.vim_program, None);

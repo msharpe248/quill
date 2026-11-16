@@ -135,7 +135,22 @@ public final class WebPane: PaneView, WKNavigationDelegate, WKUIDelegate {
     /// The user allowed this document to load pictures and styles from the
     /// network.
     public let allowsRemoteContent: Bool
-    public private(set) var phase = Phase.preparing
+    public private(set) var phase = Phase.preparing {
+        didSet {
+            if phase != oldValue, phase == .loaded || phase == .failed {
+                onSettled?()
+            }
+        }
+    }
+    /// Whether this is the reading pane: the page stands in the reader's
+    /// place, has lines of its own above it, and is not closed by the user.
+    public let isReading: Bool
+    /// The page has loaded, or will not: there is nothing more to wait
+    /// for before putting the pane on show. Not called for a pane that had
+    /// already failed when it was made.
+    public var onSettled: (() -> Void)?
+    /// The HTML file the pane shows.
+    public var document: URL { policy.document }
     /// Addresses the view was refused leave to go to, the latest last.
     public private(set) var refused: [String] = []
     /// For tests. Nothing outside this module loads anything into it.
@@ -145,13 +160,23 @@ public final class WebPane: PaneView, WKNavigationDelegate, WKUIDelegate {
     private var preparation: Task<Void, Never>?
     private var closed = false
 
-    /// - Parameter openLink: Given a web or mail address the user clicked.
-    public init(file: URL, title: String, allowsRemoteContent: Bool, openLink: @escaping (URL) -> Void) {
+    /// - Parameters:
+    ///   - readingHeader: Given, even empty, this is the reading pane, with
+    ///     these lines above the page. The page is held to the same rules
+    ///     either way.
+    ///   - openLink: Given a web or mail address the user clicked.
+    public init(
+        file: URL, title: String, allowsRemoteContent: Bool, readingHeader: [String]? = nil,
+        openLink: @escaping (URL) -> Void
+    ) {
         policy = WebNavigationPolicy(document: file)
         self.allowsRemoteContent = allowsRemoteContent
         self.openLink = openLink
+        isReading = readingHeader != nil
         webView = MessageWebView(frame: .zero, configuration: Self.configuration())
-        super.init(kind: .web, title: title, content: webView)
+        super.init(
+            kind: .web, title: title, content: webView, headerLines: readingHeader,
+            closable: readingHeader == nil)
 
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -210,8 +235,39 @@ public final class WebPane: PaneView, WKNavigationDelegate, WKUIDelegate {
         setMessage(text)
     }
 
+    /// Scrolls the page by a screenful, as the page down and page up keys
+    /// do in a web view that has the keyboard. No script is involved: none
+    /// runs here, the app's own included.
+    public func scroll(_ by: ScrollBy) {
+        guard phase == .loaded else { return }
+        switch by {
+        case .pageDown: webView.scrollPageDown(nil)
+        case .pageUp: webView.scrollPageUp(nil)
+        }
+        scrolls += 1
+    }
+
+    /// How many times the page has been asked to scroll.
+    public private(set) var scrolls = 0
+
+    /// A picture of the page as it is on show, for a scripted run's dump:
+    /// the web view draws in a process of its own, and a picture of the
+    /// window has a hole where it is.
+    public func picture() async -> NSImage? {
+        guard phase == .loaded else { return nil }
+        return try? await webView.takeSnapshot(configuration: nil)
+    }
+
+    /// Where the page is in the window, in the window's own coordinates.
+    public var pageFrame: NSRect {
+        webView.convert(webView.bounds, to: nil)
+    }
+
     override public var summary: String {
         var words = ["remote content \(allowsRemoteContent ? "allowed" : "blocked")", phase.rawValue]
+        if scrolls > 0 {
+            words.append("scrolled \(scrolls)")
+        }
         if !refused.isEmpty {
             words.append("refused \(refused.count)")
         }

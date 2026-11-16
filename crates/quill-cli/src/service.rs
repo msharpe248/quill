@@ -12,9 +12,12 @@
 //! The UI reaches no server itself, so the one request it ever asks to
 //! have made to a server that is not the user's comes through here too:
 //! telling a mailing list to unsubscribe them (see `unsubscribe`).
+//!
+//! And it reads and writes no file itself, so a choice made in the UI that
+//! is to outlast the run is written into the config here (`remember`).
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use quill_auth::SecretStore;
@@ -27,7 +30,8 @@ use quill_store::Store;
 use quill_sync::{SyncAccount, SyncHandle};
 use quill_tui::app::AccountsLink;
 use quill_tui::setup::{
-    AccountDraft, AccountEvent, AccountRequest, ServerDraft, SignInDraft, Trusting, VerifyProblem,
+    AccountDraft, AccountEvent, AccountRequest, Preference, ServerDraft, SignInDraft, Trusting,
+    VerifyProblem,
 };
 use tokio::sync::mpsc::unbounded_channel;
 
@@ -107,6 +111,57 @@ pub fn spawn(service: Service) -> AccountsLink {
         requests: Some(requests_tx),
         events,
     }
+}
+
+/// Starts a service that does one thing: remembers the choices the user
+/// makes in the UI, in the config. It is what the demo mailbox has in
+/// place of the whole service: it has no accounts to add or sign in, and
+/// still a config that says how Quill starts. Anything else asked of it
+/// goes unanswered, as it does with no service at all.
+pub fn spawn_remembering(config_file: PathBuf) -> AccountsLink {
+    let (requests_tx, mut requests) = unbounded_channel();
+    let (events_tx, events) = unbounded_channel();
+    tokio::spawn(async move {
+        while let Some(request) = requests.recv().await {
+            if let AccountRequest::Remember(preference) = request {
+                let result = remember_off_thread(config_file.clone(), preference).await;
+                if events_tx.send(AccountEvent::Remembered(result)).is_err() {
+                    break;
+                }
+            }
+        }
+    });
+    AccountsLink {
+        requests: Some(requests_tx),
+        events,
+    }
+}
+
+/// [`remember`], off the async threads: the config file blocks.
+async fn remember_off_thread(config_file: PathBuf, preference: Preference) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || remember(&config_file, preference))
+        .await
+        .unwrap_or_else(|err| Err(err.to_string()))
+}
+
+/// Writes a choice made in the UI into `config.toml`, leaving the rest of
+/// the file as the user wrote it. A config Quill cannot read is not
+/// touched.
+fn remember(config_file: &Path, preference: Preference) -> Result<(), String> {
+    let before = match std::fs::read_to_string(config_file) {
+        Ok(text) => text,
+        // No config yet is an empty one.
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(format!("config.toml cannot be read: {err}")),
+    };
+    let after = match preference {
+        Preference::WebReading(on) => config_edit::set_web_reading(&before, on)?,
+    };
+    if after == before {
+        return Ok(());
+    }
+    config_edit::write(config_file, &after)
+        .map_err(|err| format!("config.toml cannot be written: {err}"))
 }
 
 impl Service {
@@ -193,6 +248,9 @@ impl Service {
                 let (host, result) = unsubscribe::one_click(&url).await;
                 AccountEvent::Unsubscribed { host, result }
             }
+            AccountRequest::Remember(preference) => AccountEvent::Remembered(
+                remember_off_thread(self.config_file.clone(), preference).await,
+            ),
         }
     }
 
@@ -1741,6 +1799,77 @@ mod tests {
                 host: "127.0.0.1".to_owned(),
                 result: Ok(()),
             }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_choice_made_in_the_ui_is_written_into_the_config_and_the_rest_is_kept() {
+        let rig = Rig::new();
+        let before = "# My settings\n[ui]\ntheme = \"light\"   # easier on the eyes\n\n\
+                      [[account]]\nname = \"Personal\"   # home\ntype = \"imap\"\naddress = \"robin@example.org\"\n\
+                      imap = { host = \"mail.example.org\" }\n";
+        write_config(&rig, before);
+        let remember = |on| AccountRequest::Remember(Preference::WebReading(on));
+        assert_eq!(
+            rig.service.handle(remember(true)).await,
+            AccountEvent::Remembered(Ok(()))
+        );
+        assert_eq!(
+            config_text(&rig),
+            before.replace(
+                "# easier on the eyes\n",
+                "# easier on the eyes\nweb_reading = true\n"
+            )
+        );
+        assert!(rig.config().ui.web_reading);
+        assert_eq!(
+            rig.service.handle(remember(false)).await,
+            AccountEvent::Remembered(Ok(()))
+        );
+        assert!(!rig.config().ui.web_reading);
+        assert_eq!(rig.config().accounts.len(), 1);
+
+        // A config Quill cannot read is left exactly as it is, and the
+        // reason comes back.
+        write_config(&rig, "[ui\ntheme = ");
+        assert!(matches!(
+            rig.service.handle(remember(true)).await,
+            AccountEvent::Remembered(Err(reason)) if reason.contains("config.toml cannot be read")
+        ));
+        assert_eq!(config_text(&rig), "[ui\ntheme = ");
+    }
+
+    #[tokio::test]
+    async fn the_demo_mailbox_remembers_a_choice_too_and_answers_nothing_else() {
+        let dir = tempfile::tempdir().unwrap();
+        // No config yet, and no folder for one.
+        let file = dir.path().join("config").join("config.toml");
+        let AccountsLink {
+            requests,
+            mut events,
+        } = spawn_remembering(file.clone());
+        let requests = requests.unwrap();
+        // Not this service's to do: nothing comes of it.
+        requests
+            .send(AccountRequest::Discover {
+                address: "robin@example.com".to_owned(),
+            })
+            .unwrap();
+        requests
+            .send(AccountRequest::Remember(Preference::WebReading(true)))
+            .unwrap();
+        assert_eq!(next(&mut events).await, AccountEvent::Remembered(Ok(())));
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "[ui]\nweb_reading = true\n"
+        );
+        requests
+            .send(AccountRequest::Remember(Preference::WebReading(false)))
+            .unwrap();
+        assert_eq!(next(&mut events).await, AccountEvent::Remembered(Ok(())));
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "[ui]\nweb_reading = false\n"
         );
     }
 

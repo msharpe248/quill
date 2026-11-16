@@ -74,6 +74,17 @@ pub enum CoreToShell {
     /// Take the sheet down: the form is over.
     #[serde(rename = "form.close")]
     FormClose(NoParams),
+    /// Show sanitized HTML in the reading pane: the web view that stands
+    /// in the reader's place while web reading is on. It stays until
+    /// `reading.close`, and never takes the keyboard by itself.
+    #[serde(rename = "reading.show")]
+    ReadingShow(ReadingShow),
+    /// Scroll what the reading pane shows.
+    #[serde(rename = "reading.scroll")]
+    ReadingScroll(ReadingScroll),
+    /// Take the reading pane away: web reading is off.
+    #[serde(rename = "reading.close")]
+    ReadingClose(NoParams),
 }
 
 /// A message the shell sends to the core.
@@ -163,6 +174,9 @@ pub struct StateUpdate {
     pub context: Context,
     /// Names of the commands that would do something right now.
     pub enabled: Vec<String>,
+    /// Names of the commands that switch something on and off, and have
+    /// it on right now: their menu items are shown checked.
+    pub checked: Vec<String>,
     /// Unread messages across all inboxes, for the Dock badge.
     pub unread: u32,
     /// The window title.
@@ -325,6 +339,107 @@ pub struct PaneWeb {
     pub title: String,
     /// The user has allowed this message to load remote content.
     pub remote: bool,
+}
+
+/// The most lines the reading pane's header may be given.
+pub const MAX_READING_HEADER_LINES: usize = 8;
+/// The longest any one of them may be, in bytes.
+pub const MAX_READING_HEADER_BYTES: usize = 2000;
+
+/// A page for the reading pane, and what to say above it. It cannot be
+/// built or decoded with more header lines than the pane has room for, or
+/// with a line that is empty, too long or more than one line.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "ReadingShowParams", into = "ReadingShowParams")]
+pub struct ReadingShow {
+    path: AbsolutePath,
+    title: String,
+    remote: bool,
+    header: Vec<String>,
+}
+
+impl ReadingShow {
+    pub fn new(path: AbsolutePath, title: &str, remote: bool, header: Vec<String>) -> Option<Self> {
+        let fits = header.len() <= MAX_READING_HEADER_LINES
+            && header.iter().all(|line| {
+                !line.is_empty()
+                    && line.len() <= MAX_READING_HEADER_BYTES
+                    && !line.chars().any(char::is_control)
+            });
+        fits.then(|| Self {
+            path,
+            title: title.to_owned(),
+            remote,
+            header,
+        })
+    }
+
+    /// The sanitized HTML. Files beside it in its folder may be loaded.
+    pub fn path(&self) -> &AbsolutePath {
+        &self.path
+    }
+
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    /// The user has allowed this message to load remote content.
+    pub fn remote(&self) -> bool {
+        self.remote
+    }
+
+    /// Lines of plain text shown above the page, outside it: who the
+    /// message is from and to, and when it was sent.
+    pub fn header(&self) -> &[String] {
+        &self.header
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReadingShowParams {
+    path: AbsolutePath,
+    title: String,
+    remote: bool,
+    header: Vec<String>,
+}
+
+impl TryFrom<ReadingShowParams> for ReadingShow {
+    type Error = String;
+
+    fn try_from(params: ReadingShowParams) -> Result<Self, Self::Error> {
+        Self::new(params.path, &params.title, params.remote, params.header).ok_or_else(|| {
+            format!(
+                "header must be at most {MAX_READING_HEADER_LINES} lines, each one line of 1 to \
+                 {MAX_READING_HEADER_BYTES} bytes"
+            )
+        })
+    }
+}
+
+impl From<ReadingShow> for ReadingShowParams {
+    fn from(show: ReadingShow) -> Self {
+        Self {
+            path: show.path,
+            title: show.title,
+            remote: show.remote,
+            header: show.header,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReadingScroll {
+    pub by: ScrollBy,
+}
+
+/// How far to scroll the reading pane, and which way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScrollBy {
+    PageDown,
+    PageUp,
 }
 
 /// The longest side a thumbnail may be asked for, in pixels.
@@ -1718,6 +1833,44 @@ mod tests {
             decode::<CoreToShell>("not json"),
             Err(BridgeError::Malformed(_))
         ));
+    }
+
+    #[test]
+    fn a_page_for_the_reading_pane_is_only_built_with_a_header_that_fits() {
+        let path = || AbsolutePath::new(Path::new("/tmp/quill-view/m1/page/message.html")).unwrap();
+        let show = |header: Vec<String>| ReadingShow::new(path(), "A subject", false, header);
+        let line = |text: &str| vec![text.to_owned()];
+        assert!(show(Vec::new()).is_some());
+        assert!(show(vec!["x".to_owned(); MAX_READING_HEADER_LINES]).is_some());
+        assert!(show(vec!["x".to_owned(); MAX_READING_HEADER_LINES + 1]).is_none());
+        assert!(show(line("")).is_none());
+        assert!(show(line("two\nlines")).is_none());
+        assert!(show(line("an escape \u{1b}[31m")).is_none());
+        assert!(show(line(&"é".repeat(MAX_READING_HEADER_BYTES / 2))).is_some());
+        assert!(show(line(&"é".repeat(MAX_READING_HEADER_BYTES / 2 + 1))).is_none());
+
+        // What is built is what is read back, and nothing else is.
+        let built = show(line("From: Ana Ruiz <ana.ruiz@example.com>")).unwrap();
+        let sent = encode(&CoreToShell::ReadingShow(built.clone())).unwrap();
+        assert_eq!(
+            decode::<CoreToShell>(&sent).unwrap(),
+            CoreToShell::ReadingShow(built)
+        );
+        for bad in [
+            r#"{"path":"/a","title":"","remote":false}"#,
+            r#"{"path":"a","title":"","remote":false,"header":[]}"#,
+            r#"{"path":"/a","title":"","remote":false,"header":["a\nb"]}"#,
+            r#"{"path":"/a","title":"","remote":false,"header":[],"focus":true}"#,
+        ] {
+            let line = format!(r#"{{"jsonrpc":"2.0","method":"reading.show","params":{bad}}}"#);
+            assert!(decode::<CoreToShell>(&line).is_err(), "{bad}");
+        }
+        assert!(
+            decode::<CoreToShell>(
+                r#"{"jsonrpc":"2.0","method":"reading.scroll","params":{"by":"line_down"}}"#
+            )
+            .is_err()
+        );
     }
 
     fn text_field(id: &str, focus: bool) -> FormField {

@@ -7,7 +7,7 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Padding};
 
-use crate::command::{Category, Context};
+use crate::command::{Category, CommandId, Context};
 use crate::state::{Env, State};
 use crate::text;
 
@@ -27,6 +27,10 @@ pub fn lines(env: &Env, context: Context) -> Vec<HelpLine> {
             .specs()
             .iter()
             .filter(|spec| spec.category == category && spec.applies_in(context))
+            // Web reading needs the host's web view pane. Where there is
+            // none, as in a terminal, its key does nothing and is not
+            // listed.
+            .filter(|spec| spec.id != CommandId::ViewWebReading || env.web_pane)
             .map(|spec| {
                 let keys: Vec<String> = env
                     .keymap

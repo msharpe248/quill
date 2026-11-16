@@ -32,7 +32,8 @@ mod mouse;
 use quill_host::bridge::{FormShow, FormUsed};
 
 use crate::setup::{
-    AccountEvent, AccountRequest, CertificatePrompt, Outcome, Setup, SignIn, SignInStage, Used,
+    AccountEvent, AccountRequest, CertificatePrompt, Outcome, Preference, Setup, SignIn,
+    SignInStage, Used,
 };
 use crate::template::{self, Template};
 use crate::theme::Styles;
@@ -119,6 +120,13 @@ pub struct Env {
     /// Quill's own app: it is sandboxed, and starts nothing outside its
     /// bundle.
     pub hooks_enabled: bool,
+    /// Whether the host has a web view pane that can stand in the
+    /// reader's place and follow the list, as Quill's app has. A terminal
+    /// has none, and web reading is not on offer there.
+    pub web_pane: bool,
+    /// Web reading is on as Quill starts: `web_reading` under `[ui]` in
+    /// the config. It means nothing without [`Env::web_pane`].
+    pub web_reading: bool,
 }
 
 impl Env {
@@ -241,6 +249,9 @@ pub enum Action {
     /// showing, or changed one of its choices: what its fields held, and
     /// which button.
     FormUsed(FormUsed),
+    /// The list's cursor has rested on a message for a moment: the time
+    /// to show it in the web reading pane. See [`State::settle_due`].
+    SelectionSettled,
 }
 
 /// What an action asks of the world outside the state: queries and writes
@@ -301,6 +312,19 @@ pub enum HostRequest {
         body: String,
         actions: Vec<(&'static str, &'static str, bool)>,
     },
+    /// Show a sanitized page in the web reading pane, in place of what
+    /// it showed, with `header` as lines of plain text above it. `remote`:
+    /// it may load remote content.
+    Reading {
+        path: PathBuf,
+        title: String,
+        remote: bool,
+        header: Vec<String>,
+    },
+    /// Scroll what the web reading pane shows by a page: down, or up.
+    ScrollReading { down: bool },
+    /// Take the web reading pane away.
+    CloseReading,
     /// Take notifications down: their mail has been dealt with.
     ClearNotifications(Vec<String>),
     /// Ask the user where to save a copy of a file, with the host's panel.
@@ -346,6 +370,8 @@ pub enum HostRequest {
 pub struct HostState {
     pub context: Context,
     pub enabled: Vec<CommandId>,
+    /// The commands that switch something on and off, and have it on.
+    pub checked: Vec<CommandId>,
     pub unread: u32,
     pub title: String,
 }
@@ -881,6 +907,62 @@ impl Reader {
     }
 }
 
+/// What the web reading pane shows, or has been asked to show.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Shown {
+    /// A message's page: its HTML, made safe.
+    Page(LocalMessageId),
+    /// A message's text, while its downloaded copy is not at hand.
+    Text(LocalMessageId),
+    /// Words of Quill's own: why there is no message in the pane.
+    Note(String),
+}
+
+/// How the web reading pane follows the list.
+///
+/// The pane shows the message under the list's cursor, once the cursor
+/// has rested there for a moment: moving through the list quickly asks for
+/// no page on the way, and a page that arrives for a message the cursor
+/// has left is not shown.
+#[derive(Debug, Default)]
+struct Follow {
+    /// The message under the list's cursor when last looked at.
+    target: Option<LocalMessageId>,
+    /// The cursor has rested there long enough for it to be shown.
+    settled: bool,
+    /// How many times the cursor has moved on to another message: tells
+    /// the run loop a new wait from the one it is already timing.
+    moves: u64,
+    /// The user did something in this update that takes them to the
+    /// message under the cursor: moved to it, clicked it, opened it.
+    went: bool,
+    /// The user opened the message (`enter`): shown now, not in a moment.
+    now: bool,
+    /// The user went to the target themselves, so that once it is shown
+    /// it has been opened, and is read. Not so for the message the cursor
+    /// happens to be on when a mailbox opens or a search finds something.
+    by_user: bool,
+    /// What the pane was last asked to show.
+    asked: Option<Shown>,
+    /// The target's page could not be made, and why: the reason is what
+    /// the pane shows for it, and the page is not asked for again until
+    /// the cursor has been elsewhere or the message is read afresh.
+    failed: Option<String>,
+}
+
+/// What the web reading pane says when the list has nothing under its
+/// cursor. The same words the reader has for it.
+const NO_MESSAGE: &str = "No message selected";
+/// And while a message that was never downloaded is fetched.
+const DOWNLOADING: &str = "Downloading this message…";
+/// How wide a message is laid out to find its links while no reader is
+/// drawn to lay it out for.
+const UNDRAWN_WIDTH: usize = 80;
+/// The longest a line above the page in the web reading pane is let be.
+/// The pane cuts it to its own width; this keeps a message with a
+/// thousand recipients from sending them all.
+const READING_HEADER_COLUMNS: usize = 400;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Help {
     /// The context help was opened from, and so describes.
@@ -955,6 +1037,13 @@ pub struct State {
     /// The host shows that form, in a sheet of its own
     /// ([`Env::account_sheet`]), so it is not drawn over the panes.
     pub form_hosted: bool,
+    /// Web reading is on: mail is read in the host's web view pane, which
+    /// follows the list, and no reader is drawn here.
+    pub web_reading: bool,
+    /// The user has switched web reading the other way from what the
+    /// config says, in this run.
+    web_flipped: bool,
+    follow: Follow,
     /// A sign-in to an account's provider, waiting on the user.
     pub sign_in: Option<SignIn>,
     /// A time being asked for.
@@ -1015,6 +1104,9 @@ impl State {
             flash: None,
             setup: None,
             form_hosted: false,
+            web_reading: false,
+            web_flipped: false,
+            follow: Follow::default(),
             sign_in: None,
             when: None,
             next_wake: None,
@@ -1100,6 +1192,8 @@ impl State {
         // Where the form is shown is the host's to say, and the layout
         // goes by it.
         self.form_hosted = env.account_sheet;
+        // And so is whether there is a pane to read mail in.
+        self.web_reading = self.web_reading_wanted(env);
         match action {
             Action::Key(chord) => self.on_key(env, chord, &mut out),
             Action::Command(id) => self.run(env, id, &mut out),
@@ -1133,6 +1227,11 @@ impl State {
                 self.on_editor_exited(env, ran, status, &mut out);
             }
             Action::FormUsed(used) => self.on_form(&used, &mut out),
+            Action::SelectionSettled => {
+                // Nothing drawn here changes: the page is the host's.
+                changed = false;
+                self.follow.settled = true;
+            }
             Action::HookDone { name, outcome } => {
                 self.hook_running = None;
                 let said = outcome.said(&name);
@@ -1278,6 +1377,7 @@ impl State {
         if std::mem::take(&mut self.vim_wanted) {
             self.start_vim(env, &mut out);
         }
+        self.follow_selection(env, &mut out);
         self.settle_notifications(&mut out);
         // With no accounts there is nothing to read: offer to add one,
         // once, instead of an empty window.
@@ -1760,9 +1860,18 @@ impl State {
             CommandId::FocusSidebar => self.set_focus(Pane::Sidebar),
             CommandId::FocusList => self.set_focus(Pane::List),
             CommandId::FocusReader => self.set_focus(Pane::Reader),
+            // With the message in the host's pane there are two panes
+            // here to go between.
+            CommandId::FocusNext | CommandId::FocusPrev if self.web_reading => {
+                self.set_focus(match self.focus {
+                    Pane::Sidebar => Pane::List,
+                    Pane::List | Pane::Reader => Pane::Sidebar,
+                });
+            }
             CommandId::FocusNext => self.set_focus(self.focus.next()),
             CommandId::FocusPrev => self.set_focus(self.focus.prev()),
             CommandId::ViewZoom => self.zoomed = !self.zoomed,
+            CommandId::ViewWebReading => self.toggle_web_reading(env, out),
             CommandId::ViewThreads => {
                 self.ungrouped = !self.ungrouped;
                 self.flash = Some((
@@ -1829,7 +1938,7 @@ impl State {
             CommandId::MessageOpenInBrowser => self.show_page(env, PageUse::Browser, out),
             CommandId::MessageLoadRemote => {
                 self.reader.remote = true;
-                self.show_page(env, self.reader.page.unwrap_or(PageUse::Pane), out);
+                self.show_page(env, self.page_again(), out);
             }
             CommandId::SenderAlwaysRemote => {
                 let sender = self
@@ -1848,7 +1957,7 @@ impl State {
                     ));
                     out.data.push(DataRequest::AllowRemote { address });
                     self.reader.remote = true;
-                    self.show_page(env, self.reader.page.unwrap_or(PageUse::Pane), out);
+                    self.show_page(env, self.page_again(), out);
                 }
             }
             CommandId::AttachmentOpen => self.use_attachment(FileUse::Open, out),
@@ -2025,7 +2134,12 @@ impl State {
             CommandId::NavOpen => {
                 self.focus == Pane::Sidebar || self.list.rows.get(self.list.selected).is_some()
             }
-            CommandId::MessageToggleHtml => self.reader.has_two_versions(),
+            // The versions are the text reader's to switch between.
+            CommandId::MessageToggleHtml => !self.web_reading && self.reader.has_two_versions(),
+            CommandId::ViewWebReading => env.web_pane,
+            // There is no reader here to go to: the message is in the
+            // host's pane, and the keys that work on it work from the list.
+            CommandId::FocusReader => !self.web_reading,
             CommandId::MessageOpenLink => !self.reader.links.is_empty(),
             // The files listed are those of the message in the reader, so
             // from the list it must be the one under the cursor.
@@ -2038,9 +2152,9 @@ impl State {
             CommandId::AttachmentOpen | CommandId::AttachmentSave => {
                 self.chosen_attachment().is_some()
             }
-            CommandId::MessageViewHtml | CommandId::MessageOpenInBrowser => {
-                self.page_message(context).is_some()
-            }
+            // The page is on show already, in the reading pane.
+            CommandId::MessageViewHtml => !self.web_reading && self.page_message(context).is_some(),
+            CommandId::MessageOpenInBrowser => self.page_message(context).is_some(),
             CommandId::MessageLoadRemote | CommandId::SenderAlwaysRemote => {
                 !env.remote_never && self.page_message(context).is_some()
             }
@@ -2094,6 +2208,13 @@ impl State {
                 .map(|spec| spec.id)
                 .filter(|id| self.is_enabled(env, *id))
                 .collect(),
+            checked: env
+                .registry
+                .specs()
+                .iter()
+                .map(|spec| spec.id)
+                .filter(|id| self.is_on(*id))
+                .collect(),
             unread,
             title: if mailbox.is_empty() {
                 "Quill".to_owned()
@@ -2103,7 +2224,21 @@ impl State {
         }
     }
 
+    /// Whether a command that switches something on and off has it on.
+    /// The app shell checks its menu item.
+    pub fn is_on(&self, id: CommandId) -> bool {
+        match id {
+            CommandId::ViewWebReading => self.web_reading,
+            _ => false,
+        }
+    }
+
     fn set_focus(&mut self, pane: Pane) {
+        // With the message in the host's pane there is no reader here to
+        // have the keys: only a message being written takes its place.
+        if pane == Pane::Reader && self.web_reading && self.compose.is_none() {
+            return;
+        }
         self.focus = pane;
         match pane {
             Pane::Sidebar => {}
@@ -2210,6 +2345,16 @@ impl State {
                     self.go_to_entry(env, target, out);
                 }
             }
+            // With the message in the host's pane, a page down or up is
+            // a page of the message, as it is in the reader: the list is
+            // moved through a message at a time, or to its ends.
+            Pane::List
+                if self.web_reading && matches!(motion, Motion::PageDown | Motion::PageUp) =>
+            {
+                out.host.push(HostRequest::ScrollReading {
+                    down: motion == Motion::PageDown,
+                });
+            }
             Pane::List => {
                 let page = areas
                     .list
@@ -2219,6 +2364,7 @@ impl State {
                 let target = step(self.list.selected, self.list.rows.len(), motion, page);
                 if target != self.list.selected {
                     self.list.selected = target;
+                    self.follow.went = true;
                     self.sync_reader(out);
                 }
             }
@@ -2283,6 +2429,10 @@ impl State {
                     out.data.push(DataRequest::SetSeen { id, seen: true });
                 }
                 self.sync_reader(out);
+                // In the host's pane it is shown now, not in a moment, and
+                // the keys stay with the list.
+                self.follow.went = true;
+                self.follow.now = true;
                 self.set_focus(Pane::Reader);
             }
             Pane::Reader => {}
@@ -3449,6 +3599,21 @@ impl State {
                 }
                 return;
             }
+            AccountEvent::Remembered(result) => {
+                // The choice holds for this run. That it will not be how
+                // Quill starts next time is worth a line, not a notice to
+                // dismiss.
+                if let Err(reason) = result {
+                    self.flash = Some((
+                        format!(
+                            "That holds until Quill is closed: {}",
+                            text::sanitize_line(&reason)
+                        ),
+                        false,
+                    ));
+                }
+                return;
+            }
             AccountEvent::Unsubscribed { host, result } => {
                 let host = text::sanitize_line(&host);
                 self.notices.push_back(match result {
@@ -3862,18 +4027,256 @@ impl State {
         let Some(message) = self.page_message(self.context()) else {
             return;
         };
-        let remote = if env.remote_never {
+        out.data.push(DataRequest::WebPage {
+            message,
+            remote: self.remote_content(env),
+            then,
+        });
+    }
+
+    /// Whether the page of the message in the reader may load remote
+    /// content, from what the user has said.
+    fn remote_content(&self, env: &Env) -> RemoteContent {
+        if env.remote_never {
             RemoteContent::Never
         } else if self.reader.remote {
             RemoteContent::Allowed
         } else {
             RemoteContent::IfSenderAllowed
+        }
+    }
+
+    /// Where a message's page is shown again once it may load its remote
+    /// content: where it is on show.
+    fn page_again(&self) -> PageUse {
+        if self.web_reading {
+            PageUse::Reading
+        } else {
+            self.reader.page.unwrap_or(PageUse::Pane)
+        }
+    }
+
+    /// Whether web reading is on: the host has a pane for it, and the
+    /// config and the user's switching in this run come out at on.
+    fn web_reading_wanted(&self, env: &Env) -> bool {
+        env.web_pane && (env.web_reading != self.web_flipped)
+    }
+
+    /// Switches between reading mail in the host's web view pane and in
+    /// the reader drawn here, and has the choice remembered.
+    fn toggle_web_reading(&mut self, env: &Env, out: &mut Effects) {
+        self.web_flipped = !self.web_flipped;
+        self.web_reading = self.web_reading_wanted(env);
+        out.accounts
+            .push(AccountRequest::Remember(Preference::WebReading(
+                self.web_reading,
+            )));
+        let key = env
+            .hint_key(CommandId::ViewWebReading)
+            .map_or_else(String::new, |key| format!(" {key} switches back."));
+        if self.web_reading {
+            // Asked for, so shown at once; and not thereby read.
+            self.follow = Follow {
+                target: self.list.rows.get(self.list.selected).map(|row| row.id),
+                settled: true,
+                ..Follow::default()
+            };
+            // There is no reader here now to have the keys.
+            if self.compose.is_none() {
+                if self.focus == Pane::Reader {
+                    self.focus = Pane::List;
+                }
+                self.main_pane = MainPane::List;
+            }
+            self.flash = Some((format!("Messages are shown as web pages.{key}"), false));
+        } else {
+            self.follow = Follow::default();
+            out.host.push(HostRequest::CloseReading);
+            // The page was the reading pane's: nothing of it is on show.
+            self.reader.page = None;
+            // Laid out again, for the reader that is drawn here now.
+            self.reader.wrap_width = None;
+            self.flash = Some((format!("Messages are shown as text.{key}"), false));
+        }
+    }
+
+    /// The count of the cursor's moves, while the web reading pane is
+    /// waiting for the cursor to rest: the run loop sends
+    /// [`Action::SelectionSettled`] once this has stayed the same for a
+    /// moment. `None` when nothing is waiting.
+    pub fn settle_due(&self) -> Option<u64> {
+        (self.web_reading && !self.follow.settled).then_some(self.follow.moves)
+    }
+
+    /// What the web reading pane was last asked to show.
+    pub fn reading_asked(&self) -> Option<&Shown> {
+        self.follow.asked.as_ref()
+    }
+
+    /// What the web reading pane should show for the message under the
+    /// list's cursor, or `None` while that is not known yet: the list or
+    /// the message is still being read from the store.
+    fn reading_wanted(&self) -> Option<Shown> {
+        let Some(target) = self.follow.target else {
+            return self.list.loaded.then(|| Shown::Note(NO_MESSAGE.to_owned()));
         };
-        out.data.push(DataRequest::WebPage {
-            message,
-            remote,
-            then,
+        self.reader.row.as_ref().filter(|row| row.id == target)?;
+        if let Some(why) = &self.follow.failed {
+            return Some(Shown::Note(why.clone()));
+        }
+        match &self.reader.body {
+            Body::None | Body::Loading => None,
+            Body::Downloading => Some(Shown::Note(DOWNLOADING.to_owned())),
+            Body::Unavailable(why) => Some(Shown::Note(why.clone())),
+            // A page is made from the message as it arrived. A draft never
+            // arrived, and mail whose copy was let go is shown as its text
+            // until the copy is back.
+            Body::Loaded(body)
+                if body.copy_missing || DraftId::from_message_id(target).is_some() =>
+            {
+                Some(Shown::Text(target))
+            }
+            Body::Loaded(_) => Some(Shown::Page(target)),
+        }
+    }
+
+    /// Keeps the web reading pane on the message under the list's cursor.
+    /// Run at the end of every update: whatever moved the cursor, the
+    /// pane follows it, a moment after it comes to rest.
+    fn follow_selection(&mut self, env: &Env, out: &mut Effects) {
+        let went = std::mem::take(&mut self.follow.went);
+        let now = std::mem::take(&mut self.follow.now);
+        if !self.web_reading {
+            return;
+        }
+        // However a message being written was put away, the keys are not
+        // left with a reader that is not drawn.
+        if self.focus == Pane::Reader && self.compose.is_none() {
+            self.focus = Pane::List;
+            self.main_pane = MainPane::List;
+        }
+        let target = self.list.rows.get(self.list.selected).map(|row| row.id);
+        if target != self.follow.target {
+            self.follow.target = target;
+            self.follow.moves += 1;
+            self.follow.settled = false;
+            self.follow.by_user = went;
+            self.follow.failed = None;
+        } else if went {
+            self.follow.by_user = true;
+        }
+        if now {
+            self.follow.settled = true;
+        }
+        if !self.follow.settled {
+            return;
+        }
+        let Some(wanted) = self.reading_wanted() else {
+            return;
+        };
+        if self.follow.asked.as_ref() == Some(&wanted) {
+            return;
+        }
+        match &wanted {
+            Shown::Page(message) => out.data.push(DataRequest::WebPage {
+                message: *message,
+                remote: self.remote_content(env),
+                then: PageUse::Reading,
+            }),
+            Shown::Text(message) => {
+                if let (Some(row), Body::Loaded(body)) = (&self.reader.row, &self.reader.body) {
+                    out.data.push(DataRequest::TextPage {
+                        message: *message,
+                        title: row.headers.subject.clone(),
+                        text: body.text.clone(),
+                    });
+                }
+            }
+            Shown::Note(text) => out.data.push(DataRequest::NotePage { text: text.clone() }),
+        }
+        self.follow.asked = Some(wanted);
+    }
+
+    /// What the web reading pane says above the message in the reader:
+    /// who it is from and to, when it was sent, and the files it carries.
+    /// Plain lines, already cleaned as everything from a message is.
+    fn reading_header(&self, env: &Env) -> Vec<String> {
+        let Some(row) = &self.reader.row else {
+            return Vec::new();
+        };
+        let join = |addresses: &[quill_core::types::Address]| {
+            addresses
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let mut lines = Vec::new();
+        for (label, addresses) in [
+            ("From", &row.headers.from),
+            ("To", &row.headers.to),
+            ("Cc", &row.headers.cc),
+        ] {
+            if !addresses.is_empty() {
+                lines.push(format!("{label}: {}", join(addresses)));
+            }
+        }
+        lines.push(text::long_date(row.headers.date, &env.tz));
+        let files = self.reader.files();
+        if !files.is_empty() {
+            let key = env
+                .hint_key(CommandId::MessageAttachments)
+                .map_or_else(String::new, |key| format!("  ({key} lists them)"));
+            let named = files
+                .iter()
+                .map(|file| format!("{} ({})", file.name, text::file_size(file.size)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            lines.push(format!("Attached: {named}{key}"));
+        }
+        lines
+            .iter()
+            .map(|line| text::sanitize_line(line))
+            .map(|line| text::truncate(&line, READING_HEADER_COLUMNS))
+            .filter(|line| !line.is_empty())
+            .collect()
+    }
+
+    /// Puts the page of the message under the cursor in the web reading
+    /// pane. A message the user went to is read once it is shown.
+    fn show_in_reading_pane(
+        &mut self,
+        env: &Env,
+        message: LocalMessageId,
+        page: crate::files::WebPage,
+        out: &mut Effects,
+    ) {
+        out.host.push(HostRequest::Reading {
+            path: page.path,
+            title: text::sanitize_line(&page.title),
+            remote: page.remote,
+            header: self.reading_header(env),
         });
+        // Opened, as far as being read goes: the same rule as `enter` in
+        // the list with the reader drawn here.
+        let unread = self
+            .list
+            .rows
+            .get(self.list.selected)
+            .is_some_and(|row| row.id == message && !row.flags.seen);
+        // While several are selected, moving among them is choosing, not
+        // reading.
+        if std::mem::take(&mut self.follow.by_user)
+            && unread
+            && !self.list.has_marks()
+            && DraftId::from_message_id(message).is_none()
+        {
+            self.set_seen_locally(message, true);
+            out.data.push(DataRequest::SetSeen {
+                id: message,
+                seen: true,
+            });
+        }
     }
 
     /// The messages a filing or marking command acts on: those selected
@@ -4243,13 +4646,16 @@ impl State {
                     .loaded
                     .then(|| self.list.rows.get(self.list.selected).map(|row| row.id))
                     .flatten();
-                self.list.selected = keep
-                    .and_then(|id| rows.iter().position(|row| row.id == id))
-                    .unwrap_or(if self.list.loaded {
-                        self.list.selected.min(rows.len().saturating_sub(1))
-                    } else {
-                        0
-                    });
+                let kept = keep.and_then(|id| rows.iter().position(|row| row.id == id));
+                // The message under the cursor has gone, filed or deleted,
+                // and its neighbour is what the user is on now: gone to,
+                // as far as the web reading pane goes.
+                self.follow.went |= keep.is_some() && kept.is_none();
+                self.list.selected = kept.unwrap_or(if self.list.loaded {
+                    self.list.selected.min(rows.len().saturating_sub(1))
+                } else {
+                    0
+                });
                 self.list.rows = rows;
                 self.list.loaded = true;
                 self.list.keep_listed_marks();
@@ -4260,6 +4666,9 @@ impl State {
             }
             DataEvent::BodyLoaded { id, body } => {
                 if self.reader.row.as_ref().is_some_and(|row| row.id == id) {
+                    // Read afresh: a page that could not be made of it
+                    // before may be made now.
+                    self.follow.failed = None;
                     self.reader.body = match body {
                         Some(body) => {
                             self.reader.rest = match (body.copy_missing, &self.reader.rest) {
@@ -4477,6 +4886,18 @@ impl State {
                 if self.reader.row.as_ref().map(|row| row.id) != Some(message) {
                     return;
                 }
+                // The reading pane's page is only shown while it is the
+                // one being waited for.
+                if then == PageUse::Reading
+                    && (!self.web_reading
+                        || self.follow.target != Some(message)
+                        || !matches!(
+                            self.follow.asked,
+                            Some(Shown::Page(asked) | Shown::Text(asked)) if asked == message
+                        ))
+                {
+                    return;
+                }
                 self.reader.page = Some(then);
                 if page.blocked > 0 && !page.remote {
                     let pictures = if page.blocked == 1 {
@@ -4496,14 +4917,37 @@ impl State {
                     };
                     self.flash = Some((format!("{pictures}{how}."), false));
                 }
-                out.host.push(match then {
-                    PageUse::Pane => HostRequest::Web {
+                match then {
+                    PageUse::Pane => out.host.push(HostRequest::Web {
                         path: page.path,
                         title: text::sanitize_line(&page.title),
                         remote: page.remote,
-                    },
-                    PageUse::Browser => HostRequest::OpenFile(page.path),
-                });
+                    }),
+                    PageUse::Browser => out.host.push(HostRequest::OpenFile(page.path)),
+                    PageUse::Reading => self.show_in_reading_pane(env, message, page, out),
+                }
+            }
+            DataEvent::PageFailed { message, problem } => {
+                // Still the message the pane is waiting for: the reason
+                // is shown in its place, not the message before it. A
+                // message shown as its text stays as it is: there was
+                // never a page to be had of it.
+                if self.web_reading && self.follow.asked == Some(Shown::Page(message)) {
+                    let problem = text::sanitize_line(&problem);
+                    self.follow.failed = Some(problem.clone());
+                    self.follow.asked = Some(Shown::Note(problem.clone()));
+                    out.data.push(DataRequest::NotePage { text: problem });
+                }
+            }
+            DataEvent::NoteReady { text, page } => {
+                if self.web_reading && self.follow.asked == Some(Shown::Note(text)) {
+                    out.host.push(HostRequest::Reading {
+                        path: page.path,
+                        title: String::new(),
+                        remote: false,
+                        header: Vec::new(),
+                    });
+                }
             }
             DataEvent::Error(message) => self.notices.push_back(Notice::error(message)),
         }
@@ -4560,6 +5004,16 @@ impl State {
             );
             let last = self.reader.lines.len().saturating_sub(viewport);
             self.reader.scroll = self.reader.scroll.min(last);
+        } else if self.web_reading && self.reader.wrap_width != Some(UNDRAWN_WIDTH) {
+            // No reader is drawn, and the message's links are still to be
+            // had from the list: it is laid out all the same, to find them.
+            let (lines, links) = match (&self.reader.body, self.reader.showing()) {
+                (Body::Loaded(body), Some(showing)) => body_lines(body, showing, UNDRAWN_WIDTH),
+                _ => (Vec::new(), Vec::new()),
+            };
+            self.reader.lines = lines;
+            self.reader.links = links;
+            self.reader.wrap_width = Some(UNDRAWN_WIDTH);
         }
         if let (Some(compose), Some(rect)) = (&mut self.compose, areas.reader) {
             let body = layout::compose_body(rect, compose);

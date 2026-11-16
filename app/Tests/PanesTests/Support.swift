@@ -48,6 +48,20 @@ func wait(
     }
 }
 
+/// The same, for a condition that has to wait on something itself.
+@MainActor
+func wait(
+    upTo seconds: Double = 20, for what: String, until condition: @MainActor () async -> Bool
+) async throws {
+    let deadline = Date().addingTimeInterval(seconds)
+    while !(await condition()) {
+        guard Date() < deadline else {
+            throw TimedOut(description: "timed out waiting for \(what)")
+        }
+        try await Task.sleep(for: .milliseconds(20))
+    }
+}
+
 /// Lets the given time pass while watching that the condition keeps
 /// holding. Returns false as soon as it does not.
 @MainActor

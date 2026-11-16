@@ -1,6 +1,8 @@
 import AppKit
 import Bridge
 import Notifications
+import Panes
+import WebKit
 
 /// Drives the running app from the command line, for checks that need the
 /// real window, menus and terminal but no person:
@@ -41,6 +43,15 @@ import Notifications
 ///   option's name, and choosing it tells the core, as choosing it by hand
 ///   does
 /// - `sheetpress:BUTTON` press a button of the form in the sheet, by its name
+/// - `snap:NAME`      write the dump as it stands now, to the `--dump-screen`
+///   file with `.NAME` added to its name (and its picture beside it), and go
+///   on: several states of one run can then be checked from one launch
+///
+/// The reading pane is in the dump: whether web reading is on, the page the
+/// core last asked it to show (its title, the last of its path, whether it
+/// may load remote content, how far it has loaded, how often it was
+/// scrolled) and the lines above it. A web view's page is drawn into the
+/// picture from the web view's own snapshot of itself.
 ///
 /// The sheet is the real one, on the window; `press:` reaches it while it is
 /// up, so `press:enter` is its default button and `press:esc` its cancel.
@@ -118,19 +129,21 @@ enum DebugScript {
         controller.problemReporter = { _, _, _ in }
         Task { @MainActor in
             for step in steps {
-                await perform(step, on: controller)
+                await perform(step, on: controller, dumpingTo: options.dumpScreenTo)
             }
             guard let destination = options.dumpScreenTo else { return }
             // Let the last step's effects reach the screen.
             try? await Task.sleep(for: .milliseconds(400))
-            dump(controller, to: destination)
+            await dumpWithPages(controller, to: destination)
             controller.stopCore()
             try? await Task.sleep(for: .milliseconds(1500))
             exit(0)
         }
     }
 
-    private static func perform(_ step: String, on controller: MainWindowController) async {
+    private static func perform(
+        _ step: String, on controller: MainWindowController, dumpingTo destination: URL?
+    ) async {
         let (verb, argument) = split(step)
         switch verb {
         case "wait":
@@ -231,6 +244,13 @@ enum DebugScript {
                 note("no button \(argument) in the sheet to press")
             }
             try? await Task.sleep(for: .milliseconds(300))
+        case "snap":
+            let plain = !argument.isEmpty && argument.allSatisfy { $0.isLetter || $0.isNumber || $0 == "-" }
+            if let destination, plain {
+                await dumpWithPages(controller, to: destination.appendingPathExtension(argument))
+            } else {
+                note("cannot snap \(argument)")
+            }
         default:
             note("unknown step \(step)")
         }
@@ -333,7 +353,18 @@ enum DebugScript {
 
     // MARK: - The dump
 
-    static func dump(_ controller: MainWindowController, to destination: URL?) {
+    /// The dump, with the page of a web view on show drawn into the
+    /// picture: a web view draws in a process of its own, and is asked for
+    /// a picture of itself.
+    static func dumpWithPages(_ controller: MainWindowController, to destination: URL?) async {
+        var page: (NSImage, NSRect)?
+        if let pane = controller.pane as? WebPane, let picture = await pane.picture() {
+            page = (picture, pane.pageFrame)
+        }
+        dump(controller, to: destination, page: page)
+    }
+
+    static func dump(_ controller: MainWindowController, to destination: URL?, page: (NSImage, NSRect)? = nil) {
         guard let destination else { return }
         var lines = [controller.terminalText, "", "--- shell ---"]
         lines.append("title: \(controller.window?.title ?? "")")
@@ -348,10 +379,16 @@ enum DebugScript {
         } else {
             lines.append("pane: none")
         }
+        // reading: off
+        // reading: on, "Subject", m12/page/message.html, remote content blocked, loaded, header: From: ... | To: ...
+        lines.append("reading: \(controller.readingSummary)")
+        lines.append("reading requests: \(controller.readingRequests)")
         let responder = controller.window?.firstResponder.map { String(describing: type(of: $0)) }
         lines.append("keys go to: \(responder ?? "nothing")")
         lines.append("opened: \(opened.joined(separator: " "))")
         lines.append("enabled: \(controller.commands.enabledNames.joined(separator: " "))")
+        // The commands that are switched on: their menu items are checked.
+        lines.append("checked: \(controller.commands.checkedNames.joined(separator: " "))")
         lines.append("file panels asked for: \(panelsAsked)")
         lines.append("copied: \(copied.map { $0.debugDescription }.joined(separator: " "))")
         lines.append("opened files: \(openedFiles.joined(separator: " "))")
@@ -393,7 +430,10 @@ enum DebugScript {
             guard let menu = top.submenu else { continue }
             let items = menu.items.filter { !$0.isSeparatorItem }.map { item -> String in
                 let isCommand = item.representedObject is String
-                let state = isCommand ? (item.isEnabled ? "+" : "-") : ""
+                var state = isCommand ? (item.isEnabled ? "+" : "-") : ""
+                if isCommand, item.state == .on {
+                    state += "\u{2713}"
+                }
                 var key = ""
                 if !item.keyEquivalent.isEmpty {
                     key = " <\(item.keyEquivalentModifierMask.contains(.command) ? "cmd-" : "")\(item.keyEquivalent)>"
@@ -416,6 +456,13 @@ enum DebugScript {
             let bitmap = frame.bitmapImageRepForCachingDisplay(in: frame.bounds)
         {
             frame.cacheDisplay(in: frame.bounds, to: bitmap)
+            // A web view's page, where the web view is in the window.
+            if let (picture, place) = page, let context = NSGraphicsContext(bitmapImageRep: bitmap) {
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current = context
+                picture.draw(in: place, from: .zero, operation: .copy, fraction: 1, respectFlipped: true, hints: nil)
+                NSGraphicsContext.restoreGraphicsState()
+            }
             // A sheet is a window of its own: it is drawn into the picture
             // where it lies over the window, and saved by itself as well,
             // to be looked at closely. The picture is what each window

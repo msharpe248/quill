@@ -55,6 +55,13 @@ public class PaneView: NSView {
     /// What the header says after the title: "2 of 5" for the second of five
     /// files, and nothing when there is nothing to add.
     public private(set) var detail = ""
+    /// Lines of plain text under the title, in a pane that has them: the
+    /// reading pane says who a message is from and to there, outside the
+    /// page, where the page cannot reach.
+    public let headerLines: [String]
+    /// Whether the pane has a close button. The reading pane has none: it
+    /// goes when the core says so.
+    public let isClosable: Bool
     /// Shown in place of the viewer when there is nothing it can show.
     public private(set) var message: String?
     /// The close button was used.
@@ -67,15 +74,27 @@ public class PaneView: NSView {
     private let closeButton = NSButton()
 
     /// `closeHint` is what the close button says of itself when pointed at.
-    init(kind: PaneKind, title: String, content: NSView, closeHint: String = "Close Pane (esc)") {
+    /// `headerLines`, when given, makes the header that of a pane to read
+    /// in: the title set larger, and these lines under it. `closable`
+    /// false leaves the close button out.
+    init(
+        kind: PaneKind, title: String, content: NSView, closeHint: String = "Close Pane (esc)",
+        headerLines: [String]? = nil, closable: Bool = true
+    ) {
         self.kind = kind
         self.title = title
         self.content = content
+        self.headerLines = headerLines ?? []
+        isClosable = closable
         super.init(frame: .zero)
 
-        titleLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
-        titleLabel.textColor = .secondaryLabelColor
-        titleLabel.lineBreakMode = .byTruncatingMiddle
+        let reading = headerLines != nil
+        titleLabel.font =
+            reading
+            ? .systemFont(ofSize: NSFont.systemFontSize + 2, weight: .semibold)
+            : .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
+        titleLabel.textColor = reading ? .labelColor : .secondaryLabelColor
+        titleLabel.lineBreakMode = reading ? .byTruncatingTail : .byTruncatingMiddle
         titleLabel.maximumNumberOfLines = 1
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         titleLabel.stringValue = title
@@ -91,10 +110,44 @@ public class PaneView: NSView {
         closeButton.target = self
         closeButton.action = #selector(close(_:))
         closeButton.setAccessibilityIdentifier("pane.close")
+        closeButton.isHidden = !closable
 
-        let header = NSStackView(views: [titleLabel, detailLabel, NSView(), closeButton])
-        header.orientation = .horizontal
-        header.edgeInsets = NSEdgeInsets(top: 4, left: 10, bottom: 4, right: 8)
+        let top = NSStackView(views: [titleLabel, detailLabel, NSView(), closeButton])
+        top.orientation = .horizontal
+        // Under the title, each on a line of its own, cut to the pane's
+        // width: plain text, whatever it says.
+        let lines = self.headerLines.map { line in
+            let label = NSTextField(labelWithString: line)
+            label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+            label.textColor = .secondaryLabelColor
+            label.lineBreakMode = .byTruncatingTail
+            label.maximumNumberOfLines = 1
+            label.allowsDefaultTighteningForTruncation = false
+            label.isSelectable = true
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            return label
+        }
+        let insets =
+            reading
+            ? NSEdgeInsets(top: 10, left: 16, bottom: 10, right: 12)
+            : NSEdgeInsets(top: 4, left: 10, bottom: 4, right: 8)
+        let header = NSStackView(views: [top] + lines)
+        header.orientation = .vertical
+        header.alignment = .leading
+        header.spacing = 2
+        header.edgeInsets = insets
+        if reading, !title.isEmpty {
+            header.setCustomSpacing(6, after: top)
+        }
+        // A pane to read in with nothing to say above its page says
+        // nothing: no empty bar.
+        header.isHidden = reading && title.isEmpty && lines.isEmpty
+        for view in [top] + lines {
+            view.widthAnchor.constraint(lessThanOrEqualTo: header.widthAnchor, constant: -(insets.left + insets.right))
+                .isActive = true
+        }
+        top.widthAnchor.constraint(equalTo: header.widthAnchor, constant: -(insets.left + insets.right))
+            .isActive = true
 
         messageLabel.alignment = .center
         messageLabel.textColor = .secondaryLabelColor

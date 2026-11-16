@@ -35,7 +35,7 @@ You need a stable Rust toolchain (1.98 or later; `rust-toolchain.toml` selects i
 cargo run --release -- tui --demo
 ```
 
-`--demo` opens an invented mailbox held in memory. It reads your config, theme and keys if you have them, and writes nothing.
+`--demo` opens an invented mailbox held in memory. It reads your config, theme and keys if you have them, and writes nothing. (In the app, the one thing it does write is the choice of reading pane, `web_reading`, when you switch it: see "Reading in a web pane".)
 
 Without `--demo`, `quill tui` opens your own mail. The first time, with no accounts yet, it opens the form for adding one.
 
@@ -49,6 +49,8 @@ open target/app/Quill.app
 The script builds the Rust core and the Swift shell, assembles `target/app/Quill.app`, and signs it ad hoc with the App Sandbox on. The app opens your own mail, and the form for adding an account when there is none; `Quill.app/Contents/MacOS/Quill --demo` opens the demo mailbox instead. The app keeps its config and mail in its own container, apart from those of `quill` run in a terminal.
 
 Around the terminal the app adds a menu bar and toolbar built from the core's commands, the mailbox name and unread count in the title bar, the unread count on the Dock icon, and a second pane beside the terminal for looking at attachments, playing sound and video, and showing a message's HTML. `esc` closes the pane, and `cmd-]` moves focus between the panes.
+
+`w` (View > Web Reading Pane, or its toolbar button) turns that second pane into the place mail is read: a web view that shows the message under the list's cursor, as a mail program's reading pane does, with the accounts and the list beside it. See "Reading in a web pane".
 
 `SANDBOX=0 app/build-app.sh` signs without the sandbox, to tell a sandbox denial from an ordinary bug.
 
@@ -194,6 +196,7 @@ Press `?` at any time for the keys that apply where you are. The bottom bar show
 | `x` | Select or unselect, and move on | `V` | Start or end a range |
 | `X` | Unsubscribe from a mailing list | `\|` | Give the message to one of your own programs (in a terminal) |
 | `y` / `n` | Accept, decline an invitation | `M` | Answer an invitation with maybe |
+| `w` | Read in a web pane, or in the text reader (in the app) | | |
 
 Arrow keys, `home`, `end`, `pageup` and `pagedown` work too. `ctrl-d` also pages down and `ctrl-c` also quits.
 
@@ -227,6 +230,25 @@ remote_images = "ask"     # or "never": i and I do nothing
 ```
 
 A link whose text names one site and whose target is another is flagged in the reader, on the line below it.
+
+### Reading in a web pane
+
+In the app, `w` switches between two ways of reading. Off, which is how Quill starts, is everything above: the reader is text, and `v` shows one message as a page. On, the web pane takes the reader's place and follows the list: move through the messages and each is shown as its page, a moment after the cursor comes to rest on it. The terminal then draws only the accounts and the list. Who the message is from and to, its date and its files are above the page, outside it. A message with no HTML is a page of its text, so nothing jumps about between one kind of message and another.
+
+The keyboard stays with the list. `j` and `k` move; `space` and `ctrl-u` (the keys that page down and up) page the message, not the list; `enter` shows the message under the cursor at once. Everything that acts on a message works from there as it does in the reader: reply, forward, archive, delete, move, star, unread, `o` for its links, `a` for its files, `i` and `I` for its remote pictures, `B` for the browser, unsubscribing, answering an invitation. A message being written takes the list's place, with the one being answered still on show beside it. Clicking in the page puts the keyboard there, for selecting and copying; `esc` gives it back to the list.
+
+The page is the same cleaned copy `v` shows, held to the same rules: no script runs, nothing is fetched, and remote pictures stay out until `i` or `I`. A link clicked in it opens in your browser, if it is a web or mail address, and never in the pane.
+
+A message becomes read when you go to it and it has been shown: by moving to it, clicking it or pressing `enter`. The message the cursor merely starts on when a mailbox opens, or when a search finds something, is shown without being marked; so is one the wheel scrolls past, and so is any message while several are selected.
+
+The choice is kept. Switching writes it into `config.toml`, leaving the rest of the file as you wrote it:
+
+```toml
+[ui]
+web_reading = true        # false, or left out: the text reader
+```
+
+A terminal has no web view, so there `w` does nothing, the setting is ignored, and `v` still opens the browser.
 
 ## Unsubscribing from a mailing list
 
@@ -581,13 +603,14 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 |---|---|
 | `nav.next`, `nav.prev` | Move down or up; scroll in the reader. Between the fields of the account form |
 | `nav.top`, `nav.bottom` | Jump to the first or last |
-| `nav.page_down`, `nav.page_up` | Move by a screenful |
+| `nav.page_down`, `nav.page_up` | Move by a screenful. With the web reading pane on, page the message |
 | `nav.open` | Open the message or mailbox |
 | `nav.back` | Go back, close help, dismiss a notice |
 | `focus.sidebar`, `focus.list`, `focus.reader` | Focus a pane |
 | `focus.next`, `focus.prev` | Cycle the panes |
 | `view.zoom` | Zoom the focused pane |
 | `view.threads` | List conversations together, or every message by itself |
+| `view.web_reading` | In the app, read in a web pane that follows the list, or in the text reader |
 | `message.toggle_unread`, `message.toggle_star` | Change a message's flags |
 | `message.toggle_html` | Switch a message between its HTML and its plain text |
 | `message.open_link` | List the message's links, to open one in the browser |
@@ -655,7 +678,7 @@ The IMAP backend's tests run against a real server: install Dovecot (`brew insta
 
 The shell and the core talk over a bridge defined in `schema/bridge.json`. The example messages in `schema/examples` are tested from both sides; change the schema, both sets of types and the examples together.
 
-The app can be driven without a person, for checks that need the real window: `Quill --script "wait:2;menu:message.toggle_star;press:cmd-j" --dump-screen out.txt` performs the steps, then writes the terminal's text, the shell's state and a picture of the window (`out.txt.png`). Inside the sandbox the file must be in the app's container. `app/Sources/QuillApp/DebugScript.swift` lists the steps. A sheet on the window is in the dump too (its step, what it says, and each field with what it holds, a password as `<secret>`), is drawn into the picture where it lies and saved by itself as `out.txt.sheet.png`; `sheetset:FIELD=VALUE` and `sheetpress:BUTTON` work it.
+The app can be driven without a person, for checks that need the real window: `Quill --script "wait:2;menu:message.toggle_star;press:cmd-j" --dump-screen out.txt` performs the steps, then writes the terminal's text, the shell's state and a picture of the window (`out.txt.png`). Inside the sandbox the file must be in the app's container. `app/Sources/QuillApp/DebugScript.swift` lists the steps. A sheet on the window is in the dump too (its step, what it says, and each field with what it holds, a password as `<secret>`), is drawn into the picture where it lies and saved by itself as `out.txt.sheet.png`; `sheetset:FIELD=VALUE` and `sheetpress:BUTTON` work it. `snap:NAME` writes the dump as it stands in the middle of a script (`out.txt.NAME`, and its picture), so one launch can check several states; the dump says whether the web reading pane is on and what it shows.
 
 The UI is covered by snapshot tests of whole screens at 80x24 and 200x60 (`crates/quill-tui/tests/snapshots.rs`). When a change to the UI is intended, regenerate them with `INSTA_UPDATE=always cargo test -p quill-tui` or review them with `cargo insta review`, and read the diff before committing.
 

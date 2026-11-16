@@ -29,6 +29,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     private(set) var pane: PaneView?
     private var keyMonitor: Any?
 
+    /// The reading pane's turn in the second pane's place: the page the
+    /// core last asked it to show, while it wants one shown at all.
+    private(set) var readingSlot = ReadingSlot<ReadingShow>()
+    /// A reading pane loading its page out of sight, to take the place of
+    /// the one on show once there is something to see in it.
+    private var incomingReading: WebPane?
+    /// How many pages the reading pane has been asked to show.
+    private(set) var readingRequests = 0
+
     /// The Vim in the editor pane, while one is running.
     private var editor: RunningEditor?
     /// The one place there is for an editor, and what became of the last.
@@ -273,7 +282,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 let key = PaneKey(event: event)
             else { return event }
             if key == .escape {
-                closePane()
+                // The reading pane is not the user's to close: esc gives
+                // the keys back to the terminal, where the list is.
+                if isReadingPane {
+                    surface.focus()
+                } else {
+                    closePane()
+                }
                 return nil
             }
             return pane.handleKey(key) ? nil : event
@@ -350,6 +365,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             onCommandsChanged?()
         case let .stateUpdate(state):
             commands.setEnabled(state.enabled)
+            commands.setChecked(state.checked)
             window?.title = state.title.isEmpty ? "Quill" : state.title
             window?.subtitle = state.unread > 0 ? "\(state.unread) unread" : ""
             NSApp.dockTile.badgeLabel = state.unread > 0 ? String(state.unread) : nil
@@ -403,6 +419,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             formSheet.show(form, on: window)
         case .formClose:
             formSheet.close()
+        case let .readingShow(page):
+            showReading(page)
+        case let .readingScroll(by):
+            readingPane?.scroll(by)
+        case .readingClose:
+            closeReading()
         }
     }
 
@@ -652,7 +674,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     func windowWillClose(_: Notification) {
-        // Nothing goes on playing behind a closed window.
+        // Nothing goes on playing, or loading, behind a closed window.
+        dropIncomingReading()
         pane?.tearDown()
         stopCore()
     }
@@ -698,6 +721,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             return
         }
         newPane.onClose = { [weak self] in self?.closePane() }
+        // A page still loading for the reading pane has no pane to go
+        // into now. The latest is loaded afresh when this one goes.
+        dropIncomingReading()
         // A pane that replaces another takes its place exactly; the first
         // pane leaves the terminal the larger share.
         var divider = splitView.bounds.width * 0.58
@@ -722,16 +748,133 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             stopEditor()
             return
         }
+        // The reading pane goes when the core says web reading is off,
+        // and by nothing else.
+        if isReadingPane {
+            return
+        }
         removePane()
     }
 
     private func removePane() {
         guard let old = pane else { return }
+        let divider = surface.view.frame.width
         pane = nil
         old.tearDown()
         old.removeFromSuperview()
         surface.focus()
+        // The place is empty: the reading pane has it back, where the pane
+        // that has gone was, on the page the core last asked for.
+        if case let .show(page) = readingSlot.vacated() {
+            place(makeReadingPane(page), dividerAt: divider)
+        }
     }
+
+    // MARK: - The reading pane
+
+    /// The reading pane, while it is the pane on show.
+    private var readingPane: WebPane? {
+        (pane as? WebPane).flatMap { $0.isReading ? $0 : nil }
+    }
+
+    private var isReadingPane: Bool { readingPane != nil }
+
+    private var occupant: PaneOccupant {
+        if pane == nil {
+            return .nothing
+        }
+        return isReadingPane ? .reading : .other
+    }
+
+    /// The terminal's share of the window beside the reading pane: the
+    /// accounts and the list need less room than the three panes did.
+    private static let terminalShareBesideReading = 0.5
+
+    /// How long a page is given to load out of sight before it is put on
+    /// show anyway, still loading.
+    private static let longestWaitForAPage = 0.4
+
+    private func makeReadingPane(_ page: ReadingShow) -> WebPane {
+        WebPane(
+            file: URL(fileURLWithPath: page.path), title: page.title, allowsRemoteContent: page.remote,
+            readingHeader: page.header
+        ) { [weak self] address in
+            // The same door every other link goes through.
+            self?.openLink(address.absoluteString)
+        }
+    }
+
+    /// Shows a page in the reading pane, in place of the page it showed.
+    /// The keyboard stays where it is: with the terminal, and its list.
+    private func showReading(_ page: ReadingShow) {
+        readingRequests += 1
+        switch readingSlot.show(page, over: occupant) {
+        case let .show(page):
+            place(makeReadingPane(page), dividerAt: splitView.bounds.width * Self.terminalShareBesideReading)
+        case let .replace(page):
+            dropIncomingReading()
+            let incoming = makeReadingPane(page)
+            incomingReading = incoming
+            guard incoming.phase != .failed else {
+                swapInReading(incoming)
+                return
+            }
+            incoming.onSettled = { [weak self, weak incoming] in
+                guard let incoming else { return }
+                self?.swapInReading(incoming)
+            }
+            Task { [weak self, weak incoming] in
+                try? await Task.sleep(for: .seconds(Self.longestWaitForAPage))
+                guard let incoming else { return }
+                self?.swapInReading(incoming)
+            }
+        case .close, .nothing:
+            // Another pane has the place. The page waits for it to go.
+            break
+        }
+    }
+
+    /// Puts a reading pane beside the terminal, in an empty place, without
+    /// giving it the keyboard.
+    private func place(_ newPane: WebPane, dividerAt divider: CGFloat) {
+        pane = newPane
+        splitView.addArrangedSubview(newPane)
+        splitView.layoutSubtreeIfNeeded()
+        splitView.setPosition(divider, ofDividerAt: 0)
+    }
+
+    /// Puts a reading pane that has loaded its page where the reading pane
+    /// on show is. If that pane had the keyboard, the terminal has it now:
+    /// the pane the user clicked in is gone.
+    private func swapInReading(_ incoming: WebPane) {
+        guard incomingReading === incoming, let old = readingPane else { return }
+        incomingReading = nil
+        incoming.onSettled = nil
+        let hadFocus = paneHasFocus
+        let divider = surface.view.frame.width
+        old.tearDown()
+        old.removeFromSuperview()
+        place(incoming, dividerAt: divider)
+        if hadFocus {
+            surface.focus()
+        }
+    }
+
+    private func dropIncomingReading() {
+        incomingReading?.onSettled = nil
+        incomingReading?.tearDown()
+        incomingReading = nil
+    }
+
+    /// Takes the reading pane away: the core says web reading is off.
+    private func closeReading() {
+        dropIncomingReading()
+        if readingSlot.close(over: occupant) == .close {
+            removePane()
+        }
+    }
+
+    // MARK: - Moving between the panes
 
     private func focus(_ pane: PaneView) {
         // A viewer that will not take the keyboard leaves it with the pane
@@ -1023,6 +1166,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     /// What became of each vimrc import or removal, in order.
     private(set) var vimrcResults: [String] = []
 
+    /// The reading pane in a line, for the dump: `off`, or `on` and what
+    /// it shows, or that another pane has its place for now.
+    var readingSummary: String {
+        guard let page = readingSlot.page else { return "off" }
+        let file = URL(fileURLWithPath: page.path).pathComponents.suffix(3).joined(separator: "/")
+        var words = ["on", page.title.debugDescription, file]
+        if let shown = readingPane {
+            // The pane on show may still be the page before, for a moment.
+            let current = shown.document.path == page.path
+            words.append(current ? shown.summary : "still showing \(shown.title.debugDescription)")
+        } else {
+            words.append("behind another pane")
+        }
+        if !page.header.isEmpty {
+            words.append("header: " + page.header.joined(separator: " | "))
+        }
+        return words.joined(separator: ", ")
+    }
+
+    /// The reading pane's web view, for the picture in the dump.
+    var readingPaneForPicture: WebPane? { readingPane }
+
     /// The editor pane's screen as text, while Vim is running.
     var editorText: String? { editor?.surface.visibleText() }
 
@@ -1047,8 +1212,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 extension MainWindowController: NSMenuItemValidation {
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
-        case #selector(focusNextPane(_:)), #selector(focusPreviousPane(_:)), #selector(closePane(_:)):
+        case #selector(focusNextPane(_:)), #selector(focusPreviousPane(_:)):
             pane != nil
+        case #selector(closePane(_:)):
+            // The reading pane is switched off, not closed.
+            pane != nil && (pane as? WebPane)?.isReading != true
         case #selector(removeImportedVimrc(_:)):
             vimrc.current != nil
         default:

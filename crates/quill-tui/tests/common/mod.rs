@@ -107,6 +107,37 @@ impl Harness {
         )
     }
 
+    /// The demo mailbox in Quill's own app, where there is a web view
+    /// pane to read mail in. `reading`: the config says web reading is on.
+    /// Set from the start, because the first message is read as the
+    /// mailbox opens.
+    pub fn in_the_app(width: u16, height: u16, reading: bool) -> Self {
+        let mut store = Store::open_in_memory().unwrap();
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(demo::seed(&mut store, NOW))
+            .unwrap();
+        Self::over_with(
+            store,
+            width,
+            height,
+            Keymap::preset(KeymapPreset::Vim),
+            ColorMode::TrueColor,
+            false,
+            |env| {
+                env.web_pane = true;
+                env.web_reading = reading;
+            },
+        )
+    }
+
+    /// The list's cursor has rested for a moment: what the run loop says
+    /// when it has, for the web reading pane to follow it.
+    pub fn settle(&mut self) {
+        self.act(Action::SelectionSettled);
+    }
+
     pub fn build(width: u16, height: u16, keymap: Keymap, mode: ColorMode) -> Self {
         let mut store = Store::open_in_memory().unwrap();
         tokio::runtime::Builder::new_current_thread()
@@ -170,6 +201,9 @@ impl Harness {
             vim_program: None,
             hooks: Vec::new(),
             hooks_enabled: true,
+            // As in a terminal: there is no web view pane to read in.
+            web_pane: false,
+            web_reading: false,
         };
         adjust(&mut env);
         let scratch = tempfile::tempdir().unwrap();

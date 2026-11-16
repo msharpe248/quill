@@ -100,7 +100,7 @@ private func startedServer() throws -> (BridgeServer, Inbox) {
         core.send(#"{"jsonrpc":"2.0","method":"pane.close","params":{}}"# + "\n\n")
         // Two messages in one write, and one split across two writes.
         core.send(
-            #"{"jsonrpc":"2.0","method":"state.update","params":{"context":"list","enabled":[],"unread":3,"title":"Inbox"}}"#
+            #"{"jsonrpc":"2.0","method":"state.update","params":{"context":"list","enabled":[],"checked":[],"unread":3,"title":"Inbox"}}"#
                 + "\n"
                 + #"{"jsonrpc":"2.0","method":"pane.pre"#)
         core.send(#"view","params":{"items":[{"path":"/tmp/a.pdf","title":"a.pdf"}],"index":0}}"# + "\n")

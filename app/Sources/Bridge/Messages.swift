@@ -52,6 +52,14 @@ public enum CoreToShell: Equatable, Sendable {
     case formShow(FormShow)
     /// Take the sheet down: the form is over.
     case formClose
+    /// Show sanitized HTML in the reading pane: the web view that stands in
+    /// the reader's place while web reading is on. It stays until
+    /// `readingClose`, and never takes the keyboard by itself.
+    case readingShow(ReadingShow)
+    /// Scroll what the reading pane shows.
+    case readingScroll(ScrollBy)
+    /// Take the reading pane away: web reading is off.
+    case readingClose
 }
 
 /// A message the shell sends to the core.
@@ -112,19 +120,23 @@ public struct StateUpdate: Equatable, Sendable, Codable {
     public var context: Context
     /// Names of the commands that would do something right now.
     public var enabled: [String]
+    /// Names of the commands that switch something on and off, and have it
+    /// on right now: their menu items are shown checked.
+    public var checked: [String]
     /// Unread messages across all inboxes, for the Dock badge.
     public var unread: Int
     /// The window title.
     public var title: String
 
-    public init(context: Context, enabled: [String], unread: Int, title: String) {
+    public init(context: Context, enabled: [String], checked: [String] = [], unread: Int, title: String) {
         self.context = context
         self.enabled = enabled
+        self.checked = checked
         self.unread = unread
         self.title = title
     }
 
-    static let allowedKeys: Set<String> = ["context", "enabled", "unread", "title"]
+    static let allowedKeys: Set<String> = ["context", "enabled", "checked", "unread", "title"]
 }
 
 public enum Context: String, Equatable, Sendable, Codable {
@@ -226,6 +238,49 @@ public struct PaneWeb: Equatable, Sendable, Codable {
     }
 
     static let allowedKeys: Set<String> = ["path", "title", "remote"]
+}
+
+/// A page for the reading pane, and what to say above it. The shell shows
+/// the page under the web view's rules and the lines as plain text. It
+/// knows nothing else about them.
+public struct ReadingShow: Equatable, Sendable, Codable {
+    /// The sanitized HTML. Files beside it in its folder may be loaded.
+    public var path: String
+    public var title: String
+    /// The user has allowed this message to load remote content.
+    public var remote: Bool
+    /// Lines of plain text shown above the page, outside it, where the
+    /// page cannot reach.
+    public var header: [String]
+
+    /// The most lines the header may have.
+    public static let mostHeaderLines = 8
+    /// The longest any one of them may be, in bytes.
+    public static let longestHeaderLine = 2000
+
+    static func isHeaderLine(_ line: String) -> Bool {
+        (1...longestHeaderLine).contains(line.utf8.count)
+            && !line.unicodeScalars.contains { $0.properties.generalCategory == .control }
+    }
+
+    /// `nil` unless the path is absolute and the header is at most eight
+    /// lines, each one line of 1 to 2000 bytes.
+    public init?(path: String, title: String, remote: Bool, header: [String] = []) {
+        guard path.hasPrefix("/"), header.count <= Self.mostHeaderLines, header.allSatisfy(Self.isHeaderLine)
+        else { return nil }
+        self.path = path
+        self.title = title
+        self.remote = remote
+        self.header = header
+    }
+
+    static let allowedKeys: Set<String> = ["path", "title", "remote", "header"]
+}
+
+/// How far to scroll the reading pane, and which way.
+public enum ScrollBy: String, Equatable, Sendable, Codable, CaseIterable {
+    case pageDown = "page_down"
+    case pageUp = "page_up"
 }
 
 public struct ThumbnailMake: Equatable, Sendable, Codable {

@@ -28,6 +28,9 @@ pub enum PageUse {
     Pane,
     /// The user's browser.
     Browser,
+    /// The web reading pane, which stands in the reader's place and
+    /// follows the list.
+    Reading,
 }
 
 /// What [`DataRequest::Many`] does to each of its messages.
@@ -72,6 +75,20 @@ pub enum DataRequest {
         message: LocalMessageId,
         remote: RemoteContent,
         then: PageUse,
+    },
+    /// Write a message's text out as a page for the web reading pane:
+    /// one whose downloaded copy is not at hand to make its page from (a
+    /// draft, or mail whose copy was let go). Answered as
+    /// [`DataEvent::PageReady`].
+    TextPage {
+        message: LocalMessageId,
+        title: String,
+        text: String,
+    },
+    /// Write words of Quill's own out as a page for the web reading pane:
+    /// why there is no message in it.
+    NotePage {
+        text: String,
     },
     /// Let this sender's mail load remote content from now on.
     AllowRemote {
@@ -249,6 +266,16 @@ pub enum DataEvent {
         message: LocalMessageId,
         page: WebPage,
         then: PageUse,
+    },
+    /// A page for the web reading pane could not be written, and why.
+    PageFailed {
+        message: LocalMessageId,
+        problem: String,
+    },
+    /// A page of Quill's own words is written and ready to show.
+    NoteReady {
+        text: String,
+        page: WebPage,
     },
     /// What a search found, newest first. `more`: there were more than are
     /// shown.
@@ -497,6 +524,31 @@ fn run(
                 page,
                 then,
             }],
+            // The reading pane must not go on showing another message:
+            // the reason is shown there, in this one's place.
+            Err(problem) if then == PageUse::Reading => vec![DataEvent::PageFailed {
+                message,
+                problem: problem.0,
+            }],
+            Err(problem) => vec![flash(&problem.0)],
+        },
+        DataRequest::TextPage {
+            message,
+            title,
+            text,
+        } => match files::text_page(files, message, &title, &text) {
+            Ok(page) => vec![DataEvent::PageReady {
+                message,
+                page,
+                then: PageUse::Reading,
+            }],
+            Err(problem) => vec![DataEvent::PageFailed {
+                message,
+                problem: problem.0,
+            }],
+        },
+        DataRequest::NotePage { text } => match files::note_page(files, &text) {
+            Ok(page) => vec![DataEvent::NoteReady { text, page }],
             Err(problem) => vec![flash(&problem.0)],
         },
         DataRequest::AllowRemote { address } => {

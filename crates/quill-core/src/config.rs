@@ -80,6 +80,10 @@ pub struct UiConfig {
     pub notifications: bool,
     /// List the messages of a conversation together.
     pub threads: bool,
+    /// Read mail in a web view pane that follows the message list, in
+    /// place of the text reader, where the host has one (Quill's own
+    /// window). Quill writes this itself when the user switches.
+    pub web_reading: bool,
 }
 
 impl Default for UiConfig {
@@ -94,6 +98,7 @@ impl Default for UiConfig {
             mouse: true,
             notifications: true,
             threads: true,
+            web_reading: false,
         }
     }
 }

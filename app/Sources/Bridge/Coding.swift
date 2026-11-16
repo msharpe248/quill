@@ -155,6 +155,17 @@ private struct PaneWebParams: Codable {
     var remote: Bool
 }
 
+private struct ReadingShowParams: Codable {
+    var path: String
+    var title: String
+    var remote: Bool
+    var header: [String]
+}
+
+private struct ReadingScrollParams: Codable {
+    var by: String
+}
+
 private struct ThumbnailMakeParams: Codable {
     var id: Int
     var path: String
@@ -655,6 +666,25 @@ public extension CoreToShell {
         case "form.close":
             try envelope.requireOnly([])
             self = .formClose
+        case "reading.show":
+            let params = try envelope.decode(ReadingShowParams.self, allowing: ReadingShow.allowedKeys)
+            guard
+                let show = ReadingShow(
+                    path: params.path, title: params.title, remote: params.remote, header: params.header)
+            else {
+                throw BridgeError.malformed(
+                    "reading.show: the path must be absolute and the header at most 8 lines of 1 to 2000 bytes")
+            }
+            self = .readingShow(show)
+        case "reading.scroll":
+            let params = try envelope.decode(ReadingScrollParams.self, allowing: ["by"])
+            guard let by = ScrollBy(rawValue: params.by) else {
+                throw BridgeError.malformed("reading.scroll: by is page_down or page_up")
+            }
+            self = .readingScroll(by)
+        case "reading.close":
+            try envelope.requireOnly([])
+            self = .readingClose
         default:
             throw BridgeError.unknownMethod(envelope.method)
         }
@@ -700,6 +730,12 @@ public extension CoreToShell {
             encodeLine(method: "form.show", params: form.json)
         case .formClose:
             encodeLine(method: "form.close", params: NoParams())
+        case let .readingShow(show):
+            encodeLine(method: "reading.show", params: show)
+        case let .readingScroll(by):
+            encodeLine(method: "reading.scroll", params: ReadingScrollParams(by: by.rawValue))
+        case .readingClose:
+            encodeLine(method: "reading.close", params: NoParams())
         }
     }
 }

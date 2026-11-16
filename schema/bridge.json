@@ -27,7 +27,10 @@
         { "$ref": "#/$defs/spell.suggest" },
         { "$ref": "#/$defs/pane.editor" },
         { "$ref": "#/$defs/form.show" },
-        { "$ref": "#/$defs/form.close" }
+        { "$ref": "#/$defs/form.close" },
+        { "$ref": "#/$defs/reading.show" },
+        { "$ref": "#/$defs/reading.scroll" },
+        { "$ref": "#/$defs/reading.close" }
       ]
     },
     "shellToCore": {
@@ -105,7 +108,7 @@
         "method": { "const": "state.update" },
         "params": {
           "type": "object",
-          "required": ["context", "enabled", "unread", "title"],
+          "required": ["context", "enabled", "checked", "unread", "title"],
           "additionalProperties": false,
           "properties": {
             "context": {
@@ -114,6 +117,11 @@
             },
             "enabled": {
               "description": "Names of the commands that would do something right now. Menu items and toolbar buttons for every other command are disabled.",
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "checked": {
+              "description": "Names of the commands that switch something on and off, and have it on right now. Their menu items are shown checked; every other command's is not.",
               "type": "array",
               "items": { "type": "string" }
             },
@@ -263,6 +271,76 @@
             }
           }
         }
+      }
+    },
+
+    "reading.show": {
+      "description": "Core to shell. Show an HTML file the core has already sanitized in the reading pane: the web view that stands in the reader's place beside the terminal while web reading is on. It takes the place of whatever the reading pane showed, stays until reading.close, and never takes the keyboard by itself. The same rules as pane.web: scripts never run, nothing is loaded over the network unless `remote` is true, and links open in the user's browser, never in the pane.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "reading.show" },
+        "params": {
+          "type": "object",
+          "required": ["path", "title", "remote", "header"],
+          "additionalProperties": false,
+          "properties": {
+            "path": {
+              "description": "Absolute path of the HTML file. Files beside it in the same folder may be loaded by it.",
+              "type": "string",
+              "pattern": "^/"
+            },
+            "title": {
+              "type": "string"
+            },
+            "remote": {
+              "description": "The user has allowed this message to load remote content.",
+              "type": "boolean"
+            },
+            "header": {
+              "description": "Lines of plain text to show above the page, outside it, where the page cannot reach: who the message is from and to, and when it was sent. Each is one line, with no control characters, of at most 2000 bytes. The shell shows them and gives them no meaning.",
+              "type": "array",
+              "maxItems": 8,
+              "items": { "type": "string", "minLength": 1, "maxLength": 2000 }
+            }
+          }
+        }
+      }
+    },
+
+    "reading.scroll": {
+      "description": "Core to shell. Scroll what the reading pane shows, as a key pressed in it would. Nothing happens when there is no reading pane.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "reading.scroll" },
+        "params": {
+          "type": "object",
+          "required": ["by"],
+          "additionalProperties": false,
+          "properties": {
+            "by": {
+              "description": "How far, and which way.",
+              "enum": ["page_down", "page_up"]
+            }
+          }
+        }
+      }
+    },
+
+    "reading.close": {
+      "description": "Core to shell. Take the reading pane away: web reading is off.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "reading.close" },
+        "params": { "type": "object", "additionalProperties": false }
       }
     },
 

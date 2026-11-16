@@ -259,6 +259,7 @@ mod tests {
         host.state(StateUpdate {
             context: Context::List,
             enabled: vec!["view.zoom".to_owned()],
+            checked: Vec::new(),
             unread: 12,
             title: "Inbox".to_owned(),
         });
@@ -272,7 +273,7 @@ mod tests {
         let second = shell.lines.next().unwrap().unwrap();
         assert_eq!(
             second,
-            r#"{"jsonrpc":"2.0","method":"state.update","params":{"context":"list","enabled":["view.zoom"],"unread":12,"title":"Inbox"}}"#
+            r#"{"jsonrpc":"2.0","method":"state.update","params":{"context":"list","enabled":["view.zoom"],"checked":[],"unread":12,"title":"Inbox"}}"#
         );
         let third: CoreToShell = bridge::decode(&shell.lines.next().unwrap().unwrap()).unwrap();
         assert_eq!(third, CoreToShell::PaneClose(NoParams {}));
@@ -343,6 +344,34 @@ mod tests {
         assert!(matches!(sent(&mut shell), CoreToShell::PanePlay(file) if file.title == "a film"));
         host.web(png, "a message", true);
         assert!(matches!(sent(&mut shell), CoreToShell::PaneWeb(web) if web.remote));
+        host.reading_show(png, "a message", false, vec!["From: Ana".to_owned()]);
+        assert!(matches!(
+            sent(&mut shell),
+            CoreToShell::ReadingShow(show)
+                if !show.remote() && show.title() == "a message" && show.header() == ["From: Ana"]
+        ));
+        host.reading_scroll(crate::bridge::ScrollBy::PageDown);
+        assert!(matches!(
+            sent(&mut shell),
+            CoreToShell::ReadingScroll(scroll) if scroll.by == crate::bridge::ScrollBy::PageDown
+        ));
+        host.reading_close();
+        assert!(matches!(sent(&mut shell), CoreToShell::ReadingClose(_)));
+        // What is said above the page is made to fit; the page is shown.
+        let mut header = vec!["line\u{7}".to_owned(); 9];
+        header.insert(0, String::new());
+        header.insert(1, "é".repeat(1500));
+        host.reading_show(png, "a message", false, header);
+        match sent(&mut shell) {
+            CoreToShell::ReadingShow(show) => {
+                assert_eq!(show.header().len(), 8);
+                assert_eq!(show.header()[0], "é".repeat(1000));
+                assert_eq!(show.header()[1], "line");
+            }
+            other => panic!("{other:?}"),
+        }
+        // A page that is not at an absolute path is not.
+        host.reading_show(Path::new("relative.html"), "", false, Vec::new());
         host.open_file(pdf);
         assert!(matches!(sent(&mut shell), CoreToShell::FileOpen(_)));
         // The shell has a save panel, and is asked.

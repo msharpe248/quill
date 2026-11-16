@@ -100,6 +100,41 @@ pub fn pin_fingerprint(
     checked(document.to_string())
 }
 
+/// `text` with `web_reading` under `[ui]` set: whether mail is read in the
+/// app's web view pane. Written when the user switches, so that Quill
+/// starts the way they left it. A comment on the line is kept, like every
+/// other.
+pub fn set_web_reading(text: &str, on: bool) -> Result<String, String> {
+    let mut document: DocumentMut = text
+        .parse()
+        .map_err(|err| format!("config.toml cannot be read: {err}"))?;
+    let had_ui = document.contains_key("ui");
+    let ui = document
+        .entry("ui")
+        .or_insert(Item::Table(Table::new()))
+        .as_table_like_mut()
+        .ok_or("`ui` in config.toml is not a table")?;
+    match ui.get_mut("web_reading").and_then(Item::as_value_mut) {
+        // In place, with whatever is written around it.
+        Some(existing) => {
+            let decor = existing.decor().clone();
+            *existing = Value::from(on);
+            *existing.decor_mut() = decor;
+        }
+        None => {
+            ui.insert("web_reading", value(on));
+        }
+    }
+    // A section of Quill's own making is set apart from what is above it.
+    if !had_ui
+        && !text.trim().is_empty()
+        && let Some(table) = document.get_mut("ui").and_then(Item::as_table_mut)
+    {
+        table.decor_mut().set_prefix("\n");
+    }
+    checked(document.to_string())
+}
+
 fn server(server: &ServerDraft, address: &str, fingerprint: Option<&str>) -> InlineTable {
     let mut table = InlineTable::new();
     table.insert("host", server.host.as_str().into());
@@ -213,6 +248,68 @@ mod tests {
         let imap = config.accounts[1].imap.as_ref().unwrap();
         assert_eq!(imap.username.as_deref(), Some("robin"));
         assert_eq!(imap.fingerprint.as_deref(), Some("ab".repeat(32).as_str()));
+    }
+
+    #[test]
+    fn web_reading_is_written_under_ui_and_everything_else_is_left_as_it_was() {
+        // Into a section that is there, after what it already says.
+        let before = "# My settings\n[ui]\ntheme = \"light\"   # easier on the eyes\n\n\
+                      [[account]]\nname = \"Work\"   # the office\ntype = \"imap\"\n\
+                      address = \"robin@work.example.com\"\nimap = { host = \"mail.work.example.com\" }\n";
+        let on = set_web_reading(before, true).unwrap();
+        assert_eq!(
+            on,
+            before.replace(
+                "# easier on the eyes\n",
+                "# easier on the eyes\nweb_reading = true\n"
+            )
+        );
+        assert!(Config::parse(&on).unwrap().ui.web_reading);
+
+        // Switched back, the line is changed where it stands.
+        let off = set_web_reading(&on, false).unwrap();
+        assert_eq!(off, on.replace("web_reading = true", "web_reading = false"));
+        assert!(!Config::parse(&off).unwrap().ui.web_reading);
+        // And again: nothing is added twice.
+        assert_eq!(set_web_reading(&on, true).unwrap(), on);
+
+        // A comment the user put on the line itself stays on it.
+        let commented = "[ui]\nweb_reading = false   # I like the text reader\ntheme = \"dark\"\n";
+        assert_eq!(
+            set_web_reading(commented, true).unwrap(),
+            "[ui]\nweb_reading = true   # I like the text reader\ntheme = \"dark\"\n"
+        );
+    }
+
+    #[test]
+    fn web_reading_makes_the_ui_section_when_there_is_none() {
+        let text = set_web_reading("", true).unwrap();
+        assert_eq!(text, "[ui]\nweb_reading = true\n");
+        assert!(Config::parse(&text).unwrap().ui.web_reading);
+
+        // After what the user wrote, which stays as it was.
+        let before = "# Mine\n[[account]]\nname = \"Home\"   # the old one\ntype = \"imap\"\n\
+                      address = \"robin@example.org\"\nimap = { host = \"mail.example.org\" }\n";
+        let after = set_web_reading(before, true).unwrap();
+        assert_eq!(after, format!("{before}\n[ui]\nweb_reading = true\n"));
+        let config = Config::parse(&after).unwrap();
+        assert!(config.ui.web_reading);
+        assert_eq!(config.accounts.len(), 1);
+
+        // Written on one line, the section is still the one changed.
+        let inline = "ui = { theme = \"light\" }\n";
+        let after = set_web_reading(inline, true).unwrap();
+        let config = Config::parse(&after).unwrap();
+        assert!(config.ui.web_reading);
+        assert_eq!(config.ui.theme, "light");
+    }
+
+    #[test]
+    fn web_reading_is_not_written_into_a_config_quill_cannot_read() {
+        assert!(set_web_reading("[ui\ntheme = ", true).is_err());
+        assert!(set_web_reading("ui = 3\n", true).is_err());
+        // Nor is a config left unreadable that was already wrong elsewhere.
+        assert!(set_web_reading("[ui]\nthemee = \"dark\"\n", true).is_err());
     }
 
     #[test]

@@ -11,6 +11,7 @@ import Bridge
 final class CommandCenter: NSObject {
     private(set) var commands: [CommandInfo] = []
     private var enabled: Set<String> = []
+    private var checked: Set<String> = []
     private var menuItems: [String: NSMenuItem] = [:]
     private var toolbarItems: [String: NSToolbarItem] = [:]
 
@@ -31,6 +32,20 @@ final class CommandCenter: NSObject {
         for (name, item) in toolbarItems {
             item.isEnabled = enabled.contains(name)
         }
+    }
+
+    /// The commands that switch something on and off, and have it on: their
+    /// menu items carry a checkmark, as a Mac's do.
+    func setChecked(_ names: [String]) {
+        checked = Set(names)
+        for (name, item) in menuItems {
+            item.state = checked.contains(name) ? .on : .off
+        }
+    }
+
+    /// The names of the commands the core says are switched on, sorted.
+    var checkedNames: [String] {
+        checked.sorted()
     }
 
     /// Whether the core says the command of this name would do something
@@ -61,6 +76,7 @@ final class CommandCenter: NSObject {
             item.target = self
             item.representedObject = command.name
             item.isEnabled = enabled.contains(command.name)
+            item.state = checked.contains(command.name) ? .on : .off
             if let symbol = command.symbol {
                 item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
             }

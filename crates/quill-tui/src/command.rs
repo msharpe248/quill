@@ -161,6 +161,7 @@ pub enum CommandId {
     FocusPrev,
     ViewZoom,
     ViewThreads,
+    ViewWebReading,
     MessageToggleUnread,
     MessageToggleStar,
     MessageToggleHtml,
@@ -421,6 +422,19 @@ impl Registry {
                     Panes,
                     Some(Menu::View),
                     PANES,
+                ),
+                // Only where the host has a web view pane: Quill's own
+                // app. In a terminal it is never enabled.
+                with_symbol(
+                    spec(
+                        ViewWebReading,
+                        "view.web_reading",
+                        "Web reading pane",
+                        Panes,
+                        Some(Menu::View),
+                        PANES,
+                    ),
+                    "sidebar.right",
                 ),
                 with_symbol(
                     spec(
@@ -914,6 +928,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         hint(&[MessageToggleStar], "star"),
         hint(&[SelectToggle], "select"),
         hint_while_enabled(&[MessageHook], "hooks"),
+        hint_while_enabled(&[ViewWebReading], "web/text"),
         hint(&[FocusNext], "next pane"),
         hint(&[ViewZoom], "zoom"),
         hint(&[HelpToggle], "help"),
@@ -933,6 +948,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         hint(&[MessageOpenLink], "links"),
         hint(&[MessageToggleHtml], "html/text"),
         hint(&[MessageViewHtml], "web page"),
+        hint_while_enabled(&[ViewWebReading], "web/text"),
         hint(&[MessageToggleUnread], "unread"),
         hint(&[MessageToggleStar], "star"),
         hint_while_enabled(&[MessageHook], "hooks"),

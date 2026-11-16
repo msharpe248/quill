@@ -324,6 +324,8 @@ impl State {
             self.run(env, CommandId::NavOpen, out);
         } else if index != self.list.selected {
             self.list.selected = index;
+            // Clicked, the message is gone to; the wheel only passes by.
+            self.follow.went = true;
             self.sync_reader(out);
         }
     }

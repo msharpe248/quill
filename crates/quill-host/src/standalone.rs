@@ -99,6 +99,11 @@ impl Host for StandaloneHost {
             CoreToShell::PaneEditor(_)
             | CoreToShell::FormShow(_)
             | CoreToShell::FormClose(_)
+            // There is no reading pane to show a page in, scroll or close:
+            // web reading is not on offer here.
+            | CoreToShell::ReadingShow(_)
+            | CoreToShell::ReadingScroll(_)
+            | CoreToShell::ReadingClose(_)
             | CoreToShell::SpellCheck(_)
             | CoreToShell::SpellSuggest(_)
             | CoreToShell::NotifyPost(_)

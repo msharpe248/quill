@@ -36,7 +36,8 @@ private enum Examples {
                 "clipboard.write.json", "commands.list.json", "file.open.json", "files.pick.json",
                 "files.save.json", "form.close.json", "form.show.json", "link.open.json", "notify.clear.json",
                 "notify.post.json", "pane.close.json",
-                "pane.editor.json", "pane.play.json", "pane.preview.json", "pane.web.json", "spell.check.json",
+                "pane.editor.json", "pane.play.json", "pane.preview.json", "pane.web.json",
+                "reading.close.json", "reading.scroll.json", "reading.show.json", "spell.check.json",
                 "spell.suggest.json", "state.update.json", "thumbnail.make.json",
             ])
         for (name, text) in examples {
@@ -82,7 +83,7 @@ private enum Examples {
             "misspelt-word-with-no-length.json", "too-many-suggestions.json", "editor-on-a-relative-path.json",
             "form-secret-sent-by-the-core.json", "form-choice-with-no-options.json",
             "form-field-of-an-unknown-kind.json", "form-used-with-a-button-that-is-no-name.json",
-            "form-used-with-no-secrets.json",
+            "form-used-with-no-secrets.json", "reading-header-too-long.json", "reading-scroll-sideways.json",
         ] {
             #expect(examples.contains { $0.name == name }, "\(name) is missing")
         }
@@ -111,6 +112,7 @@ private enum Examples {
                     StateUpdate(
                         context: .list,
                         enabled: ["nav.next", "nav.open", "message.toggle_star", "view.zoom"],
+                        checked: ["view.web_reading"],
                         unread: 12,
                         title: "Inbox (unified) - 12 unread"
                     )))
@@ -163,6 +165,46 @@ private enum Examples {
         #expect(try ShellToCore(line: answers["thumbnail.made.json"]!) == .thumbnailMade(id: 7, ok: true))
         #expect(
             try ShellToCore(line: answers["files.saved.json"]!) == .filesSaved(name: "roadmap.pdf", saved: true))
+    }
+
+    @Test func theReadingPanesMessagesDecodeToWhatTheySay() throws {
+        let examples = try Dictionary(uniqueKeysWithValues: Examples.load("core-to-shell").map { ($0.name, $0.text) })
+        guard case let .readingShow(show) = try CoreToShell(line: examples["reading.show.json"]!) else {
+            Issue.record("not a reading.show")
+            return
+        }
+        #expect(!show.remote)
+        #expect(show.title == "Issue 88: the autumn round-up")
+        #expect(show.path.hasSuffix("/m88/page/message.html"))
+        #expect(
+            show.header == [
+                "From: The Round-up <news@example.com>", "To: Robin Example <robin@example.com>",
+                "Saturday 14 November 2026, 09:12",
+            ])
+        #expect(try CoreToShell(line: examples["reading.scroll.json"]!) == .readingScroll(.pageDown))
+        #expect(try CoreToShell(line: examples["reading.close.json"]!) == .readingClose)
+        #expect(CoreToShell.readingScroll(.pageUp).line.contains("\"by\":\"page_up\""))
+
+        // It cannot be built holding what the core would not send.
+        #expect(ReadingShow(path: "message.html", title: "", remote: false) == nil)
+        #expect(ReadingShow(path: "/a", title: "", remote: false) != nil)
+        #expect(ReadingShow(path: "/a", title: "", remote: false, header: Array(repeating: "x", count: 8)) != nil)
+        #expect(ReadingShow(path: "/a", title: "", remote: false, header: Array(repeating: "x", count: 9)) == nil)
+        #expect(ReadingShow(path: "/a", title: "", remote: false, header: [""]) == nil)
+        #expect(ReadingShow(path: "/a", title: "", remote: false, header: ["two\nlines"]) == nil)
+        #expect(ReadingShow(path: "/a", title: "", remote: false, header: ["bell\u{7}"]) == nil)
+        #expect(
+            ReadingShow(path: "/a", title: "", remote: false, header: [String(repeating: "é", count: 1000)]) != nil)
+        #expect(
+            ReadingShow(path: "/a", title: "", remote: false, header: [String(repeating: "é", count: 1001)]) == nil)
+        // A header is required, even an empty one, and nothing else is let in.
+        let bare = #"{"jsonrpc":"2.0","method":"reading.show","params":{"path":"/a","title":"","remote":false}}"#
+        #expect(throws: BridgeError.self) { try CoreToShell(line: bare) }
+        let extra =
+            #"{"jsonrpc":"2.0","method":"reading.show","params":{"path":"/a","title":"","remote":false,"header":[],"focus":true}}"#
+        #expect(throws: BridgeError.self) { try CoreToShell(line: extra) }
+        let closing = #"{"jsonrpc":"2.0","method":"reading.close","params":{"now":true}}"#
+        #expect(throws: BridgeError.self) { try CoreToShell(line: closing) }
     }
 
     @Test func droppedFilesAreAbsolutePathsAndAtLeastOne() throws {

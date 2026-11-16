@@ -186,6 +186,17 @@ pub enum AccountRequest {
     /// which the user has just agreed to. Answered with
     /// [`AccountEvent::Unsubscribed`].
     Unsubscribe { url: String },
+    /// Write a choice the user made in the UI into the config, so that it
+    /// is how Quill starts next time. Answered with
+    /// [`AccountEvent::Remembered`].
+    Remember(Preference),
+}
+
+/// A choice made in the UI that is kept between runs, in `config.toml`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Preference {
+    /// `web_reading` under `[ui]`.
+    WebReading(bool),
 }
 
 /// The answers.
@@ -228,6 +239,9 @@ pub enum AccountEvent {
         host: String,
         result: Result<(), String>,
     },
+    /// The choice is in the config, or why it could not be written there.
+    /// It holds for this run either way.
+    Remembered(Result<(), String>),
 }
 
 /// A sign-in to an account's provider that is under way.
@@ -989,7 +1003,8 @@ impl Setup {
             | AccountEvent::SignInBrowser { .. }
             | AccountEvent::SignInCode { .. }
             | AccountEvent::SignedIn { .. }
-            | AccountEvent::Unsubscribed { .. } => (Vec::new(), Outcome::Open),
+            | AccountEvent::Unsubscribed { .. }
+            | AccountEvent::Remembered(_) => (Vec::new(), Outcome::Open),
         }
     }
 }

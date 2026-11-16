@@ -270,6 +270,118 @@ struct WebPaneTests {
         #expect(server.connections == 0)
     }
 
+    // MARK: - The reading pane
+
+    private func readingPane(_ file: URL, title: String = "A subject", header: [String]) -> WebPane {
+        WebPane(file: file, title: title, allowsRemoteContent: false, readingHeader: header) { _ in }
+    }
+
+    @Test func theReadingPaneHasItsLinesAboveThePageAndNoCloseButton() async throws {
+        let scratch = try Scratch()
+        let file = try scratch.write("<!doctype html><title>before</title><p>Hello</p>", to: "message.html")
+        let lines = ["From: Ana Ruiz <ana.ruiz@example.com>", "To: Robin Vale <robin@example.com>"]
+        let pane = readingPane(file, header: lines)
+        defer { pane.tearDown() }
+        #expect(pane.isReading && !pane.isClosable)
+        #expect(pane.headerLines == lines)
+        #expect(pane.kind == .web)
+        // The lines are labels in the pane, outside the web view.
+        let labels = allSubviews(of: pane).compactMap { $0 as? NSTextField }.map(\.stringValue)
+        for line in lines + ["A subject"] {
+            #expect(labels.contains(line), "\(line) is not shown")
+        }
+        #expect(allSubviews(of: pane.webView).compactMap { $0 as? NSTextField }.isEmpty)
+        let close = allSubviews(of: pane).compactMap { $0 as? NSButton }.first
+        #expect(close?.isHidden == true)
+
+        // It is told once when there is something to see.
+        var settled = 0
+        pane.onSettled = { settled += 1 }
+        try await wait(for: "the page to load") { pane.phase == .loaded || pane.phase == .failed }
+        #expect(pane.phase == .loaded)
+        #expect(settled == 1)
+        #expect(pane.document == file)
+        // Held to the same rules as any page: no script, nothing remote.
+        #expect(pane.webView.title == "before")
+        #expect(!pane.allowsRemoteContent)
+        #expect(pane.summary == "remote content blocked, loaded")
+
+        // The pane asked for by itself is as it was: closable, no lines.
+        let plain = self.pane(file, remote: false)
+        defer { plain.tearDown() }
+        #expect(!plain.isReading && plain.isClosable && plain.headerLines.isEmpty)
+    }
+
+    @Test func aReadingPaneWithNothingToSayAboveItsPageSaysNothing() throws {
+        let scratch = try Scratch()
+        let file = try scratch.write("<p>No message selected</p>", to: "message.html")
+        let pane = readingPane(file, title: "", header: [])
+        defer { pane.tearDown() }
+        #expect(pane.isReading && !pane.isClosable)
+        let labels = allSubviews(of: pane).compactMap { $0 as? NSTextField }
+        // Whatever labels there are, none is on show.
+        #expect(labels.allSatisfy { $0.stringValue.isEmpty || $0.isHiddenOrHasHiddenAncestor })
+    }
+
+    // The page is scrolled from outside the web view, with no script: the
+    // top of this one is red and everything a screenful down is blue.
+    @Test func theReadingPaneScrollsByAPageAndBack() async throws {
+        let scratch = try Scratch()
+        let file = try scratch.write(
+            """
+            <!doctype html><title>before</title>
+            <body style="margin:0">
+            <div style="height:150px;background:rgb(255,0,0)"></div>
+            <div style="height:4000px;background:rgb(0,0,255)"></div>
+            """, to: "message.html")
+        let pane = readingPane(file, header: ["From: Ana Ruiz <ana.ruiz@example.com>"])
+        defer { pane.tearDown() }
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [.borderless],
+            backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        window.contentView = pane
+        pane.layoutSubtreeIfNeeded()
+        // Asked before there is a page, nothing happens.
+        pane.scroll(.pageDown)
+        #expect(pane.scrolls == 0)
+        try await wait(for: "the page to load") { pane.phase == .loaded || pane.phase == .failed }
+        #expect(pane.phase == .loaded)
+        #expect(!window.isVisible)
+        // The keyboard is not the web view's, and scrolling does not take it.
+        #expect((window.firstResponder as? NSView)?.isDescendant(of: pane.webView) != true)
+
+        try await wait(for: "the top of the page to be drawn") { await topColour(of: pane) == .red }
+        pane.scroll(.pageDown)
+        try await wait(for: "the page to scroll down") { await topColour(of: pane) == .blue }
+        pane.scroll(.pageUp)
+        try await wait(for: "the page to scroll back") { await topColour(of: pane) == .red }
+        #expect(pane.scrolls == 2)
+        #expect(pane.summary == "remote content blocked, loaded, scrolled 2")
+        #expect((window.firstResponder as? NSView)?.isDescendant(of: pane.webView) != true)
+        #expect(pane.webView.title == "before")
+    }
+
+    private enum Colour { case red, blue, other }
+
+    /// The colour at the top of what the page shows, from the web view's
+    /// own picture of itself.
+    private func topColour(of pane: WebPane) async -> Colour {
+        guard let picture = await pane.picture(),
+            let image = picture.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        else { return .other }
+        let pixel = NSBitmapImageRep(cgImage: image).colorAt(x: image.width / 2, y: 4)?
+            .usingColorSpace(.sRGB)
+        guard let pixel else { return .other }
+        if pixel.redComponent > 0.8, pixel.blueComponent < 0.3 { return .red }
+        if pixel.blueComponent > 0.8, pixel.redComponent < 0.3 { return .blue }
+        return .other
+    }
+
+    private func allSubviews(of view: NSView) -> [NSView] {
+        view.subviews + view.subviews.flatMap { allSubviews(of: $0) }
+    }
+
     // A real click on a real link, in a window that is never put on screen.
     @Test func clickingALinkOpensItElsewhere() async throws {
         let scratch = try Scratch()

@@ -1,0 +1,14 @@
+{
+  "jsonrpc": "2.0",
+  "method": "reading.show",
+  "params": {
+    "path": "/Users/robin/Library/Containers/dev.quill.Quill/Data/tmp/quill-view-412/m88/page/message.html",
+    "title": "Issue 88: the autumn round-up",
+    "remote": false,
+    "header": [
+      "From: The Round-up <news@example.com>",
+      "To: Robin Example <robin@example.com>",
+      "Saturday 14 November 2026, 09:12"
+    ]
+  }
+}
