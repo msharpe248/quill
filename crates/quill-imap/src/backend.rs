@@ -127,10 +127,20 @@ where
         other => Error::Connection(other.to_string()),
     };
     match credentials.get().await? {
-        Credential::Password(password) => client
-            .login(user, password)
-            .await
-            .map_err(|(err, _)| refused(err)),
+        Credential::Password(password) => match client.login(user, password).await {
+            Ok(session) => Ok(session),
+            Err((err, _)) => {
+                let err = refused(err);
+                // The password may have been changed since it was read:
+                // whoever keeps it is told, so that the next attempt reads
+                // it again. It is not tried again here, where a second
+                // wrong password could count against a lockout.
+                if matches!(err, Error::Auth(_)) {
+                    credentials.refused().await;
+                }
+                Err(err)
+            }
+        },
         Credential::OAuthToken(token) => {
             match client
                 .authenticate("XOAUTH2", XOAuth2::new(user, &token))

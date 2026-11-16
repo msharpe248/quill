@@ -94,7 +94,15 @@ Optional keys inside `imap = { ... }`: `username`, when you do not sign in with 
 
 `quill account list` shows each account and whether it has a saved password. `quill account forget NAME` removes one. Passwords are only ever in the Keychain: not in the config, the database or the logs.
 
-A Keychain item belongs to the program that made it. If you build Quill from source and then rebuild it, macOS will ask whether the new `quill` may read the password the old one saved; "Always Allow" settles it for that build. Until you answer, Quill waits and no mail moves.
+A Keychain item belongs to the program that made it. Quill built from source is signed "ad hoc", with no identity, so to macOS every build is a different program: after a rebuild it asks whether the new `quill` or `Quill.app` may read each password the old one saved, and "Always Allow" settles it for that build only. Until you answer, Quill waits and no mail moves. Each saved password or sign-in is asked about once in a run, however many connections want it.
+
+To be asked once and not after every build, sign the app with an identity of your own, which makes every build the same program to the Keychain:
+
+```sh
+QUILL_SIGN_IDENTITY="Quill Development" app/build-app.sh
+```
+
+The identity is a code-signing certificate in your Keychain: an Apple Development one if you have a developer account, or one you make yourself in Keychain Access (Certificate Assistant, Create a Certificate: any name, "Self Signed Root", "Code Signing"). Quill's scripts never make one. The first run of a build signed this way asks once more about each saved password, since those were saved by an ad hoc build; after that it does not ask again. This has not been tried here: making the certificate is yours to do.
 
 ## Microsoft 365 and Gmail: signing in with the provider
 

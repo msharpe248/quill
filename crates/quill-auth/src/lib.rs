@@ -37,6 +37,94 @@ pub trait SecretStore: Send + Sync {
     fn set(&self, name: &str, secret: &str) -> Result<(), AuthError>;
     /// Removes `name`. Removing what is not there is not an error.
     fn delete(&self, name: &str) -> Result<(), AuthError>;
+    /// Lets go of anything remembered about `name`, so that the next
+    /// [`SecretStore::get`] asks afresh: a server has refused what was
+    /// handed out, and the secret may have been changed since. A store
+    /// that remembers nothing has nothing to do.
+    fn forget(&self, name: &str) {
+        let _ = name;
+    }
+}
+
+/// A store that asks the one behind it for each secret once, and one
+/// request at a time.
+///
+/// Reading the Keychain can stop to ask the user, and macOS asks once for
+/// every request that is waiting: a sync, a watcher and a send starting
+/// together used to mean the same question three times over, each one
+/// already on its way before the first was answered. Here the first
+/// request asks and the others wait for its answer.
+///
+/// What was found is kept for the life of the process, in memory and
+/// nowhere else. A secret that is not there is not remembered, so one
+/// saved by another program is found the next time it is asked for.
+pub struct Remembered<S> {
+    inner: S,
+    /// Held across the request to `inner`: that is what makes the
+    /// requests one at a time.
+    seen: Mutex<HashMap<String, String>>,
+}
+
+impl<S> Remembered<S> {
+    pub fn new(inner: S) -> Self {
+        Self {
+            inner,
+            seen: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+impl<S> std::fmt::Debug for Remembered<S> {
+    /// Never what it holds.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Remembered(..)")
+    }
+}
+
+impl<S: SecretStore> SecretStore for Remembered<S> {
+    fn get(&self, name: &str) -> Result<Option<String>, AuthError> {
+        let mut seen = self
+            .seen
+            .lock()
+            .map_err(|_| AuthError::Keychain("poisoned".to_owned()))?;
+        if let Some(secret) = seen.get(name) {
+            return Ok(Some(secret.clone()));
+        }
+        let found = self.inner.get(name)?;
+        if let Some(secret) = &found {
+            seen.insert(name.to_owned(), secret.clone());
+        }
+        Ok(found)
+    }
+
+    fn set(&self, name: &str, secret: &str) -> Result<(), AuthError> {
+        let mut seen = self
+            .seen
+            .lock()
+            .map_err(|_| AuthError::Keychain("poisoned".to_owned()))?;
+        // Forgotten first: if the save fails, what is remembered must not
+        // be the old secret passed off as the new.
+        seen.remove(name);
+        self.inner.set(name, secret)?;
+        seen.insert(name.to_owned(), secret.to_owned());
+        Ok(())
+    }
+
+    fn delete(&self, name: &str) -> Result<(), AuthError> {
+        let mut seen = self
+            .seen
+            .lock()
+            .map_err(|_| AuthError::Keychain("poisoned".to_owned()))?;
+        seen.remove(name);
+        self.inner.delete(name)
+    }
+
+    fn forget(&self, name: &str) {
+        if let Ok(mut seen) = self.seen.lock() {
+            seen.remove(name);
+        }
+        self.inner.forget(name);
+    }
 }
 
 /// The name an account's password is kept under: the protocol, the user and
@@ -171,6 +259,143 @@ mod tests {
         assert_eq!(store.get(name).unwrap(), None);
         // Deleting what is gone is fine.
         store.delete(name).unwrap();
+    }
+
+    /// A store that counts how often it is asked, and can be slow about
+    /// answering, as the Keychain is while macOS asks the user.
+    #[derive(Default)]
+    struct Counting {
+        inner: MemorySecrets,
+        gets: std::sync::atomic::AtomicUsize,
+        slow: bool,
+    }
+
+    impl SecretStore for Counting {
+        fn get(&self, name: &str) -> Result<Option<String>, AuthError> {
+            self.gets.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if self.slow {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            self.inner.get(name)
+        }
+
+        fn set(&self, name: &str, secret: &str) -> Result<(), AuthError> {
+            self.inner.set(name, secret)
+        }
+
+        fn delete(&self, name: &str) -> Result<(), AuthError> {
+            self.inner.delete(name)
+        }
+    }
+
+    fn gets(store: &Remembered<Counting>) -> usize {
+        store.inner.gets.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    #[test]
+    fn a_remembered_secret_is_asked_for_once() {
+        let store = Remembered::new(Counting::default());
+        store
+            .inner
+            .inner
+            .set("imap:robin@example.com", "hunter2")
+            .unwrap();
+        exercise_reads(&store, "imap:robin@example.com", "hunter2", 5);
+        assert_eq!(gets(&store), 1);
+        // Another secret is another question.
+        store
+            .inner
+            .inner
+            .set("oauth:microsoft:robin@example.com", "token")
+            .unwrap();
+        exercise_reads(&store, "oauth:microsoft:robin@example.com", "token", 3);
+        assert_eq!(gets(&store), 2);
+    }
+
+    fn exercise_reads(store: &dyn SecretStore, name: &str, secret: &str, times: usize) {
+        for _ in 0..times {
+            assert_eq!(store.get(name).unwrap().as_deref(), Some(secret));
+        }
+    }
+
+    #[test]
+    fn requests_that_arrive_together_ask_once_between_them() {
+        // A sync, a watcher and a send all starting at once.
+        let store = std::sync::Arc::new(Remembered::new(Counting {
+            slow: true,
+            ..Counting::default()
+        }));
+        store
+            .inner
+            .inner
+            .set("imap:robin@example.com", "hunter2")
+            .unwrap();
+        let threads: Vec<_> = (0..6)
+            .map(|_| {
+                let store = std::sync::Arc::clone(&store);
+                std::thread::spawn(move || store.get("imap:robin@example.com").unwrap())
+            })
+            .collect();
+        for thread in threads {
+            assert_eq!(thread.join().unwrap().as_deref(), Some("hunter2"));
+        }
+        assert_eq!(gets(&store), 1);
+    }
+
+    #[test]
+    fn what_is_not_there_is_not_remembered_and_what_changes_is_followed() {
+        let store = Remembered::new(Counting::default());
+        // Not saved yet: asked each time, so that one saved by another
+        // program is found.
+        assert_eq!(store.get("imap:robin@example.com").unwrap(), None);
+        store
+            .inner
+            .inner
+            .set("imap:robin@example.com", "first")
+            .unwrap();
+        assert_eq!(
+            store.get("imap:robin@example.com").unwrap().as_deref(),
+            Some("first")
+        );
+        assert_eq!(gets(&store), 2);
+        // Saved through this store: known at once, without asking.
+        store.set("imap:robin@example.com", "second").unwrap();
+        assert_eq!(
+            store.get("imap:robin@example.com").unwrap().as_deref(),
+            Some("second")
+        );
+        assert_eq!(gets(&store), 2);
+        // Changed behind its back, then refused by a server: asked afresh.
+        store
+            .inner
+            .inner
+            .set("imap:robin@example.com", "third")
+            .unwrap();
+        assert_eq!(
+            store.get("imap:robin@example.com").unwrap().as_deref(),
+            Some("second")
+        );
+        store.forget("imap:robin@example.com");
+        assert_eq!(
+            store.get("imap:robin@example.com").unwrap().as_deref(),
+            Some("third")
+        );
+        assert_eq!(gets(&store), 3);
+        // Deleted: gone from here as well.
+        store.delete("imap:robin@example.com").unwrap();
+        assert_eq!(store.get("imap:robin@example.com").unwrap(), None);
+    }
+
+    #[test]
+    fn what_is_remembered_is_never_printed() {
+        let store = Remembered::new(MemorySecrets::default());
+        store.set("imap:robin@example.com", "hunter2").unwrap();
+        store.get("imap:robin@example.com").unwrap();
+        let printed = format!("{store:?}");
+        assert!(
+            !printed.contains("hunter2") && !printed.contains("robin"),
+            "{printed}"
+        );
     }
 
     #[test]

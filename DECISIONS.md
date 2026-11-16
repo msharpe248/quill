@@ -255,6 +255,13 @@ The UI stayed usable throughout, which is the acceptance. This was a server on t
 - **The store forgets a copy before the file is removed**, so a crash between the two leaves a file nothing points to, not a message that says it has a copy it does not.
 - **Opening a message whose copy was let go fetches it again**, once: the text is shown meanwhile with a line saying the rest is on its way, and if the fetch fails the text stays and the line says why. Attachments of drafts are not counted or cleared.
 
+### Why the Keychain keeps asking, and what was done (2026-11-16)
+
+- **The owner was asked for a password's use at every launch of a new build, and again after "Always Allow".** Two causes. The app is signed ad hoc, so its designated requirement is its own code hash (`codesign -d -r-` shows `cdhash H"…"`): every build is a different program, and "Always Allow" is given to one build. And a saved password was read from the Keychain at every sign-in, so a sync, the push watcher and a send starting together each had a request waiting before the first was answered, and macOS asked once for each.
+- **Each secret is now read once in a run, one request at a time** (`quill_auth::Remembered`, around the Keychain in the binary). The first request asks and the rest wait for its answer, so there is one question for each saved password or sign-in, not one per connection. What was read stays in the process's memory until it quits and is written nowhere; a secret that is not there is not remembered; one saved through Quill is known at once; and a server refusing a password has it read again (IMAP tells the store; POP3, SMTP and EWS do not yet, so a password changed outside a running Quill is picked up by those when Quill is next opened).
+- **Being asked again after every build is ended only by a signing identity that does not change.** `app/build-app.sh` signs with `QUILL_SIGN_IDENTITY` when it is set, and ad hoc otherwise. The script does not make an identity and nobody made one here: a certificate in the owner's Keychain is the owner's to make. **Not tried:** a build signed with a self-signed certificate under the sandbox and the hardened runtime.
+- A released Quill, signed with a Developer ID, has one identity for good and is asked about once.
+
 ## M3, compose and send
 
 Built and accepted on 2026-11-15 against the spec's three tests, with the owner away:

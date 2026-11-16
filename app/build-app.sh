@@ -7,6 +7,17 @@
 #   app/build-app.sh release    release shell, release core
 #   SANDBOX=0 app/build-app.sh  sign without the sandbox, to tell a sandbox
 #                               denial from an ordinary bug
+#   QUILL_SIGN_IDENTITY="Name" app/build-app.sh
+#                               sign with that code-signing identity from
+#                               your Keychain instead of ad hoc
+#
+# Signed ad hoc, each build is a different program to macOS: the Keychain
+# asks again about every saved password after every build, because "Always
+# Allow" is granted to that one build. Signed with an identity of your own
+# (an Apple Development certificate, or a self-signed code-signing
+# certificate made in Keychain Access), every build is the same program to
+# the Keychain and it asks once. This script never makes an identity: that
+# is for whoever owns the Keychain.
 #
 # The bundle lands in target/app/Quill.app. There is no Vim in it: mail is
 # written in the Vim that comes with macOS, or in the user's own by way of a
@@ -14,6 +25,8 @@
 set -euo pipefail
 
 configuration="${1:-debug}"
+# "-" is ad hoc: no identity at all.
+identity="${QUILL_SIGN_IDENTITY:--}"
 # With CDPATH set, `cd` prints the directory it lands in; keep that out of $root.
 unset CDPATH
 root="$(cd "$(dirname "$0")/.." >/dev/null && pwd)"
@@ -52,13 +65,13 @@ chmod 755 "$out/Contents/Resources/vim/on-terminal" "$out/Contents/Resources/vim
 
 echo "==> sign"
 if [ "${SANDBOX:-1}" = "1" ]; then
-    codesign --force --sign - --options runtime \
+    codesign --force --sign "$identity" --options runtime \
         --entitlements "$root/app/Support/Helper.entitlements" "$out/Contents/Helpers/quill"
-    codesign --force --sign - --options runtime \
+    codesign --force --sign "$identity" --options runtime \
         --entitlements "$root/app/Support/Quill.entitlements" "$out"
 else
-    codesign --force --sign - "$out/Contents/Helpers/quill"
-    codesign --force --sign - "$out"
+    codesign --force --sign "$identity" "$out/Contents/Helpers/quill"
+    codesign --force --sign "$identity" "$out"
 fi
 codesign --verify --strict "$out"
 

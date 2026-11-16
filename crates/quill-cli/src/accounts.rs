@@ -224,7 +224,9 @@ pub fn imap_backend(
     Arc::new(ImapBackend::new(imap, password))
 }
 
-/// A password kept in the Keychain, read again at every sign-in.
+/// A password kept in the Keychain, asked for at every sign-in. The store
+/// it is asked of remembers it for the run, so the Keychain itself is read
+/// once; a server that refuses it has it read again.
 struct SavedPassword {
     secrets: Arc<dyn SecretStore>,
     /// The names it may be saved under; the first one found is used.
@@ -256,6 +258,14 @@ impl Credentials for SavedPassword {
         })
         .await
         .map_err(|err| Error::Backend(err.to_string()))?
+    }
+
+    /// The password may have been changed since it was read: the next
+    /// sign-in reads the Keychain again.
+    async fn refused(&self) {
+        for name in &self.names {
+            self.secrets.forget(name);
+        }
     }
 }
 

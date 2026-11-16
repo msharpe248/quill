@@ -39,7 +39,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand};
 use jiff::tz::TimeZone;
-use quill_auth::{Keychain, SecretStore};
+use quill_auth::{Keychain, Remembered, SecretStore};
 use quill_core::config::{AccountConfig, Config};
 use quill_store::{BlobStore, Store};
 use quill_sync::SyncOptions;
@@ -199,9 +199,11 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         .context("cannot start the async runtime")?;
     match cli.command {
         Command::Tui(args) => runtime.block_on(tui(args)),
-        Command::Account { action, dirs } => {
-            runtime.block_on(account(action, dirs, Arc::new(Keychain::new())))
-        }
+        Command::Account { action, dirs } => runtime.block_on(account(
+            action,
+            dirs,
+            Arc::new(Remembered::new(Keychain::new())),
+        )),
         Command::List {
             within,
             unread,
@@ -284,7 +286,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 config_ok,
                 &paths.database(),
                 paths.data_dir.join("blobs"),
-                Arc::new(Keychain::new()),
+                Arc::new(Remembered::new(Keychain::new())),
                 output.json,
             ))?;
             anyhow::ensure!(fine, "not everything synced");
@@ -329,7 +331,7 @@ async fn tui(args: TuiArgs) -> anyhow::Result<()> {
         // The UI reads raw messages too: the reader draws a message's HTML
         // from the message as it arrived.
         let mut store = open()?.with_blobs(BlobStore::new(paths.data_dir.join("blobs")));
-        let secrets: Arc<dyn SecretStore> = Arc::new(Keychain::new());
+        let secrets: Arc<dyn SecretStore> = Arc::new(Remembered::new(Keychain::new()));
         let prepared = accounts::prepare(&loaded.config, &mut store, &secrets, loaded.config_ok)
             .context("cannot register the accounts")?;
         notices.extend(prepared.notices);
