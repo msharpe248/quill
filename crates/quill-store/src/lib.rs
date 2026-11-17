@@ -15,6 +15,7 @@ mod threads;
 pub use blobs::BlobStore;
 pub use contacts::Contact;
 pub use drafts::{DraftAttachment, DraftContent, DraftId, DraftRow, DraftState, Outgoing};
+pub use local::{KEPT, LOCAL_FOLDER, is_kept, is_made_here};
 pub use queue::{OperationId, QueuedKind, QueuedOperation, is_placeholder};
 
 use std::path::Path;
@@ -80,6 +81,8 @@ pub struct Leftovers {
     /// Changes to mail (moves, deletions, marks) that have not reached the
     /// server yet.
     pub queued: usize,
+    /// Messages in the folders made on this Mac, which no server has.
+    pub local: usize,
 }
 
 /// A folder with its message counts.
@@ -91,6 +94,9 @@ pub struct FolderRow {
     pub role: FolderRole,
     pub unread: u32,
     pub total: u32,
+    /// A folder the user made on this Mac: no server has it, and the mail
+    /// in it is nowhere else.
+    pub local: bool,
 }
 
 /// One row of a message list.
@@ -244,6 +250,10 @@ impl Store {
                 "SELECT count(*) FROM drafts WHERE account_id = ?1 AND state <> 'draft'",
             )?,
             queued: count("SELECT count(*) FROM operations WHERE account_id = ?1")?,
+            local: count(
+                "SELECT count(*) FROM messages m JOIN folders f ON f.id = m.folder_id
+                 WHERE f.account_id = ?1 AND f.remote_id LIKE 'kept:folder:%' AND m.hidden = 0",
+            )?,
         })
     }
 
@@ -560,9 +570,12 @@ impl Store {
                      WHERE m.folder_id = f.id AND m.seen = 0 AND m.hidden = 0
                        AND m.snoozed_until IS NULL),
                     (SELECT count(*) FROM messages m
-                     WHERE m.folder_id = f.id AND m.hidden = 0 AND m.snoozed_until IS NULL)
+                     WHERE m.folder_id = f.id AND m.hidden = 0 AND m.snoozed_until IS NULL),
+                    f.remote_id LIKE 'kept:folder:%'
              FROM folders f
              ORDER BY f.account_id,
+                      -- The folders made on this Mac come after the rest.
+                      f.remote_id LIKE 'kept:folder:%',
                       CASE f.role
                           WHEN 'inbox' THEN 0 WHEN 'drafts' THEN 1 WHEN 'sent' THEN 2
                           WHEN 'archive' THEN 3 WHEN 'junk' THEN 4 WHEN 'trash' THEN 5
@@ -579,6 +592,7 @@ impl Store {
                 role: FolderRole::from_stored(&role),
                 unread: row.get(4)?,
                 total: row.get(5)?,
+                local: row.get(6)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
@@ -836,7 +850,8 @@ impl Store {
     }
 
     /// Removes the folders of `account` that are not in `keep`, with their
-    /// messages. For folders deleted on the server.
+    /// messages. For folders deleted on the server: a folder made on this
+    /// Mac is no server's to delete, and always stays.
     pub fn retain_folders(&mut self, account: LocalAccountId, keep: &[FolderId]) -> Result<usize> {
         let tx = self.conn.transaction()?;
         let existing: Vec<(i64, String)> = {
@@ -847,7 +862,7 @@ impl Store {
         };
         let mut removed = 0;
         for (id, remote) in existing {
-            if !keep.iter().any(|folder| folder.0 == remote) {
+            if !keep.iter().any(|folder| folder.0 == remote) && !local::is_made_here(&remote) {
                 removed += tx.execute("DELETE FROM folders WHERE id = ?1", [id])?;
             }
         }
@@ -1956,7 +1971,8 @@ mod retain_accounts_tests {
             Leftovers {
                 drafts: 1,
                 outbox: 1,
-                queued: 1
+                queued: 1,
+                local: 0,
             }
         );
         assert_eq!(
@@ -1964,7 +1980,8 @@ mod retain_accounts_tests {
             Leftovers {
                 drafts: 1,
                 outbox: 0,
-                queued: 0
+                queued: 0,
+                local: 0,
             }
         );
 

@@ -146,6 +146,23 @@ pub enum DataRequest {
     /// Send a message that is in the outbox now, as it is: one waiting
     /// for its time or to be tried again, or one that was not sent.
     SendNow(DraftId),
+    /// Put these messages, which are in a trash folder, back where they
+    /// were before, or in their inbox when that is not known.
+    PutBack(Vec<LocalMessageId>),
+    /// Put back the message that went to a trash folder last.
+    PutBackLast,
+    /// Put a second copy of these messages into a folder of their account.
+    CopyTo {
+        ids: Vec<LocalMessageId>,
+        folder: LocalFolderId,
+    },
+    /// Make a folder on this Mac for the account, which no server has.
+    NewLocalFolder {
+        account: LocalAccountId,
+        name: String,
+    },
+    /// Take away a folder made on this Mac, if it is empty.
+    RemoveLocalFolder(LocalFolderId),
     /// Write a message's attachments where a viewer can read them: all of
     /// them when they are to be looked at, so the viewer can step from one
     /// to the next, and otherwise the one at `part` alone.
@@ -517,21 +534,80 @@ fn run(
             }
         }
         DataRequest::Delete(id) => {
-            let trash = folder_with_role(store, id, FolderRole::Trash)?;
-            let already_there = store
-                .message_location(id)?
-                .is_some_and(|location| Some(location.folder) == trash);
-            match trash {
-                Some(trash) if !already_there => moved(store, id, trash, "Moved to the trash")?,
+            let at = now();
+            match deletion(store, id)? {
+                Deletion::ToTrash { from, trash } => {
+                    // Where it was, so that it can be put back.
+                    store.note_trashed(id, from, at)?;
+                    moved(store, id, trash, "Moved to the trash")?
+                }
                 // In the trash already, or the account has none: for good.
-                _ => {
-                    let at = now();
+                Deletion::ForGood => {
                     let queued_one = store.queue_delete(id, at, at + UNDO_SECONDS)?.is_some();
                     done(queued_one, "Deleted for good")
                 }
+                // Mail that is only here is no server's to keep in a
+                // trash folder: it goes from this Mac.
+                Deletion::FromThisMac => {
+                    let queued_one = store.queue_delete(id, at, at + UNDO_SECONDS)?.is_some();
+                    done(queued_one, "Deleted from this Mac for good")
+                }
             }
         }
-        DataRequest::MoveTo { id, folder } => moved(store, id, folder, "Moved")?,
+        DataRequest::MoveTo { id, folder } => {
+            let what = move_words(store, id, folder)?;
+            moved(store, id, folder, what)?
+        }
+        DataRequest::PutBack(ids) => put_back(store, &ids)?,
+        DataRequest::PutBackLast => match store.last_trashed()? {
+            Some((id, _)) => put_back(store, &[id])?,
+            None => vec![flash(
+                "Nothing to put back: no message deleted here is still in a trash folder.",
+            )],
+        },
+        DataRequest::CopyTo { ids, folder } => {
+            let at = now();
+            let mut copying = 0usize;
+            for id in &ids {
+                copying += usize::from(store.queue_copy(*id, folder, at)?.is_some());
+            }
+            let name = folder_name(store, folder)?;
+            if copying == 0 {
+                vec![flash(
+                    "Nothing was copied: the folder belongs to another account.",
+                )]
+            } else {
+                vec![
+                    DataEvent::Queued,
+                    flash(&match copying {
+                        1 => format!("Copying it to {name}."),
+                        many => format!("Copying {many} messages to {name}."),
+                    }),
+                ]
+            }
+        }
+        DataRequest::NewLocalFolder { account, name } => {
+            match store.create_local_folder(account, &name)? {
+                Ok(_) => vec![
+                    DataEvent::StoreChanged,
+                    flash(&format!("Made {}, on this Mac.", name.trim())),
+                ],
+                Err(problem) => vec![flash(&problem)],
+            }
+        }
+        DataRequest::RemoveLocalFolder(folder) => {
+            let name = folder_name(store, folder)?;
+            if store.delete_empty_local_folder(folder)? {
+                vec![
+                    DataEvent::StoreChanged,
+                    flash(&format!("Removed {name} from this Mac.")),
+                ]
+            } else {
+                vec![flash(&format!(
+                    "{name} has mail in it. Move or delete that first."
+                ))]
+            }
+        }
         DataRequest::Many { ids, what } => many(store, &ids, what)?,
         DataRequest::WebPage {
             message,
@@ -765,6 +841,128 @@ fn folder_with_role(
         .map(|folder| folder.id))
 }
 
+/// What deleting a message comes to.
+enum Deletion {
+    /// Into its account's trash folder, from the folder it is in.
+    ToTrash {
+        from: LocalFolderId,
+        trash: LocalFolderId,
+    },
+    /// Removed: it is in the trash already, or its account has none.
+    ForGood,
+    /// Removed: it is in a folder made on this Mac, and the trash is a
+    /// server's.
+    FromThisMac,
+}
+
+fn deletion(store: &Store, id: LocalMessageId) -> quill_store::Result<Deletion> {
+    let Some(location) = store.message_location(id)? else {
+        return Ok(Deletion::ForGood);
+    };
+    let Some(trash) = folder_with_role(store, id, FolderRole::Trash)? else {
+        return Ok(Deletion::ForGood);
+    };
+    if location.folder == trash {
+        return Ok(Deletion::ForGood);
+    }
+    let trash_is_here = store
+        .folder_remote(trash)?
+        .is_some_and(|remote| quill_store::is_kept(&remote));
+    if quill_store::is_made_here(&location.remote_folder.0) && !trash_is_here {
+        return Ok(Deletion::FromThisMac);
+    }
+    Ok(Deletion::ToTrash {
+        from: location.folder,
+        trash,
+    })
+}
+
+/// What a folder is called, for saying where something went.
+fn folder_name(store: &Store, folder: LocalFolderId) -> quill_store::Result<String> {
+    Ok(store
+        .folders()?
+        .into_iter()
+        .find(|row| row.id == folder)
+        .map_or_else(
+            || "that folder".to_owned(),
+            |row| {
+                let name = crate::text::sanitize_line(&row.name);
+                if row.local {
+                    format!("{name}, on this Mac")
+                } else {
+                    name
+                }
+            },
+        ))
+}
+
+/// What is said of a move: plainly so when the message changes hands
+/// between a server and this Mac.
+fn move_words(
+    store: &Store,
+    id: LocalMessageId,
+    folder: LocalFolderId,
+) -> quill_store::Result<&'static str> {
+    let from_here = store
+        .message_location(id)?
+        .is_some_and(|location| quill_store::is_made_here(&location.remote_folder.0));
+    let to_here = store.is_local_folder(folder)?;
+    Ok(match (from_here, to_here) {
+        (false, true) => "Moved to this Mac: it is taken off the server",
+        (true, false) => "Moved from this Mac to the server",
+        _ => "Moved",
+    })
+}
+
+/// Puts messages that are in a trash folder back where they were, as one
+/// change to undo. One whose old folder is not known, or has gone, goes
+/// to its account's inbox.
+fn put_back(store: &mut Store, ids: &[LocalMessageId]) -> quill_store::Result<Vec<DataEvent>> {
+    let at = now();
+    let mut operations = Vec::new();
+    let mut to_inbox = 0usize;
+    let mut last = None;
+    for &id in ids {
+        let known = store.trashed_from(id)?;
+        let Some(folder) = (match known {
+            Some(folder) => Some(folder),
+            None => folder_with_role(store, id, FolderRole::Inbox)?,
+        }) else {
+            continue;
+        };
+        if let Some(operation) = store.queue_move(id, folder, at, at + UNDO_SECONDS)? {
+            store.forget_trashed(id)?;
+            operations.push(operation);
+            to_inbox += usize::from(known.is_none());
+            last = Some(folder);
+        }
+    }
+    store.group_operations(&operations)?;
+    let text = match (operations.len(), last) {
+        (0, _) | (_, None) => {
+            return Ok(vec![flash(
+                "Nothing was put back: it is not in a trash folder.",
+            )]);
+        }
+        (1, Some(folder)) if to_inbox == 0 => {
+            format!("Put back in {}.", folder_name(store, folder)?)
+        }
+        (1, Some(_)) => "Put back in the inbox: where it came from is not known.".to_owned(),
+        (many, _) if to_inbox == 0 => format!("Put back {many} messages where they came from."),
+        (many, _) => format!(
+            "Put back {many} messages. {to_inbox} went to the inbox: where they came from is not known."
+        ),
+    };
+    Ok(vec![
+        DataEvent::StoreChanged,
+        DataEvent::Queued,
+        DataEvent::Flash {
+            text,
+            undoable: true,
+        },
+    ])
+}
+
 /// Moves a message here and queues the move for its server.
 fn moved(
     store: &mut Store,
@@ -835,15 +1033,14 @@ fn many(
                     others += usize::from(store.delete_draft(draft)?);
                     continue;
                 }
-                let trash = folder_with_role(store, id, FolderRole::Trash)?;
-                let already_there = store
-                    .message_location(id)?
-                    .is_some_and(|location| Some(location.folder) == trash);
-                operations.extend(match trash {
-                    Some(trash) if !already_there => {
+                operations.extend(match deletion(store, id)? {
+                    Deletion::ToTrash { from, trash } => {
+                        store.note_trashed(id, from, at)?;
                         store.queue_move(id, trash, at, at + UNDO_SECONDS)?
                     }
-                    _ => store.queue_delete(id, at, at + UNDO_SECONDS)?,
+                    Deletion::ForGood | Deletion::FromThisMac => {
+                        store.queue_delete(id, at, at + UNDO_SECONDS)?
+                    }
                 });
             }
         }

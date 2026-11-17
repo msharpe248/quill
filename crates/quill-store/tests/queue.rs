@@ -1270,3 +1270,294 @@ fn a_snoozed_message_can_be_brought_back_early_or_put_off_again() {
             .is_empty()
     );
 }
+
+#[test]
+fn a_folder_made_on_this_mac_is_listed_last_and_is_no_servers_to_delete() {
+    let mut rig = Rig::new();
+    let receipts = rig
+        .store
+        .create_local_folder(rig.account, " Receipts ")
+        .unwrap()
+        .unwrap();
+    // A name that will not do is said, and nothing is made.
+    for (name, why) in [
+        ("", "Give the folder a name"),
+        ("   ", "Give the folder a name"),
+        ("receipts", "already a folder called receipts"),
+        ("two\nlines", "one line of text"),
+    ] {
+        let refused = rig
+            .store
+            .create_local_folder(rig.account, name)
+            .unwrap()
+            .unwrap_err();
+        assert!(refused.contains(why), "{name:?}: {refused}");
+    }
+    let folders = rig.store.folders().unwrap();
+    let last = folders.last().unwrap();
+    assert_eq!(
+        (last.id, last.name.as_str(), last.local),
+        (receipts, "Receipts", true)
+    );
+    assert_eq!(folders.iter().filter(|folder| folder.local).count(), 1);
+    assert!(rig.store.is_local_folder(receipts).unwrap());
+    assert!(!rig.store.is_local_folder(rig.inbox).unwrap());
+
+    // The engine drops the folders a server no longer lists. One made
+    // here was never on that list, and stays.
+    rig.store
+        .retain_folders(rig.account, &[FolderId("INBOX".to_owned())])
+        .unwrap();
+    let names: Vec<String> = rig
+        .store
+        .folders()
+        .unwrap()
+        .into_iter()
+        .map(|folder| folder.name)
+        .collect();
+    assert_eq!(names, ["INBOX", "Receipts"]);
+
+    // With mail in it, or on its way into it, it is not taken away, and
+    // that mail is what removing the account would lose.
+    let one = rig.id(rig.inbox, "1");
+    let moved = rig
+        .store
+        .queue_move(one, receipts, 10, 10)
+        .unwrap()
+        .unwrap();
+    assert!(!rig.store.delete_empty_local_folder(receipts).unwrap());
+    assert_eq!(rig.store.account_leftovers(rig.account).unwrap().local, 1);
+    // A server's folder is never taken away this way, empty or not.
+    assert!(!rig.store.delete_empty_local_folder(rig.inbox).unwrap());
+    // Empty again, it goes.
+    assert!(rig.store.undo_operation(moved).unwrap());
+    assert!(rig.store.delete_empty_local_folder(receipts).unwrap());
+    assert!(
+        rig.store
+            .folders()
+            .unwrap()
+            .iter()
+            .all(|folder| !folder.local)
+    );
+}
+
+#[test]
+fn a_move_between_a_server_and_this_mac_is_handed_out_as_what_it_is() {
+    let mut rig = Rig::new();
+    let receipts = rig
+        .store
+        .create_local_folder(rig.account, "Receipts")
+        .unwrap()
+        .unwrap();
+    let taxes = rig
+        .store
+        .create_local_folder(rig.account, "Taxes")
+        .unwrap()
+        .unwrap();
+    let one = rig.id(rig.inbox, "1");
+
+    // Off a server, into a folder that is only here: to be kept.
+    rig.store
+        .queue_move(one, receipts, 10, 10)
+        .unwrap()
+        .unwrap();
+    assert_eq!(rig.subjects(receipts), ["Message 1"]);
+    let claimed = rig.store.claim_operation(rig.account, 10).unwrap().unwrap();
+    assert_eq!(
+        claimed.kind,
+        QueuedKind::Keep {
+            message: one,
+            remote: remote("1"),
+            source: FolderId("INBOX".to_owned()),
+            target_local: receipts,
+        }
+    );
+    // The engine has it whole and off the server: it is named by what
+    // it is.
+    rig.store
+        .complete_operation(claimed.id, Some(&remote("kept:abc")))
+        .unwrap();
+    assert_eq!(rig.remote(one), "kept:abc");
+
+    // Between two folders that are only here: a move, of nothing a server
+    // has.
+    rig.store.queue_move(one, taxes, 20, 20).unwrap().unwrap();
+    let claimed = rig.store.claim_operation(rig.account, 20).unwrap().unwrap();
+    assert!(
+        matches!(&claimed.kind, QueuedKind::Move { remote, .. } if remote.0 == "kept:abc"),
+        "{claimed:?}"
+    );
+    rig.store
+        .complete_operation(claimed.id, Some(&remote("kept:abc")))
+        .unwrap();
+    assert_eq!(rig.subjects(taxes), ["Message 1"]);
+
+    // Out to a server's folder: to be handed over, with its marks. It
+    // was never downloaded in this store, and that is said too.
+    rig.store
+        .queue_move(one, rig.archive, 30, 30)
+        .unwrap()
+        .unwrap();
+    let claimed = rig.store.claim_operation(rig.account, 30).unwrap().unwrap();
+    assert_eq!(
+        claimed.kind,
+        QueuedKind::Upload {
+            remote: remote("kept:abc"),
+            target: FolderId("Archive".to_owned()),
+            target_local: rig.archive,
+            blob_hash: None,
+            flags: Flags::default(),
+        }
+    );
+    // The server will not have it: it is back where it was, on this Mac.
+    rig.store.fail_operation(claimed.id).unwrap();
+    assert_eq!(rig.subjects(taxes), ["Message 1"]);
+    assert_eq!(rig.remote(one), "kept:abc");
+    assert!(rig.subjects(rig.archive).is_empty());
+
+    // A copy changes nothing here until it is made.
+    let copy = rig.store.queue_copy(one, receipts, 40).unwrap().unwrap();
+    assert!(rig.subjects(receipts).is_empty());
+    assert_eq!(rig.store.undoable(40).unwrap(), None);
+    let claimed = rig.store.claim_operation(rig.account, 40).unwrap().unwrap();
+    assert_eq!(claimed.id, copy);
+    assert_eq!(
+        claimed.kind,
+        QueuedKind::Copy {
+            message: one,
+            remote: remote("kept:abc"),
+            target: FolderId("kept:folder:Receipts".to_owned()),
+            target_local: receipts,
+            flags: Flags::default(),
+        }
+    );
+    rig.store.complete_operation(claimed.id, None).unwrap();
+    assert_eq!(rig.subjects(taxes), ["Message 1"]);
+    // Not into the folder it is in.
+    assert_eq!(rig.store.queue_copy(one, taxes, 50).unwrap(), None);
+}
+
+#[test]
+fn a_copy_kept_here_is_the_whole_message_and_is_there_once() {
+    let mut rig = Rig::new();
+    let receipts = rig
+        .store
+        .create_local_folder(rig.account, "Receipts")
+        .unwrap()
+        .unwrap();
+    let (one, two) = (rig.id(rig.inbox, "1"), rig.id(rig.inbox, "2"));
+    let hash = "ab".repeat(32);
+    rig.store.put_downloaded(one, "Hello.", &hash).unwrap();
+
+    assert!(rig.store.copy_here(one, receipts).unwrap());
+    assert!(rig.store.copy_here(one, receipts).unwrap());
+    let copies = rig.store.messages(Mailbox::Folder(receipts)).unwrap();
+    assert_eq!(copies.len(), 1);
+    let copy = &copies[0];
+    assert_ne!(copy.id, one);
+    assert_eq!(copy.headers.subject, "Message 1");
+    assert_eq!(rig.remote(copy.id), format!("kept:{hash}"));
+    assert_eq!(rig.store.body(copy.id).unwrap().as_deref(), Some("Hello."));
+    assert_eq!(rig.store.blob_hash(copy.id).unwrap(), Some(hash));
+    // The first is where it was, as it was.
+    assert_eq!(rig.remote(one), "1");
+    assert_eq!(rig.subjects(rig.inbox).len(), 3);
+
+    // A message that is not here whole is not copied: there would be
+    // nothing behind the copy.
+    assert!(!rig.store.copy_here(two, receipts).unwrap());
+    assert_eq!(rig.subjects(receipts).len(), 1);
+}
+
+#[test]
+fn where_a_trashed_message_was_is_remembered_until_it_is_put_back() {
+    let mut rig = Rig::new();
+    let (one, two) = (rig.id(rig.inbox, "1"), rig.id(rig.inbox, "2"));
+    // Nothing is known of a message nobody moved.
+    assert_eq!(rig.store.trashed_from(one).unwrap(), None);
+    assert_eq!(rig.store.last_trashed().unwrap(), None);
+
+    // Two filed in the archive first, as the server knows.
+    let filed = rig
+        .store
+        .queue_move(two, rig.archive, 50, 50)
+        .unwrap()
+        .unwrap();
+    rig.store.claim_operation(rig.account, 50).unwrap().unwrap();
+    rig.store
+        .complete_operation(filed, Some(&remote("2-in-archive")))
+        .unwrap();
+
+    // One goes to the trash from the inbox, then two from the archive.
+    rig.store.note_trashed(one, rig.inbox, 100).unwrap();
+    let first = rig
+        .store
+        .queue_move(one, rig.trash, 100, 100)
+        .unwrap()
+        .unwrap();
+    rig.store.note_trashed(two, rig.archive, 200).unwrap();
+    let second = rig
+        .store
+        .queue_move(two, rig.trash, 200, 200)
+        .unwrap()
+        .unwrap();
+    assert_eq!(rig.store.trashed_from(one).unwrap(), Some(rig.inbox));
+    assert_eq!(rig.store.trashed_from(two).unwrap(), Some(rig.archive));
+    assert_eq!(rig.store.last_trashed().unwrap(), Some((two, rig.archive)));
+
+    // The server takes the first move without saying what the message is
+    // called now: the row goes, and a sync brings the message back as a
+    // new one. It is still known, by its Message-ID.
+    rig.store
+        .claim_operation(rig.account, 100)
+        .unwrap()
+        .unwrap();
+    rig.store.complete_operation(first, None).unwrap();
+    assert!(rig.store.message_location(one).unwrap().is_none());
+    rig.store
+        .apply_delta(
+            rig.trash,
+            &delta(
+                vec![
+                    message("1", ANA, &ME, 100),
+                    // And one that was deleted somewhere else.
+                    message("9", ANA, &ME, 90),
+                ],
+                &[],
+            ),
+        )
+        .unwrap();
+    let back = rig.id(rig.trash, "1");
+    assert_ne!(back, one);
+    assert_eq!(rig.store.trashed_from(back).unwrap(), Some(rig.inbox));
+    let elsewhere = rig.id(rig.trash, "9");
+    assert_eq!(rig.store.trashed_from(elsewhere).unwrap(), None);
+
+    // The second is put back: it is no longer the last, and nothing more
+    // is remembered of it.
+    rig.store
+        .claim_operation(rig.account, 200)
+        .unwrap()
+        .unwrap();
+    rig.store
+        .complete_operation(second, Some(&remote("2-in-trash")))
+        .unwrap();
+    rig.store
+        .queue_move(two, rig.archive, 300, 300)
+        .unwrap()
+        .unwrap();
+    rig.store.forget_trashed(two).unwrap();
+    assert_eq!(rig.store.trashed_from(two).unwrap(), None);
+    assert_eq!(rig.store.last_trashed().unwrap(), Some((back, rig.inbox)));
+    rig.store.forget_trashed(back).unwrap();
+    assert_eq!(rig.store.last_trashed().unwrap(), None);
+
+    // A note is not kept for ever: three months on, the next deletion
+    // clears the old ones away.
+    let three = rig.id(rig.inbox, "3");
+    rig.store.note_trashed(back, rig.inbox, 100).unwrap();
+    rig.store
+        .note_trashed(three, rig.inbox, 100 + 91 * 24 * 60 * 60)
+        .unwrap();
+    assert_eq!(rig.store.trashed_from(back).unwrap(), None);
+}

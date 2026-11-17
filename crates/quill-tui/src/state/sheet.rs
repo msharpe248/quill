@@ -20,7 +20,10 @@ use quill_host::bridge::{
     FormButton, FormField, FormOption, FormRole, FormShow, FormShowParams, FormUsed, Secret,
 };
 
-use super::{Effects, Env, RemovePrompt, State, UnsubscribePrompt, WhenFor, WhenPrompt};
+use super::{
+    Effects, Env, FolderPrompt, ON_THE_SERVER, ON_THIS_MAC, RemovePrompt, State, UnsubscribePrompt,
+    WhenFor, WhenPrompt,
+};
 use crate::command::{CommandId, Context};
 use crate::setup::{
     AccountRequest, CERTIFICATE_WORKING, CertificatePrompt, Press, SENDING_CERTIFICATE,
@@ -65,6 +68,7 @@ fn asked_in_a_sheet(context: Context) -> bool {
             | Context::Certificate
             | Context::SignIn
             | Context::When
+            | Context::NewFolder
             | Context::Unsubscribe
             | Context::RemoveAccount
     )
@@ -221,6 +225,76 @@ impl CertificatePrompt {
     }
 }
 
+/// The step of the question about a new folder, and its fields.
+const NEW_FOLDER: &str = "new_folder";
+const FOLDER_NAME: &str = "name";
+const FOLDER_PLACE: &str = "place";
+const PLACE_SERVER: &str = "server";
+const PLACE_HERE: &str = "here";
+
+impl FolderPrompt {
+    /// The question as a host shows it: the name to type, where the
+    /// folder is to be, and what that means for the mail put in it. With
+    /// no choice of place there is none to make, and the place is said.
+    pub fn form(&self) -> Option<FormShow> {
+        let mut fields = vec![typed(FOLDER_NAME, "Name:", &self.input, true, None)];
+        if self.either {
+            fields.push(FormField::Choice {
+                id: FOLDER_PLACE.to_owned(),
+                label: "Where:".to_owned(),
+                value: if self.here { PLACE_HERE } else { PLACE_SERVER }.to_owned(),
+                options: vec![
+                    FormOption {
+                        id: PLACE_SERVER.to_owned(),
+                        title: ON_THE_SERVER.to_owned(),
+                    },
+                    FormOption {
+                        id: PLACE_HERE.to_owned(),
+                        title: ON_THIS_MAC.to_owned(),
+                    },
+                ],
+                focus: false,
+                help: Some(self.means().to_owned()),
+            });
+        } else {
+            let mut place = shown(FOLDER_PLACE, "Where:", self.place().to_owned());
+            if let FormField::Static { help, .. } = &mut place {
+                *help = Some(self.means().to_owned());
+            }
+            fields.push(place);
+        }
+        FormShow::new(FormShowParams {
+            step: NEW_FOLDER.to_owned(),
+            title: headline(&self.title()),
+            note: None,
+            error: self.problem.as_deref().map(text::sanitize_line),
+            busy: None,
+            fields,
+            buttons: vec![
+                Press::Cancel.button(Some(FormRole::Cancel), true),
+                FormButton {
+                    id: CONFIRM.to_owned(),
+                    title: "Create".to_owned(),
+                    role: Some(FormRole::Default),
+                    enabled: true,
+                },
+            ],
+        })
+    }
+
+    /// Puts what the host's fields held into the question's own.
+    fn fill(&mut self, used: &FormUsed) {
+        put(&mut self.input, used.value(FOLDER_NAME));
+        if self.either {
+            match used.value(FOLDER_PLACE) {
+                Some(PLACE_HERE) => self.here = true,
+                Some(PLACE_SERVER) => self.here = false,
+                _ => {}
+            }
+        }
+    }
+}
+
 impl WhenPrompt {
     /// The step of this question's form.
     fn step(&self) -> &'static str {
@@ -348,6 +422,7 @@ impl State {
             Context::Certificate => self.certificates.front()?.form(&env.tz),
             Context::SignIn => self.sign_in.as_ref()?.form(),
             Context::When => self.when.as_ref()?.form(),
+            Context::NewFolder => self.new_folder.as_ref()?.form(),
             Context::Unsubscribe => self.unsubscribe.as_ref()?.form(),
             Context::RemoveAccount => self.remove.as_ref()?.form(),
             Context::Setup => self.setup.as_ref()?.form(&env.tz),
@@ -395,6 +470,7 @@ impl State {
                 }
             }
             Context::When => self.answer_when_in_sheet(env, used, out),
+            Context::NewFolder => self.answer_new_folder_in_sheet(env, used, out),
             Context::Unsubscribe => match used.button() {
                 // As `enter`: the one thing the question described.
                 Some(CONFIRM) => self.answer_unsubscribe(env, out),
@@ -470,6 +546,29 @@ impl State {
                 // As typing does: what was wrong with the last time is no
                 // longer said of this one.
                 when.problem = None;
+            }
+        }
+    }
+
+    /// Takes what was done with the question about a new folder: what its
+    /// fields held goes into the question's own, and then the button does
+    /// what its key does. With no button, the place was changed, and what
+    /// is said of it changes with it.
+    fn answer_new_folder_in_sheet(&mut self, env: &Env, used: &FormUsed, out: &mut Effects) {
+        let Some(prompt) = &mut self.new_folder else {
+            return;
+        };
+        match used.button() {
+            // As `esc`: no folder was made.
+            Some(id) if id == Press::Cancel.id() => self.new_folder = None,
+            Some(CONFIRM) => {
+                prompt.fill(used);
+                self.answer_new_folder(env, out);
+            }
+            Some(_) => {}
+            None => {
+                prompt.fill(used);
+                prompt.problem = None;
             }
         }
     }

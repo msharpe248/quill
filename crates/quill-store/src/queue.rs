@@ -30,6 +30,34 @@ pub enum QueuedKind {
         source_local: LocalFolderId,
         target_local: LocalFolderId,
     },
+    /// Keep `remote` here and nowhere else: it has been moved into a
+    /// folder made on this Mac. The whole message is to be here before the
+    /// server is told to let go of it.
+    Keep {
+        message: LocalMessageId,
+        remote: RemoteId,
+        source: FolderId,
+        target_local: LocalFolderId,
+    },
+    /// Hand a message kept here over to a server: it has been moved out of
+    /// a folder that is only here into `target`. `blob_hash` is the whole
+    /// message, if it is here.
+    Upload {
+        remote: RemoteId,
+        target: FolderId,
+        target_local: LocalFolderId,
+        blob_hash: Option<String>,
+        flags: Flags,
+    },
+    /// Put a second copy of the message into `target`, leaving it where
+    /// it is.
+    Copy {
+        message: LocalMessageId,
+        remote: RemoteId,
+        target: FolderId,
+        target_local: LocalFolderId,
+        flags: Flags,
+    },
     /// Remove `remote` from `source` for good.
     Delete { remote: RemoteId, source: FolderId },
     /// Set the message's flags.
@@ -172,6 +200,51 @@ impl Store {
         )?;
         let operation = tx.last_insert_rowid();
         tx.execute("UPDATE messages SET hidden = 1 WHERE id = ?1", [message.0])?;
+        tx.commit()?;
+        Ok(Some(OperationId(operation)))
+    }
+
+    /// Queues putting a second copy of a message into another folder of
+    /// its account. Nothing changes here until it is done: the copy
+    /// appears when the engine has made it. Returns `None`, changing
+    /// nothing, when the message is missing, is in that folder, or the
+    /// folder is another account's.
+    pub fn queue_copy(
+        &mut self,
+        message: LocalMessageId,
+        target: LocalFolderId,
+        now: i64,
+    ) -> Result<Option<OperationId>> {
+        let tx = self.conn.transaction()?;
+        let found: Option<(i64, i64, String)> = tx
+            .query_row(
+                "SELECT f.account_id, m.folder_id, m.remote_id
+                 FROM messages m JOIN folders f ON f.id = m.folder_id
+                 WHERE m.id = ?1 AND m.hidden = 0",
+                [message.0],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        let Some((account, source, remote)) = found else {
+            return Ok(None);
+        };
+        let target_account: Option<i64> = tx
+            .query_row(
+                "SELECT account_id FROM folders WHERE id = ?1",
+                [target.0],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if source == target.0 || target_account != Some(account) {
+            return Ok(None);
+        }
+        tx.execute(
+            "INSERT INTO operations (account_id, kind, message_id, remote_id, source_folder,
+                 target_folder, not_before, created)
+             VALUES (?1, 'copy', ?2, ?3, ?4, ?5, ?6, ?6)",
+            params![account, message.0, remote, source, target.0, now],
+        )?;
+        let operation = tx.last_insert_rowid();
         tx.commit()?;
         Ok(Some(OperationId(operation)))
     }
@@ -436,14 +509,77 @@ impl Store {
             .remote
             .filter(|remote| !is_placeholder(remote))
             .map(RemoteId);
+        // The message as it is now: whether it is here whole, and its
+        // marks, for an operation that carries it somewhere.
+        let whole = |message: Option<i64>| -> Result<Option<(Option<String>, Flags)>> {
+            let Some(message) = message else {
+                return Ok(None);
+            };
+            Ok(tx
+                .query_row(
+                    "SELECT blob_hash, seen, flagged, answered, draft FROM messages WHERE id = ?1",
+                    [message],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            Flags {
+                                seen: row.get(1)?,
+                                flagged: row.get(2)?,
+                                answered: row.get(3)?,
+                                draft: row.get(4)?,
+                            },
+                        ))
+                    },
+                )
+                .optional()?)
+        };
         let kind = match raw.kind.as_str() {
             "move" => match (remote, folder(raw.source)?, folder(raw.target)?) {
-                (Some(remote), Some(source), Some(target)) => QueuedKind::Move {
+                (Some(remote), Some(source), Some(target)) => {
+                    // A move between a server's folder and one that is
+                    // only here is more than a move: the message itself
+                    // changes hands.
+                    let here = crate::is_kept(&remote.0);
+                    let to_here = crate::is_kept(&target.1.0);
+                    match (here, to_here, raw.message, whole(raw.message)?) {
+                        (false, true, Some(message), _) => QueuedKind::Keep {
+                            message: LocalMessageId(message),
+                            remote,
+                            source: source.1,
+                            target_local: target.0,
+                        },
+                        (true, false, _, Some((blob_hash, flags))) => QueuedKind::Upload {
+                            remote,
+                            target: target.1,
+                            target_local: target.0,
+                            blob_hash,
+                            flags,
+                        },
+                        // The message has gone: there is nothing to carry.
+                        (false, true, None, _) | (true, false, _, None) => QueuedKind::Nothing,
+                        _ => QueuedKind::Move {
+                            remote,
+                            source: source.1,
+                            target: target.1,
+                            source_local: source.0,
+                            target_local: target.0,
+                        },
+                    }
+                }
+                _ => QueuedKind::Nothing,
+            },
+            "copy" => match (
+                remote,
+                folder(raw.target)?,
+                raw.message,
+                whole(raw.message)?,
+            ) {
+                (Some(remote), Some(target), Some(message), Some((_, flags))) => QueuedKind::Copy {
+                    message: LocalMessageId(message),
                     remote,
-                    source: source.1,
                     target: target.1,
-                    source_local: source.0,
                     target_local: target.0,
+                    flags,
                 },
                 _ => QueuedKind::Nothing,
             },

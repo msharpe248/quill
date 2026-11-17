@@ -20,7 +20,14 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         .border_type(BorderType::Thick)
         .border_style(styles.border(true))
         .padding(Padding::horizontal(1))
-        .title(Line::styled(" Move to ", styles.border(true)));
+        .title(Line::styled(
+            if picker.copy {
+                " Copy to "
+            } else {
+                " Move to "
+            },
+            styles.border(true),
+        ));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.height == 0 {
@@ -52,10 +59,17 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
     for (row, (index, choice)) in visible.enumerate() {
         let rect = Rect::new(inner.x, inner.y + 1 + row as u16, inner.width, 1);
         let selected = index == picker.selected;
+        // A folder that is only on this Mac is said to be, where it is
+        // about to be chosen: mail moved there leaves its server.
+        let name = if choice.local {
+            format!("{}{}", choice.name, crate::state::ON_THIS_MAC_SUFFIX)
+        } else {
+            choice.name.clone()
+        };
         let line = Line::from(vec![
             Span::raw(if selected { "> " } else { "  " }),
             Span::styled(
-                text::truncate(&choice.name, width.saturating_sub(2)),
+                text::truncate(&name, width.saturating_sub(2)),
                 styles.text(),
             ),
         ]);

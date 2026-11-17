@@ -41,7 +41,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
             | SidebarEntry::Account { unread, .. }
             | SidebarEntry::Folder { unread, .. } => *unread,
             SidebarEntry::Local { count, .. } => *count,
-            SidebarEntry::Searches | SidebarEntry::Search { .. } => 0,
+            SidebarEntry::Searches | SidebarEntry::Search { .. } | SidebarEntry::OnThisMac => 0,
         })
         .max()
         .unwrap_or(0);
@@ -97,14 +97,25 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
                     Span::styled(text::fit_right(&count, room - name_room), styles.unread()),
                 ])
             }
-            SidebarEntry::Folder { name, unread, .. } => counted_row(
+            // A folder that is only on this Mac sits a step further in,
+            // under the heading that says so.
+            SidebarEntry::Folder {
+                name,
+                unread,
+                local,
+                ..
+            } => counted_row(
                 cursor,
-                &format!("  {name}"),
+                &format!("{}{name}", if *local { "    " } else { "  " }),
                 *unread,
                 label_width,
                 count_width,
                 env,
             ),
+            SidebarEntry::OnThisMac => Line::from(vec![
+                Span::raw(cursor),
+                Span::styled("  On This Mac", styles.dim()),
+            ]),
             SidebarEntry::Searches => Line::from(vec![
                 Span::raw(cursor),
                 Span::styled("Searches", styles.dim()),

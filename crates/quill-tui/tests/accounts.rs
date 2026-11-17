@@ -531,7 +531,7 @@ fn the_marker_is_clicked_to_open_and_close_and_the_name_to_choose() {
 fn checking_for_new_mail_goes_by_what_is_chosen_in_the_accounts_pane() {
     let mut harness = Harness::with_accounts(120, 30);
     let (work, personal) = accounts(&harness);
-    let last = |harness: &Harness| *harness.sync_requests.last().unwrap();
+    let last = |harness: &Harness| harness.sync_requests.last().unwrap().clone();
 
     // Unified: every account.
     harness.keys("ctrl-r");

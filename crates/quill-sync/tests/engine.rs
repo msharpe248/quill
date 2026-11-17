@@ -264,10 +264,47 @@ impl Backend for MemoryBackend {
                     folder.remove(&id.0);
                 }
             }
-            Operation::Move { .. } | Operation::Copy { .. } => {}
+            // A second copy, named after the first.
+            Operation::Copy { id, to } => {
+                let found = server
+                    .folders
+                    .values()
+                    .find_map(|folder| folder.get(&id.0))
+                    .map(|mail| Mail {
+                        subject: mail.subject.clone(),
+                        date: mail.date,
+                        flags: mail.flags,
+                        body: mail.body.clone(),
+                    });
+                if let Some(mail) = found {
+                    server
+                        .folders
+                        .entry(to.0.clone())
+                        .or_default()
+                        .insert(format!("{}-copy", id.0), mail);
+                }
+            }
+            Operation::Move { .. } => {}
         }
         server.applied.push(op.clone());
         Ok(())
+    }
+
+    /// A folder at the top of the mailbox, unless there is one already.
+    async fn create_folder(&self, name: &str) -> Result<RemoteFolder> {
+        self.check()?;
+        let mut server = self.0.lock().unwrap();
+        if server.folders.contains_key(name) {
+            return Err(Error::Backend(format!(
+                "there is already a folder called {name}"
+            )));
+        }
+        server.folders.insert(name.to_owned(), BTreeMap::new());
+        Ok(RemoteFolder {
+            id: FolderId(name.to_owned()),
+            name: name.to_owned(),
+            role: FolderRole::Other,
+        })
     }
 
     /// Moves the message and renames it `<old id>-moved`, as a server that
@@ -1425,6 +1462,283 @@ async fn a_queued_move_reaches_the_server_and_the_message_keeps_its_body() {
     assert_eq!(rig.subjects("Archive"), ["File me"]);
     assert_eq!(rig.subjects("INBOX"), ["Keep"]);
     assert_eq!(rig.local("File me"), id);
+}
+
+/// A date old enough that the message's body is not fetched ahead.
+fn long_ago() -> i64 {
+    now() - 400 * 24 * 60 * 60
+}
+
+/// A folder on this Mac for the rig's account.
+fn local_folder(rig: &mut Rig, name: &str) -> LocalFolderId {
+    rig.store
+        .create_local_folder(rig.account, name)
+        .unwrap()
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mail_moved_to_a_folder_on_this_mac_is_here_whole_and_then_off_the_server() {
+    let mut rig = filing_rig().await;
+    let receipts = local_folder(&mut rig, "Receipts");
+    // A message whose body was never fetched: only its headers are here.
+    rig.backend.add("INBOX", "3", "Old one", long_ago());
+    rig.sync_now().await;
+    let id = rig.local("Old one");
+    assert_eq!(rig.store.blob_hash(id).unwrap(), None);
+
+    rig.store
+        .queue_move(id, receipts, now(), now())
+        .unwrap()
+        .unwrap();
+    rig.handle.send(SyncRequest::Queue);
+    rig.queue_empty().await;
+
+    // The server has let go of it: deleted, not moved anywhere.
+    assert_eq!(rig.server_subjects("INBOX"), ["Keep", "File me"]);
+    assert!(rig.backend.with(|server| {
+        server
+            .applied
+            .iter()
+            .any(|op| matches!(op, Operation::Delete { id } if id.0 == "3"))
+    }));
+    // And it is here, whole, under a name of the store's own: the same
+    // row, in the folder it was moved to.
+    let location = rig.store.message_location(id).unwrap().unwrap();
+    assert_eq!(location.folder, receipts);
+    assert!(quill_store::is_kept(&location.remote.0), "{location:?}");
+    let hash = rig.store.blob_hash(id).unwrap().unwrap();
+    assert_eq!(location.remote.0, format!("kept:{hash}"));
+    let raw = rig.blobs.get(&hash).unwrap().unwrap();
+    assert!(String::from_utf8_lossy(&raw).contains("Subject: Old one"));
+    assert!(rig.store.body(id).unwrap().is_some());
+
+    // Passes after that leave it be: no server lists the folder, and the
+    // folder is not taken for one a server has deleted.
+    rig.sync_now().await;
+    rig.sync_now().await;
+    assert_eq!(rig.subjects("Receipts"), ["Old one"]);
+    assert_eq!(rig.subjects("INBOX"), ["File me", "Keep"]);
+    assert_eq!(rig.local("Old one"), id);
+    let folder = rig
+        .store
+        .folders()
+        .unwrap()
+        .into_iter()
+        .find(|folder| folder.id == receipts)
+        .unwrap();
+    assert!(folder.local);
+
+    // Marking it is done here and asks nothing of the server.
+    let asked = rig.backend.with(|server| server.applied.len());
+    let seen = Flags {
+        seen: true,
+        ..Flags::default()
+    };
+    assert!(rig.store.queue_flags(id, seen, now()).unwrap());
+    rig.handle.send(SyncRequest::Queue);
+    rig.queue_empty().await;
+    assert_eq!(rig.backend.with(|server| server.applied.len()), asked);
+    assert!(rig.store.message_location(id).unwrap().unwrap().flags.seen);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mail_that_cannot_be_had_whole_is_not_taken_off_the_server() {
+    let mut rig = filing_rig().await;
+    let receipts = local_folder(&mut rig, "Receipts");
+    rig.backend.add("INBOX", "3", "Old one", long_ago());
+    rig.sync_now().await;
+    let id = rig.local("Old one");
+
+    // The server is unreachable: the move waits, and nothing is deleted.
+    rig.backend
+        .with(|server| server.down = Some("no route to host".to_owned()));
+    rig.store
+        .queue_move(id, receipts, now(), now())
+        .unwrap()
+        .unwrap();
+    rig.handle.send(SyncRequest::Queue);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(rig.store.queued_operations().unwrap(), 1);
+    assert_eq!(rig.server_subjects("INBOX"), ["Keep", "File me", "Old one"]);
+
+    // Back, with the message gone from it meanwhile and never downloaded:
+    // there is nothing to keep, so the move is taken back and said.
+    rig.backend.with(|server| {
+        server.down = None;
+        server.folders.get_mut("INBOX").unwrap().remove("3");
+    });
+    rig.handle.send(SyncRequest::SyncNow);
+    let events = rig
+        .until(|event| matches!(event, SyncEvent::Problem { .. }))
+        .await;
+    let Some(SyncEvent::Problem { message, .. }) = events.last() else {
+        unreachable!()
+    };
+    assert!(
+        message.contains("could not be moved to this Mac"),
+        "{message}"
+    );
+    rig.queue_empty().await;
+    assert!(rig.subjects("Receipts").is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mail_moved_from_this_mac_to_a_servers_folder_is_handed_over() {
+    let mut rig = filing_rig().await;
+    let receipts = local_folder(&mut rig, "Receipts");
+    let id = rig.local("File me");
+    rig.store
+        .queue_move(id, receipts, now(), now())
+        .unwrap()
+        .unwrap();
+    rig.handle.send(SyncRequest::Queue);
+    rig.queue_empty().await;
+    assert_eq!(rig.server_subjects("INBOX"), ["Keep"]);
+
+    // Between two folders that are only here: nothing is asked of anyone.
+    let taxes = local_folder(&mut rig, "Taxes");
+    let asked = rig.backend.with(|server| server.applied.len());
+    rig.store
+        .queue_move(id, taxes, now(), now())
+        .unwrap()
+        .unwrap();
+    rig.handle.send(SyncRequest::Queue);
+    rig.queue_empty().await;
+    assert_eq!(rig.backend.with(|server| server.applied.len()), asked);
+    assert_eq!(rig.subjects("Taxes"), ["File me"]);
+    assert!(quill_store::is_kept(
+        &rig.store.message_location(id).unwrap().unwrap().remote.0
+    ));
+
+    // And out to the server's archive: the server is given the message,
+    // and what it calls it is the message's name from then on.
+    let archive = rig.folder("Archive");
+    rig.store
+        .queue_move(id, archive, now(), now())
+        .unwrap()
+        .unwrap();
+    rig.handle.send(SyncRequest::Queue);
+    rig.queue_empty().await;
+    assert_eq!(rig.server_subjects("Archive"), ["File me"]);
+    let appended = rig.backend.with(|server| server.appended.clone());
+    assert_eq!(appended.len(), 1);
+    assert_eq!(appended[0].0, "Archive");
+    let location = rig.store.message_location(id).unwrap().unwrap();
+    assert_eq!(
+        (location.folder, location.remote.0.as_str()),
+        (archive, "appended-1")
+    );
+    // One message, in one place, pass after pass.
+    rig.sync_now().await;
+    assert_eq!(rig.subjects("Archive"), ["File me"]);
+    assert!(rig.subjects("Taxes").is_empty());
+    assert!(rig.subjects("Receipts").is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_copy_leaves_the_message_where_it_is_and_puts_another_where_asked() {
+    let mut rig = filing_rig().await;
+    let receipts = local_folder(&mut rig, "Receipts");
+    let id = rig.local("File me");
+
+    // To a folder on this Mac: the server is not changed at all.
+    let asked = rig.backend.with(|server| server.applied.len());
+    rig.store.queue_copy(id, receipts, now()).unwrap().unwrap();
+    rig.handle.send(SyncRequest::Queue);
+    rig.queue_empty().await;
+    assert_eq!(rig.backend.with(|server| server.applied.len()), asked);
+    assert_eq!(rig.server_subjects("INBOX"), ["Keep", "File me"]);
+    assert_eq!(rig.subjects("Receipts"), ["File me"]);
+    assert_eq!(rig.subjects("INBOX"), ["File me", "Keep"]);
+    assert_eq!(
+        rig.store.message_location(id).unwrap().unwrap().remote.0,
+        "2"
+    );
+    // The copy is a message of its own, with the text.
+    let copy = rig
+        .store
+        .messages(Mailbox::Folder(receipts))
+        .unwrap()
+        .remove(0);
+    assert_ne!(copy.id, id);
+    assert_eq!(
+        rig.store.body(copy.id).unwrap(),
+        rig.store.body(id).unwrap()
+    );
+    // Copied there twice, it is there once.
+    rig.store.queue_copy(id, receipts, now()).unwrap().unwrap();
+    rig.handle.send(SyncRequest::Queue);
+    rig.queue_empty().await;
+    assert_eq!(rig.subjects("Receipts"), ["File me"]);
+
+    // To another of the server's folders: the server copies it.
+    let archive = rig.folder("Archive");
+    rig.store.queue_copy(id, archive, now()).unwrap().unwrap();
+    rig.handle.send(SyncRequest::Queue);
+    rig.queue_empty().await;
+    assert_eq!(rig.server_subjects("Archive"), ["File me"]);
+    assert_eq!(rig.server_subjects("INBOX"), ["Keep", "File me"]);
+    rig.sync_now().await;
+    assert_eq!(rig.subjects("Archive"), ["File me"]);
+
+    // And from this Mac to the server: the server is given a copy, and
+    // the one here stays.
+    let sent = rig.folder("Sent");
+    rig.store.queue_copy(copy.id, sent, now()).unwrap().unwrap();
+    rig.handle.send(SyncRequest::Queue);
+    rig.queue_empty().await;
+    assert_eq!(rig.server_subjects("Sent"), ["File me"]);
+    assert_eq!(rig.subjects("Receipts"), ["File me"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_folder_asked_for_is_made_on_the_server_and_is_here_at_once() {
+    let mut rig = filing_rig().await;
+    rig.handle.send(SyncRequest::CreateFolder {
+        account: rig.account,
+        name: "Projects".to_owned(),
+    });
+    let events = rig
+        .until(|event| matches!(event, SyncEvent::FolderMade { .. }))
+        .await;
+    assert_eq!(
+        events.last(),
+        Some(&SyncEvent::FolderMade {
+            account: "Work".to_owned(),
+            name: "Projects".to_owned(),
+        })
+    );
+    assert!(
+        rig.backend
+            .with(|server| server.folders.contains_key("Projects"))
+    );
+    let made = rig
+        .store
+        .folders()
+        .unwrap()
+        .into_iter()
+        .find(|folder| folder.name == "Projects")
+        .unwrap();
+    // A server's folder, not one of this Mac's.
+    assert!(!made.local);
+
+    // One the server will not make is said, and nothing is made here.
+    rig.handle.send(SyncRequest::CreateFolder {
+        account: rig.account,
+        name: "Projects".to_owned(),
+    });
+    let events = rig
+        .until(|event| matches!(event, SyncEvent::Problem { .. }))
+        .await;
+    let Some(SyncEvent::Problem { message, .. }) = events.last() else {
+        unreachable!()
+    };
+    assert!(
+        message.contains("The folder Projects could not be made on the server"),
+        "{message}"
+    );
+    assert!(message.contains("already a folder"), "{message}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -83,6 +83,14 @@ impl RemovePrompt {
     pub fn losses(&self) -> Vec<String> {
         let leaving = &self.leaving;
         let mut losses = Vec::new();
+        // First: of everything here, this is the mail itself.
+        if leaving.local > 0 {
+            losses.push(format!(
+                "{} in its folders on this Mac {} nowhere else and will be deleted.",
+                counted(leaving.local, "message", "messages"),
+                if leaving.local == 1 { "is" } else { "are" }
+            ));
+        }
         if leaving.outbox > 0 {
             losses.push(format!(
                 "{} waiting in the Outbox will not be sent.",

@@ -280,3 +280,43 @@ async fn a_standard_folder_that_cannot_be_asked_about_fails_the_listing() {
     assert!(err.to_string().contains("ErrorAccessDenied"), "{err}");
     assert_eq!(rig.check().await.len(), 1);
 }
+
+#[tokio::test]
+async fn a_folder_is_made_at_the_top_of_the_mailbox_under_the_name_given() {
+    let rig = Rig::start().await;
+    rig.on("POST", "/me/mailFolders")
+        .respond_with(wiremock::ResponseTemplate::new(201).set_body_json(json!({
+            "id": "folder-receipts",
+            "displayName": "Receipts",
+            "childFolderCount": 0
+        })))
+        .mount(&rig.server)
+        .await;
+
+    let made = rig.graph.create_folder("Receipts").await.unwrap();
+    assert_eq!(
+        made,
+        listed("folder-receipts", "Receipts", FolderRole::Other)
+    );
+    let requests = rig.requests().await;
+    assert_eq!(rig.check().await, ["POST /v1.0/me/mailFolders"]);
+    let asked: Value = serde_json::from_slice(&requests[0].body).unwrap();
+    assert_eq!(asked, json!({ "displayName": "Receipts" }));
+}
+
+#[tokio::test]
+async fn a_folder_the_service_will_not_make_is_refused_in_its_words() {
+    let rig = Rig::start().await;
+    rig.on("POST", "/me/mailFolders")
+        .respond_with(refusal(
+            409,
+            "ErrorFolderExists",
+            "A folder with the specified name already exists.",
+        ))
+        .mount(&rig.server)
+        .await;
+
+    let err = rig.graph.create_folder("Receipts").await.unwrap_err();
+    assert!(err.to_string().contains("already exists"), "{err}");
+    assert_eq!(rig.check().await.len(), 1);
+}

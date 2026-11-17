@@ -512,6 +512,7 @@ impl Service {
             drafts: leftovers.drafts,
             outbox: leftovers.outbox,
             queued: leftovers.queued,
+            local: leftovers.local,
         })
     }
 
@@ -1814,6 +1815,7 @@ mod tests {
                 drafts: 1,
                 outbox: 1,
                 queued: 0,
+                local: 0,
             })
         );
         // A POP3 account's copy here may be the only one.

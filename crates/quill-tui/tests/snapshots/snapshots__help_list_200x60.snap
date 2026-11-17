@@ -32,6 +32,8 @@ expression: harness.screen()
 │                          │┃                                       ┃   e                              Archive                     ┃                                                                   │
 │                          │┃                                       ┃   d                              Delete                      ┃ Corp                                                              │
 │                          │┃                                       ┃   m                              Move to a folder            ┃                                                                   │
+│                          │┃                                       ┃   C                              Copy to a folder            ┃                                                                   │
+│                          │┃                                       ┃   P                              Put back                    ┃                                                                   │
 │                          │┃                                       ┃   b                              Snooze until a time         ┃                                                                   │
 │                          │┃                                       ┃   x                              Select or unselect          ┃                                                                   │
 │                          │┃                                       ┃   V                              Select a range              ┃                                                                   │
@@ -55,10 +57,8 @@ expression: harness.screen()
 │                          │┃                                       ┃   q, ctrl-c                      Quit                        ┃                                                                   │
 │                          │┃                                       ┃   /, cmd-f                       Search                      ┃                                                                   │
 │                          │┃                                       ┃   ctrl-r, cmd-r                  Check for New Mail          ┃                                                                   │
+│                          │┃                                       ┃   +                              New folder…                 ┃                                                                   │
 │                          │┃                                       ┃   :, ctrl-k                      Command palette             ┃                                                                   │
-│                          │┃                                       ┃   U                              Undo the last move, deleti… ┃                                                                   │
-│                          │┃                                       ┃   A                              Add an account              ┃                                                                   │
-│                          │┃                                       ┃   S                              Sign in to an account       ┃                                                                   │
-│                          │┃                                       ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1-55 of 59 ┛                                                                   │
+│                          │┃                                       ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1-55 of 62 ┛                                                                   │
 └──────────────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛└────────────────────────────────────────────────────────────────────────────────────┘
  j/k scroll  esc close

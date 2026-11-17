@@ -18,8 +18,8 @@ use async_imap::imap_proto::{
 use async_trait::async_trait;
 use bytes::Bytes;
 use quill_core::types::{
-    Capabilities, FlagChange, Flags, FolderId, Headers, Operation, RemoteEvent, RemoteFolder,
-    RemoteId, RemoteMessage, SyncCursor, SyncDelta,
+    Capabilities, FlagChange, Flags, FolderId, FolderRole, Headers, Operation, RemoteEvent,
+    RemoteFolder, RemoteId, RemoteMessage, SyncCursor, SyncDelta,
 };
 use quill_core::{Backend, Credential, Credentials, Error, Result};
 use tokio::sync::Mutex;
@@ -383,6 +383,10 @@ impl Backend for ImapBackend {
             .await)
     }
 
+    async fn create_folder(&self, name: &str) -> Result<RemoteFolder> {
+        with_session!(self, |session| create_folder(session, name).await)
+    }
+
     /// Watches the inbox with IDLE and sends `FolderChanged`, naming the
     /// inbox as `list_folders` does, whenever it is worth syncing: once as
     /// soon as the watch is in place, and after that each time the server
@@ -529,6 +533,65 @@ pub(crate) async fn list_folders<T: Wire>(session: &mut Session<T>) -> Result<Ve
         })
         .collect();
     Ok(folders)
+}
+
+/// Makes a folder for the user, where the server keeps their folders, and
+/// returns it as the server then lists it.
+///
+/// A folder of that name already there is said, not made twice: `CREATE`
+/// would be refused in the server's own words, which need not be clear.
+pub(crate) async fn create_folder<T: Wire>(
+    session: &mut Session<T>,
+    name: &str,
+) -> Result<RemoteFolder> {
+    let mut found: Vec<(String, Option<String>)> = Vec::new();
+    let reply = Command::new("LIST")
+        .arg("\"\"")
+        .arg("*")
+        .run_with(session, |response| {
+            if let Response::MailboxData(MailboxDatum::List(listed)) = response {
+                found.push((
+                    names::unescape(&listed.name).into_owned(),
+                    listed
+                        .delimiter
+                        .as_deref()
+                        .map(|delimiter| names::unescape(delimiter).into_owned()),
+                ));
+            }
+        })
+        .await?;
+    reply.require("the server would not list its folders")?;
+    let listed: Vec<names::Listed<'_>> = found
+        .iter()
+        .map(|(raw, delimiter)| names::Listed {
+            raw,
+            delimiter: delimiter.as_deref(),
+            attributes: &[],
+        })
+        .collect();
+    let raw = names::new_folder(&listed, name);
+    if found
+        .iter()
+        .any(|(existing, _)| existing.eq_ignore_ascii_case(&raw))
+    {
+        return Err(Error::Backend(format!(
+            "there is already a folder called {name}"
+        )));
+    }
+    let reply = Command::new("CREATE").mailbox(&raw)?.run(session).await?;
+    reply.require(&format!("the server would not make a folder called {name}"))?;
+    // For the mail programs that list only what is subscribed to. A server
+    // that will not is no reason to say the folder was not made.
+    let _ = Command::new("SUBSCRIBE").mailbox(&raw)?.run(session).await;
+    let made = list_folders(session)
+        .await?
+        .into_iter()
+        .find(|folder| folder.id.0 == raw);
+    Ok(made.unwrap_or(RemoteFolder {
+        id: FolderId(raw),
+        name: name.to_owned(),
+        role: FolderRole::Other,
+    }))
 }
 
 /// Selects a folder and returns the UIDVALIDITY its UIDs belong to.

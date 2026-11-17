@@ -881,3 +881,51 @@ async fn without_uidplus_a_plain_expunge_is_used_only_when_nothing_else_is_marke
     );
     assert!(listing(&backend, "INBOX").await.is_empty());
 }
+
+#[tokio::test]
+async fn a_folder_is_made_on_the_server_listed_and_ready_to_take_mail() {
+    let Some(server) = Dovecot::start().await else {
+        return;
+    };
+    let user = "folders@example.com";
+    let _other_client = arrange(&server, user).await;
+    let backend = server.backend(TlsMode::Implicit, user);
+    let before = backend.list_folders().await.unwrap();
+    assert!(before.iter().all(|folder| folder.name != "Receipts"));
+
+    let made = backend.create_folder("Receipts").await.unwrap();
+    assert_eq!(made.name, "Receipts");
+    assert_eq!(made.role, quill_core::types::FolderRole::Other);
+    // It is among the server's folders from now on, under the same name.
+    let after = backend.list_folders().await.unwrap();
+    assert_eq!(after.len(), before.len() + 1);
+    assert!(after.contains(&made), "{after:?}");
+
+    // And mail can be moved into it at once.
+    let invoice = id_of(&listing(&backend, "INBOX").await, "Invoice 114");
+    backend.move_message(&invoice, &made.id).await.unwrap();
+    assert_eq!(
+        subjects(&listing(&backend, &made.id.0).await),
+        ["Invoice 114"]
+    );
+
+    // A name that is not plain ASCII is written the way a server reads
+    // one, and read back as it was typed.
+    let named = backend.create_folder("Reçus & Co").await.unwrap();
+    assert_eq!(named.name, "Reçus & Co");
+    assert_eq!(named.id.0, "Re&AOc-us &- Co");
+    assert!(backend.list_folders().await.unwrap().contains(&named));
+
+    // One that is there already is said, and not made twice.
+    let again = backend.create_folder("receipts").await.unwrap_err();
+    assert!(
+        again
+            .to_string()
+            .contains("already a folder called receipts"),
+        "{again}"
+    );
+    assert_eq!(
+        backend.list_folders().await.unwrap().len(),
+        before.len() + 2
+    );
+}

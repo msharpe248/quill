@@ -97,6 +97,23 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         rows.dim(when.aside());
         return;
     }
+    if let Some(prompt) = &state.new_folder {
+        let inner = dialog(frame, area, &format!(" {} ", prompt.title()), env);
+        let mut rows = Rows::new(frame, inner, env);
+        rows.field("Name:", &prompt.input, true);
+        rows.pair("Where:", prompt.place());
+        rows.blank();
+        if let Some(problem) = &prompt.problem {
+            rows.warning(problem);
+            rows.blank();
+        }
+        rows.text(prompt.means());
+        if prompt.either {
+            rows.blank();
+            rows.dim("tab changes where it is made.");
+        }
+        return;
+    }
     if let Some(prompt) = &state.unsubscribe {
         let inner = dialog(frame, area, " Unsubscribe ", env);
         let mut rows = Rows::new(frame, inner, env);

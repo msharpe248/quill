@@ -100,6 +100,14 @@ pub trait Backend: Send + Sync {
         Ok(())
     }
 
+    /// Makes a folder called `name` on the server, beside the ones it has,
+    /// and says what it is known by there.
+    async fn create_folder(&self, name: &str) -> Result<RemoteFolder> {
+        Err(crate::Error::Unsupported(format!(
+            "a folder called {name} cannot be made on this kind of server from here"
+        )))
+    }
+
     /// Saves a complete message into a folder, as a sent copy or a draft,
     /// and says what it is called there when the server tells.
     async fn append(

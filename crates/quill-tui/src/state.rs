@@ -29,12 +29,14 @@ use crate::outgoing::{Handed, InviteAnswer, Response, SendRequest};
 use crate::palette::{self, Item, Palette, What};
 
 mod edit;
+mod folders;
 mod mouse;
 mod remove;
 mod settings;
 mod sheet;
 use quill_host::bridge::{FormUsed, SettingsUsed};
 
+pub use self::folders::{FolderPrompt, ON_THE_SERVER, ON_THIS_MAC};
 pub use self::remove::{REMOVING, RemovePrompt, YES as REMOVE_YES};
 pub use self::settings::SettingsWindow;
 use crate::settings::Applied;
@@ -562,7 +564,13 @@ pub enum SidebarEntry {
         name: String,
         role: FolderRole,
         unread: u32,
+        /// Made on this Mac: no server has it. It is listed under the
+        /// heading that says so.
+        local: bool,
     },
+    /// The heading, within an account, over its folders that are only on
+    /// this Mac. The cursor skips it.
+    OnThisMac,
     /// The heading over the saved searches. The cursor skips it.
     Searches,
     /// A saved search: a mailbox of whatever it finds.
@@ -578,7 +586,7 @@ impl SidebarEntry {
             Self::Unified { .. } => Some(Mailbox::Unified),
             Self::Local { mailbox, .. } => Some(*mailbox),
             Self::Account { id, .. } => Some(Mailbox::Account(*id)),
-            Self::Searches | Self::Search { .. } => None,
+            Self::Searches | Self::Search { .. } | Self::OnThisMac => None,
             Self::Folder { id, .. } => Some(Mailbox::Folder(*id)),
         }
     }
@@ -644,7 +652,7 @@ impl Sidebar {
         for (index, entry) in self.entries.iter().enumerate() {
             match entry {
                 SidebarEntry::Account { id, .. } => open = self.is_open(*id),
-                SidebarEntry::Folder { .. } if !open => continue,
+                SidebarEntry::Folder { .. } | SidebarEntry::OnThisMac if !open => continue,
                 _ => {}
             }
             shown.push(index);
@@ -752,6 +760,8 @@ pub struct FolderPicker {
     pub message: LocalMessageId,
     /// The other messages to move with it.
     pub also: Vec<LocalMessageId>,
+    /// The messages are to be copied there, and stay where they are.
+    pub copy: bool,
     pub filter: LineInput,
     pub selected: usize,
     pub offset: usize,
@@ -762,6 +772,7 @@ impl FolderPicker {
         Self {
             message,
             also: Vec::new(),
+            copy: false,
             filter: LineInput::default(),
             selected: 0,
             offset: 0,
@@ -966,7 +977,13 @@ pub enum UnsubscribeHow {
 pub struct FolderChoice {
     pub id: LocalFolderId,
     pub name: String,
+    /// The folder is only on this Mac: said beside its name.
+    pub local: bool,
 }
+
+/// What is said after the name of a folder that is only on this Mac,
+/// wherever a folder is named in a line of its own.
+pub const ON_THIS_MAC_SUFFIX: &str = " (on this Mac)";
 
 /// The picture the reader draws above a message's text: the first of its
 /// files that is one.
@@ -1324,6 +1341,9 @@ pub struct State {
     pub settings: Option<SettingsWindow>,
     /// A time being asked for.
     pub when: Option<WhenPrompt>,
+    /// The box asking what a new folder is to be called, and where it is
+    /// to be.
+    pub new_folder: Option<FolderPrompt>,
     /// When the next snoozed message is due back.
     next_wake: Option<i64>,
     /// Certificates of existing accounts waiting for a decision. The first
@@ -1395,6 +1415,7 @@ impl State {
             sign_in: None,
             settings: None,
             when: None,
+            new_folder: None,
             next_wake: None,
             certificates: VecDeque::new(),
             setup_offered: false,
@@ -1430,6 +1451,9 @@ impl State {
         }
         if self.when.is_some() {
             return Context::When;
+        }
+        if self.new_folder.is_some() {
+            return Context::NewFolder;
         }
         if self.unsubscribe.is_some() {
             return Context::Unsubscribe;
@@ -1750,6 +1774,13 @@ impl State {
                     return;
                 }
             }
+            Context::NewFolder => {
+                if let Some(prompt) = &mut self.new_folder
+                    && prompt.key(chord)
+                {
+                    return;
+                }
+            }
             Context::Folders => {
                 if let Some(picker) = &mut self.folders
                     && picker.filter.key(chord)
@@ -1952,7 +1983,14 @@ impl State {
                 if let Some(picker) = self.folders.take()
                     && let Some(choice) = self.folder_choices(&picker).get(picker.selected)
                 {
-                    if picker.also.is_empty() {
+                    if picker.copy {
+                        let mut ids = vec![picker.message];
+                        ids.extend(picker.also);
+                        out.data.push(DataRequest::CopyTo {
+                            ids,
+                            folder: choice.id,
+                        });
+                    } else if picker.also.is_empty() {
                         out.data.push(DataRequest::MoveTo {
                             id: picker.message,
                             folder: choice.id,
@@ -1984,7 +2022,7 @@ impl State {
                     what: Bulk::Delete,
                 }),
             },
-            CommandId::MessageMove => {
+            CommandId::MessageMove | CommandId::MessageCopy => {
                 // Drafts are in no folder of any server and stay put.
                 let mut ids = self
                     .targets()
@@ -1993,8 +2031,19 @@ impl State {
                 if let Some(first) = ids.next() {
                     let mut picker = FolderPicker::for_message(first);
                     picker.also = ids.collect();
+                    picker.copy = id == CommandId::MessageCopy;
                     self.folders = Some(picker);
                 }
+            }
+            CommandId::MessagePutBack => self.put_back(out),
+            CommandId::FolderCreate => self.ask_new_folder(env),
+            CommandId::FolderRemove => {
+                if let Some(folder) = self.chosen_local_folder() {
+                    out.data.push(DataRequest::RemoveLocalFolder(folder));
+                }
+            }
+            CommandId::NavOpen if context == Context::NewFolder => {
+                self.answer_new_folder(env, out);
             }
             CommandId::SelectToggle => {
                 if self.list.range.is_some() {
@@ -2520,6 +2569,13 @@ impl State {
                 .iter()
                 .any(|id| DraftId::from_message_id(*id).is_none()),
             CommandId::NavOpen if context == Context::When => true,
+            CommandId::NavOpen if context == Context::NewFolder => true,
+            CommandId::MessageCopy => self
+                .target_row()
+                .is_some_and(|row| DraftId::from_message_id(row.id).is_none()),
+            CommandId::MessagePutBack => self.can_put_back(),
+            CommandId::FolderCreate => self.can_make_folder(env),
+            CommandId::FolderRemove => self.chosen_local_folder().is_some(),
             CommandId::NavOpen if context == Context::Unsubscribe => true,
             CommandId::NavOpen if context == Context::Templates => self
                 .templates
@@ -2647,6 +2703,7 @@ impl State {
                     || self.setup.is_some()
                     || self.sign_in.is_some()
                     || self.when.is_some()
+                    || self.new_folder.is_some()
                     || !self.certificates.is_empty()
                     || !self.notices.is_empty()
                     || self.focus == Pane::Reader
@@ -2739,6 +2796,7 @@ impl State {
             Context::Certificate
                 | Context::SignIn
                 | Context::When
+                | Context::NewFolder
                 | Context::Unsubscribe
                 | Context::RemoveAccount
                 | Context::Setup
@@ -2931,6 +2989,8 @@ impl State {
             self.certificates.pop_front();
         } else if self.when.take().is_some() {
             // Nothing was snoozed or sent.
+        } else if self.new_folder.take().is_some() {
+            // No folder was made.
         } else if self.unsubscribe.take().is_some() {
             // Nothing was asked of the list, written or opened.
         } else if self.remove.is_some() {
@@ -3056,11 +3116,17 @@ impl State {
             let title = match entry {
                 SidebarEntry::Unified { .. } => "Go to Inbox (unified)".to_owned(),
                 SidebarEntry::Local { name, .. } => format!("Go to {name}"),
-                SidebarEntry::Folder { account, name, .. } => format!(
-                    "Go to {} / {name}",
+                SidebarEntry::Folder {
+                    account,
+                    name,
+                    local,
+                    ..
+                } => format!(
+                    "Go to {} / {name}{}",
                     self.accounts
                         .get(*account)
-                        .map_or("", |account| account.name.as_str())
+                        .map_or("", |account| account.name.as_str()),
+                    if *local { ON_THIS_MAC_SUFFIX } else { "" }
                 ),
                 SidebarEntry::Search { name, query } => {
                     return Some(Item {
@@ -3069,7 +3135,9 @@ impl State {
                         keys: String::new(),
                     });
                 }
-                SidebarEntry::Account { .. } | SidebarEntry::Searches => return None,
+                SidebarEntry::Account { .. } | SidebarEntry::Searches | SidebarEntry::OnThisMac => {
+                    return None;
+                }
             };
             Some(Item {
                 what: What::Mailbox(entry.mailbox()?),
@@ -3810,7 +3878,11 @@ impl State {
             .iter()
             .filter_map(|entry| match entry {
                 SidebarEntry::Folder {
-                    id, account, name, ..
+                    id,
+                    account,
+                    name,
+                    local,
+                    ..
                 } if *id != row.folder
                     && self.accounts.get(*account).map(|account| account.id)
                         == Some(row.account) =>
@@ -3818,6 +3890,7 @@ impl State {
                     Some(FolderChoice {
                         id: *id,
                         name: name.clone(),
+                        local: *local,
                     })
                 }
                 _ => None,
@@ -5121,6 +5194,13 @@ impl State {
                 });
             }
             SyncEvent::Sent { .. } => self.flash = Some(("Sent.".to_owned(), false)),
+            SyncEvent::FolderMade { account, name } => {
+                self.notices.push_back(Notice::info(format!(
+                    "Made the folder {} on {}'s server.",
+                    text::sanitize_line(&name),
+                    text::sanitize_line(&account)
+                )));
+            }
             SyncEvent::Arrived { messages, .. } => {
                 if env.notifications {
                     out.data.push(DataRequest::Announce(messages));
@@ -5960,6 +6040,7 @@ impl State {
                 name,
                 role,
                 unread,
+                ..
             } if *id == current => Some((
                 self.accounts.get(*account).map_or("", |a| a.name.as_str()),
                 name.as_str(),
@@ -5992,7 +6073,14 @@ impl State {
             (Mailbox::Account(_), _) => self
                 .shown_account()
                 .map_or_else(String::new, |(name, _)| format!("Inbox ({name})")),
-            (Mailbox::Folder(_), Some((account, folder, _, _))) => format!("{account} / {folder}"),
+            (Mailbox::Folder(_), Some((account, folder, _, _))) => format!(
+                "{account} / {folder}{}",
+                if self.current_folder_is_local() {
+                    ON_THIS_MAC_SUFFIX
+                } else {
+                    ""
+                }
+            ),
             (Mailbox::Folder(_), None) => String::new(),
             (Mailbox::Drafts, _) => "Drafts".to_owned(),
             (Mailbox::Outbox, _) => "Outbox".to_owned(),
@@ -6070,18 +6158,25 @@ fn sidebar_entries(
                 .map(|folder| folder.unread)
                 .sum(),
         });
-        entries.extend(
-            folders
+        // The server's folders, and then, under a heading that says so,
+        // the ones that are only on this Mac.
+        for local in [false, true] {
+            let mut of_kind = folders
                 .iter()
-                .filter(|folder| folder.account == account.id)
-                .map(|folder| SidebarEntry::Folder {
-                    id: folder.id,
-                    account: index,
-                    name: text::sanitize_line(&folder.name),
-                    role: folder.role,
-                    unread: folder.unread,
-                }),
-        );
+                .filter(|folder| folder.account == account.id && folder.local == local)
+                .peekable();
+            if local && of_kind.peek().is_some() {
+                entries.push(SidebarEntry::OnThisMac);
+            }
+            entries.extend(of_kind.map(|folder| SidebarEntry::Folder {
+                id: folder.id,
+                account: index,
+                name: text::sanitize_line(&folder.name),
+                role: folder.role,
+                unread: folder.unread,
+                local,
+            }));
+        }
     }
     entries
 }

@@ -65,6 +65,64 @@ pub(crate) fn decode_utf7(name: &str) -> String {
     out
 }
 
+/// Writes a mailbox name in IMAP's modified UTF-7, as a server expects a
+/// name it is asked to make: printable ASCII as it is, `&` as `&-`, and
+/// every run of anything else shifted.
+pub(crate) fn encode_utf7(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut shifted: Vec<u16> = Vec::new();
+    let flush = |shifted: &mut Vec<u16>, out: &mut String| {
+        if shifted.is_empty() {
+            return;
+        }
+        let bytes: Vec<u8> = shifted.iter().flat_map(|unit| unit.to_be_bytes()).collect();
+        out.push('&');
+        out.push_str(&STANDARD_NO_PAD.encode(bytes).replace('/', ","));
+        out.push('-');
+        shifted.clear();
+    };
+    for letter in name.chars() {
+        if matches!(letter, ' '..='~') {
+            flush(&mut shifted, &mut out);
+            if letter == '&' {
+                out.push_str("&-");
+            } else {
+                out.push(letter);
+            }
+        } else {
+            let mut units = [0u16; 2];
+            shifted.extend_from_slice(letter.encode_utf16(&mut units));
+        }
+    }
+    flush(&mut shifted, &mut out);
+    out
+}
+
+/// What a folder the user asks for is to be called on the server: the name
+/// in the server's writing, inside the place it keeps the user's folders.
+/// That place is the inbox on a server whose every other folder is listed
+/// inside it (see [`folders`]), and the top of the mailbox otherwise.
+pub(crate) fn new_folder(listed: &[Listed<'_>], name: &str) -> String {
+    let others: Vec<&Listed<'_>> = listed
+        .iter()
+        .filter(|folder| !folder.raw.eq_ignore_ascii_case("INBOX"))
+        .collect();
+    let inside = listed
+        .iter()
+        .find_map(|folder| folder.delimiter)
+        .map(|delimiter| format!("INBOX{delimiter}"))
+        .filter(|prefix| {
+            !others.is_empty()
+                && others.iter().all(|folder| {
+                    folder
+                        .raw
+                        .get(..prefix.len())
+                        .is_some_and(|start| start.eq_ignore_ascii_case(prefix))
+                })
+        });
+    format!("{}{}", inside.unwrap_or_default(), encode_utf7(name))
+}
+
 /// One shifted run: base64 with `,` for `/`, holding UTF-16BE.
 fn decode_run(encoded: &str) -> Option<String> {
     let bytes = STANDARD_NO_PAD.decode(encoded.replace(',', "/")).ok()?;
@@ -241,6 +299,51 @@ mod tests {
         assert_eq!(decode_utf7("&2D3eAA-"), "😀");
         assert_eq!(decode_utf7("Tom &- Jerry"), "Tom & Jerry");
         assert_eq!(decode_utf7("&-"), "&");
+    }
+
+    #[test]
+    fn a_name_is_written_the_way_a_server_reads_one() {
+        for (typed, written) in [
+            ("Receipts", "Receipts"),
+            ("Entwürfe", "Entw&APw-rfe"),
+            ("台北", "&U,BTFw-"),
+            ("😀", "&2D3eAA-"),
+            ("Tom & Jerry", "Tom &- Jerry"),
+            ("~peter/mail/台北/日本語", "~peter/mail/&U,BTFw-/&ZeVnLIqe-"),
+        ] {
+            assert_eq!(encode_utf7(typed), written);
+            // And reads back as it was typed.
+            assert_eq!(decode_utf7(written), typed);
+        }
+    }
+
+    #[test]
+    fn a_new_folder_goes_where_the_server_keeps_the_users_folders() {
+        let listed =
+            |names: &'static [&'static str], delimiter: &'static str| -> Vec<Listed<'static>> {
+                names
+                    .iter()
+                    .map(|raw| Listed {
+                        raw,
+                        delimiter: Some(delimiter),
+                        attributes: &[],
+                    })
+                    .collect()
+            };
+        // Beside the inbox, on most servers.
+        let beside = listed(&["INBOX", "Sent", "Trash"], "/");
+        assert_eq!(new_folder(&beside, "Receipts"), "Receipts");
+        // Inside it, where every other folder is.
+        let inside = listed(&["INBOX", "INBOX.Sent", "INBOX.Trash"], ".");
+        assert_eq!(new_folder(&inside, "Receipts"), "INBOX.Receipts");
+        assert_eq!(new_folder(&inside, "Reçus"), "INBOX.Re&AOc-us");
+        // A mailbox with nothing but an inbox says nothing about where:
+        // the top is as good a guess as any, and the server may refuse it.
+        let alone = listed(&["INBOX"], ".");
+        assert_eq!(new_folder(&alone, "Receipts"), "Receipts");
+        // One folder outside the inbox is enough to say the top is used.
+        let mixed = listed(&["INBOX", "INBOX.Sent", "Archive"], ".");
+        assert_eq!(new_folder(&mixed, "Receipts"), "Receipts");
     }
 
     #[test]

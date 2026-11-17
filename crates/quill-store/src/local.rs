@@ -1,5 +1,12 @@
-//! Accounts whose mail lives here: a POP3 server hands mail over and keeps
-//! no folders or marks, so the copy in this store is the one that matters.
+//! Mail that lives here and nowhere else.
+//!
+//! A POP3 server hands mail over and keeps no folders or marks, so for
+//! such an account the copy in this store is the one that matters. Any
+//! account may also have folders the user made on this Mac: mail moved
+//! into one is kept here whole and taken off its server.
+//!
+//! Also here: where a message was before it went to the trash, which no
+//! server records, so that it can be put back.
 
 use std::collections::HashSet;
 
@@ -7,6 +14,31 @@ use quill_core::types::{LocalAccountId, LocalFolderId, LocalMessageId, RemoteId,
 use rusqlite::{OptionalExtension, params};
 
 use crate::{Result, Store, contacts, insert_message_row};
+
+/// The start of the ids of folders, and of messages, that exist only in
+/// the store. No server issues such an id.
+pub const KEPT: &str = "kept:";
+
+/// The start of the id of a folder the user made on this Mac. The rest of
+/// it is the folder's name.
+pub const LOCAL_FOLDER: &str = "kept:folder:";
+
+/// Whether a folder's or a message's id is one of the store's own: there
+/// is nothing on any server by that name.
+pub fn is_kept(remote: &str) -> bool {
+    remote.starts_with(KEPT)
+}
+
+/// Whether a folder's id is that of one the user made on this Mac.
+pub fn is_made_here(remote: &str) -> bool {
+    remote.starts_with(LOCAL_FOLDER)
+}
+
+/// How long a note of where a trashed message came from is kept.
+const TRASHED_KEPT_SECONDS: i64 = 90 * 24 * 60 * 60;
+
+/// The longest name a folder made here may have, in characters.
+const LONGEST_FOLDER_NAME: usize = 60;
 
 impl Store {
     /// Which of `ids` name a message this account already has, in any of
@@ -216,5 +248,222 @@ impl Store {
         }
         tx.commit()?;
         Ok(LocalMessageId(id))
+    }
+
+    /// Makes a folder on this Mac for `account`, which no server will
+    /// have. Returns it, or why there is none, in words for the user: a
+    /// name that will not do, or one the account's local folders have
+    /// already.
+    pub fn create_local_folder(
+        &mut self,
+        account: LocalAccountId,
+        name: &str,
+    ) -> Result<std::result::Result<LocalFolderId, String>> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Ok(Err("Give the folder a name.".to_owned()));
+        }
+        if name.chars().any(char::is_control) {
+            return Ok(Err("A folder's name is one line of text.".to_owned()));
+        }
+        if name.chars().count() > LONGEST_FOLDER_NAME {
+            return Ok(Err(format!(
+                "A folder's name can be {LONGEST_FOLDER_NAME} characters at most."
+            )));
+        }
+        let taken: bool = self.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM folders
+                 WHERE account_id = ?1 AND remote_id LIKE 'kept:folder:%'
+                   AND name = ?2 COLLATE NOCASE)",
+            params![account.0, name],
+            |row| row.get(0),
+        )?;
+        if taken {
+            return Ok(Err(format!(
+                "There is already a folder called {name} on this Mac."
+            )));
+        }
+        let id = self.conn.query_row(
+            "INSERT INTO folders (account_id, remote_id, name, role)
+             VALUES (?1, ?2, ?3, 'other') RETURNING id",
+            params![account.0, format!("{LOCAL_FOLDER}{name}"), name],
+            |row| row.get(0),
+        )?;
+        Ok(Ok(LocalFolderId(id)))
+    }
+
+    /// What a folder is known by: on its server, or, for one that is only
+    /// here, in the store.
+    pub fn folder_remote(&self, folder: LocalFolderId) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT remote_id FROM folders WHERE id = ?1",
+                [folder.0],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    /// Whether `folder` is one the user made on this Mac.
+    pub fn is_local_folder(&self, folder: LocalFolderId) -> Result<bool> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT remote_id LIKE 'kept:folder:%' FROM folders WHERE id = ?1",
+                [folder.0],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(false))
+    }
+
+    /// Takes away a folder made on this Mac, if there is nothing in it
+    /// and nothing on its way into or out of it. Returns whether it went:
+    /// a folder with mail in it, or one a server has, stays.
+    pub fn delete_empty_local_folder(&mut self, folder: LocalFolderId) -> Result<bool> {
+        Ok(self.conn.execute(
+            "DELETE FROM folders
+             WHERE id = ?1 AND remote_id LIKE 'kept:folder:%'
+               AND NOT EXISTS (SELECT 1 FROM messages WHERE folder_id = ?1)
+               AND NOT EXISTS (SELECT 1 FROM operations
+                               WHERE source_folder = ?1 OR target_folder = ?1)",
+            [folder.0],
+        )? > 0)
+    }
+
+    /// Puts a second copy of a message into `folder`, as mail kept here:
+    /// the same message, named by its content, with its text and its
+    /// place in its conversation. Only for a message that is here whole.
+    /// Returns whether there is a copy there now: `false` when the
+    /// message is missing or has not been downloaded.
+    pub fn copy_here(&mut self, message: LocalMessageId, folder: LocalFolderId) -> Result<bool> {
+        let tx = self.conn.transaction()?;
+        let hash: Option<Option<String>> = tx
+            .query_row(
+                "SELECT blob_hash FROM messages WHERE id = ?1",
+                [message.0],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(Some(hash)) = hash else {
+            return Ok(false);
+        };
+        let kept = format!("{KEPT}{hash}");
+        tx.execute(
+            "INSERT INTO messages (folder_id, remote_id, message_id, subject, from_addrs,
+                 to_addrs, cc_addrs, date, size, seen, flagged, answered, draft,
+                 has_attachments, blob_hash, thread_id)
+             SELECT ?2, ?3, message_id, subject, from_addrs, to_addrs, cc_addrs, date, size,
+                    seen, flagged, answered, draft, has_attachments, blob_hash, thread_id
+             FROM messages WHERE id = ?1
+             ON CONFLICT (folder_id, remote_id) DO NOTHING",
+            params![message.0, folder.0, kept],
+        )?;
+        tx.execute(
+            "INSERT INTO bodies (message_id, text)
+             SELECT c.id, b.text FROM bodies b, messages c
+             WHERE b.message_id = ?1 AND c.folder_id = ?2 AND c.remote_id = ?3
+             ON CONFLICT (message_id) DO NOTHING",
+            params![message.0, folder.0, kept],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    /// Notes that `message` is about to leave `from` for the trash, so
+    /// that it can be put back there. Called before the move is made.
+    pub fn note_trashed(
+        &mut self,
+        message: LocalMessageId,
+        from: LocalFolderId,
+        now: i64,
+    ) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        let found: Option<(i64, Option<String>)> = tx
+            .query_row(
+                "SELECT f.account_id, m.message_id FROM messages m
+                 JOIN folders f ON f.id = m.folder_id WHERE m.id = ?1",
+                [message.0],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((account, header)) = found else {
+            return Ok(());
+        };
+        // One note for a message: where it was last.
+        tx.execute(
+            "DELETE FROM trashed WHERE message = ?1
+                 OR (account_id = ?2 AND message_id IS NOT NULL AND message_id = ?3)",
+            params![message.0, account, header],
+        )?;
+        tx.execute(
+            "DELETE FROM trashed WHERE at < ?1",
+            [now - TRASHED_KEPT_SECONDS],
+        )?;
+        tx.execute(
+            "INSERT INTO trashed (account_id, message, message_id, from_folder, at)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![account, message.0, header, from.0, now],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The folder `message` was in before it went to the trash, if Quill
+    /// moved it there and the folder is still there. A message is known
+    /// by its row, and once a sync has replaced the row, by its
+    /// `Message-ID` within its account.
+    pub fn trashed_from(&self, message: LocalMessageId) -> Result<Option<LocalFolderId>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT t.from_folder FROM trashed t, messages m
+                 JOIN folders f ON f.id = m.folder_id
+                 WHERE m.id = ?1 AND t.account_id = f.account_id
+                   AND t.from_folder <> m.folder_id
+                   AND (t.message = m.id
+                        OR (t.message IS NULL AND t.message_id IS NOT NULL
+                            AND t.message_id = m.message_id))
+                 ORDER BY t.at DESC, t.id DESC LIMIT 1",
+                [message.0],
+                |row| row.get(0),
+            )
+            .optional()?
+            .map(LocalFolderId))
+    }
+
+    /// The message that went to a trash folder last and is still in one,
+    /// with where it was before: what "put back the last deleted" means.
+    pub fn last_trashed(&self) -> Result<Option<(LocalMessageId, LocalFolderId)>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT m.id, t.from_folder FROM trashed t
+                 JOIN messages m ON (t.message = m.id
+                      OR (t.message IS NULL AND t.message_id IS NOT NULL
+                          AND t.message_id = m.message_id))
+                 JOIN folders f ON f.id = m.folder_id
+                 WHERE f.account_id = t.account_id AND f.role = 'trash' AND m.hidden = 0
+                   AND t.from_folder <> m.folder_id
+                 ORDER BY t.at DESC, t.id DESC LIMIT 1",
+                [],
+                |row| Ok((LocalMessageId(row.get(0)?), LocalFolderId(row.get(1)?))),
+            )
+            .optional()?)
+    }
+
+    /// Lets go of the note of where `message` came from: it has been put
+    /// back.
+    pub fn forget_trashed(&mut self, message: LocalMessageId) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM trashed WHERE message = ?1
+                 OR (message IS NULL AND message_id IS NOT NULL AND message_id =
+                     (SELECT message_id FROM messages WHERE id = ?1)
+                     AND account_id = (SELECT f.account_id FROM messages m
+                         JOIN folders f ON f.id = m.folder_id WHERE m.id = ?1))",
+            [message.0],
+        )?;
+        Ok(())
     }
 }

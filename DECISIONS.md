@@ -1081,3 +1081,39 @@ The owner had a background made for the disk image, with where the two icons go.
 - **`hdiutil` says it is deprecated** on macOS 27, in favour of `diskutil image`. It still does all of this; the script is not changed for it yet, since `diskutil image` is not there on older systems.
 - The app icons in the same archive were not taken: the owner said to leave them.
 
+## Putting back, making folders, and folders on this Mac (2026-11-16)
+
+The owner asked for three things: to have back what was deleted, after the ten seconds of undo; to make folders; and to have folders on this Mac, with mail in them that is not on the server. "It must be clear when a folder is local."
+
+### Putting back
+
+- **Quill remembers where a message was when it moves it to the trash** (`trashed`, migration 11; `Store::note_trashed`). No server does. A message is known by its row, and once a sync has replaced the row (a move the server did not answer with the new name), by its `Message-ID` within its account. A note is kept three months.
+- **One command, `message.put_back` (`P`).** In a trash folder it puts the messages chosen back; anywhere else, the one deleted last (`Store::last_trashed`). One key that does the sensible thing in each place, over two commands with two keys. It is not among the status bar's hints: it is on everywhere, and would take room from the rest.
+- **A message Quill did not delete goes to the inbox**, and that is said. Guessing a folder would be worse.
+- Putting back is a queued move, undone and replayed like any other.
+
+### Folders
+
+- **`folder.create` (`+`) asks for a name and a place** (`FolderPrompt`, `Context::NewFolder`): one question in the core with two views, like the others. On the server it is the engine's to do (`SyncRequest::CreateFolder`, `Backend::create_folder`), since the engine has the connections; `SyncRequest` stopped being `Copy` for the name it carries.
+- **IMAP** makes it where the server keeps the user's folders: inside the inbox on a server whose every other folder is listed there, at the top otherwise (`names::new_folder`), written in modified UTF-7, and subscribed to. **Graph** makes it at the top of the mailbox. **EWS and POP3** have no `create_folder`: POP3 has no folders to make, EWS is not done.
+- **Not done:** renaming or deleting a server's folder, and folders inside folders other than by typing the server's own separator in the name.
+
+### Folders on this Mac
+
+- **They belong to an account**, like the folders POP3 mail is kept in, and are the same thing underneath: a folder whose id starts `kept:` and messages named by their content. One "On This Mac" for every account, as Mail has, was the other way. It would have needed an account that is not an account (no server, no address to send from, nothing to remove) in every place accounts are listed, and a message there would not know which account answers it. Under its account, a reply goes from the right address by itself.
+- **A folder the user made is `kept:folder:NAME`** (`quill_store::LOCAL_FOLDER`), which is how it is told from POP3's own three. `retain_folders` never removes one: no server lists it, so no server can be said to have deleted it.
+- **Moving in is a queued move like any other**, shown at once, with one difference in what the engine does (`QueuedKind::Keep`): it sees that the whole message is here, downloading it if it is not (`Engine::whole`, which goes by the bytes in the blob store and not by a note that they should be there), and only then deletes it from the server. The message then takes the name `kept:HASH`. A message that cannot be had whole is not deleted: the move is taken back. A delete that finds the message already gone is success, so a crash between the two steps loses nothing.
+- **Moving out hands the message to the server** (`QueuedKind::Upload`, `Backend::append`), and the name the server gives it becomes its name. Graph refuses: it files whatever it is handed as an unsent draft. So on a Graph account a message on this Mac cannot go back to the server, and the refusal puts it back and says why.
+- **Copying** (`message.copy`, `C`; `QueuedKind::Copy`) is new with this, because "on this Mac as well as on the server" is otherwise not to be had. Into a local folder it copies the row and its text (`Store::copy_here`); between two of a server's folders the server copies; from here to a server it is an append.
+- **Deleting a message that is on this Mac deletes it**, with the usual ten seconds. The other way was to send it to the server's Trash, which Graph cannot take, and which would put mail that had been taken off the server back on it in order to throw it away.
+- **Marks on such a message are made here** and the server is not told: there is nothing there by that name.
+- **Clear when a folder is local:** a heading in the accounts pane that the cursor skips (`SidebarEntry::OnThisMac`), the folder a step further in beneath it, "(on this Mac)" after its name in the list's title, the palette and the picker (`ON_THIS_MAC_SUFFIX`), and the words of the move itself.
+- **Removing an account** counts the messages in its local folders and says them first among what would be lost (`Leftovers::local`).
+- **What is still as it was, and is a risk now:** an `[[account]]` taken out of the settings file by hand has its mail dropped at the next start without a question (`retain_accounts`). That was harmless while the store held only copies. It is said in the README; asking first would be better.
+- **The store is not only a cache any more.** It holds mail that is nowhere else, and a store written by this build is refused by an older one (`NewerSchema`), as after any migration.
+
+### Seen
+
+- The store, the engine and the UI each have tests for all of the above; the engine's run against the in-memory server, and making a folder runs against the scratch Dovecot (plain names, one that needs UTF-7, a name already there) and against a stand-in for Graph.
+- Not seen against a real server: any of it. The owner's own accounts were not touched.
+

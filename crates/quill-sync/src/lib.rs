@@ -62,9 +62,8 @@ pub enum ServerCopies {
     DeleteAfterDays(u32),
 }
 
-/// The start of the ids of folders, and of messages, that exist only in
-/// the store. No server issues such an id.
-pub const KEPT: &str = "kept:";
+pub use quill_store::KEPT;
+use quill_store::is_kept;
 
 /// The folders Quill keeps for an account whose server has only an inbox.
 fn kept_folders() -> Vec<RemoteFolder> {
@@ -143,6 +142,9 @@ pub enum SyncEvent {
     BodyFailed { id: LocalMessageId, reason: String },
     /// A message left the outbox: a server accepted it.
     Sent { account: String },
+    /// A folder that was asked for is on the account's server now, and in
+    /// the store.
+    FolderMade { account: String, name: String },
     /// Something went wrong that the user should see.
     Problem { account: String, message: String },
     /// An account's server presented a certificate that was not accepted.
@@ -158,7 +160,7 @@ pub enum SyncEvent {
 }
 
 /// What the UI asks of the engine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncRequest {
     /// Sync every account now instead of at the next interval.
     SyncNow,
@@ -170,6 +172,12 @@ pub enum SyncRequest {
     /// The store's queue or outbox has something new: a change the user
     /// made, or mail to send. Look now instead of at the next due time.
     Queue,
+    /// Make a folder called `name` on the account's server. Answered by
+    /// `FolderMade`, or by a `Problem` saying why not.
+    CreateFolder {
+        account: LocalAccountId,
+        name: String,
+    },
 }
 
 /// The UI's end of the engine. Dropping it stops the engine.
@@ -348,6 +356,11 @@ async fn serve(engine: Arc<Engine>, mut queue: UnboundedReceiver<SyncRequest>) {
                 .running()
                 .iter()
                 .for_each(|account| account.queue.notify_one()),
+            // On its own task, like a download: the server takes its time.
+            SyncRequest::CreateFolder { account, name } => {
+                let engine = Arc::clone(&engine);
+                tokio::spawn(async move { engine.create_folder(account, name).await });
+            }
         }
     }
 }
@@ -642,7 +655,7 @@ impl Engine {
             FolderRole::Junk | FolderRole::Trash => 3,
         });
         for (local, remote, role) in folders {
-            if remote.0.starts_with(KEPT) {
+            if is_kept(&remote.0) {
                 // Nothing on any server to compare it with.
                 continue;
             }
@@ -1000,28 +1013,97 @@ impl Engine {
         // filing and marking happen here and nowhere else.
         let keeps_here = !can.folders;
         let mut left_server = None;
+        // What is said when the server will not have it, after "A message
+        // could not be".
+        const MOVED: &str = "moved on the server and has been put back as it was";
+        const DELETED: &str = "deleted on the server and has been put back as it was";
+        const CHANGED: &str = "changed on the server and has been put back as it was";
+        const SAVED: &str = "saved on the server and has been put back as it was";
+        const KEPT_HERE: &str = "moved to this Mac and has been put back where it was";
+        const HANDED_OVER: &str = "moved from this Mac to the server and has been put back";
+        const COPIED: &str = "copied";
         let (outcome, what, resync) = match operation.kind {
             QueuedKind::Nothing => (Ok(None), "", false),
             // The move is already made here; the message keeps its name.
-            QueuedKind::Move { remote, .. } if keeps_here => (Ok(Some(remote)), "moved", false),
-            // A copy the server never had needs nothing done there.
-            QueuedKind::Delete { remote, .. } if remote.0.starts_with(KEPT) => {
-                (Ok(None), "deleted", false)
+            // So it is for every move of an account whose mail is all
+            // kept here, and for any account's between two folders that
+            // are only here.
+            QueuedKind::Move { remote, .. } if keeps_here || is_kept(&remote.0) => {
+                (Ok(Some(remote)), MOVED, false)
             }
-            QueuedKind::Flags { .. } if !can.flags => (Ok(None), "changed", false),
+            QueuedKind::Keep { remote, .. } | QueuedKind::Upload { remote, .. } if keeps_here => {
+                (Ok(Some(remote)), MOVED, false)
+            }
+            // A copy the server never had needs nothing done there.
+            QueuedKind::Delete { remote, .. } if is_kept(&remote.0) => (Ok(None), DELETED, false),
+            QueuedKind::Flags { remote, .. } if !can.flags || is_kept(&remote.0) => {
+                (Ok(None), CHANGED, false)
+            }
             QueuedKind::Append {
+                target,
                 target_local,
                 blob_hash,
                 flags,
-                ..
-            } if keeps_here => (
+            } if keeps_here || is_kept(&target.0) => (
                 self.keep_copy(target_local, blob_hash, flags).await,
-                "saved",
+                SAVED,
                 false,
             ),
+            // Into a folder that is only here: the whole message is made
+            // safe here first, and only then is the server told to let go.
+            QueuedKind::Keep {
+                message, remote, ..
+            } => (
+                self.keep_only_here(account, message, &remote).await,
+                KEPT_HERE,
+                false,
+            ),
+            // Out of a folder that is only here: the server is given the
+            // message, and what it calls it becomes the message's name.
+            QueuedKind::Upload {
+                target,
+                blob_hash,
+                flags,
+                ..
+            } => match self.blob(blob_hash).await {
+                Some(raw) => (
+                    account.backend.append(&target, &raw, flags).await,
+                    HANDED_OVER,
+                    true,
+                ),
+                None => (
+                    Err(Error::NotFound(
+                        "the whole message is not on this Mac".to_owned(),
+                    )),
+                    HANDED_OVER,
+                    false,
+                ),
+            },
+            QueuedKind::Copy {
+                message,
+                remote,
+                target,
+                target_local,
+                flags,
+            } => {
+                let to_server = !keeps_here && !is_kept(&target.0);
+                (
+                    self.copy(
+                        account,
+                        to_server,
+                        (message, &remote),
+                        (&target, target_local),
+                        flags,
+                    )
+                    .await
+                    .map(|()| None),
+                    COPIED,
+                    to_server,
+                )
+            }
             QueuedKind::Move { remote, target, .. } => (
                 account.backend.move_message(&remote, &target).await,
-                "moved",
+                MOVED,
                 true,
             ),
             QueuedKind::Delete { remote, .. } => {
@@ -1033,7 +1115,7 @@ impl Engine {
                 if keeps_here && outcome.is_ok() {
                     left_server = Some(remote);
                 }
-                (outcome, "deleted", false)
+                (outcome, DELETED, false)
             }
             QueuedKind::Flags { remote, flags } => (
                 account
@@ -1041,7 +1123,7 @@ impl Engine {
                     .apply(&Operation::SetFlags { id: remote, flags })
                     .await
                     .map(|()| None),
-                "changed",
+                CHANGED,
                 false,
             ),
             QueuedKind::Append {
@@ -1050,16 +1132,7 @@ impl Engine {
                 flags,
                 ..
             } => {
-                let blobs = self.blobs.clone();
-                let raw = tokio::task::spawn_blocking(move || match blobs {
-                    Some(blobs) => blobs.get(&blob_hash),
-                    None => Ok(None),
-                })
-                .await
-                .ok()
-                .and_then(Result::ok)
-                .flatten();
-                match raw {
+                match self.blob(Some(blob_hash)).await {
                     // A saved copy has no row here until a sync lists it,
                     // whether or not the server said what it called it.
                     Some(raw) => (
@@ -1068,11 +1141,11 @@ impl Engine {
                             .append(&target, &raw, flags)
                             .await
                             .map(|_| None),
-                        "saved",
+                        SAVED,
                         true,
                     ),
                     // The message to save has gone: there is nothing to do.
-                    None => (Ok(None), "saved", false),
+                    None => (Ok(None), SAVED, false),
                 }
             }
         };
@@ -1115,12 +1188,181 @@ impl Engine {
                 if undone.is_ok() {
                     self.emit(SyncEvent::Changed);
                 }
-                self.problem(
-                    account,
-                    format!("A message could not be {what} on the server and has been put back as it was: {refused}"),
-                );
+                self.problem(account, format!("A message could not be {what}: {refused}"));
                 None
             }
+        }
+    }
+
+    /// The whole message filed under `hash`, if it is on this Mac.
+    async fn blob(&self, hash: Option<String>) -> Option<Vec<u8>> {
+        let hash = hash?;
+        let blobs = self.blobs.clone()?;
+        tokio::task::spawn_blocking(move || blobs.get(&hash))
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .flatten()
+    }
+
+    /// Sees that the whole of `message` is on this Mac, downloading it
+    /// from the server as `remote` if it is not, and says what it is
+    /// filed under. Nothing short of the bytes themselves counts: this is
+    /// asked before a server is told to let go of its copy.
+    async fn whole(
+        &self,
+        account: &SyncAccount,
+        message: LocalMessageId,
+        remote: &RemoteId,
+    ) -> quill_core::Result<String> {
+        let filed = |engine: &Self| {
+            let blobs = engine.blobs.clone();
+            async move {
+                let hash = self
+                    .db(move |store| store.blob_hash(message))
+                    .await
+                    .map_err(Error::Backend)?;
+                let Some(hash) = hash else { return Ok(None) };
+                let there = hash.clone();
+                let present = tokio::task::spawn_blocking(move || match blobs {
+                    Some(blobs) => blobs.get(&there).map(|raw| raw.is_some()),
+                    None => Ok(false),
+                })
+                .await
+                .map_err(|err| Error::Backend(err.to_string()))?
+                .map_err(|err| Error::Backend(err.to_string()))?;
+                Ok::<_, Error>(present.then_some(hash))
+            }
+        };
+        if let Some(hash) = filed(self).await? {
+            return Ok(hash);
+        }
+        if is_kept(&remote.0) {
+            // No server ever had it: there is nowhere to fetch it from.
+            return Err(Error::NotFound(
+                "the whole message is not on this Mac".to_owned(),
+            ));
+        }
+        let date = self
+            .db(move |store| store.message_location(message))
+            .await
+            .map_err(Error::Backend)?
+            .map_or_else(now, |location| location.date);
+        let raw = account.backend.fetch_raw(remote).await?;
+        self.store_downloaded(message, date, raw)
+            .await
+            .map_err(|failure| match failure {
+                FetchFailure::Gone => Error::NotFound("the message has gone".to_owned()),
+                FetchFailure::Other(reason) => Error::Backend(reason),
+            })?;
+        filed(self)
+            .await?
+            .ok_or_else(|| Error::Backend("the message could not be saved on this Mac".to_owned()))
+    }
+
+    /// Makes a message that has been moved into a folder of this Mac's
+    /// own the only copy: here whole first, and then off the server.
+    /// Returns what the message is called from now on, by its content.
+    ///
+    /// Safe to do twice: a message already here is not fetched again, and
+    /// one already off the server is not an error.
+    async fn keep_only_here(
+        &self,
+        account: &SyncAccount,
+        message: LocalMessageId,
+        remote: &RemoteId,
+    ) -> quill_core::Result<Option<RemoteId>> {
+        let hash = self.whole(account, message, remote).await?;
+        match account
+            .backend
+            .apply(&Operation::Delete { id: remote.clone() })
+            .await
+        {
+            // Gone already: a first try got that far.
+            Ok(()) | Err(Error::NotFound(_)) => {}
+            Err(other) => return Err(other),
+        }
+        Ok(Some(RemoteId(format!("{KEPT}{hash}"))))
+    }
+
+    /// Puts a second copy of a message into another folder, leaving the
+    /// first where it is. `to_server`: the folder is one a server has.
+    async fn copy(
+        &self,
+        account: &SyncAccount,
+        to_server: bool,
+        (message, remote): (LocalMessageId, &RemoteId),
+        (target, target_local): (&FolderId, LocalFolderId),
+        flags: Flags,
+    ) -> quill_core::Result<()> {
+        if !to_server {
+            // Into a folder that is only here: a copy of the whole message.
+            self.whole(account, message, remote).await?;
+            let copied = self
+                .db(move |store| store.copy_here(message, target_local))
+                .await
+                .map_err(Error::Backend)?;
+            return if copied {
+                Ok(())
+            } else {
+                Err(Error::NotFound("the message has gone".to_owned()))
+            };
+        }
+        if is_kept(&remote.0) {
+            // From here to a server: the server is given the message.
+            let hash = self.whole(account, message, remote).await?;
+            let raw = self.blob(Some(hash)).await.ok_or_else(|| {
+                Error::NotFound("the whole message is not on this Mac".to_owned())
+            })?;
+            return account
+                .backend
+                .append(target, &raw, flags)
+                .await
+                .map(|_| ());
+        }
+        account
+            .backend
+            .apply(&Operation::Copy {
+                id: remote.clone(),
+                to: target.clone(),
+            })
+            .await
+    }
+
+    /// Makes a folder on an account's server and puts it in the store, so
+    /// that it is there to be seen and moved to at once.
+    async fn create_folder(&self, id: LocalAccountId, name: String) {
+        let Some(running) = self.account(id) else {
+            self.emit(SyncEvent::Problem {
+                account: "Folders".to_owned(),
+                message: format!(
+                    "The folder {name} was not made: its account is not being synced."
+                ),
+            });
+            return;
+        };
+        let account = &running.account;
+        let made = match account.backend.create_folder(&name).await {
+            Ok(folder) => self
+                .db(move |store| store.upsert_folder(id, &folder).map(|_| ()))
+                .await
+                .map_err(|reason| reason.clone()),
+            Err(refused) => Err(refused.to_string()),
+        };
+        match made {
+            Ok(()) => {
+                self.emit(SyncEvent::Changed);
+                self.emit(SyncEvent::FolderMade {
+                    account: account.name.clone(),
+                    name,
+                });
+                // The server may have more to say about it than its name.
+                running.wake.notify_one();
+            }
+            Err(reason) => self.problem(
+                account,
+                format!("The folder {name} could not be made on the server: {reason}"),
+            ),
         }
     }
 

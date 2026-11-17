@@ -514,6 +514,16 @@ impl Io<'_> {
                         reason: "The body of this message has not been downloaded.".to_owned(),
                     }));
                 }
+                // With no engine there is no server to ask: said, not left
+                // to look as if it were on its way.
+                (None, SyncRequest::CreateFolder { name, .. }) => {
+                    let _ = self.injected.send(Action::Sync(SyncEvent::Problem {
+                        account: "Folders".to_owned(),
+                        message: format!(
+                            "The folder {name} was not made: there is no server to ask here."
+                        ),
+                    }));
+                }
                 (None, SyncRequest::SyncNow | SyncRequest::SyncOne(_) | SyncRequest::Queue) => {}
             }
         }
@@ -543,6 +553,8 @@ impl Io<'_> {
                 Context::SignIn => bridge::Context::Setup,
                 // A box to type in over the panes, as the folder picker is.
                 Context::When => bridge::Context::Folders,
+                // Another box to type in over the panes.
+                Context::NewFolder => bridge::Context::Folders,
                 // A question to answer before anything is sent, as a
                 // certificate is.
                 Context::Unsubscribe => bridge::Context::Certificate,

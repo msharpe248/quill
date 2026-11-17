@@ -22,6 +22,9 @@ pub enum Context {
     /// Typing a time: when a snoozed message comes back, or when a
     /// message is sent.
     When,
+    /// Naming a folder to make, and saying where: on the account's
+    /// server, or on this Mac.
+    NewFolder,
     /// Being asked before unsubscribing from a mailing list.
     Unsubscribe,
     /// Being asked before an account is removed.
@@ -57,6 +60,7 @@ impl Context {
             Self::Certificate => "Certificate",
             Self::SignIn => "Signing in",
             Self::When => "Choosing a time",
+            Self::NewFolder => "New folder",
             Self::Unsubscribe => "Unsubscribe",
             Self::RemoveAccount => "Remove an account",
             Self::Folders => "Move to a folder",
@@ -82,6 +86,7 @@ const EVERYWHERE: &[Context] = &[
     Context::Certificate,
     Context::SignIn,
     Context::When,
+    Context::NewFolder,
     Context::Unsubscribe,
     Context::RemoveAccount,
     Context::Folders,
@@ -174,6 +179,8 @@ pub enum CommandId {
     MessageArchive,
     MessageDelete,
     MessageMove,
+    MessageCopy,
+    MessagePutBack,
     MessageSnooze,
     SelectToggle,
     SelectRange,
@@ -215,6 +222,8 @@ pub enum CommandId {
     AccountSignIn,
     AccountRemove,
     AccountEdit,
+    FolderCreate,
+    FolderRemove,
     MailboxSync,
     SidebarOpen,
     SidebarClose,
@@ -354,6 +363,7 @@ impl Registry {
                         Context::Attachments,
                         Context::Setup,
                         Context::When,
+                        Context::NewFolder,
                         Context::Unsubscribe,
                         Context::Folders,
                         Context::Templates,
@@ -536,6 +546,25 @@ impl Registry {
                     ),
                     "folder",
                 ),
+                spec(
+                    MessageCopy,
+                    "message.copy",
+                    "Copy to a folder",
+                    Message,
+                    Some(Menu::Message),
+                    MESSAGE,
+                ),
+                with_symbol(
+                    spec(
+                        MessagePutBack,
+                        "message.put_back",
+                        "Put back",
+                        Message,
+                        Some(Menu::Message),
+                        PANES,
+                    ),
+                    "arrow.uturn.backward",
+                ),
                 with_symbol(
                     spec(
                         MessageSnooze,
@@ -592,6 +621,22 @@ impl Registry {
                         PANES,
                     ),
                     "arrow.clockwise",
+                ),
+                spec(
+                    FolderCreate,
+                    "folder.create",
+                    "New folder\u{2026}",
+                    General,
+                    Some(Menu::Mailbox),
+                    PANES,
+                ),
+                spec(
+                    FolderRemove,
+                    "folder.remove",
+                    "Remove this empty folder from this Mac",
+                    General,
+                    Some(Menu::Mailbox),
+                    &[Context::Sidebar],
                 ),
                 // In the accounts pane only: elsewhere the keys they take
                 // are free.
@@ -994,6 +1039,8 @@ pub fn hints(context: Context) -> &'static [Hint] {
         // One or the other, and only on an account or one of its folders.
         hint_while_enabled(&[SidebarOpen], "show folders"),
         hint_while_enabled(&[SidebarClose], "hide folders"),
+        // Only on a folder that is on this Mac and nowhere else.
+        hint_while_enabled(&[FolderRemove], "remove folder"),
         hint(&[FocusNext], "list"),
         hint(&[ViewZoom], "zoom"),
         hint(&[HelpToggle], "help"),
@@ -1075,6 +1122,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
     const CERTIFICATE: &[Hint] = &[hint(&[NavBack], "reject")];
     const SIGNING_IN: &[Hint] = &[hint(&[NavBack], "give up")];
     const WHEN: &[Hint] = &[hint(&[NavOpen], "set"), hint(&[NavBack], "cancel")];
+    const NEW_FOLDER: &[Hint] = &[hint(&[NavOpen], "make it"), hint(&[NavBack], "cancel")];
     const FOLDERS: &[Hint] = &[hint(&[NavOpen], "move here"), hint(&[NavBack], "cancel")];
     const UNSUBSCRIBING: &[Hint] = &[hint(&[NavOpen], "go ahead"), hint(&[NavBack], "cancel")];
     const REMOVING: &[Hint] = &[hint(&[NavBack], "keep the account")];
@@ -1108,6 +1156,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         Context::Certificate => CERTIFICATE,
         Context::SignIn => SIGNING_IN,
         Context::When => WHEN,
+        Context::NewFolder => NEW_FOLDER,
         Context::Links => LINKS,
         Context::Search => SEARCHING,
         Context::Palette => PALETTE,

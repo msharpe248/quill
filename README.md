@@ -209,7 +209,7 @@ Press `?` at any time for the keys that apply where you are, and `K` (or `f1`) f
 | `t` | Show as HTML or plain text | `o` | Open a link |
 | `c` | Write a new message | `r` / `R` | Reply, reply to all |
 | `f` | Forward | `e` | Archive |
-| `d` | Delete (to Trash; from Trash, for good) | `m` | Move to a folder |
+| `d` | Delete (to Trash; from Trash, or from a folder on this Mac, for good) | `m` | Move to a folder |
 | `U` | Undo the last move, deletion or send | `A` | Add an account |
 | `S` | Sign in to an account (Microsoft, Google) | `T` | Group or ungroup conversations |
 | `b` | Snooze until a time | `ctrl-r` | Check for new mail now: every account, or the one chosen in the accounts pane |
@@ -221,6 +221,8 @@ Press `?` at any time for the keys that apply where you are, and `K` (or `f1`) f
 | `y` / `n` | Accept, decline an invitation | `M` | Answer an invitation with maybe |
 | `l` / `h` | In the accounts pane: show, hide an account's folders | `K` | Every key, and what it does |
 | `D` | Remove the account chosen in the accounts pane, after asking | `E` | Change the account chosen in the accounts pane: its servers and password |
+| `P` | Put back: in a Trash folder, the messages chosen; anywhere else, the one deleted last | `C` | Copy to a folder |
+| `+` | Make a folder, on the server or on this Mac | `_` | In the accounts pane: take away an empty folder of this Mac's |
 
 `tab` keeps to the two panes of everyday use: from the list it goes to the message and from the message back to the list. `shift-tab` goes to the accounts from either, and from the accounts `tab` goes to the list and `shift-tab` to the message. (With the web reading pane on there is no message pane in the terminal to go to: `tab` does nothing from the list, and the keys for the message work from there.)
 
@@ -251,6 +253,42 @@ While a question is on screen (a certificate to accept, a sign-in, a time to typ
 In the app those four, like the form that adds an account, are sheets on the window: one at a time, the same one a terminal would have in front, with buttons in place of the keys and "Cancel" (or esc) to put it away. The terminal draws nothing of a question the sheet is asking and answers none of it. What is chosen from with the keyboard stays in the terminal in the app as well: the command palette, the lists of folders, templates, links, files and hooks, and the help.
 
 To act on several messages at once, select them first: `x` on each, or `V`, move, and `V` again for a run of them; `ctrl-a` selects everything listed. Archive, delete, move, read and star then apply to all of them, and one `U` takes the whole lot back. `esc` lets the selection go. From the reader, a command is always about the message being read.
+
+### Putting back what was deleted
+
+`U` takes back the last move or deletion for ten seconds, before the server has heard of it. After that, a deleted message is in its account's Trash, and `P` (Message > Put Back) puts it back where it came from:
+
+- **In a Trash folder**, `P` puts back the message under the cursor, or every selected one, each into the folder it was deleted from.
+- **Anywhere else**, `P` puts back the message that was deleted last.
+
+A mail server keeps no record of where a message in its Trash came from. Quill keeps its own, for the messages Quill itself moved there, for three months. A message deleted somewhere else (on a phone, in webmail), or before this was kept, goes back to the inbox, and Quill says so; `m` moves it anywhere else. Putting back is a move like any other: `U` takes it back.
+
+### Folders, and folders on this Mac
+
+`+` (Mailbox > New Folder…) makes a folder for the account the accounts pane is on. It asks for a name and for where the folder is to be:
+
+- **On the server.** The folder is made on the account's mail server, beside its others, and every mail program that reads the account sees it. This is for IMAP accounts (Gmail among them) and Microsoft 365.
+- **On this Mac.** The folder exists in Quill and nowhere else. Mail moved into it is downloaded whole first and only then taken off the server, so from then on it is on this Mac and nowhere else: not on the server, not on your phone, not in webmail. It takes no room in the mailbox the server gives you, and it is as safe as this Mac's disk and its backups are.
+
+In a terminal, `tab` goes between the two; in the app it is a choice in the sheet. An account with no folders on its server (POP3) can have folders on this Mac only.
+
+**A folder on this Mac is never shown like a server's.** It is listed under its account beneath a heading, "On This Mac", after the server's folders; the list's title, the palette and the folder picker call it "(on this Mac)"; and moving a message into one says "Moved to this Mac: it is taken off the server."
+
+What works with them:
+
+- **Moving in** (`m`): the message is kept here and deleted from the server. If it cannot be downloaded whole, nothing is deleted and the move is taken back.
+- **Moving out**, to one of the server's folders: the server is given the message. Microsoft 365 cannot be given mail this way (it would file it as an unsent draft), so for such an account a message on this Mac stays on this Mac; the move is put back and Quill says why.
+- **Copying** (`C`, Message > Copy to a Folder): into a folder on this Mac it keeps a copy here and changes nothing on the server, which is the way to have a message in both places.
+- **Deleting** a message that is on this Mac deletes it from this Mac, for good, after the ten seconds `U` gives: it is not sent to the server's Trash, which never had it.
+- **Marks, search, replies and conversations** work as for any other message.
+- **Taking a folder away** (`_` on it in the accounts pane): only when it is empty.
+
+Things to know:
+
+- **Gmail** keeps every message in All Mail whatever folder it is taken out of, so a message moved to this Mac from a Gmail folder is still in All Mail on Google's side.
+- **Removing the account** from Quill deletes its folders on this Mac with it. Quill counts the messages in them and says so before you answer. Taking an `[[account]]` out of the settings file by hand does the same at the next start, without asking.
+- **The mail store** is in `~/Library/Application Support/Quill`. With folders on this Mac it is no longer only a copy of what a server has: include it in your backups.
+- Making a folder on an Exchange server reached over EWS is not there yet, nor is renaming or deleting a server's folder.
 
 ## HTML mail, and what it is allowed to do
 
@@ -707,6 +745,10 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `message.toggle_html` | Switch a message between its HTML and its plain text |
 | `message.open_link` | List the message's links, to open one in the browser |
 | `message.archive`, `message.delete`, `message.move` | File the message, or every selected one |
+| `message.copy` | Put a second copy of the message, or of every selected one, into another folder of its account |
+| `message.put_back` | In a Trash folder, put the messages chosen back where they were deleted from; anywhere else, the one deleted last |
+| `folder.create` | Make a folder for the account chosen: on its server, or on this Mac |
+| `folder.remove` | Take away the empty folder of this Mac's that the accounts pane is on |
 | `message.snooze` | Put the message aside until a time |
 | `select.toggle`, `select.range`, `select.all` | Select messages to act on together |
 | `message.compose` | Write a new message |

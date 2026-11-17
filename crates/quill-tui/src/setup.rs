@@ -329,6 +329,9 @@ pub struct Leaving {
     pub outbox: usize,
     /// Changes to mail that have not reached the server yet.
     pub queued: usize,
+    /// Messages in the account's folders on this Mac, which no server
+    /// has.
+    pub local: usize,
 }
 
 /// The answers.

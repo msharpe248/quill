@@ -476,6 +476,24 @@ impl Backend for GraphBackend {
             .map(|message| RemoteId(message.id)))
     }
 
+    /// A new folder at the top of the mailbox, beside the inbox.
+    async fn create_folder(&self, name: &str) -> Result<RemoteFolder> {
+        let url = self.client.url(&["me", "mailFolders"], "");
+        let made: wire::Folder = self
+            .client
+            .send(&Request::post(
+                url,
+                serde_json::json!({ "displayName": name }),
+            ))
+            .await?
+            .json("make the folder")?;
+        Ok(RemoteFolder {
+            name: made.display_name.unwrap_or_else(|| name.to_owned()),
+            id: FolderId(made.id),
+            role: FolderRole::Other,
+        })
+    }
+
     /// Saves a draft into `folder`.
     ///
     /// Graph files a message it is handed as a draft, wherever it is put

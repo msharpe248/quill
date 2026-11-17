@@ -27,13 +27,16 @@ expression: harness.screen()
 ┃                          ┃│                                       ┃   h, left                        Hide the account's folders  ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃ Message                                                      ┃                                                                   │
+┃                          ┃│                                       ┃   P                              Put back                    ┃                                                                   │
 ┃                          ┃│                                       ┃   c                              Write a new message         ┃                                                                   │
 ┃                          ┃│                                       ┃   cmd-enter, ctrl-x, ctrl-enter  Send                        ┃                                                                   │
-┃                          ┃│                                       ┃                                                              ┃                                                                   │
-┃                          ┃│                                       ┃ General                                                      ┃ Corp                                                              │
+┃                          ┃│                                       ┃                                                              ┃ Corp                                                              │
+┃                          ┃│                                       ┃ General                                                      ┃                                                                   │
 ┃                          ┃│                                       ┃   q, ctrl-c                      Quit                        ┃                                                                   │
 ┃                          ┃│                                       ┃   /, cmd-f                       Search                      ┃                                                                   │
 ┃                          ┃│                                       ┃   ctrl-r, cmd-r                  Check for New Mail          ┃                                                                   │
+┃                          ┃│                                       ┃   +                              New folder…                 ┃                                                                   │
+┃                          ┃│                                       ┃   _                              Remove this empty folder f… ┃                                                                   │
 ┃                          ┃│                                       ┃   :, ctrl-k                      Command palette             ┃                                                                   │
 ┃                          ┃│                                       ┃   U                              Undo the last move, deleti… ┃                                                                   │
 ┃                          ┃│                                       ┃   A                              Add an account              ┃                                                                   │
@@ -42,9 +45,6 @@ expression: harness.screen()
 ┃                          ┃│                                       ┃   D                              Remove this account…        ┃                                                                   │
 ┃                          ┃│                                       ┃   ?                              Help for this context       ┃                                                                   │
 ┃                          ┃│                                       ┃   K, f1                          Keyboard shortcuts          ┃                                                                   │
-┃                          ┃│                                       ┃                                                              ┃                                                                   │
-┃                          ┃│                                       ┃                                                              ┃                                                                   │
-┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │
