@@ -459,6 +459,9 @@ pub struct Can {
     pub add: bool,
     /// An account can be signed in to now, and no sign-in is under way.
     pub sign_in: bool,
+    /// An account can be asked to be removed now: nothing that has an
+    /// account in hand is under way.
+    pub remove: bool,
 }
 
 /// The name of the button that imports a theme, in the general pane.
@@ -468,6 +471,7 @@ pub const ACCOUNTS: &str = "accounts";
 /// The actions of that list.
 pub const ADD: &str = "add";
 pub const SIGN_IN: &str = "sign_in";
+pub const REMOVE: &str = "remove";
 
 /// Said at the foot of every pane, beside the button that opens the
 /// settings file.
@@ -750,9 +754,9 @@ fn accounts(read: &SettingsRead, can: Can) -> Vec<FormField> {
                 }
             )),
             actions: if account.signs_in {
-                vec![SIGN_IN.to_owned()]
+                vec![SIGN_IN.to_owned(), REMOVE.to_owned()]
             } else {
-                Vec::new()
+                vec![REMOVE.to_owned()]
             },
         })
         .collect();
@@ -773,11 +777,18 @@ fn accounts(read: &SettingsRead, can: Can) -> Vec<FormField> {
                 row: true,
                 enabled: can.accounts && can.sign_in,
             },
+            FormAction {
+                id: REMOVE.to_owned(),
+                title: "Remove\u{2026}".to_owned(),
+                row: true,
+                enabled: can.accounts && can.remove,
+            },
         ],
         empty: Some("No accounts yet.".to_owned()),
         help: Some(
-            "An account is taken away by taking it out of the settings file. The copy of \
-             its mail kept on this Mac goes when Quill is next opened."
+            "Removing an account takes it out of the settings file and the Keychain, and \
+             deletes the copy of its mail kept on this Mac. Mail on its server is not \
+             touched."
                 .to_owned(),
         ),
     }]

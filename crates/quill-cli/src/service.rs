@@ -30,6 +30,7 @@ use quill_smtp::{SmtpAuth, SmtpConfig, SmtpSender};
 use quill_store::Store;
 use quill_sync::{SyncAccount, SyncHandle};
 use quill_tui::app::AccountsLink;
+use quill_tui::setup::Leaving;
 use quill_tui::setup::{
     AccountDraft, AccountEvent, AccountRequest, Preference, ServerDraft, SignInDraft, Trusting,
     VerifyProblem,
@@ -255,6 +256,19 @@ impl Service {
                 account: String::new(),
                 result: Err("no sign-in was under way".to_owned()),
             },
+            AccountRequest::RemoveAsk { account } => {
+                let service = Arc::clone(self);
+                let name = account.clone();
+                // The config file and the store block.
+                let found = tokio::task::spawn_blocking(move || service.leaving(&name))
+                    .await
+                    .unwrap_or_else(|err| Err(err.to_string()));
+                AccountEvent::RemoveAsked { account, found }
+            }
+            AccountRequest::Remove { account } => {
+                let result = self.remove(&account).await;
+                AccountEvent::Removed { account, result }
+            }
             AccountRequest::Unsubscribe { url } => {
                 let (host, result) = unsubscribe::one_click(&url).await;
                 AccountEvent::Unsubscribed { host, result }
@@ -379,6 +393,141 @@ impl Service {
                     other => other.to_string(),
                 })
             })
+    }
+
+    /// The account called `name` in the config as it stands, with the
+    /// config's text: or why there is none to remove.
+    fn account_named(&self, name: &str) -> Result<(String, Config, AccountConfig), String> {
+        let text = self.config_text()?;
+        let config = Config::parse(&text)
+            .map_err(|err| format!("The settings file has a mistake to fix first: {err}"))?;
+        let account = config
+            .accounts
+            .iter()
+            .find(|account| account.name == name)
+            .cloned()
+            .ok_or_else(|| format!("There is no account called {name} in the settings file."))?;
+        Ok((text, config, account))
+    }
+
+    /// The store's own name for the account called `name`, if it has it.
+    fn stored(&self, name: &str) -> Result<Option<LocalAccountId>, String> {
+        let store = self
+            .store
+            .lock()
+            .map_err(|_| "the store is unavailable after an earlier failure".to_owned())?;
+        Ok(store
+            .accounts()
+            .map_err(|err| err.to_string())?
+            .into_iter()
+            .find(|account| account.name == name)
+            .map(|account| account.id))
+    }
+
+    /// What removing the account called `name` would lose. Changes nothing.
+    fn leaving(&self, name: &str) -> Result<Leaving, String> {
+        let (_, _, account) = self.account_named(name)?;
+        let leftovers = match self.stored(name)? {
+            Some(id) => self
+                .store
+                .lock()
+                .map_err(|_| "the store is unavailable after an earlier failure".to_owned())?
+                .account_leftovers(id)
+                .map_err(|err| err.to_string())?,
+            // Never synced: there is nothing of its own here.
+            None => quill_store::Leftovers::default(),
+        };
+        Ok(Leaving {
+            address: account.address.clone(),
+            // A POP3 account's mail is taken off its server as it is
+            // fetched, and kept here.
+            only_copy: account.kind == AccountType::Pop3,
+            drafts: leftovers.drafts,
+            outbox: leftovers.outbox,
+            queued: leftovers.queued,
+        })
+    }
+
+    /// Removes the account called `name`, which the user has just agreed
+    /// to: out of the config, then its syncing stopped, then its mail out
+    /// of the store and its secrets out of the Keychain.
+    ///
+    /// The config goes first, and if it cannot be written nothing else is
+    /// done: the account is as it was. Once it is written the account is
+    /// removed, and whatever cannot be cleared up after it is said and not
+    /// undone (`Ok(Some(..))`): the store would let go of it at the next
+    /// start in any case, and a secret left behind harms nothing.
+    async fn remove(self: &Arc<Self>, name: &str) -> Result<Option<String>, String> {
+        let service = Arc::clone(self);
+        let named = name.to_owned();
+        // Files and the store block.
+        let (id, secrets) = tokio::task::spawn_blocking(move || service.take_out(&named))
+            .await
+            .unwrap_or_else(|err| Err(err.to_string()))?;
+        // From the runtime, as the engine's tasks were started: nothing
+        // more is fetched or sent for it, and nothing written to the store
+        // behind the removal.
+        if let Some(id) = id {
+            self.sync.remove_account(id);
+        }
+        let service = Arc::clone(self);
+        Ok(
+            tokio::task::spawn_blocking(move || service.clear_up(id, &secrets))
+                .await
+                .unwrap_or_else(|err| Some(err.to_string())),
+        )
+    }
+
+    /// Takes the account called `name` out of the config. Returns the
+    /// store's name for it, if the store has it, and the secrets that were
+    /// its alone: one that an account still in the config goes by is not
+    /// among them.
+    fn take_out(&self, name: &str) -> Result<(Option<LocalAccountId>, Vec<String>), String> {
+        let (before, _, account) = self.account_named(name)?;
+        let after = config_edit::remove_account(&before, name)?;
+        let left = Config::parse(&after).map_err(|err| err.to_string())?;
+        let kept: Vec<String> = left
+            .accounts
+            .iter()
+            .flat_map(crate::accounts::secret_names)
+            .collect();
+        let secrets = crate::accounts::secret_names(&account)
+            .into_iter()
+            .filter(|name| !kept.contains(name))
+            .collect();
+        let id = self.stored(name)?;
+        config_edit::write(&self.config_file, &after)
+            .map_err(|err| format!("The settings file cannot be written: {err}"))?;
+        Ok((id, secrets))
+    }
+
+    /// Deletes a removed account's mail and secrets. Returns what could
+    /// not be cleared up, in words for the user, if anything.
+    fn clear_up(&self, id: Option<LocalAccountId>, secrets: &[String]) -> Option<String> {
+        let mut left = Vec::new();
+        if let Some(id) = id {
+            let deleted = self
+                .store
+                .lock()
+                .map_err(|_| "the store is unavailable".to_owned())
+                .and_then(|mut store| store.remove_account(id).map_err(|err| err.to_string()));
+            if let Err(reason) = deleted {
+                left.push(format!(
+                    "The copy of its mail could not be deleted yet ({reason}); it goes when \
+                     Quill is next opened."
+                ));
+            }
+        }
+        for name in secrets {
+            if let Err(reason) = self.secrets.delete(name) {
+                left.push(format!(
+                    "Its password could not be taken out of the Keychain ({reason}); look for \
+                     \"Quill\" in Keychain Access."
+                ));
+            }
+            self.secrets.forget(name);
+        }
+        (!left.is_empty()).then(|| left.join(" "))
     }
 
     fn config_text(&self) -> Result<String, String> {
@@ -1076,6 +1225,280 @@ mod tests {
             other => panic!("{other:?}"),
         }
         assert_eq!(rig.config().accounts.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_synced_account_is_removed_with_its_mail_its_password_and_its_place_in_the_file() {
+        let Some(server) = Dovecot::start().await else {
+            return;
+        };
+        fill(&mut server.session(USER).await, "INBOX", 3).await;
+        let mut rig = Rig::new();
+        let saved = rig
+            .service
+            .handle(AccountRequest::Save {
+                draft: draft(&server, TlsMode::None),
+                password: Secret(PASSWORD.to_owned()),
+                trusting: Trusting::System,
+            })
+            .await;
+        assert_eq!(saved, AccountEvent::Saved(Ok("Personal".to_owned())));
+        rig.messages(3).await;
+        let secret = format!("imap:{USER}@localhost");
+        assert!(rig.secrets.get(&secret).unwrap().is_some());
+
+        // Asking first changes nothing, and says there is nothing here
+        // that is not on the server too.
+        let asked = rig
+            .service
+            .handle(AccountRequest::RemoveAsk {
+                account: "Personal".to_owned(),
+            })
+            .await;
+        assert_eq!(
+            asked,
+            AccountEvent::RemoveAsked {
+                account: "Personal".to_owned(),
+                found: Ok(Leaving {
+                    address: USER.to_owned(),
+                    ..Leaving::default()
+                }),
+            }
+        );
+        assert_eq!(rig.config().accounts.len(), 1);
+        assert_eq!(rig.store.messages(Mailbox::Unified).unwrap().len(), 3);
+
+        let removed = rig
+            .service
+            .handle(AccountRequest::Remove {
+                account: "Personal".to_owned(),
+            })
+            .await;
+        assert_eq!(
+            removed,
+            AccountEvent::Removed {
+                account: "Personal".to_owned(),
+                result: Ok(None),
+            }
+        );
+        // Gone from the file, the store and the Keychain, at once.
+        assert!(rig.config().accounts.is_empty());
+        assert!(rig.store.accounts().unwrap().is_empty());
+        assert!(rig.store.messages(Mailbox::Unified).unwrap().is_empty());
+        assert_eq!(rig.secrets.get(&secret).unwrap(), None);
+        // The mail on the server is as it was.
+        let on_server = server.session(USER).await.select("INBOX").await.unwrap();
+        assert_eq!(on_server.exists, 3);
+        // And it is not there to be removed twice.
+        match rig
+            .service
+            .handle(AccountRequest::Remove {
+                account: "Personal".to_owned(),
+            })
+            .await
+        {
+            AccountEvent::Removed {
+                result: Err(reason),
+                ..
+            } => assert!(reason.contains("no account called Personal"), "{reason}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn removing_one_account_leaves_the_others_and_what_they_share_and_says_what_is_lost() {
+        let mut rig = Rig::new();
+        let written = "[ui]\ntheme = \"light\"   # mine\n\n\
+            [[account]]\nname = \"Work\"\ntype = \"imap\"\naddress = \"robin@example.com\"\n\
+            imap = { host = \"mail.example.com\" }\nsmtp = { host = \"smtp.example.com\" }\n\n\
+            [[account]]\nname = \"Home\"\ntype = \"imap\"\naddress = \"robin@example.org\"\n\
+            imap = { host = \"mail.example.org\" }\n\n\
+            [[account]]\nname = \"Alias\"\ntype = \"imap\"\naddress = \"r@example.org\"\n\
+            imap = { host = \"mail.example.org\", username = \"robin@example.org\" }\n\n\
+            [[account]]\nname = \"Old\"\ntype = \"pop3\"\naddress = \"robin@example.net\"\n\
+            pop3 = { host = \"pop.example.net\" }\n";
+        write_config(&rig, written);
+        let config = rig.config();
+        let mut ids = HashMap::new();
+        for account in &config.accounts {
+            ids.insert(account.name.clone(), rig.service.register(account).unwrap());
+            for name in crate::accounts::secret_names(account) {
+                rig.secrets.set(&name, "hunter2").unwrap();
+            }
+        }
+        let secrets = |names: &[&str]| -> Vec<bool> {
+            names
+                .iter()
+                .map(|name| rig.secrets.get(name).unwrap().is_some())
+                .collect()
+        };
+        let all = [
+            "imap:robin@example.com@mail.example.com",
+            "smtp:robin@example.com@smtp.example.com",
+            "imap:robin@example.org@mail.example.org",
+            "pop3:robin@example.net@pop.example.net",
+        ];
+        assert_eq!(secrets(&all), [true, true, true, true]);
+
+        // Work has a message being written, one waiting to go, and Home a
+        // draft of its own.
+        let content = quill_store::DraftContent::default();
+        rig.store
+            .save_draft(None, ids["Work"], &content, 1)
+            .unwrap();
+        let going = rig
+            .store
+            .save_draft(None, ids["Work"], &content, 1)
+            .unwrap()
+            .unwrap();
+        rig.store
+            .queue_send(
+                going,
+                "hash",
+                "robin@example.com",
+                &["a@example.com".to_owned()],
+                5,
+                1,
+            )
+            .unwrap();
+        rig.store
+            .save_draft(None, ids["Home"], &content, 1)
+            .unwrap();
+
+        let ask = |account: &str| {
+            let service = Arc::clone(&rig.service);
+            let account = account.to_owned();
+            async move {
+                match service.handle(AccountRequest::RemoveAsk { account }).await {
+                    AccountEvent::RemoveAsked { found, .. } => found,
+                    other => panic!("{other:?}"),
+                }
+            }
+        };
+        assert_eq!(
+            ask("Work").await,
+            Ok(Leaving {
+                address: "robin@example.com".to_owned(),
+                only_copy: false,
+                drafts: 1,
+                outbox: 1,
+                queued: 0,
+            })
+        );
+        // A POP3 account's copy here may be the only one.
+        assert!(ask("Old").await.unwrap().only_copy);
+        // A name is the whole name, as the file has it.
+        for absent in ["work", "Club", ""] {
+            assert!(
+                ask(absent)
+                    .await
+                    .unwrap_err()
+                    .contains("There is no account called")
+            );
+        }
+        // Asking changed nothing.
+        assert_eq!(config_text(&rig), written);
+
+        let remove = |account: &str| {
+            let service = Arc::clone(&rig.service);
+            let account = account.to_owned();
+            async move {
+                match service.handle(AccountRequest::Remove { account }).await {
+                    AccountEvent::Removed { result, .. } => result,
+                    other => panic!("{other:?}"),
+                }
+            }
+        };
+        assert_eq!(remove("Work").await, Ok(None));
+        let names = |rig: &Rig| -> Vec<String> {
+            rig.config()
+                .accounts
+                .iter()
+                .map(|account| account.name.clone())
+                .collect()
+        };
+        assert_eq!(names(&rig), ["Home", "Alias", "Old"]);
+        // What else the user wrote is as they wrote it.
+        assert!(config_text(&rig).starts_with("[ui]\ntheme = \"light\"   # mine\n"));
+        // Its passwords are gone, for reading and for sending; the others'
+        // are not.
+        assert_eq!(secrets(&all), [false, false, true, true]);
+        // And everything of its own in the store, the outbox included.
+        let stored: Vec<String> = rig
+            .store
+            .accounts()
+            .unwrap()
+            .into_iter()
+            .map(|account| account.name)
+            .collect();
+        assert_eq!(stored, ["Home", "Alias", "Old"]);
+        assert!(rig.store.outbox().unwrap().is_empty());
+        assert_eq!(rig.store.drafts().unwrap().len(), 1);
+
+        // Home and Alias sign in to one mailbox with one password: taking
+        // one of them away leaves the other its password.
+        assert_eq!(remove("Home").await, Ok(None));
+        assert_eq!(names(&rig), ["Alias", "Old"]);
+        assert_eq!(secrets(&all), [false, false, true, true]);
+        assert_eq!(remove("Alias").await, Ok(None));
+        assert_eq!(secrets(&all), [false, false, false, true]);
+        // The last one too: no accounts is a file Quill reads.
+        assert_eq!(remove("Old").await, Ok(None));
+        assert!(rig.config().accounts.is_empty());
+        assert!(rig.store.accounts().unwrap().is_empty());
+        assert_eq!(secrets(&all), [false, false, false, false]);
+        let _ = &mut rig;
+    }
+
+    #[tokio::test]
+    async fn an_account_is_not_removed_from_a_file_that_cannot_be_read_or_written() {
+        let rig = Rig::new();
+        let remove = |account: &str| {
+            let service = Arc::clone(&rig.service);
+            let account = account.to_owned();
+            async move {
+                match service.handle(AccountRequest::Remove { account }).await {
+                    AccountEvent::Removed { result, .. } => result,
+                    other => panic!("{other:?}"),
+                }
+            }
+        };
+        // A file with a mistake in it is not edited.
+        let mistaken = "[[account]]\nname = \"Work\"\ntype = \"imap\"\naddress = \n";
+        write_config(&rig, mistaken);
+        assert!(
+            remove("Work")
+                .await
+                .unwrap_err()
+                .contains("mistake to fix first")
+        );
+        assert_eq!(config_text(&rig), mistaken);
+        // One that cannot be written is left, and so are the store and
+        // the Keychain: the account is as it was.
+        let written = "[[account]]\nname = \"Work\"\ntype = \"imap\"\naddress = \"robin@example.com\"\n\
+            imap = { host = \"mail.example.com\" }\n";
+        write_config(&rig, written);
+        let config = rig.config();
+        rig.service.register(&config.accounts[0]).unwrap();
+        rig.secrets
+            .set("imap:robin@example.com@mail.example.com", "hunter2")
+            .unwrap();
+        let folder = rig.service.config_file.parent().unwrap().to_owned();
+        let mut closed = std::fs::metadata(&folder).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut closed, 0o500);
+        std::fs::set_permissions(&folder, closed.clone()).unwrap();
+        let refused = remove("Work").await;
+        std::os::unix::fs::PermissionsExt::set_mode(&mut closed, 0o700);
+        std::fs::set_permissions(&folder, closed).unwrap();
+        assert!(refused.unwrap_err().contains("cannot be written"));
+        assert_eq!(config_text(&rig), written);
+        assert_eq!(rig.store.accounts().unwrap().len(), 1);
+        assert!(
+            rig.secrets
+                .get("imap:robin@example.com@mail.example.com")
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[tokio::test]

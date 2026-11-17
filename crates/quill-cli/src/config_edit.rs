@@ -71,6 +71,33 @@ fn with_account(text: &str, account: Table) -> Result<String, String> {
     checked(document.to_string())
 }
 
+/// `text` without the account called `name`: its `[[account]]` and
+/// whatever is written in it, and nothing else. The other accounts, and
+/// every comment that is not the removed account's own, stay as they are.
+pub fn remove_account(text: &str, name: &str) -> Result<String, String> {
+    let mut document: DocumentMut = text
+        .parse()
+        .map_err(|err| format!("config.toml cannot be read: {err}"))?;
+    let missing = || format!("there is no account called {name} in config.toml");
+    let accounts = document
+        .get_mut("account")
+        .ok_or_else(missing)?
+        .as_array_of_tables_mut()
+        .ok_or(
+            "the accounts in config.toml are not written as [[account]] sections, which is \
+             the only way Quill edits them: take the account out by hand",
+        )?;
+    let index = accounts
+        .iter()
+        .position(|account| account.get("name").and_then(Item::as_str) == Some(name))
+        .ok_or_else(missing)?;
+    accounts.remove(index);
+    if accounts.is_empty() {
+        document.remove("account");
+    }
+    checked(document.to_string())
+}
+
 /// `text` with the certificate of one of `account`'s servers pinned:
 /// `server` is the key it is configured under, `imap` or `smtp`.
 pub fn pin_fingerprint(
@@ -325,6 +352,67 @@ mod tests {
             (smtp.host.as_str(), smtp.port, smtp.tls),
             ("smtp.example.com", Some(587), TlsMode::Starttls)
         );
+    }
+
+    #[test]
+    fn an_account_is_taken_out_and_everything_else_is_left_as_it_was() {
+        let text = "# My settings\n\
+            [ui]\n\
+            theme = \"light\"   # easier on the eyes\n\
+            \n\
+            # The office.\n\
+            [[account]]\n\
+            name = \"Work\"\n\
+            type = \"graph\"\n\
+            address = \"robin@example.com\"\n\
+            \n\
+            # Mine.\n\
+            [[account]]\n\
+            name = \"Home\"   # the old one\n\
+            type = \"imap\"\n\
+            address = \"robin@example.org\"\n\
+            imap = { host = \"mail.example.org\" }\n\
+            \n\
+            [compose]\n\
+            editor = \"vim\"\n";
+        let without_work = remove_account(text, "Work").unwrap();
+        assert_eq!(
+            without_work,
+            text.replace(
+                "# The office.\n[[account]]\nname = \"Work\"\ntype = \"graph\"\n\
+                 address = \"robin@example.com\"\n\n",
+                ""
+            )
+        );
+        let config = Config::parse(&without_work).unwrap();
+        assert_eq!(config.accounts.len(), 1);
+        assert_eq!(config.accounts[0].name, "Home");
+        // The last one too: no accounts is a config Quill reads.
+        let none = remove_account(&without_work, "Home").unwrap();
+        assert!(!none.contains("[[account]]") && !none.contains("example.org"));
+        assert!(
+            none.starts_with("# My settings\n[ui]\ntheme = \"light\"   # easier on the eyes\n")
+        );
+        assert!(none.ends_with("[compose]\neditor = \"vim\"\n"));
+        assert!(Config::parse(&none).unwrap().accounts.is_empty());
+
+        // An account that is not there is said, and a name is the whole
+        // name, as it is written.
+        for absent in ["Club", "work", "Wor", ""] {
+            let refused = remove_account(text, absent).unwrap_err();
+            assert!(refused.contains("there is no account called"), "{refused}");
+        }
+        assert!(remove_account("", "Work").is_err());
+        // Accounts written another way are not edited, and a file with a
+        // mistake in it is not touched.
+        let inline =
+            "account = [{ name = \"Work\", type = \"graph\", address = \"robin@example.com\" }]\n";
+        assert!(
+            remove_account(inline, "Work")
+                .unwrap_err()
+                .contains("by hand")
+        );
+        assert!(remove_account("[[account]\nname = \"Work\"\n", "Work").is_err());
     }
 
     #[test]

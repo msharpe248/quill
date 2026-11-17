@@ -360,7 +360,8 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
             || !state.certificates.is_empty()
             || state.sign_in.is_some()
             || state.when.is_some()
-            || state.unsubscribe.is_some())
+            || state.unsubscribe.is_some()
+            || state.remove.is_some())
     {
         let dialog_width = width.saturating_sub(4).min(76);
         let dialog_height = body_height.saturating_sub(2).min(18);

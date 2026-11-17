@@ -24,6 +24,8 @@ pub enum Context {
     When,
     /// Being asked before unsubscribing from a mailing list.
     Unsubscribe,
+    /// Being asked before an account is removed.
+    RemoveAccount,
     /// Choosing a folder to move a message to. Typing narrows the list.
     Folders,
     /// Choosing a template to put into the message being written. Typing
@@ -56,6 +58,7 @@ impl Context {
             Self::SignIn => "Signing in",
             Self::When => "Choosing a time",
             Self::Unsubscribe => "Unsubscribe",
+            Self::RemoveAccount => "Remove an account",
             Self::Folders => "Move to a folder",
             Self::Templates => "Insert a template",
             Self::Suggestions => "Spelling suggestions",
@@ -80,6 +83,7 @@ const EVERYWHERE: &[Context] = &[
     Context::SignIn,
     Context::When,
     Context::Unsubscribe,
+    Context::RemoveAccount,
     Context::Folders,
     Context::Templates,
     Context::Suggestions,
@@ -209,6 +213,7 @@ pub enum CommandId {
     EditUndo,
     AccountAdd,
     AccountSignIn,
+    AccountRemove,
     MailboxSync,
     SidebarOpen,
     SidebarClose,
@@ -900,6 +905,14 @@ impl Registry {
                     ),
                     "person.badge.key",
                 ),
+                spec(
+                    AccountRemove,
+                    "account.remove",
+                    "Remove this account\u{2026}",
+                    General,
+                    Some(Menu::File),
+                    PANES,
+                ),
                 with_symbol(
                     spec(
                         HelpToggle,
@@ -1052,6 +1065,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
     const WHEN: &[Hint] = &[hint(&[NavOpen], "set"), hint(&[NavBack], "cancel")];
     const FOLDERS: &[Hint] = &[hint(&[NavOpen], "move here"), hint(&[NavBack], "cancel")];
     const UNSUBSCRIBING: &[Hint] = &[hint(&[NavOpen], "go ahead"), hint(&[NavBack], "cancel")];
+    const REMOVING: &[Hint] = &[hint(&[NavBack], "keep the account")];
     const TEMPLATES: &[Hint] = &[hint(&[NavOpen], "insert"), hint(&[NavBack], "cancel")];
     const SUGGESTIONS: &[Hint] = &[
         hint(&[NavNext, NavPrev], "move"),
@@ -1074,6 +1088,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         Context::Compose => COMPOSING,
         Context::Folders => FOLDERS,
         Context::Unsubscribe => UNSUBSCRIBING,
+        Context::RemoveAccount => REMOVING,
         Context::Templates => TEMPLATES,
         Context::Suggestions => SUGGESTIONS,
         Context::Hooks => HOOKS,

@@ -17,12 +17,13 @@ expression: outline(&shown)
    more: Rules, saved searches and each account’s servers are set in the settings file. Hooks and templates are files beside it.
 == Accounts (accounts, at)
    accounts "": list
-     row "Work": Microsoft 365, robin@example.com. Signs in with Microsoft. [sign_in]
-     row "Home": IMAP, robin@example.org. Signs in with a password. []
+     row "Work": Microsoft 365, robin@example.com. Signs in with Microsoft. [sign_in, remove]
+     row "Home": IMAP, robin@example.org. Signs in with a password. [remove]
      action add "Add an Account…"
      action sign_in "Sign In…", of a row
+     action remove "Remove…", of a row
      empty: No accounts yet.
-     help: An account is taken away by taking it out of the settings file. The copy of its mail kept on this Mac goes when Quill is next opened.
+     help: Removing an account takes it out of the settings file and the Keychain, and deletes the copy of its mail kept on this Mac. Mail on its server is not touched.
    more: Rules, saved searches and each account’s servers are set in the settings file. Hooks and templates are files beside it.
 == Composing (composing, square.and.pencil)
    editor "Write in:": choice = nano of builtin "Quill’s own editor" | vim "Vim" | nano "nano" | pico "Pico" | mg "mg"

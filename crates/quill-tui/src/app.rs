@@ -546,6 +546,8 @@ impl Io<'_> {
                 // A question to answer before anything is sent, as a
                 // certificate is.
                 Context::Unsubscribe => bridge::Context::Certificate,
+                // And so is one to answer before an account is removed.
+                Context::RemoveAccount => bridge::Context::Certificate,
                 Context::Folders => bridge::Context::Folders,
                 // A list to narrow by typing, over the message.
                 Context::Templates => bridge::Context::Folders,

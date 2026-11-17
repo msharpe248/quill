@@ -211,6 +211,15 @@ pub enum AccountRequest {
     SignIn { account: Option<String> },
     /// Give up on the sign-in in progress.
     CancelSignIn,
+    /// Say what removing the account called this would lose, so that it
+    /// can be asked about. Changes nothing. Answered with
+    /// [`AccountEvent::RemoveAsked`].
+    RemoveAsk { account: String },
+    /// Remove the account called this: out of the config, out of the
+    /// Keychain, and its mail out of the store, with its syncing stopped.
+    /// The user has just agreed to it. Answered with
+    /// [`AccountEvent::Removed`].
+    Remove { account: String },
     /// Tell a mailing list's server to unsubscribe the user: one POST of
     /// `List-Unsubscribe=One-Click` to this `https` address (RFC 8058),
     /// which the user has just agreed to. Answered with
@@ -238,6 +247,23 @@ pub enum Preference {
     /// `editor_tips` under `[compose]`: whether what an editor's keys do
     /// is said above it.
     EditorTips(bool),
+}
+
+/// What goes with an account that is removed, beyond the copy of its mail:
+/// what exists nowhere but on this Mac.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Leaving {
+    /// The account's address.
+    pub address: String,
+    /// The account's mail is taken off its server as it is fetched
+    /// (POP3), so the copy here may be the only one.
+    pub only_copy: bool,
+    /// Messages being written and not sent.
+    pub drafts: usize,
+    /// Messages waiting to be sent, or refused by a server.
+    pub outbox: usize,
+    /// Changes to mail that have not reached the server yet.
+    pub queued: usize,
 }
 
 /// The answers.
@@ -279,6 +305,19 @@ pub enum AccountEvent {
     Unsubscribed {
         host: String,
         result: Result<(), String>,
+    },
+    /// What removing the account would lose, or why it cannot be removed
+    /// from here at all.
+    RemoveAsked {
+        account: String,
+        found: Result<Leaving, String>,
+    },
+    /// The account is removed, or why not: then nothing was changed. With
+    /// it removed, anything that could not be cleared up after it, such as
+    /// a password still in the Keychain.
+    Removed {
+        account: String,
+        result: Result<Option<String>, String>,
     },
     /// The choice is in the config, or why it could not be written there.
     /// It holds for this run either way.
@@ -1079,6 +1118,8 @@ impl Setup {
             | AccountEvent::SignInCode { .. }
             | AccountEvent::SignedIn { .. }
             | AccountEvent::Unsubscribed { .. }
+            | AccountEvent::RemoveAsked { .. }
+            | AccountEvent::Removed { .. }
             | AccountEvent::Remembered(_)
             | AccountEvent::Settings { .. } => (Vec::new(), Outcome::Open),
         }

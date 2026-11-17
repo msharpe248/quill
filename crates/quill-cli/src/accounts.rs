@@ -182,6 +182,32 @@ pub fn ews_account(
     })
 }
 
+/// The names an account's secrets are kept under in the Keychain: its
+/// sign-in, for one that signs in with its provider, and otherwise its
+/// password for reading and, if it has one of its own, for sending. Empty
+/// for an account whose settings are too broken to say.
+pub fn secret_names(account: &AccountConfig) -> Vec<String> {
+    match crate::oauth::setup(account) {
+        Ok(Some(setup)) => return vec![setup.secret_name(account)],
+        // It signs in with its provider, and cannot say how.
+        Err(_) => return Vec::new(),
+        Ok(None) => {}
+    }
+    let Ok(reading) = reading(account) else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    if let Some(server) = &account.smtp {
+        let username = server
+            .username
+            .clone()
+            .unwrap_or_else(|| reading.username.clone());
+        names.push(password_name("smtp", &username, &server.host));
+    }
+    names.push(reading.secret);
+    names
+}
+
 /// The name an account's IMAP password is kept under in the Keychain.
 pub fn imap_password_name(config: &ImapConfig) -> String {
     password_name("imap", &config.username, &config.host)

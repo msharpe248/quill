@@ -37,9 +37,9 @@ expression: harness.screen()
 ┃                          ┃│                                       ┃   U                        Undo the last move, deletion or … ┃                                                                   │
 ┃                          ┃│                                       ┃   A                        Add an account                    ┃                                                                   │
 ┃                          ┃│                                       ┃   S                        Sign in to an account             ┃                                                                   │
+┃                          ┃│                                       ┃   D                        Remove this account…              ┃                                                                   │
 ┃                          ┃│                                       ┃   ?                        Help for this context             ┃                                                                   │
 ┃                          ┃│                                       ┃   K, f1                    Keyboard shortcuts                ┃                                                                   │
-┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │

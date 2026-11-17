@@ -92,7 +92,9 @@ quill account password Personal   # asks for the password, saves it in the Keych
 
 Optional keys inside `imap = { ... }`: `username`, when you do not sign in with your address, and `fingerprint`, the SHA-256 of a self-signed server's certificate, to accept that one certificate.
 
-`quill account list` shows each account and whether it has a saved password. `quill account forget NAME` removes one. Passwords are only ever in the Keychain: not in the config, the database or the logs.
+`quill account list` shows each account and whether it has a saved password. `quill account forget NAME` removes the password. Passwords are only ever in the Keychain: not in the config, the database or the logs.
+
+**Removing an account.** In the app, Settings > Accounts: pick the account and press Remove…. Anywhere, put the accounts pane on the account (or one of its folders) and press `D`, or choose "Remove this account…" from the palette or the File menu. Quill first says what goes with it and asks: the account is taken out of the settings file, its password or sign-in out of the Keychain, and the copy of its mail off this Mac. Mail on its server is not touched, and the account can be added again. Anything that exists only on this Mac is said before you answer: messages still in the Outbox, drafts, changes that have not reached the server, and for a POP3 account that the copy here may be the only one. In a terminal only `y` is a yes; in the app's sheet no button answers to `return`. It is not offered while a message is being written. Taking an `[[account]]` out of the file by hand still works: its mail goes when Quill is next opened, and its password stays until `quill account forget`, which has to be run first.
 
 A Keychain item belongs to the program that made it. Quill built from source is signed "ad hoc", with no identity, so to macOS every build is a different program: after a rebuild it asks whether the new `quill` or `Quill.app` may read each password the old one saved, and "Always Allow" settles it for that build only. Until you answer, Quill waits and no mail moves. Each saved password or sign-in is asked about once in a run, however many connections want it.
 
@@ -210,6 +212,7 @@ Press `?` at any time for the keys that apply where you are, and `K` (or `f1`) f
 | `X` | Unsubscribe from a mailing list | `\|` | Give the message to one of your own programs (in a terminal) |
 | `y` / `n` | Accept, decline an invitation | `M` | Answer an invitation with maybe |
 | `l` / `h` | In the accounts pane: show, hide an account's folders | `K` | Every key, and what it does |
+| `D` | Remove the account chosen in the accounts pane, after asking | | |
 
 `tab` keeps to the two panes of everyday use: from the list it goes to the message and from the message back to the list. `shift-tab` goes to the accounts from either, and from the accounts `tab` goes to the list and `shift-tab` to the message. (With the web reading pane on there is no message pane in the terminal to go to: `tab` does nothing from the list, and the keys for the message work from there.)
 
@@ -650,7 +653,7 @@ In the app, Settings… in the Quill menu (`cmd-,`) opens a settings window. It 
 | | Show a notification when mail arrives | `notifications` under `[ui]` | At once |
 | | List the messages of a conversation together | `threads` under `[ui]` | At once |
 | | Read mail in a web pane beside the list | `web_reading` under `[ui]` | At once |
-| Accounts | The accounts in the file, with Add an Account… and Sign In… | `[[account]]` | At once |
+| Accounts | The accounts in the file, with Add an Account…, Sign In… and Remove… | `[[account]]` | At once |
 | Composing | Write in: Quill's own editor, Vim, nano, Pico or mg | `editor` under `[compose]` | When Quill is next opened |
 | | Program: the program to run as that editor, where it is not the one found by its name. Shown for any editor but Quill's own; emptied, the line is taken out of the file | `editor_path` under `[compose]` | When Quill is next opened |
 | | Format: Markdown or plain text | `format` under `[compose]` | At once |
@@ -662,7 +665,7 @@ In the app, Settings… in the Quill menu (`cmd-,`) opens a settings window. It 
 
 The two that wait for the next start say so in the window, and say what Quill is going by until then.
 
-Everything else is set in the file, and the button at the foot of each pane opens it: rules, saved searches, an account's servers, name and signature, the reader's width, the font, the mouse; and beside it your keys (`keys.toml`), themes, templates and hooks. `mg` as the editor is for Quill in a terminal and is not offered in the window. There is no button to take an account away: take it out of the file, and the copy of its mail on this Mac goes when Quill is next opened. "Reveal Settings File in Finder", in the same menu, shows where the file is.
+Everything else is set in the file, and the button at the foot of each pane opens it: rules, saved searches, an account's servers, name and signature, the reader's width, the font, the mouse; and beside it your keys (`keys.toml`), themes, templates and hooks. "Reveal Settings File in Finder", in the same menu, shows where the file is.
 
 The window shows what the file says. Edit the file by hand while it is open and the window catches up when you come back to it, and so does Quill, for the settings that take effect at once. If the file has a mistake in it, the window says so, offers to open the file, and changes nothing until the mistake is put right.
 
@@ -722,6 +725,7 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `edit.copy`, `edit.cut`, `edit.select_all` | The app's Edit menu, while a message is being written |
 | `account.add` | Add an account |
 | `account.sign_in` | Sign an account in to Microsoft or Google |
+| `account.remove` | Remove the account chosen in the accounts pane, after asking |
 | `help.toggle` | Show or hide help |
 | `help.keys` | Show or hide the list of every key |
 | `app.quit` | Quit |

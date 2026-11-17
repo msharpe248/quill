@@ -20,7 +20,7 @@ use quill_host::bridge::{
     FormButton, FormField, FormOption, FormRole, FormShow, FormShowParams, FormUsed, Secret,
 };
 
-use super::{Effects, Env, State, UnsubscribePrompt, WhenFor, WhenPrompt};
+use super::{Effects, Env, RemovePrompt, State, UnsubscribePrompt, WhenFor, WhenPrompt};
 use crate::command::{CommandId, Context};
 use crate::setup::{
     AccountRequest, CERTIFICATE_WORKING, CertificatePrompt, Press, SENDING_CERTIFICATE,
@@ -37,6 +37,8 @@ const SNOOZE: &str = "snooze";
 const SEND_LATER: &str = "send_later";
 /// The step of the question about unsubscribing.
 const UNSUBSCRIBE: &str = "unsubscribe";
+/// The step of the question about removing an account.
+const REMOVE_ACCOUNT: &str = "remove_account";
 /// What the step of a question about an existing account's certificate
 /// starts with. The rest is the certificate's own: see
 /// [`CertificatePrompt::step`].
@@ -64,6 +66,7 @@ fn asked_in_a_sheet(context: Context) -> bool {
             | Context::SignIn
             | Context::When
             | Context::Unsubscribe
+            | Context::RemoveAccount
     )
 }
 
@@ -298,6 +301,35 @@ impl UnsubscribePrompt {
     }
 }
 
+impl RemovePrompt {
+    /// The question as a host shows it: what is asked is its title, and
+    /// under it what saying yes does, what it leaves alone, and each thing
+    /// that goes for good. No button is the one `return` presses: removing
+    /// an account is not to be done by a stray key.
+    pub fn form(&self) -> Option<FormShow> {
+        let mut said = vec![self.does(), self.keeps().to_owned()];
+        said.extend(self.losses());
+        let said: Vec<&str> = said.iter().map(String::as_str).collect();
+        FormShow::new(FormShowParams {
+            step: REMOVE_ACCOUNT.to_owned(),
+            title: self.title(),
+            note: paragraphs(&said),
+            error: None,
+            busy: self.busy.then(|| super::REMOVING.to_owned()),
+            fields: Vec::new(),
+            buttons: vec![
+                Press::Cancel.button(Some(FormRole::Cancel), !self.busy),
+                FormButton {
+                    id: CONFIRM.to_owned(),
+                    title: "Remove".to_owned(),
+                    role: None,
+                    enabled: !self.busy,
+                },
+            ],
+        })
+    }
+}
+
 impl State {
     /// The form or question the host is to show in its sheet, when the
     /// host is the one that shows them ([`Env::sheets`]): the one a
@@ -317,6 +349,7 @@ impl State {
             Context::SignIn => self.sign_in.as_ref()?.form(),
             Context::When => self.when.as_ref()?.form(),
             Context::Unsubscribe => self.unsubscribe.as_ref()?.form(),
+            Context::RemoveAccount => self.remove.as_ref()?.form(),
             Context::Setup => self.setup.as_ref()?.form(&env.tz),
             _ => None,
         }
@@ -368,6 +401,11 @@ impl State {
                 // As `esc`: nothing was asked of the list, written or
                 // opened.
                 Some(id) if id == Press::Cancel.id() => self.unsubscribe = None,
+                _ => {}
+            },
+            Context::RemoveAccount => match used.button() {
+                Some(CONFIRM) => self.answer_remove(out),
+                Some(id) if id == Press::Cancel.id() => self.cancel_remove(),
                 _ => {}
             },
             _ => {}

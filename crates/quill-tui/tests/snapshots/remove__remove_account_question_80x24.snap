@@ -1,0 +1,28 @@
+---
+source: crates/quill-tui/tests/remove.rs
+expression: harness.screen()
+---
+┏ [1] Accounts ━━┓┌ [2] Inbox (Work) - 8 unread ───────────────────────────────┐
+┃  Unified    12 ┃│> * @ Ana Ruiz        Q4 roadmap                       09:14│
+┃>┏ Remove Work? ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓1│
+┃ ┃ The account for robin@example.com is taken out of Quill: its settings    ┃i│
+┃ ┃ out of the settings file, its password or sign-in out of the Keychain,   ┃i│
+┃ ┃ and the copy of its mail off this Mac.                                   ┃u│
+┃ ┃                                                                          ┃d│
+┃ ┃ Mail on its server is not touched, and the account can be added again.   ┃e│
+┃ ┃ 1 message waiting in the Outbox will not be sent.                        ┃n│
+┃ ┃ 2 drafts will be deleted.                                                ┃6│
+┃ ┃ 3 changes made here have not reached the server yet and will be lost.    ┃2│
+┃ ┃                                                                          ┃5│
+┃ ┃ y remove it   esc keep it                                                ┃ │
+┃ ┃                                                                          ┃ │
+┃ ┃                                                                          ┃ │
+┃ ┃                                                                          ┃ │
+┃ ┃                                                                          ┃ │
+┃ ┃                                                                          ┃ │
+┃ ┃                                                                          ┃ │
+┃ ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┗━━━━━━━━━━━━━━━━┛└────────────────────────────────────────────────────────────┘
+ esc keep the account

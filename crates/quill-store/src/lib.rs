@@ -69,6 +69,19 @@ pub struct AccountRow {
     pub kind: String,
 }
 
+/// What of an account's exists nowhere but in the store: lost for good if
+/// the account is removed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Leftovers {
+    /// Messages being written and not sent.
+    pub drafts: usize,
+    /// Messages waiting to be sent, or refused by a server.
+    pub outbox: usize,
+    /// Changes to mail (moves, deletions, marks) that have not reached the
+    /// server yet.
+    pub queued: usize,
+}
+
 /// A folder with its message counts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FolderRow {
@@ -205,6 +218,33 @@ impl Store {
         }
         tx.commit()?;
         Ok(removed)
+    }
+
+    /// Removes one account with everything of its own: its folders and
+    /// mail, what it was writing, what was waiting to be sent and what had
+    /// not reached its server yet. Returns whether there was such an
+    /// account. For an account the user has asked to have removed, while
+    /// Quill runs.
+    pub fn remove_account(&mut self, id: LocalAccountId) -> Result<bool> {
+        let removed = self
+            .conn
+            .execute("DELETE FROM accounts WHERE id = ?1", [id.0])?;
+        Ok(removed > 0)
+    }
+
+    /// What of an account's is kept only here, and would go with it.
+    pub fn account_leftovers(&self, id: LocalAccountId) -> Result<Leftovers> {
+        let count = |sql: &str| -> Result<usize> {
+            let count: i64 = self.conn.query_row(sql, [id.0], |row| row.get(0))?;
+            Ok(usize::try_from(count).unwrap_or(0))
+        };
+        Ok(Leftovers {
+            drafts: count("SELECT count(*) FROM drafts WHERE account_id = ?1 AND state = 'draft'")?,
+            outbox: count(
+                "SELECT count(*) FROM drafts WHERE account_id = ?1 AND state <> 'draft'",
+            )?,
+            queued: count("SELECT count(*) FROM operations WHERE account_id = ?1")?,
+        })
     }
 
     /// Inserts the folder, or updates its name and role when already known.
@@ -1865,6 +1905,86 @@ mod change_detection_tests {
 #[cfg(test)]
 mod retain_accounts_tests {
     use super::*;
+
+    #[test]
+    fn one_account_is_removed_with_everything_of_its_own_and_the_rest_is_left() {
+        let mut store = Store::open_in_memory().unwrap();
+        let mut ids = Vec::new();
+        for name in ["Work", "Personal"] {
+            let account = store.upsert_account(name, "r@example.com", "imap").unwrap();
+            store
+                .upsert_folder(
+                    account,
+                    &RemoteFolder {
+                        id: FolderId("INBOX".to_owned()),
+                        name: "INBOX".to_owned(),
+                        role: FolderRole::Inbox,
+                    },
+                )
+                .unwrap();
+            ids.push(account);
+        }
+        let (work, personal) = (ids[0], ids[1]);
+        // Work has a message being written, one on its way out, and a
+        // change its server has not heard of. Personal has a draft.
+        let content = DraftContent::default();
+        store.save_draft(None, work, &content, 1).unwrap().unwrap();
+        let going = store.save_draft(None, work, &content, 1).unwrap().unwrap();
+        assert!(
+            store
+                .queue_send(
+                    going,
+                    "hash",
+                    "r@example.com",
+                    &["a@example.com".to_owned()],
+                    5,
+                    1
+                )
+                .unwrap()
+        );
+        store
+            .conn
+            .execute(
+                "INSERT INTO operations (account_id, kind, not_before, created) \
+                 VALUES (?1, 'flags', 0, 0)",
+                [work.0],
+            )
+            .unwrap();
+        store.save_draft(None, personal, &content, 1).unwrap();
+        assert_eq!(
+            store.account_leftovers(work).unwrap(),
+            Leftovers {
+                drafts: 1,
+                outbox: 1,
+                queued: 1
+            }
+        );
+        assert_eq!(
+            store.account_leftovers(personal).unwrap(),
+            Leftovers {
+                drafts: 1,
+                outbox: 0,
+                queued: 0
+            }
+        );
+
+        assert!(store.remove_account(work).unwrap());
+        // It is gone, with its folders, its drafts, its outbox and its
+        // queue; the other account has all it had.
+        let names: Vec<String> = store
+            .accounts()
+            .unwrap()
+            .into_iter()
+            .map(|account| account.name)
+            .collect();
+        assert_eq!(names, ["Personal"]);
+        assert_eq!(store.account_leftovers(work).unwrap(), Leftovers::default());
+        assert_eq!(store.queued_operations().unwrap(), 0);
+        assert_eq!(store.account_leftovers(personal).unwrap().drafts, 1);
+        assert_eq!(store.folders().unwrap().len(), 1);
+        // Removing what is not there is nothing, and says so.
+        assert!(!store.remove_account(work).unwrap());
+    }
 
     #[test]
     fn accounts_taken_out_of_the_config_are_removed_with_their_mail() {

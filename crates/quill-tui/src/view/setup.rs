@@ -119,6 +119,33 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         rows.keys(&[(go.as_str(), says.yes), (stop.as_str(), "cancel")]);
         return;
     }
+    if let Some(prompt) = &state.remove {
+        let inner = dialog(frame, area, &format!(" {} ", prompt.title()), env);
+        let mut rows = Rows::new(frame, inner, env);
+        rows.text(&prompt.does());
+        rows.blank();
+        // What cannot be had back is said as a warning; that the mail is
+        // safe on its server, plainly.
+        if prompt.leaving.only_copy {
+            rows.warning(prompt.keeps());
+        } else {
+            rows.dim(prompt.keeps());
+        }
+        for loss in prompt.losses() {
+            rows.warning(&loss);
+        }
+        rows.blank();
+        if prompt.busy {
+            rows.dim(crate::state::REMOVING);
+            return;
+        }
+        let stop = env
+            .hint_key(CommandId::NavBack)
+            .map_or_else(String::new, ToString::to_string);
+        let yes = crate::state::REMOVE_YES.to_string();
+        rows.keys(&[(yes.as_str(), "remove it"), (stop.as_str(), "keep it")]);
+        return;
+    }
     let Some(setup) = &state.setup else {
         return;
     };

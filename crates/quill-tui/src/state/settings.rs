@@ -55,6 +55,7 @@ impl State {
                     add: self.is_enabled(env, CommandId::AccountAdd),
                     sign_in: self.is_enabled(env, CommandId::AccountSignIn)
                         && self.sign_in.is_none(),
+                    remove: self.can_remove_account(env),
                 },
                 window.refused.as_deref(),
             ),
@@ -138,6 +139,14 @@ impl State {
                                     fresh: false,
                                 });
                             }
+                            // As the command does, for the account picked
+                            // in the window: the question comes first.
+                            (true, settings::REMOVE, Some(account))
+                                if self.can_remove_account(env) =>
+                            {
+                                let name = account.name.clone();
+                                self.ask_remove(env, &name, out);
+                            }
                             _ => {}
                         }
                         self.settings_answered(None);
@@ -165,7 +174,7 @@ impl State {
 
     /// The host is owed the settings again, with why the last change was
     /// not made if it was not.
-    fn settings_answered(&mut self, refused: Option<String>) {
+    pub(super) fn settings_answered(&mut self, refused: Option<String>) {
         if let Some(window) = &mut self.settings {
             window.refused = refused;
             window.answers += 1;

@@ -29,10 +29,12 @@ use crate::outgoing::{Handed, InviteAnswer, Response, SendRequest};
 use crate::palette::{self, Item, Palette, What};
 
 mod mouse;
+mod remove;
 mod settings;
 mod sheet;
 use quill_host::bridge::{FormUsed, SettingsUsed};
 
+pub use self::remove::{REMOVING, RemovePrompt, YES as REMOVE_YES};
 pub use self::settings::SettingsWindow;
 use crate::settings::Applied;
 
@@ -1256,6 +1258,11 @@ pub struct State {
     spell: Spell,
     /// The question to answer before unsubscribing from a list.
     pub unsubscribe: Option<UnsubscribePrompt>,
+    /// The question to answer before an account is removed.
+    pub remove: Option<RemovePrompt>,
+    /// The service has been asked what removing an account would lose,
+    /// and has not said yet: the question follows its answer.
+    remove_asked: bool,
     /// The message being written, in the reader's place.
     pub compose: Option<Compose>,
     /// A message the store worker has prepared to write, opened at the end
@@ -1360,6 +1367,8 @@ impl State {
             after_vim: None,
             spell: Spell::default(),
             unsubscribe: None,
+            remove: None,
+            remove_asked: false,
             compose: None,
             compose_pending: None,
             respond_pending: None,
@@ -1419,6 +1428,9 @@ impl State {
         }
         if self.unsubscribe.is_some() {
             return Context::Unsubscribe;
+        }
+        if self.remove.is_some() {
+            return Context::RemoveAccount;
         }
         if self.setup.is_some() {
             return Context::Setup;
@@ -1803,6 +1815,13 @@ impl State {
             // A question with two answers, enter and esc. A letter is
             // neither, and must not run a command behind it.
             Context::Unsubscribe if matches!(chord.key, Key::Char(_)) => return,
+            // In a sheet of the host's it is answered there, and a letter
+            // typed here must not answer what is not on this screen. Drawn
+            // here, one letter says yes and no other does anything.
+            Context::RemoveAccount if self.form_hosted && matches!(chord.key, Key::Char(_)) => {
+                return;
+            }
+            Context::RemoveAccount if self.answer_remove_key(chord, out) => return,
             _ => {}
         }
         self.pending.push(chord);
@@ -2240,6 +2259,11 @@ impl State {
                     self.close_account(env, account, out);
                 }
             }
+            CommandId::AccountRemove => {
+                if let Some(name) = self.chosen_account().map(|account| account.name.clone()) {
+                    self.ask_remove(env, &name, out);
+                }
+            }
             CommandId::AccountSignIn => {
                 out.accounts.push(AccountRequest::SignIn {
                     account: self.current_account().map(|account| account.name.clone()),
@@ -2510,6 +2534,9 @@ impl State {
             _ if context == Context::Unsubscribe => {
                 matches!(id, CommandId::NavBack | CommandId::HelpToggle)
             }
+            _ if context == Context::RemoveAccount => {
+                matches!(id, CommandId::NavBack | CommandId::HelpToggle)
+            }
             CommandId::ComposeTemplate => {
                 !env.templates.is_empty()
                     && self.compose.as_ref().is_some_and(|compose| {
@@ -2541,6 +2568,10 @@ impl State {
                 .any(|id| DraftId::from_message_id(*id).is_none()),
             CommandId::AccountAdd => env.accounts,
             CommandId::AccountSignIn => env.accounts && !self.accounts.is_empty(),
+            // The account the accounts pane is on, and no other.
+            CommandId::AccountRemove => {
+                self.can_remove_account(env) && self.chosen_account().is_some()
+            }
             // Only where there is a server to ask: not the demo mailbox.
             CommandId::MailboxSync => env.accounts && !self.accounts.is_empty(),
             // Only on an account that is closed, and on an open one or
@@ -2591,6 +2622,7 @@ impl State {
                     || self.suggestions.is_some()
                     || self.hooks.is_some()
                     || self.unsubscribe.is_some()
+                    || self.remove.is_some()
                     || self.compose.is_some()
                     || self.setup.is_some()
                     || self.sign_in.is_some()
@@ -2688,6 +2720,7 @@ impl State {
                 | Context::SignIn
                 | Context::When
                 | Context::Unsubscribe
+                | Context::RemoveAccount
                 | Context::Setup
         ) {
             return;
@@ -2880,6 +2913,9 @@ impl State {
             // Nothing was snoozed or sent.
         } else if self.unsubscribe.take().is_some() {
             // Nothing was asked of the list, written or opened.
+        } else if self.remove.is_some() {
+            // The account stays, unless it is already being removed.
+            self.cancel_remove();
         } else if self.sign_in.is_some() {
             self.give_up_sign_in(out);
         } else if let Some(setup) = &mut self.setup {
@@ -4027,6 +4063,14 @@ impl State {
             }
             AccountEvent::Settings { read, changed } => {
                 self.on_settings_read(env, read, changed, out);
+                return;
+            }
+            AccountEvent::RemoveAsked { account, found } => {
+                self.on_remove_asked(account, found);
+                return;
+            }
+            AccountEvent::Removed { account, result } => {
+                self.on_removed(account, result, out);
                 return;
             }
             AccountEvent::Unsubscribed { host, result } => {
