@@ -9,6 +9,10 @@ ignore = [
     # A two-macro crate, archived because the standard library now has
     # `pin!`. Not a vulnerability. async-imap still depends on it.
     { id = "RUSTSEC-2026-0441", reason = "unmaintained, not vulnerable; pulled in by async-imap" },
+    # chrono, said to be unmaintained on 2026-11-17. Not a vulnerability,
+    # and there is no version to move to. Quill's own dates are jiff's;
+    # this one is async-imap's, for the dates in what a server sends.
+    { id = "RUSTSEC-2026-0543", reason = "unmaintained, not vulnerable; pulled in by async-imap" },
 ]
 
 [licenses]
