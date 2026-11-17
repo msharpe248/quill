@@ -1022,3 +1022,13 @@ The owner added a Gmail account with their Google password, twice, and was refus
 - **Not verified, and cannot be here:** a sign-in at Google itself, and Gmail's IMAP and SMTP taking the token. Everything up to the browser is tested against stand-ins; the rest needs the owner's client ID and their account. Saving a Google account starts its syncing, which connects to Google's servers, so no test and no scripted run saves one: the form was looked at in the app as far as the fields and what it says when they are empty.
 - **A test that failed once:** the mailbox lock's test asked for the lock again the instant it was dropped, and lost a race with another test starting a program (which holds a copy of every open file until the program takes its place). It now allows a moment. Only the test was at fault: Quill's own children are started the same way and let go of the file as they start.
 
+## From is a list to choose from (2026-11-16)
+
+The owner, with three accounts: "I think you should have a drop down of outbound methods to send from... if I am replying to a [work] email it should set that by default, if I am replying to a gmail mail, it should set that by default."
+
+- **The default was already so**: a reply or a forward goes from the account its message came to, whichever mailbox is in view (now held by a test over every inbox together), and a new message from the account in view. And `←`/`→` on From already changed it. Nothing on the screen said either.
+- **From is now drawn as a list** when there is more than one account (`▾` after it, always, not only with the cursor there), and opens as one: `space` on the field, or a click on it from anywhere in the message. The accounts are listed under the field by name and address, with a mark by the one in use; arrows and `enter` (or `tab`, `space`, a click) take one, `esc` or a click elsewhere puts the list away. `←`/`→` still change it without the list. `space` no longer steps to the next account: it opens the list.
+- **One list for "how it is sent"**: an account has one sending server, so the account is the outbound method. There is no separate choice of server.
+- **Drawn in the terminal, in the app too**: the message is the core's to draw, and a list under a field is what the people on offer under an address already are. With an editor in the text's place the list covers its top rows as that one does (`rows_over`), which matters from five accounts up.
+- **Seen in the app** (a separate build, demo mailbox with its two accounts): a reply opening from the account its message came to, a click on From opening the list, and an account taken from it with the keyboard.
+

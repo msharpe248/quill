@@ -3,7 +3,7 @@ source: crates/quill-tui/tests/snapshots.rs
 expression: harness.screen()
 ---
 ┌ [1] Accounts ──┐┏ [3] Reply ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-│> Unified    12 │┃ From:    robin@example.com  (Work)                         ┃
+│> Unified    12 │┃ From:    robin@example.com  (Work) ▾                       ┃
 │  ▾ Work        │┃ To:      Ana Ruiz <ana.ruiz@example.com>                   ┃
 │    Inbox     8 │┃ Cc:                                                        ┃
 │    Drafts      │┃ Subject: Re: Q4 roadmap                                    ┃

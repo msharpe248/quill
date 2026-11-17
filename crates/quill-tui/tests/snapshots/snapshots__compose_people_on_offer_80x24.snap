@@ -3,7 +3,7 @@ source: crates/quill-tui/tests/snapshots.rs
 expression: harness.screen()
 ---
 ┌ [1] Accounts ──┐┏ [3] New message ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-│> Unified    12 │┃ From:    robin@example.com  (Work)                         ┃
+│> Unified    12 │┃ From:    robin@example.com  (Work) ▾                       ┃
 │  ▾ Work        │┃ To:      r                                                 ┃
 │    Inbox     8 │┃ Cc:        Ana Ruiz <ana.ruiz@example.com>                 ┃
 │    Drafts      │┃ Subject: > Riverside Library <holds@example.com>           ┃

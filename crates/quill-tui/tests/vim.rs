@@ -1206,6 +1206,24 @@ fn in_the_app_the_editor_gives_way_to_whatever_quill_draws_over_it() {
     harness.keys("escape");
     assert_eq!(harness.state.editor_spot(&harness.env).covered, 0);
 
+    // The list of accounts under From is the same: with the two accounts
+    // there are it ends above the editor, and a longer one would be
+    // drawn over its top rows, past To, Cc, the subject and the rule.
+    harness.keys("shift-tab shift-tab space");
+    assert_eq!(field(&harness), Field::From);
+    let spot = harness.state.editor_spot(&harness.env);
+    assert_eq!(
+        (spot.place, spot.covered, spot.keys),
+        (Some(place), 0, false)
+    );
+    harness.state.compose.as_mut().unwrap().choosing = Some(quill_tui::compose::AccountChoice {
+        selected: 0,
+        count: 6,
+    });
+    assert_eq!(harness.state.editor_spot(&harness.env).covered, 2);
+    harness.keys("escape");
+    assert_eq!(harness.state.editor_spot(&harness.env).covered, 0);
+
     // The help is drawn over the pane: the editor is not on show, and
     // has no keys, until the help has gone.
     harness.keys("cmd-down");

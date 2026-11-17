@@ -3,7 +3,7 @@ source: crates/quill-tui/tests/webreading.rs
 expression: harness.screen()
 ---
 ┌ [1] Accounts ────────────┐┏ [3] Reply ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-│> Unified              11 │┃ From:    robin.vale@example.com  (Personal)                                                                                                                              ┃
+│> Unified              11 │┃ From:    robin.vale@example.com  (Personal) ▾                                                                                                                            ┃
 │  ▾ Work                  │┃ To:      Peter Vale <peter.vale@example.com>                                                                                                                             ┃
 │    Inbox               8 │┃ Cc:                                                                                                                                                                      ┃
 │    Drafts                │┃ Subject: Re: Sunday dinner                                                                                                                                               ┃

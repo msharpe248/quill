@@ -3,7 +3,7 @@ source: crates/quill-tui/tests/snapshots.rs
 expression: harness.screen()
 ---
 ┌ [1] Accounts ────────────┐┌ [2] Inbox (unified) - 12 unread ───────────────────────────────────────────────────┐┏ [3] New message ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-│> Unified              12 ││> * @ W Ana Ruiz              Q4 roadmap                                       09:14│┃ From:    robin@example.com  (Work)                                                 ┃
+│> Unified              12 ││> * @ W Ana Ruiz              Q4 roadmap                                       09:14│┃ From:    robin@example.com  (Work) ▾                                               ┃
 │  ▾ Work                  ││      W Build Bot             [quill] PR #42 passed                            08:51│┃ To:      Priya Nair <priya.nair@example.com>,                                      ┃
 │    Inbox               8 ││  *   P Peter Vale            Sunday dinner                                    08:35│┃ Cc:                                                                                ┃
 │    Drafts                ││  *   P Maya Okafor           Trail run Saturday                               04:30│┃ Subject: Lunch on Thursday                                                         ┃

@@ -80,6 +80,16 @@ pub struct Completion {
     pub selected: usize,
 }
 
+/// The list of accounts to send from, open under the From field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AccountChoice {
+    /// Which of the accounts the cursor is on, in the order they are
+    /// listed in.
+    pub selected: usize,
+    /// How many there are: how many rows the list takes.
+    pub count: usize,
+}
+
 /// What a key did in compose.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Did {
@@ -122,6 +132,9 @@ pub struct Compose {
     pub replied_to: Option<i64>,
     pub attachments: Vec<DraftAttachment>,
     pub completion: Option<Completion>,
+    /// The list of accounts to send from, while it is open under the
+    /// From field.
+    pub choosing: Option<AccountChoice>,
     /// A line being typed to name a file to attach.
     pub attaching: Option<LineInput>,
     /// Things to look at before the message goes ("there is no subject").
@@ -165,6 +178,7 @@ impl Compose {
             replied_to: content.replied_to,
             attachments: content.attachments,
             completion: None,
+            choosing: None,
             attaching: None,
             doubts: Vec::new(),
             error: prefill.note,
@@ -234,8 +248,41 @@ impl Compose {
     }
 
     /// `tab` and `shift-tab`.
+    /// Opens the list of accounts to send from under the From field, with
+    /// the cursor on the one the message goes from now; or puts it away if
+    /// it is open. With one account there is nothing to choose.
+    pub fn toggle_accounts(&mut self, accounts: &[LocalAccountId]) {
+        if self.choosing.take().is_some() || accounts.len() < 2 {
+            return;
+        }
+        self.completion = None;
+        self.attaching = None;
+        self.field = Field::From;
+        self.choosing = Some(AccountChoice {
+            selected: accounts
+                .iter()
+                .position(|account| *account == self.account)
+                .unwrap_or(0),
+            count: accounts.len(),
+        });
+    }
+
+    /// Sends the message from the account at `index` of the list, and
+    /// puts the list away.
+    pub fn choose_account(&mut self, index: usize, accounts: &[LocalAccountId]) {
+        self.choosing = None;
+        if let Some(account) = accounts.get(index)
+            && *account != self.account
+        {
+            self.account = *account;
+            self.touched = true;
+            self.doubts.clear();
+        }
+    }
+
     pub fn move_field(&mut self, forward: bool) {
         self.completion = None;
+        self.choosing = None;
         self.field = self.field.step(forward);
         // Bcc is out of the way until it is asked for or has something
         // in it.
@@ -247,6 +294,7 @@ impl Compose {
     /// Brings up the Bcc field, with the cursor in it.
     pub fn show_bcc(&mut self) {
         self.completion = None;
+        self.choosing = None;
         self.attaching = None;
         self.field = Field::Bcc;
     }
@@ -323,6 +371,7 @@ impl Compose {
     /// Puts the cursor in the text, from wherever it is.
     pub fn go_to_body(&mut self) {
         self.completion = None;
+        self.choosing = None;
         self.attaching = None;
         self.field = Field::Body;
     }
@@ -530,10 +579,34 @@ impl Compose {
             }
         }
 
+        // The accounts to send from, listed under the From field: arrows
+        // choose, enter, tab or space takes, esc puts the list away. No
+        // other key does anything while it is open.
+        if let Some(choice) = &mut self.choosing {
+            let count = choice.count.min(accounts.len()).max(1);
+            match chord.key {
+                Key::Down if plain => choice.selected = (choice.selected + 1) % count,
+                Key::Up if plain => choice.selected = (choice.selected + count - 1) % count,
+                Key::Enter | Key::Tab | Key::Char(' ') if plain => {
+                    let chosen = choice.selected;
+                    self.choose_account(chosen, accounts);
+                }
+                Key::Esc => self.choosing = None,
+                Key::Char(_) | Key::Left | Key::Right | Key::Backspace | Key::Delete => {}
+                _ => return Did::Nothing,
+            }
+            return Did::Handled;
+        }
+
         match self.field {
             Field::From => match chord.key {
-                // Which account the message goes from.
-                Key::Left | Key::Right | Key::Char(' ') if plain && accounts.len() > 1 => {
+                // The list of accounts, to choose from.
+                Key::Char(' ') if plain && accounts.len() > 1 => {
+                    self.toggle_accounts(accounts);
+                    Did::Handled
+                }
+                // The next account or the one before, without the list.
+                Key::Left | Key::Right if plain && accounts.len() > 1 => {
                     let at = accounts
                         .iter()
                         .position(|account| *account == self.account)
@@ -829,6 +902,80 @@ mod tests {
         assert_eq!(type_text(&mut compose, "x"), Did::Handled);
         let only = compose.key("right".parse().unwrap(), &[HOME]);
         assert_eq!((only, compose.account), (Did::Nothing, HOME));
+    }
+
+    #[test]
+    fn the_from_field_opens_a_list_of_the_accounts_to_choose_from() {
+        const CLUB: LocalAccountId = LocalAccountId(3);
+        let accounts = [WORK, HOME, CLUB];
+        let key = |compose: &mut Compose, keys: &str| -> Vec<Did> {
+            keys.split_whitespace()
+                .map(|key| compose.key(key.parse().unwrap(), &accounts))
+                .collect()
+        };
+        let mut compose = blank();
+        compose.field = Field::From;
+        assert_eq!(compose.choosing, None);
+        // Space opens the list, on the account the message goes from.
+        assert_eq!(key(&mut compose, "space"), [Did::Handled]);
+        assert_eq!(
+            compose.choosing,
+            Some(AccountChoice {
+                selected: 0,
+                count: 3
+            })
+        );
+        // The arrows move through it, round the ends, and choose nothing.
+        key(&mut compose, "up");
+        assert_eq!(compose.choosing.map(|choice| choice.selected), Some(2));
+        key(&mut compose, "down down");
+        assert_eq!(compose.choosing.map(|choice| choice.selected), Some(1));
+        assert_eq!(compose.account, WORK);
+        // Letters and the sideways arrows do nothing while it is open,
+        // and are not typed anywhere.
+        assert_eq!(
+            key(&mut compose, "x left right"),
+            [Did::Handled, Did::Handled, Did::Handled]
+        );
+        assert_eq!(compose.account, WORK);
+        assert!(compose.to.is_empty());
+        // Enter takes the one the cursor is on, and puts the list away.
+        key(&mut compose, "enter");
+        assert_eq!((compose.account, compose.choosing), (HOME, None));
+        assert_eq!(compose.field, Field::From);
+        // Opened again, it starts on that one; esc changes nothing.
+        key(&mut compose, "space down");
+        assert_eq!(compose.choosing.map(|choice| choice.selected), Some(2));
+        key(&mut compose, "esc");
+        assert_eq!((compose.account, compose.choosing), (HOME, None));
+        // Space and tab take as enter does.
+        key(&mut compose, "space down space");
+        assert_eq!((compose.account, compose.choosing), (CLUB, None));
+        key(&mut compose, "space down tab");
+        assert_eq!((compose.account, compose.choosing), (WORK, None));
+        // Leaving the field puts the list away.
+        key(&mut compose, "space");
+        compose.move_field(true);
+        assert_eq!((compose.field, compose.choosing), (Field::To, None));
+        // A click does what space does, from any field, and again closes.
+        compose.toggle_accounts(&accounts);
+        assert_eq!(
+            (compose.field, compose.choosing.is_some()),
+            (Field::From, true)
+        );
+        compose.toggle_accounts(&accounts);
+        assert_eq!(compose.choosing, None);
+        compose.toggle_accounts(&accounts);
+        compose.choose_account(1, &accounts);
+        assert_eq!((compose.account, compose.choosing), (HOME, None));
+        // A row there is not chooses nothing.
+        compose.choose_account(9, &accounts);
+        assert_eq!(compose.account, HOME);
+        // With one account there is no list to open.
+        compose.field = Field::From;
+        assert_eq!(compose.key("space".parse().unwrap(), &[HOME]), Did::Handled);
+        compose.toggle_accounts(&[HOME]);
+        assert_eq!(compose.choosing, None);
     }
 
     #[test]

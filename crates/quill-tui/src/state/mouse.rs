@@ -5,6 +5,7 @@
 //! selection or the same command a key would have reached. Where the
 //! pointer is, is worked out from the same layout the views draw with.
 
+use quill_core::types::LocalAccountId;
 use ratatui::layout::{Position, Rect};
 
 use super::{Effects, Env, HostRequest, Motion, Notice, Pane, State, step};
@@ -182,12 +183,31 @@ impl State {
     }
 
     fn mouse_in_compose(&mut self, rect: Option<Rect>, mouse: Mouse, wheel: Option<Motion>) {
+        let accounts: Vec<LocalAccountId> =
+            self.accounts.iter().map(|account| account.id).collect();
         let (Some(rect), Some(compose)) = (rect, &mut self.compose) else {
             return;
         };
         // Being sent, or all of it in an editor: there is nothing here to
         // point at.
         if compose.sending || !compose.fields_in_reach() {
+            return;
+        }
+        // The list of accounts is open under the From field: a click on
+        // one of them sends the message from it, and a click anywhere
+        // else puts the list away and is that click and no more.
+        if let Some(choice) = compose.choosing {
+            if mouse.kind == MouseKind::Press {
+                let listed = mouse
+                    .row
+                    .checked_sub(rect.y + 2)
+                    .map(usize::from)
+                    .filter(|row| *row < choice.count);
+                match listed {
+                    Some(index) => compose.choose_account(index, &accounts),
+                    None => compose.choosing = None,
+                }
+            }
             return;
         }
         let body = layout::compose_body(rect, compose);
@@ -249,6 +269,11 @@ impl State {
                     compose.field = *field;
                     compose.completion = None;
                     compose.attaching = None;
+                    // A click on From opens its list, as a click on a
+                    // pop-up menu does.
+                    if *field == Field::From {
+                        compose.toggle_accounts(&accounts);
+                    }
                 }
             }
             _ => {}

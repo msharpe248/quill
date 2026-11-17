@@ -623,6 +623,135 @@ fn the_from_field_chooses_the_account() {
     );
 }
 
+/// Where `needle` first is on the screen.
+fn find(harness: &Harness, needle: &str) -> (u16, u16) {
+    for (row, line) in harness.screen().lines().enumerate() {
+        if let Some(at) = line.find(needle) {
+            let column = quill_tui::text::width(&line[..at]);
+            return (column as u16, row as u16);
+        }
+    }
+    panic!("{needle:?} is not on screen:\n{}", harness.screen());
+}
+
+fn click(harness: &mut Harness, (column, row): (u16, u16)) {
+    harness.act(Action::Mouse(quill_tui::state::Mouse {
+        kind: quill_tui::state::MouseKind::Press,
+        column,
+        row,
+    }));
+}
+
+#[test]
+fn a_reply_goes_from_the_account_the_message_came_to_whichever_is_in_view() {
+    // Every inbox together: each reply still goes from the account its
+    // message came to, and a new message from the first.
+    let mut harness = wide();
+    assert_eq!(harness.state.mailbox_title(), "Inbox (unified)");
+    let accounts = harness.store.accounts().unwrap();
+    let name_of = |id| {
+        accounts
+            .iter()
+            .find(|account| account.id == id)
+            .unwrap()
+            .name
+            .clone()
+    };
+    let mut seen = std::collections::BTreeSet::new();
+    for _ in 0..6 {
+        let came_to = name_of(harness.state.list.rows[harness.state.list.selected].account);
+        harness.keys("r");
+        assert_eq!(harness.state.context(), Context::Compose);
+        assert!(
+            harness.row_with("From:").contains(&format!("({came_to})")),
+            "{came_to}: {}",
+            harness.row_with("From:")
+        );
+        seen.insert(came_to);
+        harness.keys("esc j");
+    }
+    // Both accounts' mail was among them.
+    assert_eq!(seen.len(), 2, "{seen:?}");
+    // A forward likewise.
+    let came_to = name_of(harness.state.list.rows[harness.state.list.selected].account);
+    harness.keys("f");
+    assert!(harness.row_with("From:").contains(&format!("({came_to})")));
+}
+
+#[test]
+fn the_from_field_is_a_list_of_the_accounts_to_send_from() {
+    let mut harness = wide();
+    write_to_priya(&mut harness);
+    // With more than one account it is marked as something to choose
+    // from, whether or not the cursor is in it.
+    assert!(
+        harness.row_with("From:").contains("(Work) ▾"),
+        "{}",
+        harness.row_with("From:")
+    );
+    harness.keys("shift-tab shift-tab shift-tab shift-tab");
+    assert_eq!(harness.state.compose.as_ref().unwrap().field, Field::From);
+    // Space lists them under the field, each by its name and address,
+    // with a mark by the one the message goes from now.
+    harness.keys("space");
+    let screen = harness.screen();
+    assert!(screen.contains("> ✓ Work"), "{screen}");
+    assert!(
+        screen.contains("    Personal  robin.vale@example.com"),
+        "{screen}"
+    );
+    assert!(screen.contains("Work      robin@example.com"), "{screen}");
+    // The message is not changed by looking, and nothing is typed.
+    assert!(harness.row_with("From:").contains("(Work)"));
+    harness.keys("down");
+    assert!(
+        harness.screen().contains(">   Personal"),
+        "{}",
+        harness.screen()
+    );
+    harness.keys("enter");
+    let screen = harness.screen();
+    assert!(
+        harness.row_with("From:").contains("(Personal) ▾"),
+        "{screen}"
+    );
+    assert!(!screen.contains("✓"), "{screen}");
+    assert_eq!(harness.state.compose.as_ref().unwrap().field, Field::From);
+    // esc with the list open puts the list away, not the message.
+    harness.keys("space esc");
+    assert_eq!(harness.state.context(), Context::Compose);
+    assert!(harness.state.compose.as_ref().unwrap().choosing.is_none());
+
+    // A click on the field opens the list, from wherever the cursor is,
+    // and a click on an account takes it.
+    harness.keys("tab tab");
+    let from = find(&harness, "From:");
+    click(&mut harness, (from.0 + 12, from.1));
+    assert!(harness.state.compose.as_ref().unwrap().choosing.is_some());
+    assert!(
+        harness.screen().contains("> ✓ Personal"),
+        "{}",
+        harness.screen()
+    );
+    let work = find(&harness, "Work      robin@example.com");
+    click(&mut harness, work);
+    assert!(harness.row_with("From:").contains("(Work) ▾"));
+    assert!(harness.state.compose.as_ref().unwrap().choosing.is_none());
+    // A click anywhere else with the list open only puts it away.
+    click(&mut harness, (from.0 + 12, from.1));
+    let subject = find(&harness, "Subject:");
+    click(&mut harness, (subject.0 + 12, subject.1 + 6));
+    let compose = harness.state.compose.as_ref().unwrap();
+    assert!(compose.choosing.is_none());
+    assert_eq!(compose.field, Field::From);
+
+    // And it goes from the account chosen.
+    harness.keys("space down enter cmd-enter");
+    let (claimed, raw) = outgoing(&mut harness);
+    assert_eq!(claimed.from, "robin.vale@example.com");
+    assert!(raw.contains("From: <robin.vale@example.com>\r\n"), "{raw}");
+}
+
 #[test]
 fn bcc_is_out_of_the_way_until_asked_for() {
     let mut harness = wide();

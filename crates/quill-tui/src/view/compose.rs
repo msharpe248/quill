@@ -79,16 +79,22 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
             format!("{address}  ({})", account.name)
         });
         let mut spans = vec![label("From:", focused, styles)];
-        if focused && state.accounts.len() > 1 {
-            spans.push(Span::styled("‹ ", styles.dim()));
+        if state.accounts.len() > 1 {
+            // With more than one account to send from, the field is a
+            // list to choose from, and is marked as one.
+            let style = if focused {
+                styles.text().add_modifier(Modifier::BOLD)
+            } else {
+                styles.text()
+            };
             spans.push(Span::styled(
                 text::truncate(
                     &text::sanitize_line(&who),
-                    width.saturating_sub(LABEL_WIDTH + 4),
+                    width.saturating_sub(LABEL_WIDTH + 2),
                 ),
-                styles.text().add_modifier(Modifier::BOLD),
+                style,
             ));
-            spans.push(Span::styled(" ›", styles.dim()));
+            spans.push(Span::styled(" \u{25be}", styles.dim()));
         } else {
             spans.push(Span::styled(
                 text::truncate(
@@ -269,6 +275,58 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         }
     }
 
+    // The accounts to send from, listed under the From field over
+    // whatever is there: each by its name and its address, the cursor on
+    // one, and a mark by the one the message goes from now.
+    if let Some(choice) = &compose.choosing {
+        let names = state
+            .accounts
+            .iter()
+            .map(|account| text::width(&account.name))
+            .max()
+            .unwrap_or(0);
+        for (offset, account) in state.accounts.iter().enumerate() {
+            let y = inner.y + 1 + offset as u16;
+            if y >= bottom {
+                break;
+            }
+            let rect = Rect::new(
+                inner.x + LABEL_WIDTH as u16,
+                y,
+                inner.width.saturating_sub(LABEL_WIDTH as u16),
+                1,
+            );
+            let selected = offset == choice.selected;
+            let current = account.id == compose.account;
+            let line = Line::from(vec![
+                Span::raw(if selected { "> " } else { "  " }),
+                Span::raw(if current { "\u{2713} " } else { "  " }),
+                Span::styled(
+                    text::fit(
+                        &format!(
+                            "{}  {}",
+                            text::fit(&text::sanitize_line(&account.name), names),
+                            text::sanitize_line(&account.address)
+                        ),
+                        usize::from(rect.width).saturating_sub(4),
+                    ),
+                    styles.text(),
+                ),
+            ]);
+            frame.render_widget(ratatui::widgets::Clear, rect);
+            frame.buffer_mut().set_style(rect, styles.base());
+            frame.render_widget(line, rect);
+            frame.buffer_mut().set_style(
+                rect,
+                if selected {
+                    styles.selected(true)
+                } else {
+                    styles.dim()
+                },
+            );
+        }
+    }
+
     // The people on offer, over whatever is under the field.
     if let (Some(completion), Some(under)) = (&compose.completion, popup_under) {
         for (offset, person) in completion.people.iter().enumerate() {
@@ -387,16 +445,23 @@ fn field_row(compose: &Compose, field: Field) -> Option<u16> {
     }
 }
 
-/// How many of the rows of `place`, from its top, the people on offer
-/// under an address being typed are drawn over.
+/// How many of the rows of `place`, from its top, a list drawn under a
+/// field covers: the accounts to send from, under From, or the people on
+/// offer under an address being typed.
 pub fn rows_over(area: Rect, compose: &Compose, place: Rect) -> u16 {
-    let (Some(completion), Some(row)) = (&compose.completion, field_row(compose, compose.field))
-    else {
+    let (row, listed) = if let Some(choice) = &compose.choosing {
+        (field_row(compose, Field::From), choice.count)
+    } else if let Some(completion) = &compose.completion {
+        (field_row(compose, compose.field), completion.people.len())
+    } else {
         return 0;
     };
-    let people = u16::try_from(completion.people.len()).unwrap_or(u16::MAX);
+    let Some(row) = row else {
+        return 0;
+    };
+    let listed = u16::try_from(listed).unwrap_or(u16::MAX);
     // Inside the border, under the field.
-    let end = area.y.saturating_add(1 + row + 1).saturating_add(people);
+    let end = area.y.saturating_add(1 + row + 1).saturating_add(listed);
     end.saturating_sub(place.y).min(place.height)
 }
 
