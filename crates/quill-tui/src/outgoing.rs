@@ -529,6 +529,36 @@ pub enum Response {
 
 /// Takes a draft up again. Mail waiting in the outbox is taken back out of
 /// it first; mail a server has right now cannot be touched.
+/// What is said when a message in the outbox is sent at the user's word.
+pub const SENDING_NOW: &str = "Sending it now.";
+
+/// Sends a message that is in the outbox now, as it is, at the user's
+/// word: one waiting for its time or to be tried again, or one that was
+/// not sent and was waiting for them. The engine is told there is mail to
+/// send.
+pub fn send_now(store: &mut Store, id: DraftId) -> quill_store::Result<Vec<DataEvent>> {
+    let Some(row) = store.draft(id)? else {
+        return Ok(vec![flash("That message is gone.")]);
+    };
+    match row.state {
+        DraftState::Sending => Ok(vec![flash("It is being sent right now.")]),
+        DraftState::Draft => Ok(vec![flash("That is a draft: open it to send it.")]),
+        DraftState::Outbox | DraftState::Failed => {
+            if store.send_now(id, now())? {
+                Ok(vec![
+                    DataEvent::StoreChanged,
+                    DataEvent::Queued,
+                    flash(SENDING_NOW),
+                ])
+            } else {
+                Ok(vec![flash(
+                    "The finished message is missing. Open it and send it again.",
+                )])
+            }
+        }
+    }
+}
+
 pub fn open_draft(store: &mut Store, id: DraftId) -> quill_store::Result<Vec<DataEvent>> {
     let Some(row) = store.draft(id)? else {
         return Ok(vec![flash("That draft is gone.")]);

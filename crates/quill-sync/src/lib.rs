@@ -229,6 +229,13 @@ impl SyncHandle {
     }
 }
 
+/// What is said of a message whose account has no server to send
+/// through.
+const NO_SERVER: &str = "this account has no server to send through. Edit the account to give it one, and the message goes.";
+/// How long such a message waits before it is looked at again. It goes
+/// sooner when the account is given a server: that hurries it.
+const NO_SERVER_WAIT: i64 = 60 * 60;
+
 /// How long after starting the cache is first measured.
 const CACHE_FIRST_LOOK: Duration = Duration::from_secs(120);
 /// And how often after that.
@@ -1247,11 +1254,18 @@ impl Engine {
             false
         };
         let Some(sender) = &account.sender else {
-            return refuse(
-                "this account has no server to send through. Add `smtp = { host = \"...\" }` to it in config.toml."
-                    .to_owned(),
-            )
-            .await;
+            // No server has refused it: it waits for the account to be
+            // given one, and goes then.
+            let retry = now() + NO_SERVER_WAIT;
+            let _ = self
+                .db(move |store| store.send_failed(id, NO_SERVER, Some(retry)))
+                .await;
+            self.emit(SyncEvent::Changed);
+            self.problem(
+                account,
+                format!("A message was not sent and is waiting in the Outbox: {NO_SERVER}"),
+            );
+            return false;
         };
         let blobs = self.blobs.clone();
         let hash = outgoing.raw_hash.clone();

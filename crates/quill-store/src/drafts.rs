@@ -322,6 +322,21 @@ impl Store {
         )?)
     }
 
+    /// Sends a message that is in the outbox now, at the user's word:
+    /// one waiting for its time or to be tried again, or one that was
+    /// not sent and was waiting for them. Returns whether there was such
+    /// a message with everything it takes to send it. One that is being
+    /// sent this moment is left alone.
+    pub fn send_now(&mut self, id: DraftId, now: i64) -> Result<bool> {
+        let changed = self.conn.execute(
+            "UPDATE drafts SET state = 'outbox', send_after = ?2, error = NULL
+             WHERE id = ?1 AND state IN ('outbox', 'failed')
+               AND raw_hash IS NOT NULL AND envelope IS NOT NULL",
+            params![id.0, now],
+        )?;
+        Ok(changed > 0)
+    }
+
     /// When the account's next message is due to go, if any is waiting.
     pub fn next_send_time(&self, account: LocalAccountId) -> Result<Option<i64>> {
         Ok(self

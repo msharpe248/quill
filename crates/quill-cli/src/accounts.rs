@@ -531,6 +531,16 @@ pub fn prepare(
         let id = store.upsert_account(name, &account.address, account.kind.as_str())?;
         accounts.push(sync_account(id, account, imap, secrets, tokens));
     }
+    // Mail that was waiting to be tried again is tried as Quill starts, by
+    // every account that has a way to send: what it waited on may have
+    // been put right since, such as a sending server given to the account
+    // in the settings file.
+    let now = jiff::Timestamp::now().as_second();
+    for account in &accounts {
+        if account.sender.is_some() {
+            store.hurry_sends(account.id, now)?;
+        }
+    }
     if prune {
         let keep: Vec<&str> = config
             .accounts

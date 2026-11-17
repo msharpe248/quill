@@ -214,6 +214,7 @@ pub enum CommandId {
     AccountAdd,
     AccountSignIn,
     AccountRemove,
+    AccountEdit,
     MailboxSync,
     SidebarOpen,
     SidebarClose,
@@ -751,7 +752,9 @@ impl Registry {
                         "Send",
                         Message,
                         Some(Menu::Message),
-                        COMPOSE,
+                        // The message being written, and in the Outbox
+                        // the one the list is on.
+                        PANES_AND_COMPOSE,
                     ),
                     "paperplane",
                 ),
@@ -906,6 +909,14 @@ impl Registry {
                     "person.badge.key",
                 ),
                 spec(
+                    AccountEdit,
+                    "account.edit",
+                    "Edit this account\u{2026}",
+                    General,
+                    Some(Menu::File),
+                    PANES,
+                ),
+                spec(
                     AccountRemove,
                     "account.remove",
                     "Remove this account\u{2026}",
@@ -993,6 +1004,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         hint(&[NavOpen], "open"),
         hint(&[SearchStart], "search"),
         hint(&[MessageCompose], "write"),
+        hint_while_enabled(&[ComposeSend], "send now"),
         hint_while_enabled(&[InviteAccept], "accept"),
         hint_while_enabled(&[InviteDecline], "decline"),
         hint(&[MessageReply], "reply"),

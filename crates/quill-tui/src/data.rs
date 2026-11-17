@@ -143,6 +143,9 @@ pub enum DataRequest {
     AnswerInvite(Box<outgoing::InviteAnswer>),
     /// Take a draft, or mail from the outbox, up again.
     OpenDraft(DraftId),
+    /// Send a message that is in the outbox now, as it is: one waiting
+    /// for its time or to be tried again, or one that was not sent.
+    SendNow(DraftId),
     /// Write a message's attachments where a viewer can read them: all of
     /// them when they are to be looked at, so the viewer can step from one
     /// to the next, and otherwise the one at `part` alone.
@@ -411,6 +414,7 @@ fn run(
         } => outgoing::respond(store, id, how, &date_line, position)?,
         DataRequest::AnswerInvite(answer) => outgoing::answer_invite(store, &answer)?,
         DataRequest::OpenDraft(draft) => outgoing::open_draft(store, draft)?,
+        DataRequest::SendNow(draft) => outgoing::send_now(store, draft)?,
         DataRequest::LoadSidebar => vec![DataEvent::SidebarLoaded {
             accounts: store.accounts()?,
             folders: store.folders()?,

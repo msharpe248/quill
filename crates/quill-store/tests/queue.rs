@@ -1023,6 +1023,35 @@ fn a_send_that_fails_waits_to_retry_or_waits_for_the_user() {
     );
     assert_eq!(rig.store.claim_send(rig.account, 9999).unwrap(), None);
 
+    // At the user's word it goes again as it is, now, with what was
+    // said of it taken back. A message that is not there does not.
+    assert!(rig.store.send_now(draft, 3000).unwrap());
+    let going = &rig.store.outbox().unwrap()[0];
+    assert_eq!(
+        (going.state, going.error.as_deref()),
+        (DraftState::Outbox, None)
+    );
+    assert_eq!(rig.store.claim_send(rig.account, 2999).unwrap(), None);
+    let again = rig.store.claim_send(rig.account, 3000).unwrap().unwrap();
+    assert_eq!(again.id, draft);
+    // Not while it is with the server.
+    assert!(!rig.store.send_now(draft, 3000).unwrap());
+    assert!(
+        !rig.store
+            .send_now(quill_store::DraftId(9999), 3000)
+            .unwrap()
+    );
+    // One waiting for a later try is hurried by the same word.
+    rig.store
+        .send_failed(draft, "451 try again later", Some(9000))
+        .unwrap();
+    assert!(rig.store.send_now(draft, 3100).unwrap());
+    rig.store.claim_send(rig.account, 3100).unwrap().unwrap();
+    rig.store
+        .send_failed(draft, "550 no such user", None)
+        .unwrap();
+    assert_eq!(rig.store.claim_send(rig.account, 9999).unwrap(), None);
+
     // Corrected and saved, it is a draft again and can be sent again.
     let corrected = content("ana.ruiz@example.com", "Hi again");
     assert_eq!(

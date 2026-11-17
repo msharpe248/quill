@@ -261,6 +261,68 @@ impl Service {
                 account: String::new(),
                 result: Err("no sign-in was under way".to_owned()),
             },
+            AccountRequest::EditAsk { account } => {
+                let service = Arc::clone(self);
+                let name = account.clone();
+                // The config file blocks.
+                let found = tokio::task::spawn_blocking(move || service.as_it_is(&name))
+                    .await
+                    .unwrap_or_else(|err| Err(err.to_string()));
+                AccountEvent::EditAsked {
+                    account,
+                    found: found.map(Box::new),
+                }
+            }
+            AccountRequest::VerifyChange {
+                account,
+                draft,
+                password,
+                trusting,
+            } => {
+                // With none typed, the one Quill has is what is tried:
+                // the Keychain blocks.
+                let password = match password {
+                    Some(typed) => Ok(typed.0),
+                    None => {
+                        let service = Arc::clone(self);
+                        tokio::task::spawn_blocking(move || service.kept_password(&account))
+                            .await
+                            .unwrap_or_else(|err| Err(err.to_string()))
+                    }
+                };
+                AccountEvent::Verified(match password {
+                    Ok(password) => verify(&draft, password, &trusting).await,
+                    Err(reason) => Err(VerifyProblem::Password(reason)),
+                })
+            }
+            AccountRequest::Change {
+                account,
+                draft,
+                password,
+                trusting,
+            } => {
+                let service = Arc::clone(self);
+                let name = account.clone();
+                // Files, the Keychain and the store all block.
+                let saved = tokio::task::spawn_blocking(move || {
+                    service.change(
+                        &name,
+                        &draft,
+                        password.as_ref().map(|typed| typed.0.as_str()),
+                        &trusting,
+                    )
+                })
+                .await
+                .unwrap_or_else(|err| Err(err.to_string()));
+                AccountEvent::Saved(saved.map(|changed| {
+                    // It takes the place of the account as it was, whose
+                    // connections are let go of.
+                    self.sync.set_account(changed);
+                    // Mail that was waiting on this goes now.
+                    self.sync.send(quill_sync::SyncRequest::Queue);
+                    account
+                }))
+            }
             AccountRequest::RemoveAsk { account } => {
                 let service = Arc::clone(self);
                 let name = account.clone();
@@ -670,6 +732,166 @@ impl Service {
         ))
     }
 
+    /// The account called `name` if it is one the form can change: one
+    /// that reads its mail over IMAP and signs in with a password, and
+    /// whose sending server, if it has one, signs in with the same name.
+    /// Otherwise why not, in words for the user.
+    fn changeable(&self, name: &str) -> Result<(String, AccountConfig), String> {
+        let (text, _, account) = self.account_named(name)?;
+        if account.kind != AccountType::Imap {
+            return Err(format!(
+                "Its mail is not read over IMAP ({}), which is all this form knows how to \
+                 change. Its settings are in the settings file.",
+                account.kind.as_str()
+            ));
+        }
+        match oauth::setup(&account) {
+            Ok(None) => {}
+            Ok(Some(_)) => {
+                return Err(
+                    "It signs in with its provider, and has no servers or password of its \
+                     own to change. To sign in to it again, use Sign In."
+                        .to_owned(),
+                );
+            }
+            Err(reason) => return Err(sentence(&reason)),
+        }
+        let reading = imap_config(&account).map_err(|reason| sentence(&reason))?;
+        if let Some(sending) = &account.smtp
+            && sending
+                .username
+                .as_ref()
+                .is_some_and(|username| *username != reading.username)
+        {
+            return Err(
+                "Its sending server signs in with a name of its own, which this form does \
+                 not show. Change it in the settings file."
+                    .to_owned(),
+            );
+        }
+        Ok((text, account))
+    }
+
+    /// How the account called `name` is set up now, for the form that
+    /// changes it. Changes nothing.
+    fn as_it_is(&self, name: &str) -> Result<AccountDraft, String> {
+        let (_, account) = self.changeable(name)?;
+        let reading = imap_config(&account).map_err(|reason| sentence(&reason))?;
+        let smtp = account.smtp.as_ref().map(|server| ServerDraft {
+            host: server.host.clone(),
+            port: server.port.unwrap_or(SmtpConfig::default_port(server.tls)),
+            tls: server.tls,
+            username: reading.username.clone(),
+        });
+        Ok(AccountDraft {
+            name: account.name.clone(),
+            address: account.address.clone(),
+            imap: ServerDraft {
+                host: reading.host,
+                port: reading.port,
+                tls: reading.tls,
+                username: reading.username,
+            },
+            smtp,
+        })
+    }
+
+    /// The password Quill has for the account called `name`, for trying
+    /// changed settings with when none was typed.
+    fn kept_password(&self, name: &str) -> Result<String, String> {
+        let (_, account) = self.changeable(name)?;
+        let reading = imap_config(&account).map_err(|reason| sentence(&reason))?;
+        self.secrets
+            .get(&imap_password_name(&reading))
+            .map_err(|err| sentence(&err.to_string()))?
+            .ok_or_else(|| NO_KEPT_PASSWORD.to_owned())
+    }
+
+    /// Writes the account called `name` down as `draft` has it and
+    /// returns it ready to sync in the place of what it was. Its password
+    /// is kept under the name its new settings give it: the one typed,
+    /// or with none typed the one Quill had. Nothing is left half done:
+    /// if the config cannot be written, the Keychain is as it was.
+    fn change(
+        &self,
+        name: &str,
+        draft: &AccountDraft,
+        password: Option<&str>,
+        trusting: &Trusting,
+    ) -> Result<SyncAccount, String> {
+        let (before, old) = self.changeable(name)?;
+        let was = Config::parse(&before).map_err(|err| err.to_string())?;
+        let old_key = imap_password_name(&imap_config(&old)?);
+        let pinned = match trusting {
+            Trusting::Pinned(fingerprint) => Some(fingerprint.as_str()),
+            Trusting::System | Trusting::Once(_) => None,
+        };
+        let after = config_edit::change_account(&before, name, draft, pinned)?;
+        let config = Config::parse(&after).map_err(|err| err.to_string())?;
+        let account = config
+            .accounts
+            .iter()
+            .find(|account| account.name == name)
+            .ok_or("the account is not in config.toml any more")?
+            .clone();
+        let mut imap = imap_config(&account)?;
+        let key = imap_password_name(&imap);
+
+        let password = match password {
+            Some(typed) => typed.to_owned(),
+            None => self
+                .secrets
+                .get(&old_key)
+                .map_err(|err| err.to_string())?
+                .ok_or(NO_KEPT_PASSWORD)?,
+        };
+        // A name no account went by before is this change's to take back.
+        let new_name = !was
+            .accounts
+            .iter()
+            .flat_map(crate::accounts::secret_names)
+            .any(|kept| kept == key);
+        self.secrets
+            .set(&key, &password)
+            .map_err(|err| err.to_string())?;
+        if let Err(err) = config_edit::write(&self.config_file, &after) {
+            if new_name {
+                let _ = self.secrets.delete(&key);
+            }
+            return Err(format!("config.toml cannot be written: {err}"));
+        }
+        // What the account went by and no account goes by now.
+        let kept: Vec<String> = config
+            .accounts
+            .iter()
+            .flat_map(crate::accounts::secret_names)
+            .collect();
+        for gone in crate::accounts::secret_names(&old) {
+            if !kept.contains(&gone) {
+                let _ = self.secrets.delete(&gone);
+                self.secrets.forget(&gone);
+            }
+        }
+        // What was accepted for this run was accepted of the servers the
+        // account had.
+        if let Ok(mut once) = self.trusted_once.lock() {
+            once.retain(|(account, _), _| account != name);
+        }
+        // Trusted for this run only: held here, written nowhere.
+        if let Trusting::Once(fingerprint) = trusting {
+            imap.trust.pinned_sha256 = Some(parse_fingerprint(fingerprint)?);
+        }
+        let id = self.register(&account)?;
+        // Mail that was waiting, for a server to send through or for one
+        // that answers, is tried with the new settings now.
+        self.store
+            .lock()
+            .map_err(|_| "the store is unavailable after an earlier failure".to_owned())?
+            .hurry_sends(id, now())
+            .map_err(|err| err.to_string())?;
+        Ok(sync_account(id, &account, imap, &self.secrets, None))
+    }
+
     /// Writes down an account that signs in with Microsoft and returns it
     /// ready to sync, built as one found in the config at startup is.
     /// Nothing is asked of Microsoft and nothing goes in the Keychain:
@@ -795,6 +1017,10 @@ impl Service {
         Ok(sync_account(id, &account, imap, &self.secrets, tokens))
     }
 }
+
+/// Said when an account is changed with no password typed and Quill has
+/// none kept for it.
+const NO_KEPT_PASSWORD: &str = "Quill has no password kept for this account. Type it here.";
 
 /// Signs in with the draft's settings and `password`, to find out whether
 /// they work. Nothing is kept.
@@ -1039,10 +1265,24 @@ mod tests {
                         .unwrap_or_default()
                         .to_ascii_uppercase();
                     log.lock().unwrap().push(verb.clone());
+                    // A message is taken whole and kept nowhere.
+                    if verb == "DATA" {
+                        let _ = write.write_all(b"354 go on\r\n").await;
+                        while let Ok(Some(line)) = lines.next_line().await {
+                            if line == "." {
+                                break;
+                            }
+                        }
+                        if write.write_all(b"250 2.0.0 taken\r\n").await.is_err() {
+                            break;
+                        }
+                        continue;
+                    }
                     let reply: &[u8] = match verb.as_str() {
                         "EHLO" => b"250-localhost\r\n250 AUTH PLAIN\r\n",
                         "AUTH" if accepts => b"235 2.7.0 welcome\r\n",
                         "AUTH" => b"535 5.7.8 not you\r\n",
+                        "MAIL" | "RCPT" | "RSET" | "NOOP" => b"250 2.0.0 ok\r\n",
                         "QUIT" => b"221 bye\r\n",
                         _ => b"502 not here\r\n",
                     };
@@ -1053,6 +1293,134 @@ mod tests {
             }
         });
         (port, heard)
+    }
+
+    /// The whole of what an account that cannot send is put right by: it
+    /// was added to read mail only, a message written from it waits, and
+    /// the account is then given a server to send through.
+    #[tokio::test]
+    async fn an_account_given_a_sending_server_sends_what_was_waiting_for_one() {
+        let Some(server) = Dovecot::start().await else {
+            return;
+        };
+        let mut rig = Rig::new();
+        let reading = draft(&server, TlsMode::None);
+        assert!(reading.smtp.is_none());
+        let saved = rig
+            .service
+            .handle(AccountRequest::Save {
+                draft: reading.clone(),
+                password: Secret(PASSWORD.to_owned()),
+                trusting: Trusting::System,
+            })
+            .await;
+        assert_eq!(saved, AccountEvent::Saved(Ok("Personal".to_owned())));
+        let account = rig.store.accounts().unwrap()[0].id;
+
+        // A message from it, finished and in the outbox.
+        let raw = "From: robin@example.com\r\nTo: ana.ruiz@example.com\r\nSubject: Waiting\r\n\r\nHello.\r\n";
+        let hash = quill_store::BlobStore::new(rig.dir.path().join("blobs"))
+            .put(raw.as_bytes())
+            .unwrap();
+        let content = quill_store::DraftContent {
+            to: "ana.ruiz@example.com".to_owned(),
+            subject: "Waiting".to_owned(),
+            body: "Hello.".to_owned(),
+            ..Default::default()
+        };
+        let message = rig
+            .store
+            .save_draft(None, account, &content, now())
+            .unwrap()
+            .unwrap();
+        assert!(
+            rig.store
+                .queue_send(
+                    message,
+                    &hash,
+                    USER,
+                    &["ana.ruiz@example.com".to_owned()],
+                    now(),
+                    now(),
+                )
+                .unwrap()
+        );
+        rig.service.sync.send(quill_sync::SyncRequest::Queue);
+        // It cannot go, and waits with the reason: it is not given up on.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            let row = rig.store.draft(message).unwrap().unwrap();
+            if let Some(error) = &row.error {
+                assert!(error.contains("no server to send through"), "{error}");
+                assert_eq!(row.state, quill_store::DraftState::Outbox);
+                break;
+            }
+            let event = tokio::time::timeout_at(deadline, rig.events.recv()).await;
+            assert!(event.is_ok(), "the message was never tried");
+        }
+
+        // The form opens on the account as it is, and is given a server
+        // to send through. No password is typed: the one kept is tried,
+        // at both servers, and both take it.
+        let as_it_is = match rig
+            .service
+            .handle(AccountRequest::EditAsk {
+                account: "Personal".to_owned(),
+            })
+            .await
+        {
+            AccountEvent::EditAsked { found, .. } => *found.unwrap(),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(as_it_is, reading);
+        let (port, heard) = sending_server(true).await;
+        let changed = AccountDraft {
+            smtp: Some(ServerDraft {
+                host: "127.0.0.1".to_owned(),
+                port,
+                tls: TlsMode::None,
+                username: USER.to_owned(),
+            }),
+            ..as_it_is
+        };
+        assert_eq!(
+            rig.service
+                .handle(AccountRequest::VerifyChange {
+                    account: "Personal".to_owned(),
+                    draft: changed.clone(),
+                    password: None,
+                    trusting: Trusting::System,
+                })
+                .await,
+            AccountEvent::Verified(Ok(()))
+        );
+        assert_eq!(*heard.lock().unwrap(), ["EHLO", "AUTH", "QUIT"]);
+        let saved = rig
+            .service
+            .handle(AccountRequest::Change {
+                account: "Personal".to_owned(),
+                draft: changed,
+                password: None,
+                trusting: Trusting::System,
+            })
+            .await;
+        assert_eq!(saved, AccountEvent::Saved(Ok("Personal".to_owned())));
+        assert_eq!(
+            rig.config().accounts[0].smtp.as_ref().unwrap().port,
+            Some(port)
+        );
+
+        // The message goes, through the new server, without being
+        // touched again and without Quill being restarted.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        while rig.store.draft(message).unwrap().is_some() {
+            let event = tokio::time::timeout_at(deadline, rig.events.recv()).await;
+            assert!(event.is_ok(), "the waiting message never went");
+        }
+        let heard = heard.lock().unwrap().clone();
+        assert!(heard.contains(&"DATA".to_owned()), "{heard:?}");
+        // And the account still reads its mail: it is one account still.
+        assert_eq!(rig.store.accounts().unwrap().len(), 1);
     }
 
     #[tokio::test]
@@ -1511,6 +1879,315 @@ mod tests {
         assert!(rig.store.accounts().unwrap().is_empty());
         assert_eq!(secrets(&all), [false, false, false, false]);
         let _ = &mut rig;
+    }
+
+    /// An account whose servers are this computer's, at ports nothing
+    /// listens on: syncing it reaches nobody.
+    const CHANGEABLE: &str = "# My accounts.\n[[account]]\nname = \"Work\"\ntype = \"imap\"\n\
+        address = \"robin@example.com\"\nsignature = \"Robin\" # as I sign\n\
+        imap = { host = \"127.0.0.1\", port = 1, tls = \"none\" }\n";
+
+    fn changed_draft() -> AccountDraft {
+        AccountDraft {
+            name: "Work".to_owned(),
+            address: "robin@example.com".to_owned(),
+            imap: ServerDraft {
+                host: "localhost".to_owned(),
+                port: 1,
+                tls: TlsMode::None,
+                username: "robin".to_owned(),
+            },
+            smtp: Some(ServerDraft {
+                host: "127.0.0.1".to_owned(),
+                port: 2,
+                tls: TlsMode::None,
+                username: "robin".to_owned(),
+            }),
+        }
+    }
+
+    #[tokio::test]
+    async fn an_account_is_shown_as_it_is_and_changed_with_its_password_following_it() {
+        let rig = Rig::new();
+        write_config(&rig, CHANGEABLE);
+        rig.secrets
+            .set("imap:robin@example.com@127.0.0.1", "hunter2")
+            .unwrap();
+
+        // As it is: what the file says, with what it leaves unsaid.
+        let found = match rig
+            .service
+            .handle(AccountRequest::EditAsk {
+                account: "Work".to_owned(),
+            })
+            .await
+        {
+            AccountEvent::EditAsked { account, found } => {
+                assert_eq!(account, "Work");
+                *found.unwrap()
+            }
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(
+            found,
+            AccountDraft {
+                name: "Work".to_owned(),
+                address: "robin@example.com".to_owned(),
+                imap: ServerDraft {
+                    host: "127.0.0.1".to_owned(),
+                    port: 1,
+                    tls: TlsMode::None,
+                    username: "robin@example.com".to_owned(),
+                },
+                smtp: None,
+            }
+        );
+        assert_eq!(config_text(&rig), CHANGEABLE);
+
+        // Changed, with no password typed: the one Quill had goes with
+        // the account to its new name, and the old name is let go of.
+        let saved = rig
+            .service
+            .handle(AccountRequest::Change {
+                account: "Work".to_owned(),
+                draft: changed_draft(),
+                password: None,
+                trusting: Trusting::System,
+            })
+            .await;
+        assert_eq!(saved, AccountEvent::Saved(Ok("Work".to_owned())));
+        let text = config_text(&rig);
+        // Everything else the file said is still said.
+        assert!(text.starts_with("# My accounts.\n"), "{text}");
+        assert!(text.contains("signature = \"Robin\" # as I sign"), "{text}");
+        assert!(!text.contains("hunter2"), "{text}");
+        let config = rig.config();
+        assert_eq!(config.accounts.len(), 1);
+        let account = &config.accounts[0];
+        let reading = account.imap.as_ref().unwrap();
+        assert_eq!(
+            (reading.host.as_str(), reading.username.as_deref()),
+            ("localhost", Some("robin"))
+        );
+        let sending = account.smtp.as_ref().unwrap();
+        assert_eq!(
+            (sending.host.as_str(), sending.port),
+            ("127.0.0.1", Some(2))
+        );
+        assert_eq!(
+            rig.secrets.get("imap:robin@localhost").unwrap().as_deref(),
+            Some("hunter2")
+        );
+        assert_eq!(
+            rig.secrets.get("imap:robin@example.com@127.0.0.1").unwrap(),
+            None
+        );
+        // It is the account the store had, not a second one.
+        assert_eq!(rig.store.accounts().unwrap().len(), 1);
+
+        // Changed again with a password typed: that is the one kept. The
+        // sending server is taken away again with it.
+        let saved = rig
+            .service
+            .handle(AccountRequest::Change {
+                account: "Work".to_owned(),
+                draft: AccountDraft {
+                    smtp: None,
+                    ..changed_draft()
+                },
+                password: Some(Secret("correct horse".to_owned())),
+                trusting: Trusting::System,
+            })
+            .await;
+        assert_eq!(saved, AccountEvent::Saved(Ok("Work".to_owned())));
+        assert!(rig.config().accounts[0].smtp.is_none());
+        assert_eq!(
+            rig.secrets.get("imap:robin@localhost").unwrap().as_deref(),
+            Some("correct horse")
+        );
+    }
+
+    #[tokio::test]
+    async fn mail_that_waited_on_an_account_is_tried_again_when_it_is_changed() {
+        let mut rig = Rig::new();
+        write_config(&rig, CHANGEABLE);
+        rig.secrets
+            .set("imap:robin@example.com@127.0.0.1", "hunter2")
+            .unwrap();
+        let account = rig.service.register(&rig.config().accounts[0]).unwrap();
+        // A message that waits, with a long time to go before it is
+        // looked at again.
+        let content = quill_store::DraftContent {
+            to: "ana.ruiz@example.com".to_owned(),
+            subject: "Waiting".to_owned(),
+            ..Default::default()
+        };
+        let draft = rig
+            .store
+            .save_draft(None, account, &content, now())
+            .unwrap()
+            .unwrap();
+        assert!(
+            rig.store
+                .queue_send(
+                    draft,
+                    &"ee".repeat(32),
+                    "robin@example.com",
+                    &["ana.ruiz@example.com".to_owned()],
+                    now(),
+                    now(),
+                )
+                .unwrap()
+        );
+        rig.store.claim_send(account, now()).unwrap().unwrap();
+        rig.store
+            .send_failed(draft, "no server before", Some(now() + 86_400))
+            .unwrap();
+
+        let saved = rig
+            .service
+            .handle(AccountRequest::Change {
+                account: "Work".to_owned(),
+                draft: changed_draft(),
+                password: None,
+                trusting: Trusting::System,
+            })
+            .await;
+        assert_eq!(saved, AccountEvent::Saved(Ok("Work".to_owned())));
+        // The engine has it at once, with the account's new settings,
+        // and says how that went: not what was said a day's wait ago.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        loop {
+            let row = rig.store.draft(draft).unwrap().unwrap();
+            if row.error.as_deref() != Some("no server before") {
+                break;
+            }
+            let event = tokio::time::timeout_at(deadline, rig.events.recv()).await;
+            assert!(event.is_ok(), "the waiting message was never tried again");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_account_the_form_cannot_describe_is_not_changed_and_why_is_said() {
+        let rig = Rig::new();
+        let ask = |account: &str| {
+            let service = Arc::clone(&rig.service);
+            let account = account.to_owned();
+            async move {
+                match service.handle(AccountRequest::EditAsk { account }).await {
+                    AccountEvent::EditAsked { found, .. } => found,
+                    other => panic!("{other:?}"),
+                }
+            }
+        };
+        let written = "[[account]]\nname = \"Office\"\ntype = \"graph\"\n\
+            address = \"robin@example.com\"\n\n\
+            [[account]]\nname = \"Signed\"\ntype = \"imap\"\naddress = \"robin@example.org\"\n\
+            auth = \"oauth\"\noauth_client_id = \"an-id\"\noauth_client_secret = \"a-secret\"\n\
+            imap = { host = \"imap.gmail.com\" }\n\n\
+            [[account]]\nname = \"Split\"\ntype = \"imap\"\naddress = \"robin@example.net\"\n\
+            imap = { host = \"127.0.0.1\", port = 1, tls = \"none\" }\n\
+            smtp = { host = \"127.0.0.1\", port = 2, tls = \"none\", username = \"relay\" }\n";
+        write_config(&rig, written);
+        let office = ask("Office").await.unwrap_err();
+        assert!(office.contains("not read over IMAP"), "{office}");
+        let signed = ask("Signed").await.unwrap_err();
+        assert!(signed.contains("signs in with its provider"), "{signed}");
+        let split = ask("Split").await.unwrap_err();
+        assert!(split.contains("a name of its own"), "{split}");
+        let nobody = ask("Nobody").await.unwrap_err();
+        assert!(nobody.contains("no account called Nobody"), "{nobody}");
+
+        // And none of them is changed by being asked to be.
+        for account in ["Office", "Signed", "Split"] {
+            match rig
+                .service
+                .handle(AccountRequest::Change {
+                    account: account.to_owned(),
+                    draft: changed_draft(),
+                    password: Some(Secret("hunter2".to_owned())),
+                    trusting: Trusting::System,
+                })
+                .await
+            {
+                AccountEvent::Saved(Err(_)) => {}
+                other => panic!("{other:?}"),
+            }
+        }
+        assert_eq!(config_text(&rig), written);
+    }
+
+    #[tokio::test]
+    async fn a_change_with_no_password_to_try_or_no_file_to_write_changes_nothing() {
+        let rig = Rig::new();
+        write_config(&rig, CHANGEABLE);
+        // Nothing typed and nothing kept: no server is asked anything.
+        match rig
+            .service
+            .handle(AccountRequest::VerifyChange {
+                account: "Work".to_owned(),
+                draft: changed_draft(),
+                password: None,
+                trusting: Trusting::System,
+            })
+            .await
+        {
+            AccountEvent::Verified(Err(VerifyProblem::Password(reason))) => {
+                assert!(reason.contains("no password kept"), "{reason}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match rig
+            .service
+            .handle(AccountRequest::Change {
+                account: "Work".to_owned(),
+                draft: changed_draft(),
+                password: None,
+                trusting: Trusting::System,
+            })
+            .await
+        {
+            AccountEvent::Saved(Err(reason)) => {
+                assert!(reason.contains("no password kept"), "{reason}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(config_text(&rig), CHANGEABLE);
+
+        // A file that cannot be written: the Keychain is as it was.
+        rig.secrets
+            .set("imap:robin@example.com@127.0.0.1", "hunter2")
+            .unwrap();
+        let folder = rig.service.config_file.parent().unwrap().to_owned();
+        let mut closed = std::fs::metadata(&folder).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut closed, 0o500);
+        std::fs::set_permissions(&folder, closed.clone()).unwrap();
+        let refused = rig
+            .service
+            .handle(AccountRequest::Change {
+                account: "Work".to_owned(),
+                draft: changed_draft(),
+                password: Some(Secret("correct horse".to_owned())),
+                trusting: Trusting::System,
+            })
+            .await;
+        std::os::unix::fs::PermissionsExt::set_mode(&mut closed, 0o700);
+        std::fs::set_permissions(&folder, closed).unwrap();
+        match refused {
+            AccountEvent::Saved(Err(reason)) => {
+                assert!(reason.contains("cannot be written"), "{reason}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(config_text(&rig), CHANGEABLE);
+        assert_eq!(
+            rig.secrets
+                .get("imap:robin@example.com@127.0.0.1")
+                .unwrap()
+                .as_deref(),
+            Some("hunter2")
+        );
+        assert_eq!(rig.secrets.get("imap:robin@localhost").unwrap(), None);
     }
 
     #[tokio::test]

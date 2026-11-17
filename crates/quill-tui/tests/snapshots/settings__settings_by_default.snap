@@ -14,15 +14,16 @@ expression: outline(&window.shown())
    notifications "New mail:": toggle "Show a notification when mail arrives" = true
    threads "Message list:": toggle "List the messages of a conversation together" = true
    web_reading "Reading:": toggle "Read mail in a web pane beside the list" = false
-   more: Rules, saved searches and each account’s servers are set in the settings file. Hooks and templates are files beside it.
+   more: Rules and saved searches are set in the settings file. Hooks and templates are files beside it.
 == Accounts (accounts, at)
    accounts "": list
      action add "Add an Account…"
      action sign_in "Sign In…", of a row
+     action edit "Edit…", of a row
      action remove "Remove…", of a row
      empty: No accounts yet.
-     help: Removing an account takes it out of the settings file and the Keychain, and deletes the copy of its mail kept on this Mac. Mail on its server is not touched.
-   more: Rules, saved searches and each account’s servers are set in the settings file. Hooks and templates are files beside it.
+     help: Edit… changes an account’s servers, the name it signs in with and its password. Removing an account takes it out of the settings file and the Keychain, and deletes the copy of its mail kept on this Mac. Mail on its server is not touched.
+   more: Rules and saved searches are set in the settings file. Hooks and templates are files beside it.
 == Composing (composing, square.and.pencil)
    editor "Write in:": choice = builtin of builtin "Quill’s own editor" | vim "Vim" | nano "nano" | pico "Pico" | mg "mg"
      help: An editor other than Quill’s own is yours, with your own settings for it: Vim reads your vimrc. Takes effect when Quill is next opened.
@@ -31,12 +32,12 @@ expression: outline(&window.shown())
    spell_check "Spelling:": toggle "Check spelling as you type" = true
    undo_send_seconds "Undo send:": number = 10 from 0 to 4294967295 by 1, 0 places, seconds
      help: How long a sent message waits in the Outbox, where it can be taken back. 0 sends at once.
-   more: Rules, saved searches and each account’s servers are set in the settings file. Hooks and templates are files beside it.
+   more: Rules and saved searches are set in the settings file. Hooks and templates are files beside it.
 == Privacy (privacy, hand.raised)
    remote_images "Remote pictures:": choice = ask of ask "Ask for each message" | never "Never load them"
      help: Pictures and other content a message would fetch from the internet. Asked for, nothing is fetched until you say so for a message or for its sender.
-   more: Rules, saved searches and each account’s servers are set in the settings file. Hooks and templates are files beside it.
+   more: Rules and saved searches are set in the settings file. Hooks and templates are files beside it.
 == Storage (storage, internaldrive)
    cache_gb "Keep up to:": number = 5 from 0 to any by 1, 2 places, GB of downloaded mail
      help: Past that the oldest downloaded copies are let go, and fetched again when next opened. 0 is no limit. Mail of a POP3 account is never cleared. Takes effect when Quill is next opened.
-   more: Rules, saved searches and each account’s servers are set in the settings file. Hooks and templates are files beside it.
+   more: Rules and saved searches are set in the settings file. Hooks and templates are files beside it.

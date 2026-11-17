@@ -5,24 +5,24 @@ expression: harness.screen()
 ┌ [1] Accounts ──┐┏ [2] Inbox (unified) - 12 unread ━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 │> Unifi┏ Help: Message list ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓  09:14┃
 │  ▾ Wor┃ Navigation                                                   ┃  08:51┃
-│    Inb┃   j, down                  Next item or line                 ┃  08:35┃
-│    Dra┃   k, up                    Previous item or line             ┃  04:30┃
-│    Sen┃   g g, home                Go to the top                     ┃    Fri┃
-│    Arc┃   G, end                   Go to the bottom                  ┃    Fri┃
-│    Tra┃   space, ctrl-d, pagedown  Page down                         ┃    Fri┃
-│  ▾ Per┃   ctrl-u, pageup           Page up                           ┃    Thu┃
-│    Inb┃   enter                    Open                              ┃    Thu┃
-│    Dra┃   esc, q                   Back, close or dismiss            ┃    Wed┃
+│    Inb┃   j, down                        Next item or line           ┃  08:35┃
+│    Dra┃   k, up                          Previous item or line       ┃  04:30┃
+│    Sen┃   g g, home                      Go to the top               ┃    Fri┃
+│    Arc┃   G, end                         Go to the bottom            ┃    Fri┃
+│    Tra┃   space, ctrl-d, pagedown        Page down                   ┃    Fri┃
+│  ▾ Per┃   ctrl-u, pageup                 Page up                     ┃    Thu┃
+│    Inb┃   enter                          Open                        ┃    Thu┃
+│    Dra┃   esc, q                         Back, close or dismiss      ┃    Wed┃
 │    Sen┃                                                              ┃    Tue┃
 │    Arc┃ Panes                                                        ┃    Mon┃
-│    Tra┃   1                        Focus the accounts pane           ┃    Sun┃
-│       ┃   2                        Focus the message list            ┃ Nov 06┃
-│       ┃   3                        Focus the reader                  ┃ Nov 02┃
-│       ┃   tab                      Focus the next pane or field      ┃ Oct 25┃
-│       ┃   shift-tab                Focus the previous pane or field  ┃ct 2025┃
-│       ┃   \                        Show the accounts pane            ┃       ┃
-│       ┃   z, ctrl-z                Zoom the focused pane             ┃       ┃
-│       ┃   T                        Group or ungroup conversations    ┃       ┃
-│       ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1-19 of 57 ┛       ┃
+│    Tra┃   1                              Focus the accounts pane     ┃    Sun┃
+│       ┃   2                              Focus the message list      ┃ Nov 06┃
+│       ┃   3                              Focus the reader            ┃ Nov 02┃
+│       ┃   tab                            Focus the next pane or fie… ┃ Oct 25┃
+│       ┃   shift-tab                      Focus the previous pane or… ┃ct 2025┃
+│       ┃   \                              Show the accounts pane      ┃       ┃
+│       ┃   z, ctrl-z                      Zoom the focused pane       ┃       ┃
+│       ┃   T                              Group or ungroup conversat… ┃       ┃
+│       ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1-19 of 59 ┛       ┃
 └────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
  j/k scroll  esc close

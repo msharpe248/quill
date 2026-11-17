@@ -1799,10 +1799,31 @@ async fn an_account_with_no_way_to_send_says_so() {
         unreachable!()
     };
     assert!(message.contains("no server to send through"), "{message}");
-    assert_eq!(
-        rig.store.draft(draft).unwrap().unwrap().state,
-        quill_store::DraftState::Failed
+    // No server refused it: it waits, with the reason, and is not given
+    // up on.
+    let waiting = rig.store.draft(draft).unwrap().unwrap();
+    assert_eq!(waiting.state, quill_store::DraftState::Outbox);
+    assert!(
+        waiting
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("no server to send through")),
+        "{waiting:?}"
     );
+
+    // The account is given a server, as when it is edited: what was
+    // waiting is hurried, and goes.
+    let backend = rig.backend.clone();
+    rig.handle.set_account(SyncAccount {
+        sender: Some(Arc::new(rig.post.clone())),
+        ..SyncAccount::reading(rig.account, "Work", Arc::new(backend))
+    });
+    assert_eq!(rig.store.hurry_sends(rig.account, now()).unwrap(), 1);
+    rig.handle.send(SyncRequest::Queue);
+    rig.until(|event| matches!(event, SyncEvent::Sent { .. }))
+        .await;
+    assert_eq!(rig.post.0.lock().unwrap().sent.len(), 1);
+    assert!(rig.store.draft(draft).unwrap().is_none());
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -1148,16 +1148,19 @@ fn an_account_is_added_and_signed_in_to_from_the_window_as_by_its_commands() {
                 "Work".to_owned(),
                 vec!["sign_in".to_owned(), "remove".to_owned()]
             ),
-            ("Home".to_owned(), vec!["remove".to_owned()])
+            (
+                "Home".to_owned(),
+                vec!["edit".to_owned(), "remove".to_owned()]
+            )
         ]
     );
-    assert_eq!(can, ["add", "sign_in", "remove"]);
+    assert_eq!(can, ["add", "sign_in", "edit", "remove"]);
     // And an account picked can be taken away, which is asked about
     // first: `remove.rs` has that.
     match window.field("accounts", "accounts") {
         FormField::List { actions, .. } => {
             let ids: Vec<&str> = actions.iter().map(|action| action.id.as_str()).collect();
-            assert_eq!(ids, ["add", "sign_in", "remove"]);
+            assert_eq!(ids, ["add", "sign_in", "edit", "remove"]);
         }
         other => panic!("{other:?}"),
     }
@@ -1194,7 +1197,7 @@ fn an_account_is_added_and_signed_in_to_from_the_window_as_by_its_commands() {
         account: "Work".to_owned(),
         result: Err("nobody signed in".to_owned()),
     }));
-    assert_eq!(window.accounts().1, ["add", "sign_in", "remove"]);
+    assert_eq!(window.accounts().1, ["add", "sign_in", "edit", "remove"]);
 
     // Add an Account: the form that adds one, in the host's sheet.
     assert!(window.harness.state.setup.is_none());

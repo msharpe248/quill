@@ -28,6 +28,7 @@ use crate::layout;
 use crate::outgoing::{Handed, InviteAnswer, Response, SendRequest};
 use crate::palette::{self, Item, Palette, What};
 
+mod edit;
 mod mouse;
 mod remove;
 mod settings;
@@ -1263,6 +1264,9 @@ pub struct State {
     /// The service has been asked what removing an account would lose,
     /// and has not said yet: the question follows its answer.
     remove_asked: bool,
+    /// The service has been asked how an account is set up, to change
+    /// it, and has not said yet: the form follows its answer.
+    edit_asked: bool,
     /// The message being written, in the reader's place.
     pub compose: Option<Compose>,
     /// A message the store worker has prepared to write, opened at the end
@@ -1369,6 +1373,7 @@ impl State {
             unsubscribe: None,
             remove: None,
             remove_asked: false,
+            edit_asked: false,
             compose: None,
             compose_pending: None,
             respond_pending: None,
@@ -2038,6 +2043,13 @@ impl State {
                     });
                 }
             }
+            // In the Outbox, with no message being written: the one the
+            // list is on goes now, as it is.
+            CommandId::ComposeSend if self.compose.is_none() => {
+                if let Some(draft) = self.outbox_selection() {
+                    out.data.push(DataRequest::SendNow(draft));
+                }
+            }
             // While Vim has the message, what is here is what it was:
             // Vim is asked to send what it has, and its going does the rest.
             CommandId::ComposeSend => match self.vim_dir() {
@@ -2264,6 +2276,11 @@ impl State {
                     self.ask_remove(env, &name, out);
                 }
             }
+            CommandId::AccountEdit => {
+                if let Some(name) = self.chosen_account().map(|account| account.name.clone()) {
+                    self.ask_edit(env, &name, out);
+                }
+            }
             CommandId::AccountSignIn => {
                 out.accounts.push(AccountRequest::SignIn {
                     account: self.current_account().map(|account| account.name.clone()),
@@ -2459,6 +2476,8 @@ impl State {
             // is on its way there or back there is nobody to ask. An
             // editor without Quill's plugin cannot be asked at all: the
             // message is sent once it is back.
+            // In the Outbox, Send is for the message the list is on.
+            CommandId::ComposeSend if self.compose.is_none() => self.outbox_selection().is_some(),
             CommandId::ComposeSend | CommandId::ComposeSave => {
                 self.compose.as_ref().is_some_and(|compose| {
                     !compose.sending
@@ -2572,6 +2591,7 @@ impl State {
             CommandId::AccountRemove => {
                 self.can_remove_account(env) && self.chosen_account().is_some()
             }
+            CommandId::AccountEdit => self.can_edit_account(env) && self.chosen_account().is_some(),
             // Only where there is a server to ask: not the demo mailbox.
             CommandId::MailboxSync => env.accounts && !self.accounts.is_empty(),
             // Only on an account that is closed, and on an open one or
@@ -4073,6 +4093,10 @@ impl State {
                 self.on_removed(account, result, out);
                 return;
             }
+            AccountEvent::EditAsked { account, found } => {
+                self.on_edit_asked(account, found);
+                return;
+            }
             AccountEvent::Unsubscribed { host, result } => {
                 let host = text::sanitize_line(&host);
                 self.notices.push_back(match result {
@@ -4105,6 +4129,10 @@ impl State {
         out.accounts.extend(requests);
         match outcome {
             Outcome::Open => {}
+            Outcome::Changed(name) => {
+                self.setup = None;
+                self.on_account_changed(&name, out);
+            }
             Outcome::Added(name) => {
                 self.setup = None;
                 self.notices.push_back(Notice::info(format!(
@@ -4212,6 +4240,16 @@ impl State {
     /// is on, or whose folder it is on, wherever the keys are. `None` on
     /// a row that is every account's: the unified inbox, the mail kept
     /// only here, a saved search.
+    /// The message the list is on, while the list is the Outbox's: what
+    /// Send is for when no message is being written.
+    fn outbox_selection(&self) -> Option<DraftId> {
+        if self.mailbox != Mailbox::Outbox || self.search.is_some() {
+            return None;
+        }
+        let row = self.list.rows.get(self.list.selected)?;
+        DraftId::from_message_id(row.id)
+    }
+
     fn chosen_account(&self) -> Option<&AccountRow> {
         let id = self.sidebar.account_of(self.sidebar.selected)?;
         self.accounts.iter().find(|account| account.id == id)

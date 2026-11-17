@@ -358,20 +358,26 @@ impl Setup {
                 let server = |field: ServerField, label, input, help| {
                     typed(field.id(), label, input, at == field, help)
                 };
-                fields.push(chosen(
-                    ServerField::Type,
-                    "Type:",
-                    self.kind.id(),
-                    Kind::ALL
-                        .into_iter()
-                        .map(|kind| FormOption {
-                            id: kind.id().to_owned(),
-                            title: kind.label().to_owned(),
-                        })
-                        .collect(),
-                    at == ServerField::Type,
-                ));
-                fields.push(server(ServerField::Name, "Name:", &self.name, None));
+                // An account that is there keeps its kind and its name:
+                // which one it is is said, and neither is asked for.
+                if self.editing.is_some() {
+                    note = self.editing_note();
+                } else {
+                    fields.push(chosen(
+                        ServerField::Type,
+                        "Type:",
+                        self.kind.id(),
+                        Kind::ALL
+                            .into_iter()
+                            .map(|kind| FormOption {
+                                id: kind.id().to_owned(),
+                                title: kind.label().to_owned(),
+                            })
+                            .collect(),
+                        at == ServerField::Type,
+                    ));
+                    fields.push(server(ServerField::Name, "Name:", &self.name, None));
+                }
                 match self.kind {
                     // Signing in as Quill itself: nothing more to fill in.
                     Kind::Microsoft if self.own_application => {
@@ -511,7 +517,13 @@ impl Setup {
                 .unwrap_or_else(|| vec![Press::Reject.button(Some(FormRole::Cancel), true)]),
             step => {
                 let mut buttons = vec![Press::Cancel.button(Some(FormRole::Cancel), true)];
-                if step != Step::Address {
+                // Not at the first step, which for an account being
+                // changed is its servers.
+                let first = match self.editing {
+                    Some(_) => Step::Server,
+                    None => Step::Address,
+                };
+                if step != first {
                     buttons.push(Press::Back.button(None, !waiting));
                 }
                 buttons.push(Press::Continue.button(Some(FormRole::Default), !waiting));
@@ -600,7 +612,13 @@ impl Setup {
             }
             Step::Certificate => {}
             Step::Server => {
-                let value = |field: ServerField| used.value(field.id());
+                // Only what the form showed: an account being changed
+                // was shown neither its name nor its kind.
+                let editing = self.editing.is_some();
+                let value = |field: ServerField| match field {
+                    ServerField::Name | ServerField::Type if editing => None,
+                    field => used.value(field.id()),
+                };
                 put(&mut self.name, value(ServerField::Name));
                 match self.kind {
                     Kind::Microsoft => {

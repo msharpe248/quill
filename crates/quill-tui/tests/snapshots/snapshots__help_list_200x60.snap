@@ -5,60 +5,60 @@ expression: harness.screen()
 ┌ [1] Accounts ────────────┐┏ [2] Inbox (unified) - 12 unread ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓┌ [3] Reader ──────────────────────────────────────────────────── unread, attachment ┐
 │> Unified              12 │┃> * @ W Ana Ruiz              Q4 roadma┏ Help: Message list ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓z <ana.ruiz@example.com>                                           │
 │  ▾ Work                  │┃      W Build Bot             [quill] P┃ Navigation                                                   ┃ale <robin@example.com>                                            │
-│    Inbox               8 │┃  *   P Peter Vale            Sunday di┃   j, down                  Next item or line                 ┃Nov 2026 09:14                                                     │
-│    Drafts                │┃  *   P Maya Okafor           Trail run┃   k, up                    Previous item or line             ┃map                                                                │
-│    Sent                  │┃  * @ W Sam Lee               Photos fr┃   g g, home                Go to the top                     ┃.pdf (937 bytes)  (a lists them)                                   │
-│    Archive               │┃  *   P Riverside Library     Your hold┃   G, end                   Go to the bottom                  ┃                                                                   │
-│    Trash                 │┃  *   W Priya Nair            Re: Offsi┃   space, ctrl-d, pagedown  Page down                         ┃                                                                   │
-│  ▾ Personal              │┃  *!@ W Tomás Ortega          Invoice 2┃   ctrl-u, pageup           Page up                           ┃                                                                   │
-│    Inbox               4 │┃      P Jo Park               Re: Book ┃   enter                    Open                              ┃t roadmap for Q4. The short version: we ship the sync rewrite in   │
-│    Drafts                │┃  *   W 陈静 Chen Jing        Design re┃   esc, q                   Back, close or dismiss            ┃ovember on search, and keep December for whatever the first two    │
+│    Inbox               8 │┃  *   P Peter Vale            Sunday di┃   j, down                        Next item or line           ┃Nov 2026 09:14                                                     │
+│    Drafts                │┃  *   P Maya Okafor           Trail run┃   k, up                          Previous item or line       ┃map                                                                │
+│    Sent                  │┃  * @ W Sam Lee               Photos fr┃   g g, home                      Go to the top               ┃.pdf (937 bytes)  (a lists them)                                   │
+│    Archive               │┃  *   P Riverside Library     Your hold┃   G, end                         Go to the bottom            ┃                                                                   │
+│    Trash                 │┃  *   W Priya Nair            Re: Offsi┃   space, ctrl-d, pagedown        Page down                   ┃                                                                   │
+│  ▾ Personal              │┃  *!@ W Tomás Ortega          Invoice 2┃   ctrl-u, pageup                 Page up                     ┃                                                                   │
+│    Inbox               4 │┃      P Jo Park               Re: Book ┃   enter                          Open                        ┃t roadmap for Q4. The short version: we ship the sync rewrite in   │
+│    Drafts                │┃  *   W 陈静 Chen Jing        Design re┃   esc, q                         Back, close or dismiss      ┃ovember on search, and keep December for whatever the first two    │
 │    Sent                  │┃      W IT Helpdesk           Scheduled┃                                                              ┃                                                                   │
 │    Archive               │┃  *   W Lena Fischer          Lunch on ┃ Panes                                                        ┃                                                                   │
-│    Trash                 │┃  *   P Hillcrest Dental      Appointme┃   1                        Focus the accounts pane           ┃ould like your eyes on before Thursday:                            │
-│                          │┃  *!@ W Omar Haddad           Re: Contr┃   2                        Focus the message list            ┃                                                                   │
-│                          │┃  *   W The Weekly Parser     Issue 88:┃   3                        Focus the reader                  ┃lestone assumes the index format is settled. Is it?                │
-│                          │┃   !@ P Maya Okafor           Recipe yo┃   tab                      Focus the next pane or field      ┃led in two weeks for the offline queue. Tell me if that is         │
-│                          │┃      W Ana Ruiz              Welcome t┃   shift-tab                Focus the previous pane or field  ┃                                                                   │
-│                          │┃                                       ┃   \                        Show the accounts pane            ┃ota over the holidays is still empty.                              │
-│                          │┃                                       ┃   z, ctrl-z                Zoom the focused pane             ┃                                                                   │
-│                          │┃                                       ┃   T                        Group or ungroup conversations    ┃detail, including the dependency chart you asked for. Comments in  │
+│    Trash                 │┃  *   P Hillcrest Dental      Appointme┃   1                              Focus the accounts pane     ┃ould like your eyes on before Thursday:                            │
+│                          │┃  *!@ W Omar Haddad           Re: Contr┃   2                              Focus the message list      ┃                                                                   │
+│                          │┃  *   W The Weekly Parser     Issue 88:┃   3                              Focus the reader            ┃lestone assumes the index format is settled. Is it?                │
+│                          │┃   !@ P Maya Okafor           Recipe yo┃   tab                            Focus the next pane or fie… ┃led in two weeks for the offline queue. Tell me if that is         │
+│                          │┃      W Ana Ruiz              Welcome t┃   shift-tab                      Focus the previous pane or… ┃                                                                   │
+│                          │┃                                       ┃   \                              Show the accounts pane      ┃ota over the holidays is still empty.                              │
+│                          │┃                                       ┃   z, ctrl-z                      Zoom the focused pane       ┃                                                                   │
+│                          │┃                                       ┃   T                              Group or ungroup conversat… ┃detail, including the dependency chart you asked for. Comments in  │
 │                          │┃                                       ┃                                                              ┃ply, whichever is easier.                                          │
 │                          │┃                                       ┃ Message                                                      ┃                                                                   │
-│                          │┃                                       ┃   u                        Mark read or unread               ┃                                                                   │
-│                          │┃                                       ┃   s                        Star or unstar                    ┃                                                                   │
-│                          │┃                                       ┃   t                        Show as HTML or as plain text     ┃                                                                   │
-│                          │┃                                       ┃   o                        Open a link                       ┃                                                                   │
-│                          │┃                                       ┃   e                        Archive                           ┃                                                                   │
-│                          │┃                                       ┃   d                        Delete                            ┃ Corp                                                              │
-│                          │┃                                       ┃   m                        Move to a folder                  ┃                                                                   │
-│                          │┃                                       ┃   b                        Snooze until a time               ┃                                                                   │
-│                          │┃                                       ┃   x                        Select or unselect                ┃                                                                   │
-│                          │┃                                       ┃   V                        Select a range                    ┃                                                                   │
-│                          │┃                                       ┃   ctrl-a                   Select every message listed       ┃                                                                   │
-│                          │┃                                       ┃   a                        List the attachments              ┃                                                                   │
-│                          │┃                                       ┃   B                        Open in the browser               ┃                                                                   │
-│                          │┃                                       ┃   i                        Load remote pictures for this me… ┃                                                                   │
-│                          │┃                                       ┃   I                        Always load remote pictures from… ┃                                                                   │
-│                          │┃                                       ┃   X                        Unsubscribe from this list        ┃                                                                   │
-│                          │┃                                       ┃   |                        Run a hook on this message        ┃                                                                   │
-│                          │┃                                       ┃   y                        Accept the invitation             ┃                                                                   │
-│                          │┃                                       ┃   n                        Decline the invitation            ┃                                                                   │
-│                          │┃                                       ┃   M                        Answer the invitation with maybe  ┃                                                                   │
-│                          │┃                                       ┃   c                        Write a new message               ┃                                                                   │
-│                          │┃                                       ┃   r                        Reply                             ┃                                                                   │
-│                          │┃                                       ┃   R                        Reply to all                      ┃                                                                   │
-│                          │┃                                       ┃   f                        Forward                           ┃                                                                   │
+│                          │┃                                       ┃   u                              Mark read or unread         ┃                                                                   │
+│                          │┃                                       ┃   s                              Star or unstar              ┃                                                                   │
+│                          │┃                                       ┃   t                              Show as HTML or as plain t… ┃                                                                   │
+│                          │┃                                       ┃   o                              Open a link                 ┃                                                                   │
+│                          │┃                                       ┃   e                              Archive                     ┃                                                                   │
+│                          │┃                                       ┃   d                              Delete                      ┃ Corp                                                              │
+│                          │┃                                       ┃   m                              Move to a folder            ┃                                                                   │
+│                          │┃                                       ┃   b                              Snooze until a time         ┃                                                                   │
+│                          │┃                                       ┃   x                              Select or unselect          ┃                                                                   │
+│                          │┃                                       ┃   V                              Select a range              ┃                                                                   │
+│                          │┃                                       ┃   ctrl-a                         Select every message listed ┃                                                                   │
+│                          │┃                                       ┃   a                              List the attachments        ┃                                                                   │
+│                          │┃                                       ┃   B                              Open in the browser         ┃                                                                   │
+│                          │┃                                       ┃   i                              Load remote pictures for t… ┃                                                                   │
+│                          │┃                                       ┃   I                              Always load remote picture… ┃                                                                   │
+│                          │┃                                       ┃   X                              Unsubscribe from this list  ┃                                                                   │
+│                          │┃                                       ┃   |                              Run a hook on this message  ┃                                                                   │
+│                          │┃                                       ┃   y                              Accept the invitation       ┃                                                                   │
+│                          │┃                                       ┃   n                              Decline the invitation      ┃                                                                   │
+│                          │┃                                       ┃   M                              Answer the invitation with… ┃                                                                   │
+│                          │┃                                       ┃   c                              Write a new message         ┃                                                                   │
+│                          │┃                                       ┃   r                              Reply                       ┃                                                                   │
+│                          │┃                                       ┃   R                              Reply to all                ┃                                                                   │
+│                          │┃                                       ┃   f                              Forward                     ┃                                                                   │
+│                          │┃                                       ┃   cmd-enter, ctrl-x, ctrl-enter  Send                        ┃                                                                   │
 │                          │┃                                       ┃                                                              ┃                                                                   │
 │                          │┃                                       ┃ General                                                      ┃                                                                   │
-│                          │┃                                       ┃   q, ctrl-c                Quit                              ┃                                                                   │
-│                          │┃                                       ┃   /, cmd-f                 Search                            ┃                                                                   │
-│                          │┃                                       ┃   ctrl-r, cmd-r            Check for New Mail                ┃                                                                   │
-│                          │┃                                       ┃   :, ctrl-k                Command palette                   ┃                                                                   │
-│                          │┃                                       ┃   U                        Undo the last move, deletion or … ┃                                                                   │
-│                          │┃                                       ┃   A                        Add an account                    ┃                                                                   │
-│                          │┃                                       ┃   S                        Sign in to an account             ┃                                                                   │
-│                          │┃                                       ┃   D                        Remove this account…              ┃                                                                   │
-│                          │┃                                       ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1-55 of 57 ┛                                                                   │
+│                          │┃                                       ┃   q, ctrl-c                      Quit                        ┃                                                                   │
+│                          │┃                                       ┃   /, cmd-f                       Search                      ┃                                                                   │
+│                          │┃                                       ┃   ctrl-r, cmd-r                  Check for New Mail          ┃                                                                   │
+│                          │┃                                       ┃   :, ctrl-k                      Command palette             ┃                                                                   │
+│                          │┃                                       ┃   U                              Undo the last move, deleti… ┃                                                                   │
+│                          │┃                                       ┃   A                              Add an account              ┃                                                                   │
+│                          │┃                                       ┃   S                              Sign in to an account       ┃                                                                   │
+│                          │┃                                       ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1-55 of 59 ┛                                                                   │
 └──────────────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛└────────────────────────────────────────────────────────────────────────────────────┘
  j/k scroll  esc close

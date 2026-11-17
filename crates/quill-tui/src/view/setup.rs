@@ -169,17 +169,24 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         }
         Step::Server if setup.kind == Kind::Google => google(&mut rows, setup, typing),
         Step::Server => {
-            if let Some(note) = &setup.note {
-                rows.dim(note);
-                rows.blank();
-            }
             let at = setup.server_field();
-            rows.choice(
-                "Type:",
-                setup.kind.label(),
-                typing && at == ServerField::Type,
-            );
-            rows.field("Name:", &setup.name, typing && at == ServerField::Name);
+            // An account that is there keeps its kind and its name: which
+            // one it is is said, and neither is asked for.
+            if let Some(which) = setup.editing_note() {
+                rows.dim(&which);
+                rows.blank();
+            } else {
+                if let Some(note) = &setup.note {
+                    rows.dim(note);
+                    rows.blank();
+                }
+                rows.choice(
+                    "Type:",
+                    setup.kind.label(),
+                    typing && at == ServerField::Type,
+                );
+                rows.field("Name:", &setup.name, typing && at == ServerField::Name);
+            }
             rows.field("Server:", &setup.host, typing && at == ServerField::Host);
             rows.field("Port:", &setup.port, typing && at == ServerField::Port);
             rows.choice(

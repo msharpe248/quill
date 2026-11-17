@@ -122,6 +122,7 @@ impl State {
             && self.setup.is_none()
             && self.remove.is_none()
             && !self.remove_asked
+            && !self.edit_asked
     }
 
     /// Has the service say what removing `account` would lose. The

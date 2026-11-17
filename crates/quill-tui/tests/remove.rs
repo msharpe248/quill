@@ -496,7 +496,7 @@ fn the_settings_window_has_a_remove_button_for_the_account_picked() {
     // Every account can be removed, whichever way it signs in, and the
     // button is one for the row picked.
     assert_eq!(rows[0].actions, ["sign_in", "remove"]);
-    assert_eq!(rows[1].actions, ["remove"]);
+    assert_eq!(rows[1].actions, ["edit", "remove"]);
     let remove = actions.iter().find(|action| action.id == "remove").unwrap();
     assert_eq!(
         (remove.title.as_str(), remove.row, remove.enabled),

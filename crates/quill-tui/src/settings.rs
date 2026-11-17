@@ -462,6 +462,8 @@ pub struct Can {
     /// An account can be asked to be removed now: nothing that has an
     /// account in hand is under way.
     pub remove: bool,
+    /// An account can be asked to be changed now.
+    pub edit: bool,
 }
 
 /// The name of the button that imports a theme, in the general pane.
@@ -472,11 +474,12 @@ pub const ACCOUNTS: &str = "accounts";
 pub const ADD: &str = "add";
 pub const SIGN_IN: &str = "sign_in";
 pub const REMOVE: &str = "remove";
+pub const EDIT: &str = "edit";
 
 /// Said at the foot of every pane, beside the button that opens the
 /// settings file.
-const MORE: &str = "Rules, saved searches and each account\u{2019}s servers are set in the settings \
-                    file. Hooks and templates are files beside it.";
+const MORE: &str = "Rules and saved searches are set in the settings file. Hooks and templates \
+                    are files beside it.";
 /// Said beside a setting that holds from the next start.
 const NEXT_START: &str = "Takes effect when Quill is next opened.";
 
@@ -753,10 +756,13 @@ fn accounts(read: &SettingsRead, can: Can) -> Vec<FormField> {
                     (false, _) => "Signs in with a password.",
                 }
             )),
-            actions: if account.signs_in {
-                vec![SIGN_IN.to_owned(), REMOVE.to_owned()]
-            } else {
-                vec![REMOVE.to_owned()]
+            // What the form can change is an account's servers and its
+            // password: one that signs in with its provider has neither
+            // to show.
+            actions: match (account.signs_in, account.kind) {
+                (true, _) => vec![SIGN_IN.to_owned(), REMOVE.to_owned()],
+                (false, AccountType::Imap) => vec![EDIT.to_owned(), REMOVE.to_owned()],
+                (false, _) => vec![REMOVE.to_owned()],
             },
         })
         .collect();
@@ -778,6 +784,12 @@ fn accounts(read: &SettingsRead, can: Can) -> Vec<FormField> {
                 enabled: can.accounts && can.sign_in,
             },
             FormAction {
+                id: EDIT.to_owned(),
+                title: "Edit\u{2026}".to_owned(),
+                row: true,
+                enabled: can.accounts && can.edit,
+            },
+            FormAction {
                 id: REMOVE.to_owned(),
                 title: "Remove\u{2026}".to_owned(),
                 row: true,
@@ -786,9 +798,10 @@ fn accounts(read: &SettingsRead, can: Can) -> Vec<FormField> {
         ],
         empty: Some("No accounts yet.".to_owned()),
         help: Some(
-            "Removing an account takes it out of the settings file and the Keychain, and \
-             deletes the copy of its mail kept on this Mac. Mail on its server is not \
-             touched."
+            "Edit\u{2026} changes an account\u{2019}s servers, the name it signs in with and its \
+             password. Removing an account takes it out of the settings file and the \
+             Keychain, and deletes the copy of its mail kept on this Mac. Mail on its \
+             server is not touched."
                 .to_owned(),
         ),
     }]

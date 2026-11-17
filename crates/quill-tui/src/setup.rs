@@ -229,6 +229,29 @@ pub enum AccountRequest {
         password: Secret,
         trusting: Trusting,
     },
+    /// Say how the account called this is set up, so that it can be
+    /// changed. Changes nothing. Answered with
+    /// [`AccountEvent::EditAsked`].
+    EditAsk { account: String },
+    /// As [`AccountRequest::Verify`], for an account that is there
+    /// already and is being changed. With no password, the one Quill has
+    /// for it is what is tried.
+    VerifyChange {
+        account: String,
+        draft: AccountDraft,
+        password: Option<Secret>,
+        trusting: Trusting,
+    },
+    /// Write the account called this to the config as the draft has it,
+    /// keep its password under the name its new settings give it, and
+    /// sync it afresh. With no password, the one Quill has is kept.
+    /// Answered with [`AccountEvent::Saved`].
+    Change {
+        account: String,
+        draft: AccountDraft,
+        password: Option<Secret>,
+        trusting: Trusting,
+    },
     /// Write an account that signs in with Microsoft to the config and
     /// start syncing it. Nothing is asked of Microsoft and nothing goes in
     /// the Keychain: signing in is the next thing, and is asked for
@@ -354,6 +377,12 @@ pub enum AccountEvent {
         account: String,
         found: Result<Leaving, String>,
     },
+    /// How the account is set up now, to be changed, or why it cannot be
+    /// changed from here.
+    EditAsked {
+        account: String,
+        found: Result<Box<AccountDraft>, String>,
+    },
     /// The account is removed, or why not: then nothing was changed. With
     /// it removed, anything that could not be cleared up after it, such as
     /// a password still in the Keychain.
@@ -453,6 +482,10 @@ pub struct Discovery {
 pub enum VerifyProblem {
     /// The server refused the name and password.
     Auth(String),
+    /// There is no password to try: none was typed for an account being
+    /// changed, and Quill has none kept for it. Nothing was asked of a
+    /// server.
+    Password(String),
     /// The server's certificate was not accepted.
     Certificate(Box<CertificateProblem>),
     /// Reading works; the server mail is sent through does not, for this
@@ -529,6 +562,9 @@ pub enum Outcome {
     Open,
     /// The account was saved under this name; the flow is over.
     Added(String),
+    /// The changes to the account called this were saved; the flow is
+    /// over.
+    Changed(String),
     /// The account was saved under this name and is being signed in to
     /// with its provider: the form is over and the sign-in takes its place.
     SigningIn(String),
@@ -570,8 +606,16 @@ pub struct Setup {
     pub note: Option<String>,
     /// The certificate being asked about.
     pub problem: Option<Box<CertificateProblem>>,
+    /// The form is changing an account that is there already: this one,
+    /// by its name. Its name, its address and what kind of account it is
+    /// stay as they are, so the form starts at its servers.
+    pub editing: Option<String>,
     trusting: Trusting,
 }
+
+/// What the form says where the password of an account being changed is
+/// asked for.
+pub const KEEP_PASSWORD: &str = "Leave it empty to keep the password Quill has.";
 
 impl Default for Setup {
     fn default() -> Self {
@@ -599,14 +643,56 @@ impl Default for Setup {
             error: None,
             note: None,
             problem: None,
+            editing: None,
             trusting: Trusting::System,
         }
     }
 }
 
 impl Setup {
+    /// The form for changing the account called `account`, with its
+    /// settings as `draft` has them: at its servers, since that is all
+    /// there is to change.
+    pub fn editing(account: String, draft: AccountDraft) -> Self {
+        let mut setup = Self {
+            step: Step::Server,
+            kind: Kind::Imap,
+            field: ServerField::Host.index(),
+            editing: Some(account),
+            ..Self::default()
+        };
+        setup.address.set(draft.address);
+        setup.name.set(draft.name);
+        setup.host.set(draft.imap.host);
+        setup.port.set(draft.imap.port.to_string());
+        setup.tls = draft.imap.tls;
+        setup.username.set(draft.imap.username);
+        if let Some(smtp) = draft.smtp {
+            setup.smtp_host.set(smtp.host);
+            setup.smtp_port.set(smtp.port.to_string());
+            setup.smtp_tls = smtp.tls;
+        }
+        setup
+    }
+
+    /// Which account is being changed, in words, for the top of the form.
+    pub fn editing_note(&self) -> Option<String> {
+        let account = self.editing.as_deref()?;
+        Some(format!(
+            "{account}, {}. Its name and address stay as they are.",
+            self.address.text()
+        ))
+    }
+
     /// What the form is called at the step it is at.
     pub fn title(&self) -> &'static str {
+        if self.editing.is_some() {
+            return match self.step {
+                Step::Address | Step::Server => "Edit an account: the server",
+                Step::Password => "Edit an account: sign in",
+                Step::Certificate => "Edit an account: certificate",
+            };
+        }
         match self.step {
             Step::Address => "Add an account",
             Step::Server if self.kind == Kind::Microsoft => "Add an account: Microsoft",
@@ -624,6 +710,11 @@ impl Setup {
             self.username.text(),
             self.host.text()
         );
+        // An account that is there already has a password already.
+        let asked = match self.editing {
+            Some(_) => format!("{asked} {KEEP_PASSWORD}"),
+            None => asked,
+        };
         // A provider that does not take the user's normal password is
         // said so here, where it is about to be typed.
         match quill_core::providers::password_advice(self.host.text()) {
@@ -676,7 +767,8 @@ impl Setup {
     /// chosen. A field that is not shown is not stopped at.
     pub fn shows(&self, field: ServerField) -> bool {
         match field {
-            ServerField::Type | ServerField::Name => true,
+            // An account that is there keeps its kind and its name.
+            ServerField::Type | ServerField::Name => self.editing.is_none(),
             ServerField::Host
             | ServerField::Port
             | ServerField::Security
@@ -827,7 +919,7 @@ impl Setup {
                 } else {
                     (self.field + count - 1) % count
                 };
-                // The type and the name are always shown, so this ends.
+                // The server's name is always shown, so this ends.
                 if self.shows(self.server_field()) {
                     break;
                 }
@@ -886,7 +978,8 @@ impl Setup {
                 Vec::new()
             }
             Step::Password => {
-                if self.password.is_empty() {
+                // An account being changed may keep the password it has.
+                if self.password.is_empty() && self.editing.is_none() {
                     self.error = Some("Enter the account's password.".to_owned());
                     return Vec::new();
                 }
@@ -906,6 +999,8 @@ impl Setup {
         }
         match self.step {
             Step::Address => return true,
+            // An account being changed has no address to go back to.
+            Step::Server if self.editing.is_some() => return true,
             Step::Server => self.step = Step::Address,
             Step::Password => self.step = Step::Server,
             Step::Certificate => self.reject_certificate(),
@@ -1083,10 +1178,18 @@ impl Setup {
         match self.draft() {
             Ok(draft) => {
                 self.busy = Some(format!("Signing in to {}…", draft.imap.host));
-                vec![AccountRequest::Verify {
-                    draft,
-                    password: Secret(self.password.text().to_owned()),
-                    trusting: self.trusting.clone(),
+                vec![match self.editing.clone() {
+                    Some(account) => AccountRequest::VerifyChange {
+                        account,
+                        draft,
+                        password: self.typed_password(),
+                        trusting: self.trusting.clone(),
+                    },
+                    None => AccountRequest::Verify {
+                        draft,
+                        password: Secret(self.password.text().to_owned()),
+                        trusting: self.trusting.clone(),
+                    },
                 }]
             }
             Err(problem) => {
@@ -1095,6 +1198,12 @@ impl Setup {
                 Vec::new()
             }
         }
+    }
+
+    /// The password typed, if one was: an account being changed may be
+    /// left with the one it has.
+    fn typed_password(&self) -> Option<Secret> {
+        (!self.password.is_empty()).then(|| Secret(self.password.text().to_owned()))
     }
 
     fn reject_certificate(&mut self) {
@@ -1209,10 +1318,18 @@ impl Setup {
                     Ok(()) => match self.draft() {
                         Ok(draft) => {
                             self.busy = Some(format!("Saving {}…", draft.name));
-                            let save = AccountRequest::Save {
-                                draft,
-                                password: Secret(self.password.text().to_owned()),
-                                trusting: self.trusting.clone(),
+                            let save = match self.editing.clone() {
+                                Some(account) => AccountRequest::Change {
+                                    account,
+                                    draft,
+                                    password: self.typed_password(),
+                                    trusting: self.trusting.clone(),
+                                },
+                                None => AccountRequest::Save {
+                                    draft,
+                                    password: Secret(self.password.text().to_owned()),
+                                    trusting: self.trusting.clone(),
+                                },
                             };
                             (vec![save], Outcome::Open)
                         }
@@ -1241,6 +1358,10 @@ impl Setup {
                         );
                         (Vec::new(), Outcome::Open)
                     }
+                    Err(VerifyProblem::Password(reason)) => {
+                        self.error = Some(text::sanitize_line(&reason));
+                        (Vec::new(), Outcome::Open)
+                    }
                     Err(VerifyProblem::Certificate(problem)) => {
                         self.problem = Some(problem);
                         self.step = Step::Certificate;
@@ -1251,8 +1372,13 @@ impl Setup {
                         // do without one.
                         self.step = Step::Server;
                         self.field = ServerField::SmtpHost.index();
+                        let without = if self.editing.is_some() {
+                            "clear it to leave the account without sending"
+                        } else {
+                            "clear it to add the account without sending"
+                        };
                         self.error = Some(format!(
-                            "Mail can be read, but not sent through {}: {reason} Correct it, or clear it to add the account without sending.",
+                            "Mail can be read, but not sent through {}: {reason} Correct it, or {without}.",
                             self.smtp_host.text().trim()
                         ));
                         (Vec::new(), Outcome::Open)
@@ -1279,6 +1405,7 @@ impl Setup {
                         };
                         (vec![sign_in], Outcome::SigningIn(name))
                     }
+                    Ok(name) if self.editing.is_some() => (Vec::new(), Outcome::Changed(name)),
                     Ok(name) => (Vec::new(), Outcome::Added(name)),
                     Err(reason) => {
                         self.error = Some(format!("The account could not be saved: {reason}"));
@@ -1294,6 +1421,7 @@ impl Setup {
             | AccountEvent::Unsubscribed { .. }
             | AccountEvent::RemoveAsked { .. }
             | AccountEvent::Removed { .. }
+            | AccountEvent::EditAsked { .. }
             | AccountEvent::Remembered(_)
             | AccountEvent::Settings { .. } => (Vec::new(), Outcome::Open),
         }

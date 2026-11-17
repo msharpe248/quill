@@ -56,6 +56,7 @@ impl State {
                     sign_in: self.is_enabled(env, CommandId::AccountSignIn)
                         && self.sign_in.is_none(),
                     remove: self.can_remove_account(env),
+                    edit: self.can_edit_account(env),
                 },
                 window.refused.as_deref(),
             ),
@@ -146,6 +147,13 @@ impl State {
                             {
                                 let name = account.name.clone();
                                 self.ask_remove(env, &name, out);
+                            }
+                            // As the command does, for the account picked
+                            // in the window: the form opens once the
+                            // service has said how the account is set up.
+                            (true, settings::EDIT, Some(account)) if self.can_edit_account(env) => {
+                                let name = account.name.clone();
+                                self.ask_edit(env, &name, out);
                             }
                             _ => {}
                         }

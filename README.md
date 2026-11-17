@@ -100,6 +100,8 @@ Optional keys inside `imap = { ... }`: `username`, when you do not sign in with 
 
 `quill account list` shows each account and whether it has a saved password. `quill account forget NAME` removes the password. Passwords are only ever in the Keychain: not in the config, the database or the logs.
 
+**Changing an account.** In the app, Settings > Accounts: pick the account and press Edit…. Anywhere, put the accounts pane on the account (or one of its folders) and press `E`, or choose "Edit this account…" from the palette or the File menu. The form that added the account opens with its settings in it: the server its mail is read from, the server it is sent through, how each is reached, and the name it signs in with. The account's name and address stay as they are. The password can be typed again or left empty, which keeps the one in the Keychain. The settings are tried before they are kept, as when the account was added, and the account then syncs afresh with them; mail that was waiting in the Outbox for the account goes at once. This is for an account read over IMAP with a password. One that signs in with Google or Microsoft has no servers or password of its own to change, and a POP3 or Exchange account is changed in the settings file.
+
 **Removing an account.** In the app, Settings > Accounts: pick the account and press Remove…. Anywhere, put the accounts pane on the account (or one of its folders) and press `D`, or choose "Remove this account…" from the palette or the File menu. Quill first says what goes with it and asks: the account is taken out of the settings file, its password or sign-in out of the Keychain, and the copy of its mail off this Mac. Mail on its server is not touched, and the account can be added again. Anything that exists only on this Mac is said before you answer: messages still in the Outbox, drafts, changes that have not reached the server, and for a POP3 account that the copy here may be the only one. In a terminal only `y` is a yes; in the app's sheet no button answers to `return`. It is not offered while a message is being written. Taking an `[[account]]` out of the file by hand still works: its mail goes when Quill is next opened, and its password stays until `quill account forget`, which has to be run first.
 
 A Keychain item belongs to the program that made it. Quill built from source is signed "ad hoc", with no identity, so to macOS every build is a different program: after a rebuild it asks whether the new `quill` or `Quill.app` may read each password the old one saved, and "Always Allow" settles it for that build only. Until you answer, Quill waits and no mail moves. Each saved password or sign-in is asked about once in a run, however many connections want it.
@@ -218,7 +220,7 @@ Press `?` at any time for the keys that apply where you are, and `K` (or `f1`) f
 | `X` | Unsubscribe from a mailing list | `\|` | Give the message to one of your own programs (in a terminal) |
 | `y` / `n` | Accept, decline an invitation | `M` | Answer an invitation with maybe |
 | `l` / `h` | In the accounts pane: show, hide an account's folders | `K` | Every key, and what it does |
-| `D` | Remove the account chosen in the accounts pane, after asking | | |
+| `D` | Remove the account chosen in the accounts pane, after asking | `E` | Change the account chosen in the accounts pane: its servers and password |
 
 `tab` keeps to the two panes of everyday use: from the list it goes to the message and from the message back to the list. `shift-tab` goes to the accounts from either, and from the accounts `tab` goes to the list and `shift-tab` to the message. (With the web reading pane on there is no message pane in the terminal to go to: `tab` does nothing from the list, and the keys for the message work from there.)
 
@@ -406,7 +408,8 @@ The `cmd` keys work in the app; a terminal keeps `cmd` for itself, so there the 
 - **Before it goes**, Quill asks once if the subject is empty or the message mentions an attachment and has none. Sending again sends it as it is.
 - **Undo send.** A sent message waits in the Outbox for `undo_send_seconds` (10 by default); `U` in that time makes it a draft again. Set it to 0 to send at once.
 - **Drafts and the Outbox** appear at the top of the sidebar when there is something in them. `enter` on a draft, or on mail still in the Outbox, opens it to carry on writing; `d` throws a draft away. What you are writing is saved every few seconds and when Quill quits.
-- **Mail a server refuses** stays in the Outbox and says why when you open it. Mail that could not be sent because the server was unreachable is tried again by itself.
+- **Mail a server refuses** stays in the Outbox and says why when you open it. Mail that could not be sent because the server was unreachable is tried again by itself, and so is mail from an account with no server to send through, which goes once the account is given one.
+- **Send from the Outbox.** With the list on a message in the Outbox, Send (`cmd-enter`, or `ctrl-x` in a terminal; Message > Send and the toolbar's button in the app) sends it now, as it is: one that was not sent, one waiting to be tried again, or one waiting for its time. Starting Quill also tries again whatever was waiting to be tried.
 
 To send, an account needs an SMTP server. Adding an account inside Quill fills it in when it can be found; by hand it is one more line:
 
@@ -659,7 +662,7 @@ In the app, Settings… in the Quill menu (`cmd-,`) opens a settings window. It 
 | | Show a notification when mail arrives | `notifications` under `[ui]` | At once |
 | | List the messages of a conversation together | `threads` under `[ui]` | At once |
 | | Read mail in a web pane beside the list | `web_reading` under `[ui]` | At once |
-| Accounts | The accounts in the file, with Add an Account…, Sign In… and Remove… | `[[account]]` | At once |
+| Accounts | The accounts in the file, with Add an Account…, Sign In…, Edit… and Remove… | `[[account]]` | At once |
 | Composing | Write in: Quill's own editor, Vim, nano, Pico or mg | `editor` under `[compose]` | When Quill is next opened |
 | | Program: the program to run as that editor, where it is not the one found by its name. Shown for any editor but Quill's own; emptied, the line is taken out of the file | `editor_path` under `[compose]` | When Quill is next opened |
 | | Format: Markdown or plain text | `format` under `[compose]` | At once |
@@ -708,7 +711,7 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `select.toggle`, `select.range`, `select.all` | Select messages to act on together |
 | `message.compose` | Write a new message |
 | `message.reply`, `message.reply_all`, `message.forward` | Answer or pass on the message |
-| `compose.send`, `compose.save` | Send the message being written, or save it as a draft |
+| `compose.send`, `compose.save` | Send the message being written, or save it as a draft. In the Outbox, `compose.send` sends the message the list is on, now |
 | `compose.send_later` | Send the message being written at a time you type |
 | `compose.attach`, `compose.bcc` | Attach a file; add blind copies |
 | `compose.template` | Put a template into the message being written |
@@ -731,6 +734,7 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `edit.copy`, `edit.cut`, `edit.select_all` | The app's Edit menu, while a message is being written |
 | `account.add` | Add an account |
 | `account.sign_in` | Sign an account in to Microsoft or Google |
+| `account.edit` | Change the account chosen in the accounts pane: its servers, the name it signs in with and its password |
 | `account.remove` | Remove the account chosen in the accounts pane, after asking |
 | `help.toggle` | Show or hide help |
 | `help.keys` | Show or hide the list of every key |

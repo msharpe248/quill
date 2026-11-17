@@ -9,7 +9,7 @@ mod common;
 use common::{Harness, NOW};
 use quill_store::{DraftState, Outgoing};
 use quill_sync::{SyncEvent, SyncRequest};
-use quill_tui::command::Context;
+use quill_tui::command::{CommandId, Context};
 use quill_tui::compose::Field;
 use quill_tui::data::{DataEvent, DataRequest};
 use quill_tui::outgoing::Response;
@@ -1013,6 +1013,82 @@ fn hints_name_keys_that_can_be_pressed_in_a_terminal() {
     );
     harness.keys("ctrl-x");
     assert_eq!(harness.store.outbox().unwrap().len(), 1);
+}
+
+#[test]
+fn a_message_in_the_outbox_is_sent_from_the_list_as_it_is() {
+    let mut harness = wide();
+    // Where the list is not the Outbox there is nothing for Send to send.
+    assert!(
+        !harness
+            .state
+            .is_enabled(&harness.env, CommandId::ComposeSend)
+    );
+    write_to_priya(&mut harness);
+    harness.keys("cmd-enter");
+    // The engine tries it, and it does not go: it waits for the user.
+    let (claimed, _) = outgoing(&mut harness);
+    harness
+        .store
+        .send_failed(
+            claimed.id,
+            "the account had no server to send through",
+            None,
+        )
+        .unwrap();
+    harness.act(Action::Data(DataEvent::StoreChanged));
+
+    // In the Outbox, on the message, Send is for it: by its key, in the
+    // menu and on the toolbar, which all go by whether it is enabled.
+    harness.keys("1 g g j enter");
+    assert_eq!(harness.state.context(), Context::List);
+    assert!(
+        harness
+            .state
+            .is_enabled(&harness.env, CommandId::ComposeSend)
+    );
+    assert!(
+        status(&harness).contains("send now"),
+        "{}",
+        status(&harness)
+    );
+    let told = harness.sync_requests.len();
+    harness.keys("cmd-enter");
+    // It is not opened to be written again: it goes as it is.
+    assert_eq!(harness.state.context(), Context::List);
+    assert!(harness.state.compose.is_none());
+    assert!(
+        harness.screen().contains("Sending it now."),
+        "{}",
+        harness.screen()
+    );
+    let outbox = harness.store.outbox().unwrap();
+    assert_eq!(outbox.len(), 1);
+    assert_eq!(
+        (outbox[0].state, outbox[0].error.as_deref()),
+        (DraftState::Outbox, None)
+    );
+    // The engine is told there is mail to send, and finds it due.
+    assert!(
+        harness.sync_requests[told..]
+            .iter()
+            .any(|request| matches!(request, SyncRequest::Queue)),
+        "{:?}",
+        harness.sync_requests
+    );
+    let again = harness
+        .store
+        .claim_send(outbox[0].account, jiff::Timestamp::now().as_second() + 5)
+        .unwrap()
+        .unwrap();
+    assert_eq!(again.id, claimed.id);
+    // While it is with the server it is not sent a second time.
+    harness.keys("cmd-enter");
+    assert!(
+        harness.screen().contains("It is being sent right now."),
+        "{}",
+        harness.screen()
+    );
 }
 
 #[test]

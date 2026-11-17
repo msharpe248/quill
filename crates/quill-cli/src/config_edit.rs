@@ -139,6 +139,120 @@ pub fn remove_account(text: &str, name: &str) -> Result<String, String> {
     checked(document.to_string())
 }
 
+/// `text` with the servers of the account called `name` as `draft` has
+/// them: where each is, how it is reached and the name it is signed in to
+/// with. Everything else the account says, and every comment, stays.
+/// With no sending server in the draft the account's `smtp` is taken out.
+/// `fingerprint`, when given, pins the reading server's certificate; a
+/// certificate pinned before stays pinned for as long as its server is
+/// the same one.
+pub fn change_account(
+    text: &str,
+    name: &str,
+    draft: &AccountDraft,
+    fingerprint: Option<&str>,
+) -> Result<String, String> {
+    let mut document: DocumentMut = text
+        .parse()
+        .map_err(|err| format!("config.toml cannot be read: {err}"))?;
+    let missing = || format!("there is no account called {name} in config.toml");
+    let accounts = document
+        .get_mut("account")
+        .ok_or_else(missing)?
+        .as_array_of_tables_mut()
+        .ok_or(
+            "the accounts in config.toml are not written as [[account]] sections, which is \
+             the only way Quill edits them: change the account by hand",
+        )?;
+    let table = accounts
+        .iter_mut()
+        .find(|table| table.get("name").and_then(Item::as_str) == Some(name))
+        .ok_or_else(missing)?;
+    change_server(table, "imap", &draft.imap, &draft.address, fingerprint)?;
+    match &draft.smtp {
+        Some(smtp) => change_server(table, "smtp", smtp, &draft.address, None)?,
+        None => {
+            table.remove("smtp");
+        }
+    }
+    checked(document.to_string())
+}
+
+/// Makes `account`'s server under `key` what `server` says, keeping
+/// whatever else is written of it.
+fn change_server(
+    account: &mut Table,
+    key: &str,
+    server: &ServerDraft,
+    address: &str,
+    fingerprint: Option<&str>,
+) -> Result<(), String> {
+    let tls = match server.tls {
+        TlsMode::Implicit => "implicit",
+        TlsMode::Starttls => "starttls",
+        TlsMode::None => "none",
+    };
+    // The address is the default sign-in name, so it is not written.
+    let username = (server.username != address).then_some(server.username.as_str());
+    let Some(entry) = account.get_mut(key) else {
+        account[key] = Item::Value(Value::InlineTable(self::server(
+            server,
+            address,
+            fingerprint,
+        )));
+        return Ok(());
+    };
+    // Written either as `imap = { ... }` or as a `[account.imap]` table.
+    if let Some(inline) = entry.as_inline_table_mut() {
+        // A certificate is pinned for the server it was shown by.
+        let moved = inline.get("host").and_then(Value::as_str) != Some(server.host.as_str());
+        inline.insert("host", server.host.as_str().into());
+        inline.insert("port", i64::from(server.port).into());
+        inline.insert("tls", tls.into());
+        match username {
+            Some(username) => {
+                inline.insert("username", username.into());
+            }
+            None => {
+                inline.remove("username");
+            }
+        }
+        match fingerprint {
+            Some(fingerprint) => {
+                inline.insert("fingerprint", fingerprint.into());
+            }
+            None if moved => {
+                inline.remove("fingerprint");
+            }
+            None => {}
+        }
+        inline.fmt();
+    } else if let Some(table) = entry.as_table_mut() {
+        let moved = table.get("host").and_then(Item::as_str) != Some(server.host.as_str());
+        table["host"] = value(server.host.as_str());
+        table["port"] = value(i64::from(server.port));
+        table["tls"] = value(tls);
+        match username {
+            Some(username) => table["username"] = value(username),
+            None => {
+                table.remove("username");
+            }
+        }
+        match fingerprint {
+            Some(fingerprint) => table["fingerprint"] = value(fingerprint),
+            None if moved => {
+                table.remove("fingerprint");
+            }
+            None => {}
+        }
+    } else {
+        return Err(format!(
+            "`{key}` of the account in config.toml is not a table"
+        ));
+    }
+    Ok(())
+}
+
 /// `text` with the certificate of one of `account`'s servers pinned:
 /// `server` is the key it is configured under, `imap` or `smtp`.
 pub fn pin_fingerprint(
@@ -973,6 +1087,116 @@ mod tests {
 
         assert!(pin_fingerprint(before, "Nobody", "imap", &fingerprint).is_err());
         assert!(pin_fingerprint("", "Work", "imap", &fingerprint).is_err());
+    }
+
+    #[test]
+    fn an_accounts_servers_are_changed_and_the_rest_of_it_is_kept() {
+        let pin = "ab".repeat(32);
+        let before = format!(
+            "# Mine.\n[ui]\ntheme = \"quill-dark\"\n\n\
+             [[account]]\nname = \"Work\"\ntype = \"imap\"\naddress = \"robin@example.com\"\n\
+             signature = \"Robin\" # as I sign\n\
+             imap = {{ host = \"old.example.com\", fingerprint = \"{pin}\" }} # the office\n\n\
+             [[account]]\nname = \"Home\"\ntype = \"imap\"\naddress = \"robin@example.org\"\n\n\
+             [account.imap]\nhost = \"home.example.org\"\nfingerprint = \"{pin}\"\n\n\
+             [account.smtp]\nhost = \"out.example.org\"\n"
+        );
+        let server = |host: &str, port, username: &str| ServerDraft {
+            host: host.to_owned(),
+            port,
+            tls: TlsMode::Starttls,
+            username: username.to_owned(),
+        };
+        // Work: another reading server, a name to sign in with, and a
+        // sending server where there was none.
+        let work = AccountDraft {
+            name: "Work".to_owned(),
+            address: "robin@example.com".to_owned(),
+            imap: server("mail.example.com", 143, "robin"),
+            smtp: Some(server("mail.example.com", 587, "robin")),
+        };
+        let after = change_account(&before, "Work", &work, None).unwrap();
+        let config = Config::parse(&after).unwrap();
+        let account = &config.accounts[0];
+        let reading = account.imap.as_ref().unwrap();
+        assert_eq!(
+            (
+                reading.host.as_str(),
+                reading.port,
+                reading.tls,
+                reading.username.as_deref()
+            ),
+            (
+                "mail.example.com",
+                Some(143),
+                TlsMode::Starttls,
+                Some("robin")
+            )
+        );
+        // The pin was for the server it had: it does not follow it.
+        assert_eq!(reading.fingerprint, None);
+        let sending = account.smtp.as_ref().unwrap();
+        assert_eq!(
+            (
+                sending.host.as_str(),
+                sending.port,
+                sending.username.as_deref()
+            ),
+            ("mail.example.com", Some(587), Some("robin"))
+        );
+        // The other account, and everything else written, is as it was.
+        assert_eq!(
+            config.accounts[1],
+            Config::parse(&before).unwrap().accounts[1]
+        );
+        for kept in [
+            "# Mine.",
+            "theme = \"quill-dark\"",
+            "# as I sign",
+            "# the office",
+        ] {
+            assert!(after.contains(kept), "{kept} in {after}");
+        }
+
+        // Home, written as tables: the same server at another port keeps
+        // its pin, the name to sign in with goes back to the address, and
+        // the sending server is taken away.
+        let home = AccountDraft {
+            name: "Home".to_owned(),
+            address: "robin@example.org".to_owned(),
+            imap: server("home.example.org", 143, "robin@example.org"),
+            smtp: None,
+        };
+        let after = change_account(&after, "Home", &home, None).unwrap();
+        let config = Config::parse(&after).unwrap();
+        let account = &config.accounts[1];
+        let reading = account.imap.as_ref().unwrap();
+        assert_eq!(
+            (reading.port, reading.username.as_deref()),
+            (Some(143), None)
+        );
+        assert_eq!(reading.fingerprint.as_deref(), Some(pin.as_str()));
+        assert!(account.smtp.is_none());
+        assert!(!after.contains("out.example.org"), "{after}");
+
+        // A certificate accepted while the account is changed is its new
+        // pin; and an account that is not there is not made up.
+        let newer = "cd".repeat(32);
+        let after = change_account(&after, "Home", &home, Some(&newer)).unwrap();
+        assert_eq!(
+            Config::parse(&after).unwrap().accounts[1]
+                .imap
+                .as_ref()
+                .unwrap()
+                .fingerprint
+                .as_deref(),
+            Some(newer.as_str())
+        );
+        assert!(
+            change_account(&after, "Nobody", &home, None)
+                .unwrap_err()
+                .contains("no account called Nobody")
+        );
     }
 
     #[test]

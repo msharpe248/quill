@@ -154,14 +154,19 @@ pub async fn discover(address: &str, dns: &dyn Dns, prober: &dyn Prober) -> Disc
             let host = format!("{prefix}.{base}");
             for (port, tls) in [(993, TlsMode::Implicit), (143, TlsMode::Starttls)] {
                 if prober.imap(&host, port, tls).await {
-                    // Submission is usually beside it; offered, not checked,
-                    // since nothing is sent until the first message is.
-                    let smtp = smtp.clone().or_else(|| {
-                        Some(match tls {
-                            TlsMode::Implicit => (format!("smtp.{base}"), 465, TlsMode::Implicit),
-                            _ => (format!("smtp.{base}"), 587, TlsMode::Starttls),
-                        })
-                    });
+                    // Submission is usually beside it; offered, not checked
+                    // here: the form signs in to it before the account is
+                    // saved. A server called `mail` is most often the one
+                    // for both; one called `imap` has an `smtp` beside it.
+                    let sending = if prefix == "mail" {
+                        host.clone()
+                    } else {
+                        format!("smtp.{base}")
+                    };
+                    let smtp = smtp.clone().or(Some(match tls {
+                        TlsMode::Implicit => (sending, 465, TlsMode::Implicit),
+                        _ => (sending, 587, TlsMode::Starttls),
+                    }));
                     return Discovery {
                         draft: draft(account_name(&domain), (host.clone(), port, tls), smtp),
                         found: true,
@@ -494,7 +499,12 @@ mod tests {
             ),
             ("mail.example.net", 143, TlsMode::Starttls)
         );
-        assert_eq!(found.draft.smtp.unwrap().port, 587);
+        // A server called `mail` is offered for sending as well.
+        let sending = found.draft.smtp.unwrap();
+        assert_eq!(
+            (sending.host.as_str(), sending.port),
+            ("mail.example.net", 587)
+        );
         let tried = prober.tried.lock().unwrap().clone();
         assert_eq!(
             tried[0],
