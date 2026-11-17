@@ -23,7 +23,7 @@ What needs a person, in the order it is worth doing:
 1. **Sign in to a Microsoft account.** Add it from the form and Microsoft's sign-in page opens: Quill is registered with Microsoft and needs nothing from you but the sign-in. Nothing here has yet met a real Microsoft 365 or Outlook.com mailbox. Gmail signs in with Google the same way in the builds Quill is given out as: they carry Quill's registration with Google, which the source does not. That registration has not been through Google's verification, so Google shows a warning to click through and lets in only a limited number of people ([docs/oauth.md](docs/oauth.md)). A build you make from the source asks for a client of your own instead; an app password is the other way, and the form says where to make one.
 2. **Choose an editor**, if you would sooner write mail outside Quill's own: `editor = "vim"`, `"nano"`, `"pico"` or `"mg"` under `[compose]`, or Settings > Composing in the app. It is your own, with your own settings; `editor_path` names the program if it is not the one of that name on the `PATH`.
 3. **Allow notifications** when the app first asks, and make Quill the default mail program in Mail's settings if you want `mailto:` links to come here.
-4. **A licence, and somewhere to publish.** Quill is to be given out as source and as a download (GitHub, Homebrew), not through the App Store. A Developer ID to sign and notarize the download with is what makes it open on someone else's Mac without a warning.
+4. **A Developer ID.** Quill is given out as source and as a download (GitHub, Homebrew), not through the App Store. A Developer ID to sign and notarize the download with is what makes it open on someone else's Mac without a warning.
 
 [DECISIONS.md](DECISIONS.md) says under each milestone exactly what was verified, what was not, and what was left unbuilt.
 
@@ -835,3 +835,12 @@ Layout of the workspace:
 | `app/Sources/QuillApp` | Windows, menus, toolbar and panes |
 
 Known limits: servers that only speak TLS 1.0 or 1.1 will not be supported in version 1.
+
+## Privacy
+
+Quill has no servers of its own and sends nothing to its author: your mail and your sign-ins stay on your Mac. [PRIVACY.md](PRIVACY.md) says exactly what it keeps and what it connects to.
+
+## Licence
+
+Quill is under the MIT License with the Commons Clause: use it, copy it, change it and share it freely, but do not sell it. The whole of it is in [LICENSE](LICENSE). That makes Quill source-available and not "open source" as the Open Source Initiative defines the term.
+

@@ -25,8 +25,9 @@ exceptions = [
 ]
 
 [licenses.private]
-# Quill's own crates carry no licence until the open-source question in the
-# spec is settled. They are never published.
+# Quill's own crates are under the licence in LICENSE (MIT with the Commons
+# Clause), which is not one a crate's manifest can name. They are never
+# published to a registry.
 ignore = true
 
 [bans]
