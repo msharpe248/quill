@@ -143,6 +143,15 @@ struct PlayerPaneTests {
         #expect(pane.summary.hasPrefix("playing at 0:0"))
         #expect(pane.handleKey(.space))
         #expect(pane.player.rate == 0)
+        // The film comes to rest, and then stays where it is. Its clock may
+        // run on for an instant after the pause is asked for (it did on a
+        // virtual Mac), so it is let settle before it is held to standing
+        // still. One that never stopped would never settle.
+        try await wait(for: "the film to come to rest") {
+            let before = seconds(pane)
+            try? await Task.sleep(for: .milliseconds(60))
+            return seconds(pane) == before
+        }
         let stopped = seconds(pane)
         let still = try await holds(for: 0.3) { seconds(pane) == stopped }
         #expect(still)
