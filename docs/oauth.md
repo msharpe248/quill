@@ -68,11 +68,21 @@ An app password is the other way to use Gmail, and needs none of this: turn on 2
 3. Under **APIs & Services**, **OAuth consent screen**, set the application up as **External**, give it a name and your address, and add the scope `https://mail.google.com/`.
 4. While the application is in **Testing**, add your own Gmail address under **Test users**. Only test users can sign in.
 5. Under **APIs & Services**, **Credentials**, choose **Create credentials**, **OAuth client ID**, and the application type **Desktop app**.
-6. The page that follows shows a **Client ID** and a **Client secret**. Both go in the config.
+6. The page that follows shows a **Client ID** and a **Client secret**. Quill asks for both.
 
 Two things to know. Google calls the second value a secret, and says itself that for a desktop application it is not one: every copy of the application carries it. That is why it may sit in `config.toml`, where real passwords never do. And while the application is in Testing, Google ends each sign-in after seven days, so Quill will ask you to sign in again every week. Publishing the application ends that, and for the mail scope Google wants to verify it first.
 
+### Add the account in Quill
+
+Press `A`, type the Gmail address and continue. The form offers the account with a password, which for Google is an app password. Change **Type** to **Google (sign in)**: the form then asks for the Client ID and the Client secret in place of servers and a password. Continue, and Google's sign-in page opens in your browser; sign in there, agree to what Quill asks for, and come back.
+
+The application is asked for once. The next Google account you add is offered the same one, and is a Google account from the start. Signing in with Google is for Google's own mail servers: a Gmail address, or an address of your own whose mail Google Workspace hosts.
+
+If Quill is ever given an application of its own with Google, as it has with Microsoft, none of this section will be needed: a Gmail address will ask for nothing but the sign-in.
+
 ### The account in config.toml
+
+What the form writes, and what to write by hand instead:
 
 ```toml
 [[account]]

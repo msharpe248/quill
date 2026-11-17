@@ -516,6 +516,8 @@ fn it_is_described_as_the_one_met_while_adding_an_account_is() {
             note: None,
             microsoft_application: None,
             microsoft_own: false,
+            google_application: None,
+            google_own: false,
         },
     }));
     press(&mut adding, Some("continue"), &[]);

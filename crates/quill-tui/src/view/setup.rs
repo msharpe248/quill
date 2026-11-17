@@ -10,10 +10,11 @@ use ratatui::widgets::{Block, BorderType, Padding};
 use crate::command::CommandId;
 use crate::input::LineInput;
 use crate::setup::{
-    ADDRESS_NOTE, CERTIFICATE_WORKING, Kind, MICROSOFT_NOTE, MICROSOFT_OWN_NOTE, NO_ENCRYPTION,
-    NO_SENDING, SENDING_CERTIFICATE, SIGN_IN_BROWSER, SIGN_IN_CODE, SIGN_IN_STARTING,
-    SIGN_IN_WAITING, ServerField, Setup, SignInStage, Step, UNREADABLE_CERTIFICATE,
-    certificate_note, certificate_reason, grouped_fingerprint, security_label, sign_in_code_lasts,
+    ADDRESS_NOTE, CERTIFICATE_WORKING, GOOGLE_NOTE, GOOGLE_OWN_NOTE, Kind, MICROSOFT_NOTE,
+    MICROSOFT_OWN_NOTE, NO_ENCRYPTION, NO_SENDING, SENDING_CERTIFICATE, SIGN_IN_BROWSER,
+    SIGN_IN_CODE, SIGN_IN_STARTING, SIGN_IN_WAITING, ServerField, Setup, SignInStage, Step,
+    UNREADABLE_CERTIFICATE, certificate_note, certificate_reason, grouped_fingerprint,
+    security_label, sign_in_code_lasts,
 };
 use crate::state::{Env, MAILING_LIST, State};
 use crate::text;
@@ -166,6 +167,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
             }
             microsoft(&mut rows, setup, typing);
         }
+        Step::Server if setup.kind == Kind::Google => google(&mut rows, setup, typing),
         Step::Server => {
             if let Some(note) = &setup.note {
                 rows.dim(note);
@@ -258,6 +260,39 @@ fn microsoft(rows: &mut Rows<'_, '_>, setup: &Setup, typing: bool) {
     );
     rows.blank();
     rows.dim(MICROSOFT_NOTE);
+}
+
+/// The server step of an account that signs in with Google. What was said
+/// of the address when it was found is about a password, which this kind
+/// of account has none of, so it is not repeated here.
+fn google(rows: &mut Rows<'_, '_>, setup: &Setup, typing: bool) {
+    let at = setup.server_field();
+    rows.label = MICROSOFT_LABEL_WIDTH;
+    rows.choice(
+        "Type:",
+        setup.kind.label(),
+        typing && at == ServerField::Type,
+    );
+    rows.field("Name:", &setup.name, typing && at == ServerField::Name);
+    rows.pair("Address:", setup.address.text());
+    // Signing in as Quill itself: nothing more to fill in.
+    if setup.own_google {
+        rows.blank();
+        rows.dim(GOOGLE_OWN_NOTE);
+        return;
+    }
+    rows.field(
+        "Client ID:",
+        &setup.google_client,
+        typing && at == ServerField::GoogleClient,
+    );
+    rows.field(
+        "Client secret:",
+        &setup.google_secret,
+        typing && at == ServerField::GoogleSecret,
+    );
+    rows.blank();
+    rows.dim(GOOGLE_NOTE);
 }
 
 fn status(rows: &mut Rows<'_, '_>, setup: &Setup) {

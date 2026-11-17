@@ -2,9 +2,12 @@ use jiff::tz::TimeZone;
 use quill_core::CertificateDetails;
 use quill_host::bridge::{self, CoreToShell};
 
-use super::super::tests::{at_microsoft, at_password, found, found_at_microsoft, keys, problem};
+use super::super::tests::{
+    at_google, at_microsoft, at_password, found, found_at_microsoft, keys, problem,
+};
 use super::super::{
-    AccountDraft, AccountEvent, Outcome, Secret, SignInDraft, Trusting, VerifyProblem,
+    AccountDraft, AccountEvent, GOOGLE_NOTE, GOOGLE_OWN_NOTE, Outcome, Secret, SignInDraft,
+    Trusting, VerifyProblem,
 };
 use super::*;
 
@@ -221,7 +224,8 @@ fn the_server_step_of_a_password_account_has_its_servers() {
         named,
         [
             ("imap", "IMAP (password)"),
-            ("microsoft", "Microsoft (sign in)")
+            ("microsoft", "Microsoft (sign in)"),
+            ("google", "Google (sign in)")
         ]
     );
     let FormField::Choice { options, .. } = field(&shown, "smtp_security") else {
@@ -622,6 +626,7 @@ fn a_microsoft_account_is_saved_from_the_sheet_and_goes_on_to_signing_in() {
                 address: "robin@example.com".to_owned(),
                 application_id: "11111111-2222-3333-4444-555555555555".to_owned(),
                 tenant: None,
+                google: None,
             }
         }]
     );
@@ -636,6 +641,81 @@ fn a_microsoft_account_is_saved_from_the_sheet_and_goes_on_to_signing_in() {
         }]
     );
     assert_eq!(outcome, Outcome::SigningIn("Work".to_owned()));
+}
+
+#[test]
+fn a_google_account_in_the_sheet_asks_for_its_application_or_for_nothing() {
+    // Offered with a password, the type changed in the sheet: the fields
+    // are the application's, and what was said about passwords is gone.
+    let mut setup = at_google(None, false);
+    assert!(form(&setup).note().is_some());
+    press(&mut setup, None, &[("type", "google")], &[]);
+    let shown = form(&setup);
+    assert_eq!(shown.title(), "Add an Account: Google");
+    assert_eq!(shown.note(), None);
+    assert_eq!(
+        ids(&shown),
+        ["type", "name", "address", "google_client", "google_secret"]
+    );
+    assert_eq!(field(&shown, "address").value(), Some("robin@gmail.com"));
+    assert!(matches!(
+        field(&shown, "google_secret"),
+        FormField::Text { label, help: Some(help), .. }
+            if label == "Client Secret:" && help == GOOGLE_NOTE
+    ));
+    // Continue with nothing typed: said, with the focus where it goes.
+    press(&mut setup, Some(Press::Continue), &[("name", "Gmail")], &[]);
+    let shown = form(&setup);
+    assert!(shown.error().unwrap().contains("client ID"));
+    assert_eq!(focus(&shown), Some("google_client"));
+
+    // What the fields held is taken, and the account is saved and then
+    // signed in to.
+    let used = press(
+        &mut setup,
+        Some(Press::Continue),
+        &[
+            ("type", "google"),
+            ("name", "Personal"),
+            ("google_client", " 123-abc.apps.googleusercontent.com "),
+            ("google_secret", "GOCSPX-not-a-real-one"),
+        ],
+        &[],
+    );
+    let [AccountRequest::SaveSignIn { draft }] = used.requests.as_slice() else {
+        panic!("{:?}", used.requests);
+    };
+    assert_eq!(draft.name, "Personal");
+    assert_eq!(draft.application_id, "123-abc.apps.googleusercontent.com");
+    let google = draft.google.as_ref().unwrap();
+    assert_eq!(
+        google.client_secret.as_deref(),
+        Some("GOCSPX-not-a-real-one")
+    );
+    assert_eq!(google.imap.host, "imap.gmail.com");
+    assert_eq!(form(&setup).busy(), Some("Saving Personal…"));
+    let (requests, outcome) = setup.on_event(AccountEvent::Saved(Ok("Personal".to_owned())));
+    assert_eq!(
+        requests,
+        [AccountRequest::SignIn {
+            account: Some("Personal".to_owned())
+        }]
+    );
+    assert_eq!(outcome, Outcome::SigningIn("Personal".to_owned()));
+
+    // Signing in as Quill itself: its name, its address, and what
+    // happens next.
+    let setup = at_google(Some(("quill.apps.googleusercontent.com", None)), true);
+    let shown = form(&setup);
+    assert_eq!(ids(&shown), ["type", "name", "address"]);
+    assert!(matches!(
+        field(&shown, "address"),
+        FormField::Static { help: Some(help), .. } if help == GOOGLE_OWN_NOTE
+    ));
+    // And it is a message the bridge carries.
+    let message = CoreToShell::FormShow(shown);
+    let line = bridge::encode(&message).unwrap();
+    assert_eq!(bridge::decode::<CoreToShell>(&line).unwrap(), message);
 }
 
 #[test]

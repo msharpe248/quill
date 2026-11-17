@@ -41,6 +41,8 @@ fn found(address: &str) -> AccountEvent {
             note: Some("Found in the DNS records of example.com.".to_owned()),
             microsoft_application: None,
             microsoft_own: false,
+            google_application: None,
+            google_own: false,
         },
     }
 }
@@ -234,6 +236,7 @@ fn a_microsoft_account_is_added_without_a_password_and_goes_on_to_signing_in() {
                 address: "robin@example.com".to_owned(),
                 application_id: "jq-app-1".to_owned(),
                 tenant: None,
+                google: None,
             }
         })
     );
@@ -304,6 +307,75 @@ fn a_microsoft_account_is_added_without_a_password_and_goes_on_to_signing_in() {
             .screen()
             .contains("Example: Cannot reach the server.")
     );
+}
+
+#[test]
+fn a_gmail_account_can_sign_in_with_google_and_asks_for_no_password() {
+    let mut harness = Harness::first_run(120, 30);
+    harness.type_text("robin@gmail.com");
+    harness.keys("enter");
+    let AccountEvent::Discovered { address, mut found } = found("robin@gmail.com") else {
+        unreachable!()
+    };
+    found.draft.name = "Gmail".to_owned();
+    found.draft.imap.host = "imap.gmail.com".to_owned();
+    found.draft.smtp.as_mut().unwrap().host = "smtp.gmail.com".to_owned();
+    found.note =
+        Some("Gmail's usual servers. Google does not accept your normal password here.".to_owned());
+    harness.act(Action::Account(AccountEvent::Discovered { address, found }));
+    // With no application to sign in as, it is offered with a password.
+    let screen = harness.screen();
+    assert!(screen.contains("IMAP (password)"), "{screen}");
+    assert!(screen.contains("imap.gmail.com"), "{screen}");
+
+    // The type is the user's to change: the first field, one to the left.
+    harness.keys("shift-tab left");
+    let screen = harness.screen();
+    assert!(screen.contains(" Add an account: Google "), "{screen}");
+    assert!(screen.contains("Google (sign in)"), "{screen}");
+    assert!(screen.contains("robin@gmail.com"), "{screen}");
+    assert!(
+        screen.contains("Client ID:") && screen.contains("Client secret:"),
+        "{screen}"
+    );
+    assert!(screen.contains("docs/oauth.md"), "{screen}");
+    // It has no servers to confirm, and what was said of passwords is
+    // not said of an account that has none.
+    for absent in [
+        "Server:",
+        "Port:",
+        "Security:",
+        "Send via:",
+        "normal password",
+    ] {
+        assert!(!screen.contains(absent), "{absent}\n{screen}");
+    }
+    harness.keys("tab tab");
+    harness.type_text("123-abc.apps.googleusercontent.com");
+    harness.keys("tab");
+    harness.type_text("GOCSPX-not-a-real-one");
+    harness.keys("enter");
+    let Some(AccountRequest::SaveSignIn { draft }) = harness.account_requests.last() else {
+        panic!("{:?}", harness.account_requests.last());
+    };
+    assert_eq!(draft.application_id, "123-abc.apps.googleusercontent.com");
+    let google = draft.google.as_ref().unwrap();
+    assert_eq!(
+        google.client_secret.as_deref(),
+        Some("GOCSPX-not-a-real-one")
+    );
+    assert_eq!(google.imap.host, "imap.gmail.com");
+    assert!(harness.screen().contains("Saving Gmail"));
+    // Saved: the sign-in takes the form's place, and is asked for.
+    harness.act(Action::Account(AccountEvent::Saved(Ok("Gmail".to_owned()))));
+    assert!(harness.state.setup.is_none());
+    assert_eq!(
+        harness.account_requests.last(),
+        Some(&AccountRequest::SignIn {
+            account: Some("Gmail".to_owned())
+        })
+    );
+    assert_eq!(harness.state.context(), quill_tui::command::Context::SignIn);
 }
 
 #[test]

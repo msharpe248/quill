@@ -43,6 +43,9 @@ pub fn add_account(
 /// is not Quill's own, which an account that names none uses anyway; and
 /// `oauth_tenant` only when the draft names one.
 pub fn add_sign_in_account(text: &str, draft: &SignInDraft) -> Result<String, String> {
+    if let Some(google) = &draft.google {
+        return add_google_account(text, draft, google);
+    }
     let mut account = Table::new();
     account["name"] = value(&draft.name);
     account["type"] = value("graph");
@@ -53,6 +56,44 @@ pub fn add_sign_in_account(text: &str, draft: &SignInDraft) -> Result<String, St
     }
     if let Some(tenant) = &draft.tenant {
         account["oauth_tenant"] = value(tenant);
+    }
+    with_account(text, account)
+}
+
+/// `text` with one more `[[account]]` that signs in with Google: an `imap`
+/// account whose `auth` is `oauth`, with the mail servers it is read from
+/// and sent through. The application it signs in as is written only when
+/// it is not Quill's own, which an account that names none uses anyway.
+fn add_google_account(
+    text: &str,
+    draft: &SignInDraft,
+    google: &quill_tui::setup::GoogleDraft,
+) -> Result<String, String> {
+    let mut account = Table::new();
+    account["name"] = value(&draft.name);
+    account["type"] = value("imap");
+    account["address"] = value(&draft.address);
+    account["auth"] = value("oauth");
+    let application = draft.application_id.trim();
+    let quills = crate::oauth::GOOGLE_APPLICATION.map(|(id, _)| id);
+    if !application.is_empty() && Some(application) != quills {
+        account["oauth_client_id"] = value(application);
+        if let Some(secret) = google
+            .client_secret
+            .as_deref()
+            .map(str::trim)
+            .filter(|secret| !secret.is_empty())
+        {
+            account["oauth_client_secret"] = value(secret);
+        }
+    }
+    account["imap"] = Item::Value(Value::InlineTable(server(
+        &google.imap,
+        &draft.address,
+        None,
+    )));
+    if let Some(smtp) = &google.smtp {
+        account["smtp"] = Item::Value(Value::InlineTable(server(smtp, &draft.address, None)));
     }
     with_account(text, account)
 }
@@ -793,7 +834,63 @@ mod tests {
             address: "robin@example.com".to_owned(),
             application_id: "app-1".to_owned(),
             tenant: tenant.map(str::to_owned),
+            google: None,
         }
+    }
+
+    fn google(secret: Option<&str>) -> SignInDraft {
+        let server = |host: &str, port| ServerDraft {
+            host: host.to_owned(),
+            port,
+            tls: TlsMode::Implicit,
+            username: "robin@gmail.com".to_owned(),
+        };
+        SignInDraft {
+            name: "Personal".to_owned(),
+            address: "robin@gmail.com".to_owned(),
+            application_id: "123-abc.apps.googleusercontent.com".to_owned(),
+            tenant: None,
+            google: Some(quill_tui::setup::GoogleDraft {
+                client_secret: secret.map(str::to_owned),
+                imap: server("imap.gmail.com", 993),
+                smtp: Some(server("smtp.gmail.com", 465)),
+            }),
+        }
+    }
+
+    #[test]
+    fn an_account_that_signs_in_with_google_is_an_imap_account_with_oauth_and_its_application() {
+        // What docs/oauth.md has the user write by hand, key for key.
+        let text = add_sign_in_account("", &google(Some("GOCSPX-not-a-real-one"))).unwrap();
+        assert_eq!(
+            text,
+            "[[account]]\nname = \"Personal\"\ntype = \"imap\"\naddress = \"robin@gmail.com\"\n\
+             auth = \"oauth\"\noauth_client_id = \"123-abc.apps.googleusercontent.com\"\n\
+             oauth_client_secret = \"GOCSPX-not-a-real-one\"\n\
+             imap = { host = \"imap.gmail.com\", port = 993, tls = \"implicit\" }\n\
+             smtp = { host = \"smtp.gmail.com\", port = 465, tls = \"implicit\" }\n"
+        );
+        let account = &Config::parse(&text).unwrap().accounts[0];
+        assert_eq!(account.kind, quill_core::config::AccountType::Imap);
+        assert_eq!(account.auth, quill_core::config::AuthMethod::Oauth);
+        assert_eq!(
+            account.oauth_client_secret.as_deref(),
+            Some("GOCSPX-not-a-real-one")
+        );
+        // It is one that signs in with Google, as far as the rest of
+        // Quill goes by the config.
+        let setup = crate::oauth::setup(account).unwrap().unwrap();
+        assert_eq!(setup.provider.name, "google");
+        // With no secret given, none is written.
+        let text = add_sign_in_account("", &google(None)).unwrap();
+        assert!(!text.contains("oauth_client_secret"), "{text}");
+        assert!(text.contains("oauth_client_id"), "{text}");
+        // After what the user wrote, which stays as it was.
+        let before = "# Mine\n[[account]]\nname = \"Home\"   # the old one\ntype = \"imap\"\n\
+                      address = \"robin@example.org\"\nimap = { host = \"mail.example.org\" }\n";
+        let after = add_sign_in_account(before, &google(Some("s"))).unwrap();
+        assert!(after.starts_with(before), "{after}");
+        assert_eq!(Config::parse(&after).unwrap().accounts.len(), 2);
     }
 
     #[test]

@@ -39,6 +39,8 @@ fn found(address: &str, host: &str) -> AccountEvent {
             note: Some("Found in the DNS records of example.com.".to_owned()),
             microsoft_application: None,
             microsoft_own: false,
+            google_application: None,
+            google_own: false,
         },
     }
 }
@@ -320,6 +322,7 @@ fn a_microsoft_account_goes_from_the_form_to_the_sign_in_in_the_same_sheet() {
                 address: "robin@example.com".to_owned(),
                 application_id: "11111111-2222-3333-4444-555555555555".to_owned(),
                 tenant: None,
+                google: None,
             }
         })
     );

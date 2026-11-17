@@ -30,11 +30,11 @@ use quill_smtp::{SmtpAuth, SmtpConfig, SmtpSender};
 use quill_store::Store;
 use quill_sync::{SyncAccount, SyncHandle};
 use quill_tui::app::AccountsLink;
-use quill_tui::setup::Leaving;
 use quill_tui::setup::{
     AccountDraft, AccountEvent, AccountRequest, Preference, ServerDraft, SignInDraft, Trusting,
     VerifyProblem,
 };
+use quill_tui::setup::{GoogleApplication, Leaving};
 use tokio::sync::mpsc::unbounded_channel;
 
 use crate::accounts::{imap_config, imap_password_name, parse_fingerprint, sync_account};
@@ -186,6 +186,11 @@ impl Service {
                 found.microsoft_application = self.microsoft_application().await;
                 found.microsoft_own =
                     found.microsoft_application.as_deref() == Some(oauth::MICROSOFT_APPLICATION);
+                found.google_application = self.google_application().await.map(Box::new);
+                found.google_own = match (&found.google_application, oauth::GOOGLE_APPLICATION) {
+                    (Some(offered), Some((id, _))) => offered.client_id == id,
+                    _ => false,
+                };
                 AccountEvent::Discovered { address, found }
             }
             AccountRequest::Verify {
@@ -563,6 +568,44 @@ impl Service {
         .or_else(|| Some(oauth::MICROSOFT_APPLICATION.to_owned()))
     }
 
+    /// The application the form offers for an account that signs in with
+    /// Google: the one an account in the config already signs in as, if
+    /// any names one (the same registration serves every account), and
+    /// otherwise Quill's own, if it has one. `None`: the user has to
+    /// register one, and the form asks for it.
+    async fn google_application(self: &Arc<Self>) -> Option<GoogleApplication> {
+        let service = Arc::clone(self);
+        // The config file blocks.
+        tokio::task::spawn_blocking(move || {
+            let config = Config::parse(&service.config_text().ok()?).ok()?;
+            config
+                .accounts
+                .iter()
+                .filter(|account| account.kind == AccountType::Imap && oauth::wanted(account))
+                .find_map(|account| {
+                    let id = account.oauth_client_id.as_deref()?.trim();
+                    (!id.is_empty()).then(|| GoogleApplication {
+                        client_id: id.to_owned(),
+                        client_secret: account
+                            .oauth_client_secret
+                            .as_deref()
+                            .map(str::trim)
+                            .filter(|secret| !secret.is_empty())
+                            .map(str::to_owned),
+                    })
+                })
+        })
+        .await
+        .ok()
+        .flatten()
+        .or_else(|| {
+            oauth::GOOGLE_APPLICATION.map(|(id, _)| GoogleApplication {
+                client_id: id.to_owned(),
+                client_secret: None,
+            })
+        })
+    }
+
     fn register(&self, account: &AccountConfig) -> Result<LocalAccountId, String> {
         self.store
             .lock()
@@ -645,15 +688,23 @@ impl Service {
                 draft.name
             ));
         }
-        // A sign-in is kept under the address, so a second Microsoft
-        // account at the same address would be the first one twice.
+        // A sign-in is kept under the provider and the address, so a
+        // second account of the same provider at the same address would
+        // be the first one twice.
+        let google = draft.google.is_some();
         if let Some(same) = existing.accounts.iter().find(|account| {
-            account.kind == AccountType::Graph
-                && account.address.eq_ignore_ascii_case(&draft.address)
+            account.address.eq_ignore_ascii_case(&draft.address)
+                && if google {
+                    account.kind == AccountType::Imap && oauth::wanted(account)
+                } else {
+                    account.kind == AccountType::Graph
+                }
         }) {
             return Err(format!(
-                "{} is already the Microsoft account for {}",
-                same.name, draft.address
+                "{} is already the {} account for {}",
+                same.name,
+                if google { "Google" } else { "Microsoft" },
+                draft.address
             ));
         }
         let after = config_edit::add_sign_in_account(&before, draft)?;
@@ -666,7 +717,19 @@ impl Service {
         // could never sign in (a tenant that is not one) is not saved.
         let tokens = oauth::tokens(account, &self.secrets, &mut None)?
             .ok_or("it does not sign in with a provider")?;
-        let mut built = oauth::graph_account(LocalAccountId(0), account, tokens)?;
+        let mut built = if google {
+            // Its mail is read and sent as any mail server's is, with the
+            // sign-in in the password's place.
+            sync_account(
+                LocalAccountId(0),
+                account,
+                imap_config(account)?,
+                &self.secrets,
+                Some(tokens),
+            )
+        } else {
+            oauth::graph_account(LocalAccountId(0), account, tokens)?
+        };
         config_edit::write(&self.config_file, &after)
             .map_err(|err| format!("config.toml cannot be written: {err}"))?;
         built.id = self.register(account)?;
@@ -1642,6 +1705,7 @@ mod tests {
                 address: address.to_owned(),
                 application_id: "app-1".to_owned(),
                 tenant: tenant.map(str::to_owned),
+                google: None,
             },
         }
     }
@@ -1654,6 +1718,99 @@ mod tests {
 
     fn config_text(rig: &Rig) -> String {
         std::fs::read_to_string(&rig.service.config_file).unwrap()
+    }
+
+    /// An account that signs in with Google, whose mail servers are a
+    /// port on this Mac where nothing listens: no test reaches Google's.
+    fn google(name: &str, address: &str) -> AccountRequest {
+        let server = |port| ServerDraft {
+            host: "127.0.0.1".to_owned(),
+            port,
+            tls: TlsMode::None,
+            username: address.to_owned(),
+        };
+        AccountRequest::SaveSignIn {
+            draft: SignInDraft {
+                name: name.to_owned(),
+                address: address.to_owned(),
+                application_id: "123-abc.apps.googleusercontent.com".to_owned(),
+                tenant: None,
+                google: Some(quill_tui::setup::GoogleDraft {
+                    client_secret: Some("GOCSPX-not-a-real-one".to_owned()),
+                    imap: server(1),
+                    smtp: Some(server(2)),
+                }),
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn a_google_account_is_written_down_with_its_application_and_offered_again() {
+        let rig = Rig::new();
+        // Before there is one, the form is offered no application for
+        // Google: Quill has none of its own.
+        let look = AccountRequest::Discover {
+            address: "sam@example.com".to_owned(),
+        };
+        let AccountEvent::Discovered { found, .. } = rig.service.handle(look.clone()).await else {
+            panic!("not a discovery");
+        };
+        assert_eq!(found.google_application, None);
+        assert!(!found.google_own);
+
+        let saved = rig
+            .service
+            .handle(google("Personal", "robin@gmail.com"))
+            .await;
+        assert_eq!(saved, AccountEvent::Saved(Ok("Personal".to_owned())));
+        let config = rig.config();
+        let account = &config.accounts[0];
+        assert_eq!(account.kind, AccountType::Imap);
+        assert!(oauth::wanted(account));
+        assert_eq!(
+            account.oauth_client_id.as_deref(),
+            Some("123-abc.apps.googleusercontent.com")
+        );
+        assert_eq!(
+            account.oauth_client_secret.as_deref(),
+            Some("GOCSPX-not-a-real-one")
+        );
+        // It is in the store, to be listed, and nothing is in the
+        // Keychain: nobody has signed in.
+        assert_eq!(rig.store.accounts().unwrap().len(), 1);
+        assert_eq!(
+            rig.secrets.get("oauth:google:robin@gmail.com").unwrap(),
+            None
+        );
+        // The next account is offered the same application, which is the
+        // user's own and not Quill's.
+        let AccountEvent::Discovered { found, .. } = rig.service.handle(look).await else {
+            panic!("not a discovery");
+        };
+        assert_eq!(
+            found.google_application,
+            Some(Box::new(GoogleApplication {
+                client_id: "123-abc.apps.googleusercontent.com".to_owned(),
+                client_secret: Some("GOCSPX-not-a-real-one".to_owned()),
+            }))
+        );
+        assert!(!found.google_own);
+
+        // The same address a second time would be the first one twice.
+        match rig.service.handle(google("Other", "Robin@Gmail.com")).await {
+            AccountEvent::Saved(Err(reason)) => assert!(
+                reason.contains("Personal is already the Google account for"),
+                "{reason}"
+            ),
+            other => panic!("{other:?}"),
+        }
+        // A Microsoft account at that address is another matter.
+        let saved = rig
+            .service
+            .handle(microsoft("Work", "robin@gmail.com", None))
+            .await;
+        assert_eq!(saved, AccountEvent::Saved(Ok("Work".to_owned())));
+        assert_eq!(rig.config().accounts.len(), 2);
     }
 
     #[tokio::test]
@@ -1744,6 +1901,7 @@ mod tests {
                         address: "sam@example.com".to_owned(),
                         application_id: application.to_owned(),
                         tenant: None,
+                        google: None,
                     },
                 })
                 .await;

@@ -21,9 +21,10 @@ use quill_host::bridge::{
 };
 
 use super::{
-    ADDRESS_NOTE, AccountRequest, Kind, MICROSOFT_NOTE, MICROSOFT_OWN_NOTE, NO_ENCRYPTION,
-    NO_SENDING, SECURITIES, ServerField, Setup, Step, UNREADABLE_CERTIFICATE, certificate_note,
-    certificate_reason, grouped_fingerprint, security_label,
+    ADDRESS_NOTE, AccountRequest, GOOGLE_NOTE, GOOGLE_OWN_NOTE, Kind, MICROSOFT_NOTE,
+    MICROSOFT_OWN_NOTE, NO_ENCRYPTION, NO_SENDING, SECURITIES, ServerField, Setup, Step,
+    UNREADABLE_CERTIFICATE, certificate_note, certificate_reason, grouped_fingerprint,
+    security_label,
 };
 use crate::input::LineInput;
 use crate::text;
@@ -51,6 +52,7 @@ impl Kind {
         match self {
             Kind::Imap => "imap",
             Kind::Microsoft => "microsoft",
+            Kind::Google => "google",
         }
     }
 
@@ -74,6 +76,8 @@ impl ServerField {
             ServerField::SmtpSecurity => "smtp_security",
             ServerField::Application => "application",
             ServerField::Tenant => "tenant",
+            ServerField::GoogleClient => "google_client",
+            ServerField::GoogleSecret => "google_secret",
         }
     }
 }
@@ -346,7 +350,11 @@ impl Setup {
                 fields.push(typed(ADDRESS, "Email Address:", &self.address, true, None));
             }
             Step::Server => {
-                note.clone_from(&self.note);
+                // What was said of the address when it was found is about
+                // its password, which a Google sign-in has none of.
+                if self.kind != Kind::Google {
+                    note.clone_from(&self.note);
+                }
                 let server = |field: ServerField, label, input, help| {
                     typed(field.id(), label, input, at == field, help)
                 };
@@ -394,6 +402,37 @@ impl Setup {
                             "Tenant:",
                             &self.tenant,
                             Some(MICROSOFT_NOTE),
+                        ));
+                    }
+                    // Signing in as Quill itself: nothing more to fill in.
+                    Kind::Google if self.own_google => {
+                        let mut address = shown(
+                            ADDRESS,
+                            "Address:",
+                            text::sanitize_line(self.address.text()),
+                        );
+                        if let FormField::Static { help, .. } = &mut address {
+                            *help = Some(GOOGLE_OWN_NOTE.to_owned());
+                        }
+                        fields.push(address);
+                    }
+                    Kind::Google => {
+                        fields.push(shown(
+                            ADDRESS,
+                            "Address:",
+                            text::sanitize_line(self.address.text()),
+                        ));
+                        fields.push(server(
+                            ServerField::GoogleClient,
+                            "Client ID:",
+                            &self.google_client,
+                            None,
+                        ));
+                        fields.push(server(
+                            ServerField::GoogleSecret,
+                            "Client Secret:",
+                            &self.google_secret,
+                            Some(GOOGLE_NOTE),
                         ));
                     }
                     Kind::Imap => {
@@ -567,6 +606,10 @@ impl Setup {
                     Kind::Microsoft => {
                         put(&mut self.application, value(ServerField::Application));
                         put(&mut self.tenant, value(ServerField::Tenant));
+                    }
+                    Kind::Google => {
+                        put(&mut self.google_client, value(ServerField::GoogleClient));
+                        put(&mut self.google_secret, value(ServerField::GoogleSecret));
                     }
                     Kind::Imap => {
                         put(&mut self.host, value(ServerField::Host));

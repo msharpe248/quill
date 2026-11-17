@@ -74,6 +74,8 @@ pub async fn discover(address: &str, dns: &dyn Dns, prober: &dyn Prober) -> Disc
         }),
         microsoft_application: None,
         microsoft_own: false,
+        google_application: None,
+        google_own: false,
     };
 
     // 1. A provider known by name.
@@ -117,6 +119,8 @@ pub async fn discover(address: &str, dns: &dyn Dns, prober: &dyn Prober) -> Disc
             note: Some(format!("Found in the DNS records of {domain}.")),
             microsoft_application: None,
             microsoft_own: false,
+            google_application: None,
+            google_own: false,
         };
     }
 
@@ -164,6 +168,8 @@ pub async fn discover(address: &str, dns: &dyn Dns, prober: &dyn Prober) -> Disc
                         note: Some(format!("A mail server answered at {host}.")),
                         microsoft_application: None,
                         microsoft_own: false,
+                        google_application: None,
+                        google_own: false,
                     };
                 }
             }
@@ -182,6 +188,8 @@ pub async fn discover(address: &str, dns: &dyn Dns, prober: &dyn Prober) -> Disc
         )),
         microsoft_application: None,
         microsoft_own: false,
+        google_application: None,
+        google_own: false,
     }
 }
 

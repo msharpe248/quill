@@ -46,6 +46,13 @@ pub const MICROSOFT_OWN_NOTE: &str =
 /// an application of its own.
 pub const MICROSOFT_NOTE: &str = "Register Quill with Microsoft once to get the application id: see docs/oauth.md. Tenant may be left empty.";
 
+/// What the form says of a Google account that signs in as Quill itself.
+pub const GOOGLE_OWN_NOTE: &str = "Continue, and Google's sign-in page opens in your browser.";
+
+/// What the form says under the fields of a Google account that names an
+/// application of its own.
+pub const GOOGLE_NOTE: &str = "Register Quill with Google once to get these: a Desktop app OAuth client, in the Google Cloud console. See docs/oauth.md.";
+
 /// What is said of a certificate that could not even be read.
 pub const UNREADABLE_CERTIFICATE: &str =
     "The certificate could not be read, so it cannot be accepted.";
@@ -122,17 +129,42 @@ pub struct AccountDraft {
     pub smtp: Option<ServerDraft>,
 }
 
-/// An account that signs in with Microsoft, as far as the setup flow has
-/// got with it. It has no servers to name and no password.
+/// An account that signs in with its provider (Microsoft, or Google), as
+/// far as the setup flow has got with it. It has no password.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignInDraft {
     pub name: String,
     pub address: String,
-    /// The id of the application registered for Quill with Microsoft.
+    /// The id of the application registered for Quill with the provider.
     pub application_id: String,
-    /// The one organisation to sign in to, when the application was
-    /// registered for one. `None`: any, which leaves `oauth_tenant` out.
+    /// Microsoft: the one organisation to sign in to, when the application
+    /// was registered for one. `None`: any, which leaves `oauth_tenant`
+    /// out.
     pub tenant: Option<String>,
+    /// What a Google account has besides: `None` for a Microsoft one,
+    /// which has no mail servers to name.
+    pub google: Option<GoogleDraft>,
+}
+
+/// What an account that signs in with Google has that a Microsoft one has
+/// not: its mail is read and sent through mail servers, with the sign-in
+/// in place of a password, and Google asks a desktop application for the
+/// "client secret" it was given with its id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoogleDraft {
+    /// The application's client secret. Not a secret in any real sense:
+    /// every copy of a desktop application carries it, and Google says so.
+    /// `None` where the application is Quill's own, which has its own.
+    pub client_secret: Option<String>,
+    pub imap: ServerDraft,
+    pub smtp: Option<ServerDraft>,
+}
+
+/// The application an account signs in to Google as, offered to the form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GoogleApplication {
+    pub client_id: String,
+    pub client_secret: Option<String>,
 }
 
 /// The kinds of account the form can add.
@@ -143,16 +175,26 @@ pub enum Kind {
     Imap,
     /// A Microsoft mailbox: it signs in with Microsoft, in the browser.
     Microsoft,
+    /// A Gmail or Google Workspace mailbox: it signs in with Google, in
+    /// the browser, and its mail is then read and sent as any other's is.
+    Google,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 2] = [Kind::Imap, Kind::Microsoft];
+    pub const ALL: [Kind; 3] = [Kind::Imap, Kind::Microsoft, Kind::Google];
+
+    /// Whether an account of this kind signs in with its provider, in the
+    /// browser, and is asked for no password.
+    pub fn signs_in(self) -> bool {
+        matches!(self, Kind::Microsoft | Kind::Google)
+    }
 
     /// The kind as the form names it.
     pub fn label(self) -> &'static str {
         match self {
             Kind::Imap => "IMAP (password)",
             Kind::Microsoft => "Microsoft (sign in)",
+            Kind::Google => "Google (sign in)",
         }
     }
 }
@@ -399,6 +441,12 @@ pub struct Discovery {
     /// That id is Quill's own, the one every Microsoft account uses unless
     /// its config names another. The form then has no need to show it.
     pub microsoft_own: bool,
+    /// The application an account signs in to Google as, to offer: the one
+    /// an account in the config already uses, or Quill's own if it has one.
+    /// Boxed: it is seldom there, and an answer is passed about by value.
+    pub google_application: Option<Box<GoogleApplication>>,
+    /// That application is Quill's own, and the form need not show it.
+    pub google_own: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -443,10 +491,14 @@ pub enum ServerField {
     Application,
     /// For a Microsoft account: its organisation. Empty for any.
     Tenant,
+    /// For a Google account: the client id and the client secret of the
+    /// application it signs in as.
+    GoogleClient,
+    GoogleSecret,
 }
 
 impl ServerField {
-    pub const ALL: [ServerField; 11] = [
+    pub const ALL: [ServerField; 13] = [
         ServerField::Type,
         ServerField::Name,
         ServerField::Host,
@@ -458,6 +510,8 @@ impl ServerField {
         ServerField::SmtpSecurity,
         ServerField::Application,
         ServerField::Tenant,
+        ServerField::GoogleClient,
+        ServerField::GoogleSecret,
     ];
 
     fn index(self) -> usize {
@@ -503,6 +557,11 @@ pub struct Setup {
     /// typed. Its field and the tenant's are then not shown: an account
     /// that wants another application names it in the config.
     pub own_application: bool,
+    /// For a Google account: the application's client id and secret, and
+    /// whether they are Quill's own and so not shown.
+    pub google_client: LineInput,
+    pub google_secret: LineInput,
+    pub own_google: bool,
     /// Which field of the server step has the cursor.
     pub field: usize,
     /// What is being waited for, in words. Keys other than `esc` wait too.
@@ -532,6 +591,9 @@ impl Default for Setup {
             application: LineInput::default(),
             tenant: LineInput::default(),
             own_application: false,
+            google_client: LineInput::default(),
+            google_secret: LineInput::default(),
+            own_google: false,
             field: ServerField::Name.index(),
             busy: None,
             error: None,
@@ -548,6 +610,7 @@ impl Setup {
         match self.step {
             Step::Address => "Add an account",
             Step::Server if self.kind == Kind::Microsoft => "Add an account: Microsoft",
+            Step::Server if self.kind == Kind::Google => "Add an account: Google",
             Step::Server => "Add an account: the server",
             Step::Password => "Add an account: sign in",
             Step::Certificate => "Add an account: certificate",
@@ -627,6 +690,9 @@ impl Setup {
             ServerField::Application | ServerField::Tenant => {
                 self.kind == Kind::Microsoft && !self.own_application
             }
+            ServerField::GoogleClient | ServerField::GoogleSecret => {
+                self.kind == Kind::Google && !self.own_google
+            }
         }
     }
 
@@ -648,6 +714,8 @@ impl Setup {
                 ServerField::SmtpPort => Some(&self.smtp_port),
                 ServerField::Application => Some(&self.application),
                 ServerField::Tenant => Some(&self.tenant),
+                ServerField::GoogleClient => Some(&self.google_client),
+                ServerField::GoogleSecret => Some(&self.google_secret),
                 ServerField::Type | ServerField::Security | ServerField::SmtpSecurity => None,
             },
         }
@@ -670,6 +738,8 @@ impl Setup {
                 ServerField::SmtpPort => Some(&mut self.smtp_port),
                 ServerField::Application => Some(&mut self.application),
                 ServerField::Tenant => Some(&mut self.tenant),
+                ServerField::GoogleClient => Some(&mut self.google_client),
+                ServerField::GoogleSecret => Some(&mut self.google_secret),
                 ServerField::Type | ServerField::Security | ServerField::SmtpSecurity => None,
             },
         }
@@ -786,7 +856,7 @@ impl Setup {
                 self.busy = Some(format!("Looking for the mail server of {domain}…"));
                 vec![AccountRequest::Discover { address }]
             }
-            Step::Server if self.kind == Kind::Microsoft => match self.sign_in_draft() {
+            Step::Server if self.kind.signs_in() => match self.sign_in_draft() {
                 // No password to ask for and nothing to check with a
                 // server: the account is saved, and then signed in to.
                 Ok(draft) => {
@@ -902,9 +972,74 @@ impl Setup {
         })
     }
 
-    /// The Microsoft account as the fields describe it, or which field is
-    /// wrong and how.
+    /// The account that signs in with Google as the fields describe it,
+    /// or which field is wrong and how. Its mail servers are the ones that
+    /// were found for the address, which the form does not show.
+    fn google_draft(&self) -> Result<SignInDraft, (ServerField, String)> {
+        let found = self
+            .draft()
+            .map_err(|problem| (ServerField::Type, problem))?;
+        if !quill_core::providers::signs_in_with_google(&found.imap.host) {
+            return Err((
+                ServerField::Type,
+                format!(
+                    "Signing in with Google is for Gmail and Google Workspace mailboxes. \
+                     The server found for this address is {}: choose another type.",
+                    found.imap.host
+                ),
+            ));
+        }
+        let client = self.google_client.text().trim();
+        if client.is_empty() {
+            return Err((
+                ServerField::GoogleClient,
+                "Enter the client ID Google shows for the application: it ends in \
+                 .apps.googleusercontent.com."
+                    .to_owned(),
+            ));
+        }
+        if client.contains(char::is_whitespace) {
+            return Err((
+                ServerField::GoogleClient,
+                "A client ID has no spaces in it.".to_owned(),
+            ));
+        }
+        let client_secret = match self.google_secret.text().trim() {
+            // Quill's own application has its own.
+            "" if self.own_google => None,
+            "" => {
+                return Err((
+                    ServerField::GoogleSecret,
+                    "Enter the client secret Google shows beside the client ID.".to_owned(),
+                ));
+            }
+            secret if secret.contains(char::is_whitespace) => {
+                return Err((
+                    ServerField::GoogleSecret,
+                    "A client secret has no spaces in it.".to_owned(),
+                ));
+            }
+            secret => Some(secret.to_owned()),
+        };
+        Ok(SignInDraft {
+            name: found.name,
+            address: found.address,
+            application_id: client.to_owned(),
+            tenant: None,
+            google: Some(GoogleDraft {
+                client_secret,
+                imap: found.imap,
+                smtp: found.smtp,
+            }),
+        })
+    }
+
+    /// The account that signs in with its provider as the fields describe
+    /// it, or which field is wrong and how.
     fn sign_in_draft(&self) -> Result<SignInDraft, (ServerField, String)> {
+        if self.kind == Kind::Google {
+            return self.google_draft();
+        }
         let address = self.address.text().trim().to_owned();
         let name = match self.name.text().trim() {
             "" => address.clone(),
@@ -940,6 +1075,7 @@ impl Setup {
             address,
             application_id: application_id.to_owned(),
             tenant,
+            google: None,
         })
     }
 
@@ -1034,11 +1170,30 @@ impl Setup {
                     self.application.set(id);
                     self.own_application = found.microsoft_own;
                 }
+                if self.google_client.is_empty()
+                    && let Some(application) = found.google_application
+                {
+                    let application = *application;
+                    self.google_client.set(application.client_id);
+                    self.google_secret
+                        .set(application.client_secret.unwrap_or_default());
+                    self.own_google = found.google_own;
+                }
+                // A Google mailbox signs in with Google where there is an
+                // application to sign in as. Where there is none yet, it
+                // is offered with a password, which is an app password,
+                // and the other type is the user's to choose.
+                if quill_core::providers::signs_in_with_google(self.host.text())
+                    && !self.google_client.is_empty()
+                {
+                    self.kind = Kind::Google;
+                }
                 // Found: the cursor waits on the name, the one thing only
                 // the user can choose. Not found: on the server to fill in.
                 // A Microsoft account with no application id yet: on that.
                 self.field = match self.kind {
                     Kind::Microsoft if self.application.is_empty() => ServerField::Application,
+                    Kind::Google if self.google_client.is_empty() => ServerField::GoogleClient,
                     Kind::Imap if !found.found => ServerField::Host,
                     _ => ServerField::Name,
                 }
@@ -1114,10 +1269,11 @@ impl Setup {
             AccountEvent::Saved(result) => {
                 self.busy = None;
                 match result {
-                    // A Microsoft account is saved from the server step,
-                    // and has still to be signed in to. That is asked for
-                    // at once, for the account just made.
-                    Ok(name) if self.kind == Kind::Microsoft && self.step == Step::Server => {
+                    // An account that signs in with its provider is saved
+                    // from the server step, and has still to be signed in
+                    // to. That is asked for at once, for the account just
+                    // made.
+                    Ok(name) if self.kind.signs_in() && self.step == Step::Server => {
                         let sign_in = AccountRequest::SignIn {
                             account: Some(name.clone()),
                         };
@@ -1255,6 +1411,8 @@ mod tests {
                 note: Some("Found in the DNS records of example.com.".to_owned()),
                 microsoft_application: None,
                 microsoft_own: false,
+                google_application: None,
+                google_own: false,
             },
         }
     }
@@ -1275,6 +1433,219 @@ mod tests {
         found.note = Some("Mail for example.com is hosted by Microsoft.".to_owned());
         found.microsoft_application = application.map(str::to_owned);
         AccountEvent::Discovered { address, found }
+    }
+
+    /// What discovery says of a Gmail address, with the application the
+    /// service has to offer for signing in to Google, if it has one, and
+    /// whether that one is Quill's own.
+    pub(super) fn found_at_google(
+        application: Option<(&str, Option<&str>)>,
+        own: bool,
+    ) -> AccountEvent {
+        let AccountEvent::Discovered { address, mut found } = found("robin@gmail.com") else {
+            unreachable!()
+        };
+        found.draft.name = "Gmail".to_owned();
+        found.draft.imap.host = "imap.gmail.com".to_owned();
+        found.draft.smtp = Some(ServerDraft {
+            host: "smtp.gmail.com".to_owned(),
+            port: 465,
+            tls: TlsMode::Implicit,
+            username: address.clone(),
+        });
+        found.note = Some(
+            "Gmail's usual servers. Google does not accept your normal password here.".to_owned(),
+        );
+        found.google_application = application.map(|(id, secret)| {
+            Box::new(GoogleApplication {
+                client_id: id.to_owned(),
+                client_secret: secret.map(str::to_owned),
+            })
+        });
+        found.google_own = own;
+        AccountEvent::Discovered { address, found }
+    }
+
+    /// The form at the server step, for a Gmail address.
+    pub(super) fn at_google(application: Option<(&str, Option<&str>)>, own: bool) -> Setup {
+        let mut setup = Setup::default();
+        setup.address.set("robin@gmail.com");
+        setup.advance();
+        setup.on_event(found_at_google(application, own));
+        assert_eq!(setup.step, Step::Server);
+        setup
+    }
+
+    fn gmail_servers() -> (ServerDraft, Option<ServerDraft>) {
+        let server = |host: &str, port| ServerDraft {
+            host: host.to_owned(),
+            port,
+            tls: TlsMode::Implicit,
+            username: "robin@gmail.com".to_owned(),
+        };
+        (
+            server("imap.gmail.com", 993),
+            Some(server("smtp.gmail.com", 465)),
+        )
+    }
+
+    #[test]
+    fn with_no_google_application_a_gmail_address_is_offered_with_a_password_and_can_sign_in() {
+        // Nobody has registered Quill with Google: the account is offered
+        // as one with a password, which the form says is an app password.
+        let mut setup = at_google(None, false);
+        assert_eq!(setup.kind, Kind::Imap);
+        setup.advance();
+        assert_eq!(setup.step, Step::Password);
+        assert!(setup.password_note().contains("app password"));
+        keys(&mut setup, "esc");
+        setup.back();
+        assert_eq!(setup.step, Step::Server);
+
+        // Signing in with Google is the user's to choose, and then asks
+        // for the application to sign in as: both halves of it.
+        setup.field = ServerField::Type.index();
+        keys(&mut setup, "left");
+        assert_eq!(setup.kind, Kind::Google);
+        assert_eq!(setup.title(), "Add an account: Google");
+        let shown: Vec<ServerField> = ServerField::ALL
+            .into_iter()
+            .filter(|field| setup.shows(*field))
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ServerField::Type,
+                ServerField::Name,
+                ServerField::GoogleClient,
+                ServerField::GoogleSecret
+            ]
+        );
+        assert_eq!(keys(&mut setup, "enter"), []);
+        assert_eq!(setup.server_field(), ServerField::GoogleClient);
+        assert!(setup.error.as_deref().unwrap().contains("client ID"));
+        setup
+            .google_client
+            .set(" 123-abc.apps.googleusercontent.com ");
+        assert_eq!(keys(&mut setup, "enter"), []);
+        assert_eq!(setup.server_field(), ServerField::GoogleSecret);
+        assert!(setup.error.as_deref().unwrap().contains("client secret"));
+        setup.google_secret.set("GOCSPX-not-a-real-one");
+
+        // No password is asked for and no server is signed in to: the
+        // account is saved, with the mail servers that were found.
+        let (imap, smtp) = gmail_servers();
+        assert_eq!(
+            keys(&mut setup, "enter"),
+            [AccountRequest::SaveSignIn {
+                draft: SignInDraft {
+                    name: "Gmail".to_owned(),
+                    address: "robin@gmail.com".to_owned(),
+                    application_id: "123-abc.apps.googleusercontent.com".to_owned(),
+                    tenant: None,
+                    google: Some(GoogleDraft {
+                        client_secret: Some("GOCSPX-not-a-real-one".to_owned()),
+                        imap,
+                        smtp,
+                    }),
+                }
+            }]
+        );
+        assert_eq!(setup.busy.as_deref(), Some("Saving Gmail…"));
+        // Saved: it goes on to the sign-in, as a Microsoft account does.
+        let (requests, outcome) = setup.on_event(AccountEvent::Saved(Ok("Gmail".to_owned())));
+        assert_eq!(
+            requests,
+            [AccountRequest::SignIn {
+                account: Some("Gmail".to_owned())
+            }]
+        );
+        assert_eq!(outcome, Outcome::SigningIn("Gmail".to_owned()));
+    }
+
+    #[test]
+    fn with_a_google_application_to_offer_a_gmail_address_signs_in_with_google() {
+        // One an account in the config already signs in as: offered again,
+        // and shown, since it is the user's own.
+        let mut setup = at_google(
+            Some(("mine.apps.googleusercontent.com", Some("GOCSPX-mine"))),
+            false,
+        );
+        assert_eq!(setup.kind, Kind::Google);
+        assert_eq!(setup.server_field(), ServerField::Name);
+        assert!(setup.shows(ServerField::GoogleClient) && setup.shows(ServerField::GoogleSecret));
+        assert_eq!(
+            setup.google_client.text(),
+            "mine.apps.googleusercontent.com"
+        );
+        assert_eq!(setup.google_secret.text(), "GOCSPX-mine");
+        let saved = keys(&mut setup, "enter");
+        assert!(matches!(
+            saved.as_slice(),
+            [AccountRequest::SaveSignIn { draft }]
+                if draft.google.as_ref().and_then(|google| google.client_secret.as_deref())
+                    == Some("GOCSPX-mine")
+        ));
+
+        // Quill's own: nothing to fill in but the name, and nothing of the
+        // application is shown or written.
+        let mut setup = at_google(Some(("quill.apps.googleusercontent.com", None)), true);
+        assert_eq!(setup.kind, Kind::Google);
+        assert!(!setup.shows(ServerField::GoogleClient) && !setup.shows(ServerField::GoogleSecret));
+        let (imap, smtp) = gmail_servers();
+        assert_eq!(
+            keys(&mut setup, "enter"),
+            [AccountRequest::SaveSignIn {
+                draft: SignInDraft {
+                    name: "Gmail".to_owned(),
+                    address: "robin@gmail.com".to_owned(),
+                    application_id: "quill.apps.googleusercontent.com".to_owned(),
+                    tenant: None,
+                    google: Some(GoogleDraft {
+                        client_secret: None,
+                        imap,
+                        smtp,
+                    }),
+                }
+            }]
+        );
+    }
+
+    #[test]
+    fn signing_in_with_google_is_for_googles_mail_servers_only() {
+        // An address whose mail is somewhere else, with the type changed
+        // by hand: said, and nothing saved.
+        let mut setup = Setup::default();
+        setup.address.set("robin@example.com");
+        setup.advance();
+        setup.on_event(found("robin@example.com"));
+        assert_eq!(setup.kind, Kind::Imap);
+        setup.field = ServerField::Type.index();
+        keys(&mut setup, "left");
+        assert_eq!(setup.kind, Kind::Google);
+        setup.google_client.set("mine.apps.googleusercontent.com");
+        setup.google_secret.set("GOCSPX-mine");
+        assert_eq!(keys(&mut setup, "enter"), []);
+        let said = setup.error.clone().unwrap_or_default();
+        assert!(
+            said.contains("Gmail and Google Workspace") && said.contains("imap.example.com"),
+            "{said}"
+        );
+        assert_eq!(setup.server_field(), ServerField::Type);
+        // An offer of an application does not make another server's
+        // account a Google one.
+        let AccountEvent::Discovered { address, mut found } = found("sam@example.com") else {
+            unreachable!()
+        };
+        found.google_application = Some(Box::new(GoogleApplication {
+            client_id: "mine.apps.googleusercontent.com".to_owned(),
+            client_secret: None,
+        }));
+        let mut setup = Setup::default();
+        setup.address.set("sam@example.com");
+        setup.advance();
+        setup.on_event(AccountEvent::Discovered { address, found });
+        assert_eq!(setup.kind, Kind::Imap);
     }
 
     /// The form at the server step, for an address Microsoft hosts.
@@ -1375,9 +1746,11 @@ mod tests {
         keys(&mut setup, "right");
         assert_eq!(setup.kind, Kind::Microsoft);
         keys(&mut setup, "right");
+        assert_eq!(setup.kind, Kind::Google);
+        keys(&mut setup, "right");
         assert_eq!(setup.kind, Kind::Imap);
         keys(&mut setup, "left");
-        assert_eq!(setup.kind, Kind::Microsoft);
+        assert_eq!(setup.kind, Kind::Google);
         keys(&mut setup, "space");
         assert_eq!(setup.kind, Kind::Imap);
         // Letters are not typed into a choice, and change nothing.
@@ -1388,7 +1761,7 @@ mod tests {
 
         // Changing the type takes back what was said about the old one.
         setup.error = Some("said of the other type".to_owned());
-        keys(&mut setup, "left");
+        keys(&mut setup, "right");
         assert_eq!(
             (setup.kind, setup.error.as_deref()),
             (Kind::Microsoft, None)
@@ -1457,6 +1830,7 @@ mod tests {
                     address: "robin@example.com".to_owned(),
                     application_id: "quills-own-id".to_owned(),
                     tenant: None,
+                    google: None,
                 },
             }]
         );
@@ -1566,6 +1940,7 @@ mod tests {
                     address: "robin@example.com".to_owned(),
                     application_id: "0f1e2d3c-app-1".to_owned(),
                     tenant: None,
+                    google: None,
                 }
             }]
         );
@@ -1586,6 +1961,7 @@ mod tests {
                     address: "robin@example.com".to_owned(),
                     application_id: "app-1".to_owned(),
                     tenant: Some("example.com".to_owned()),
+                    google: None,
                 }
             }]
         );

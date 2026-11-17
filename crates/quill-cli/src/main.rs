@@ -815,9 +815,18 @@ mod tests {
         // Another mailbox is another matter.
         let other = tempfile::tempdir().unwrap();
         assert!(hold_mailbox(other.path()).is_ok());
-        // And when the first has gone, the mailbox is free again.
+        // And when the first has gone, the mailbox is free again. Given a
+        // moment: another test starting a program at this instant has a
+        // copy of every open file until the program takes its place, and
+        // the lock is held for as long as any copy is open.
         drop(held);
-        assert!(hold_mailbox(dir.path()).is_ok());
+        let free = (0..200).any(|_| {
+            hold_mailbox(dir.path()).is_ok() || {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                false
+            }
+        });
+        assert!(free);
         // A folder that is not there is a mistake of another kind.
         let missing = hold_mailbox(&dir.path().join("nowhere")).unwrap_err();
         assert!(missing.downcast_ref::<AlreadyOpen>().is_none());

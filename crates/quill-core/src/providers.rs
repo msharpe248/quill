@@ -133,6 +133,16 @@ pub fn takes_no_password(host: &str) -> Option<&'static str> {
         .then_some("Microsoft")
 }
 
+/// Whether `host` is one of Google's mail servers: the ones a Gmail or
+/// Google Workspace mailbox is read from and sent through, which take a
+/// sign-in with Google in place of a password.
+pub fn signs_in_with_google(host: &str) -> bool {
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    ["gmail.com", "googlemail.com"]
+        .iter()
+        .any(|domain| host.ends_with(&format!(".{domain}")))
+}
+
 /// What to know about the password a known provider's server takes, by
 /// the server's name: that the user's normal password is not it, and where
 /// the one that is comes from. `None` for a server Quill does not know, and
@@ -184,6 +194,27 @@ pub fn by_mail_exchanger(exchanger: &str) -> Option<&'static Provider> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn googles_mail_servers_are_known_by_name() {
+        for host in [
+            "imap.gmail.com",
+            "smtp.gmail.com",
+            "IMAP.Gmail.com.",
+            "imap.googlemail.com",
+        ] {
+            assert!(signs_in_with_google(host), "{host}");
+        }
+        for host in [
+            "",
+            "gmail.com",
+            "imap.gmail.com.example.com",
+            "notgmail.com",
+            "imap.fastmail.com",
+        ] {
+            assert!(!signs_in_with_google(host), "{host}");
+        }
+    }
 
     #[test]
     fn a_known_server_that_wants_a_password_of_its_own_has_advice_and_no_other_has() {

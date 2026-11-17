@@ -45,6 +45,17 @@ pub fn wanted(account: &AccountConfig) -> bool {
 /// and proves nothing.
 pub const MICROSOFT_APPLICATION: &str = "1f673243-3634-498b-8b7f-2425ba6f2490";
 
+/// The application Quill is registered as with Google: its client id and
+/// the "client secret" Google gives a desktop application with it, which
+/// is not a secret (every copy of the application carries it, and Google
+/// says so). `None`: Quill has no application of its own with Google yet,
+/// and an account that signs in with Google names one, in its config.
+///
+/// When there is one, every such account signs in through it unless its
+/// config names another, as with [`MICROSOFT_APPLICATION`], and the form
+/// that adds an account asks for nothing but the sign-in.
+pub const GOOGLE_APPLICATION: Option<(&str, &str)> = None;
+
 /// How the account signs in with OAuth, from its config: `None` for an
 /// account that uses a password, and the reason for one whose settings
 /// cannot work.
@@ -52,8 +63,9 @@ pub fn setup(account: &AccountConfig) -> Result<Option<OAuthSetup>, String> {
     if !wanted(account) {
         return Ok(None);
     }
-    // Quill is registered with Microsoft, and with nobody else.
+    // Quill is registered with Microsoft, and may be with Google.
     let mut own_application = None;
+    let mut own_secret = None;
     let mut provider = match account.kind {
         AccountType::Graph => {
             own_application = Some(MICROSOFT_APPLICATION);
@@ -72,6 +84,10 @@ pub fn setup(account: &AccountConfig) -> Result<Option<OAuthSetup>, String> {
                     "`oauth_tenant` is for Microsoft accounts, which are `type = \"graph\"`"
                         .to_owned(),
                 );
+            }
+            if let Some((id, secret)) = GOOGLE_APPLICATION {
+                own_application = Some(id);
+                own_secret = Some(secret);
             }
             OAuthProvider::google()
         }
@@ -93,18 +109,29 @@ pub fn setup(account: &AccountConfig) -> Result<Option<OAuthSetup>, String> {
             provider.device_url = Some(url.clone());
         }
     }
-    let id = account
+    let named = account
         .oauth_client_id
         .as_deref()
         .map(str::trim)
-        .filter(|id| !id.is_empty())
+        .filter(|id| !id.is_empty());
+    // Quill's own secret goes with Quill's own id, and with no other.
+    if named.is_some() {
+        own_secret = None;
+    }
+    let id = named
         .or(own_application)
         .ok_or(
             "it has no `oauth_client_id`: the id of the application registered for Quill with the provider (see docs/oauth.md)",
         )?;
-    let client = match account.oauth_client_secret.as_deref().map(str::trim) {
-        Some(secret) if !secret.is_empty() => OAuthClient::with_secret(id, secret),
-        _ => OAuthClient::public(id),
+    let secret = account
+        .oauth_client_secret
+        .as_deref()
+        .map(str::trim)
+        .filter(|secret| !secret.is_empty())
+        .or(own_secret);
+    let client = match secret {
+        Some(secret) => OAuthClient::with_secret(id, secret),
+        None => OAuthClient::public(id),
     };
     Ok(Some(OAuthSetup { provider, client }))
 }
