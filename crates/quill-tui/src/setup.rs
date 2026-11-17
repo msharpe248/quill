@@ -556,11 +556,17 @@ impl Setup {
 
     /// What the form says where the password is asked for.
     pub fn password_note(&self) -> String {
-        format!(
+        let asked = format!(
             "The password for {} at {}. It is kept in your Keychain and nowhere else.",
             self.username.text(),
             self.host.text()
-        )
+        );
+        // A provider that does not take the user's normal password is
+        // said so here, where it is about to be typed.
+        match quill_core::providers::password_advice(self.host.text()) {
+            Some(advice) => format!("{asked} {advice}"),
+            None => asked,
+        }
     }
 
     /// Whether one of the servers named is to be reached with no
@@ -1063,9 +1069,21 @@ impl Setup {
                     },
                     Err(VerifyProblem::Auth(reason)) => {
                         let reason = text::sanitize_line(&reason);
-                        self.error = Some(format!(
-                            "The server did not accept that name and password. It said: {reason}"
-                        ));
+                        // At a provider that wants a password of its own
+                        // making, the normal one typed correctly is what
+                        // was refused: say what to type instead.
+                        self.error = Some(
+                            match quill_core::providers::password_advice(self.host.text()) {
+                                Some(advice) => format!(
+                                    "The server did not accept that name and password. \
+                                     {advice} It said: {reason}"
+                                ),
+                                None => format!(
+                                    "The server did not accept that name and password. It \
+                                     said: {reason}"
+                                ),
+                            },
+                        );
                         (Vec::new(), Outcome::Open)
                     }
                     Err(VerifyProblem::Certificate(problem)) => {
@@ -1665,6 +1683,44 @@ mod tests {
         keys(&mut setup, "left");
         setup.host.set("imap.notoutlook.com");
         assert_eq!(setup.advance(), []);
+        assert_eq!(setup.step, Step::Password);
+    }
+
+    #[test]
+    fn a_provider_that_wants_an_app_password_is_said_so_where_it_is_typed_and_when_refused() {
+        let mut setup = at_password();
+        // A server Quill does not know: nothing more to say.
+        assert!(!setup.password_note().contains("app password"));
+        setup.host.set("imap.gmail.com");
+        let note = setup.password_note();
+        assert!(note.starts_with("The password for "), "{note}");
+        assert!(
+            note.ends_with(
+                "Google does not accept your normal password here. Create an app password \
+                 in your Google account (Security, 2-Step Verification, App passwords) and \
+                 use that."
+            ),
+            "{note}"
+        );
+        // Refused, as Google refuses a normal password that is right.
+        setup.advance();
+        setup.on_event(AccountEvent::Verified(Err(VerifyProblem::Auth(
+            "Application-specific password required: \
+             https://support.google.com/accounts/answer/185833 (Failure)"
+                .to_owned(),
+        ))));
+        let said = setup.error.clone().unwrap_or_default();
+        assert!(
+            said.starts_with(
+                "The server did not accept that name and password. Google does not accept \
+                 your normal password here. Create an app password"
+            ),
+            "{said}"
+        );
+        assert!(
+            said.ends_with("It said: Application-specific password required: https://support.google.com/accounts/answer/185833 (Failure)"),
+            "{said}"
+        );
         assert_eq!(setup.step, Step::Password);
     }
 

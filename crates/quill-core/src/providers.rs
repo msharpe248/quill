@@ -133,6 +133,30 @@ pub fn takes_no_password(host: &str) -> Option<&'static str> {
         .then_some("Microsoft")
 }
 
+/// What to know about the password a known provider's server takes, by
+/// the server's name: that the user's normal password is not it, and where
+/// the one that is comes from. `None` for a server Quill does not know, and
+/// for one that takes no password at all ([`takes_no_password`]).
+///
+/// Said where the password is typed and again when it is refused: a
+/// refusal by such a server is nearly always the normal password, typed
+/// correctly.
+pub fn password_advice(host: &str) -> Option<&'static str> {
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    if host.is_empty() || takes_no_password(&host).is_some() {
+        return None;
+    }
+    PROVIDERS
+        .iter()
+        .find(|provider| {
+            [provider.imap, provider.smtp]
+                .into_iter()
+                .flatten()
+                .any(|endpoint| endpoint.host == host)
+        })
+        .and_then(|provider| provider.note)
+}
+
 /// The provider that owns an address domain, such as `gmail.com`.
 pub fn by_domain(domain: &str) -> Option<&'static Provider> {
     PROVIDERS.iter().find(|provider| {
@@ -160,6 +184,42 @@ pub fn by_mail_exchanger(exchanger: &str) -> Option<&'static Provider> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_known_server_that_wants_a_password_of_its_own_has_advice_and_no_other_has() {
+        for (host, about) in [
+            (
+                "imap.gmail.com",
+                "Google does not accept your normal password",
+            ),
+            (
+                "smtp.gmail.com",
+                "Google does not accept your normal password",
+            ),
+            (
+                "IMAP.Gmail.com.",
+                "Google does not accept your normal password",
+            ),
+            ("imap.mail.me.com", "app-specific password"),
+            ("imap.fastmail.com", "Fastmail needs an app password"),
+            ("imap.mail.yahoo.com", "Yahoo needs an app password"),
+        ] {
+            let advice = password_advice(host).unwrap_or_default();
+            assert!(advice.contains(about), "{host}: {advice}");
+        }
+        // A server Quill does not know, one whose provider has nothing to
+        // say, and one that takes no password at all.
+        for host in [
+            "",
+            "mail.example.com",
+            "gmail.com",
+            "imap.gmail.com.example.com",
+            "imap.zoho.com",
+            "outlook.office365.com",
+        ] {
+            assert_eq!(password_advice(host), None, "{host}");
+        }
+    }
 
     #[test]
     fn microsofts_servers_take_no_password() {
