@@ -39,6 +39,9 @@ import WebKit
 ///   it
 /// - `notifyaction:NAME,ID` click the button of this name on the notification
 ///   of this id
+/// - `window:close`   close the main window, as its red button does: Quill
+///   goes on running; `window:reopen` brings it back, as a click on Quill
+///   in the Dock does
 /// - `keys:close`     close the window of keys, which `menu:help.keys`
 ///   brings up; `keysearch:TEXT` types into its search field. Its picture
 ///   is written with `.keys.png` after the dump's name
@@ -237,6 +240,15 @@ enum DebugScript {
         case "press":
             press(argument, in: controller.window)
             try? await Task.sleep(for: .milliseconds(150))
+        case "window":
+            // `window:close` closes the main window as its red button
+            // does; `window:reopen` is a click on Quill in the Dock.
+            switch argument {
+            case "close": controller.window?.performClose(nil)
+            case "reopen": (NSApp.delegate as? AppDelegate)?.reopen()
+            default: note("window:\(argument) is not a step")
+            }
+            try? await Task.sleep(for: .milliseconds(400))
         case "resize":
             let parts = argument.split(separator: "x").compactMap { Double($0) }
             if parts.count == 2, let window = controller.window {
@@ -688,6 +700,9 @@ enum DebugScript {
         lines.append("reading requests: \(controller.readingRequests)")
         let responder = controller.window?.firstResponder.map { String(describing: type(of: $0)) }
         lines.append("keys go to: \(responder ?? "nothing")")
+        // main window: on screen | closed, how many times it has been
+        // closed, and whether the core is still running behind it.
+        lines.append("main window: \(controller.mainWindowSummary)")
         lines.append("opened: \(opened.joined(separator: " "))")
         lines.append("enabled: \(controller.commands.enabledNames.joined(separator: " "))")
         // The commands that are switched on: their menu items are checked.

@@ -92,8 +92,15 @@ enum MainMenu {
         // Window
         let window = submenu(of: bar, title: "Window")
         append(commands.makeMenuItems(for: .window), to: window, thenSeparator: true)
+        // Closing a window is not quitting: Quill goes on in the Dock, and
+        // the main window is brought back from here or from there.
+        window.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         window.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         window.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        window.addItem(.separator())
+        let main = window.addItem(
+            withTitle: "Main Window", action: #selector(MainWindowController.showMainWindow(_:)), keyEquivalent: "0")
+        main.target = panes
         NSApp.windowsMenu = window
 
         // Help

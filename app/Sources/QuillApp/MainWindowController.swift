@@ -818,13 +818,45 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         placeReadingDivider()
     }
 
+    /// The window was closed, by its red button or from the Window menu.
+    /// Quill goes on running, as a mail program does: mail is still
+    /// fetched and sent, new mail is still announced, and the Dock still
+    /// has the count of what is unread. The window comes back from the
+    /// Dock, the Window menu, a notification or a mail link, as it was
+    /// left. Quitting is what stops the core, not this.
     func windowWillClose(_: Notification) {
-        // The settings are the main window's: they go with it.
-        settingsWindow.close()
-        // Nothing goes on playing, or loading, behind a closed window.
-        dropIncomingReading()
-        pane?.tearDown()
-        stopCore()
+        // Nothing goes on playing behind a closed window: a film or a
+        // file being looked at is put away. The reading pane is the
+        // core's to say, and stays; so does an editor with a message in it.
+        closePane()
+        timesClosed += 1
+    }
+
+    /// How many times the main window has been closed, for a scripted
+    /// run's dump.
+    private(set) var timesClosed = 0
+
+    /// Whether the main window is on screen, or in the Dock.
+    var mainWindowIsShown: Bool {
+        guard let window else { return false }
+        return window.isVisible || window.isMiniaturized
+    }
+
+    /// Brings the main window back, or forward: from the Dock's icon and
+    /// from the Window menu. Never `showWindow`, which starts the core.
+    @objc func showMainWindow(_: Any?) {
+        guard let window else { return }
+        if window.isMiniaturized {
+            window.deminiaturize(nil)
+        }
+        window.makeKeyAndOrderFront(nil)
+        focusTerminal()
+    }
+
+    /// The main window in a few words, for a scripted run's dump.
+    var mainWindowSummary: String {
+        let shown = (window?.isVisible ?? false) ? "on screen" : "closed"
+        return "\(shown), closed \(timesClosed) times, core \(coreIsRunning ? "running" : "stopped")"
     }
 
     // MARK: - Toolbar

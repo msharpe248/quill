@@ -41,8 +41,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainWindow?.mustWaitForCoreBeforeTerminating() == true ? .terminateLater : .terminateNow
     }
 
+    /// Closing the window does not quit Quill: it goes on fetching mail
+    /// and announcing it, as a mail program does, until it is quit.
     func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool {
-        true
+        false
+    }
+
+    /// A click on the Dock's icon, or Quill opened again while it is
+    /// running: the main window comes back if it was closed.
+    func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
+        reopen()
+        return true
+    }
+
+    /// Brings the main window back if it is not on show. Also what a
+    /// scripted run does in place of a click on the Dock.
+    func reopen() {
+        guard let mainWindow, !mainWindow.mainWindowIsShown else { return }
+        mainWindow.showMainWindow(nil)
     }
 
     func applicationSupportsSecureRestorableState(_: NSApplication) -> Bool {

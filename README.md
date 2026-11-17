@@ -56,6 +56,8 @@ The app is not sandboxed: it runs your own editor on your own settings, which a 
 
 Settings… in the Quill menu (`cmd-,`) opens a settings window for the settings changed most; see "The Settings window". The app is light, dark or as the Mac is, with a theme for each, and Import Theme… in the same menu brings in any theme made for Ghostty; see "Themes".
 
+Closing the window does not quit Quill. As with any mail program on a Mac, the red button (or `cmd-w`) only puts the window away: Quill stays in the Dock, goes on fetching and sending mail, and still announces new mail and shows the unread count. A click on its Dock icon, Window > Main Window (`cmd-0`), a notification or a mail link brings the window back as you left it. `cmd-q` quits.
+
 Around the terminal the app adds a menu bar and toolbar built from the core's commands, the mailbox name and unread count in the title bar, the unread count on the Dock icon, and a second pane beside the terminal for looking at attachments and playing sound and video. `esc` closes the pane, and `cmd-]` moves focus between the panes.
 
 `w` (View > Web Reading Pane, or its toolbar button) turns that second pane into the place mail is read: a web view that shows the message under the list's cursor, as a mail program's reading pane does, with the accounts and the list beside it. See "Reading in a web pane".

@@ -1043,3 +1043,14 @@ The owner signed in to Gmail through the form with a client they had just regist
 - **`app/release.sh`** makes the app that is given out and zips it (`target/dist/Quill-VERSION-ARCH.zip`), with the checksum a Homebrew cask wants. It refuses to make one with no Google client unless told to. Run once here: 13 MB, ad hoc signed, the client in the core and the form asking for nothing. Its notarizing step is written and has never run: there is no developer account yet.
 - **Seen in the app** (the release build itself, scratch settings and home): a Gmail address offered as a Google account with only its name to give. Not continued, since that saves the account and starts its sync against Google.
 
+## Closing the window is not quitting (2026-11-16)
+
+The owner: the red button quit the app, and should not. Now it does what it does in Mail.
+
+- **The red button, and `cmd-w`, put the window away and nothing else.** `applicationShouldTerminateAfterLastWindowClosed` is false, and closing the window no longer stops the core: mail is fetched and sent, new mail is announced and the Dock has the unread count, with no window. A film or a file being looked at in the second pane is put away as the window closes; the reading pane and an editor with a message in it are left as they are.
+- **It comes back** from a click on the Dock (`applicationShouldHandleReopen`), from Window > Main Window (`cmd-0`), and from a notification or a mail link, which brought it forward already. Never by `showWindow`, which is where the core is started: the window is ordered front again as it was.
+- **The Settings window no longer closes with the main one.** It was closed with it only because closing was quitting.
+- **Quitting is `cmd-q`**, the Quill menu, or `q` in the terminal, as before, and is what stops the core.
+- **Close Window is in the Window menu** on `cmd-w`, which nothing of the core's used. It closes whichever window has the keys, so the Settings window and the window of keys too.
+- **Seen in the app** (a separate build, demo mailbox): the window closed with the core still running behind it, brought back as a Dock click does with the list where it was and the keys working, closed again from the menu and brought back by Main Window. Not seen: a notification arriving with the window closed, and the Dock's count changing meanwhile, which need mail to arrive.
+
