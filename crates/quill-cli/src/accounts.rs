@@ -660,16 +660,24 @@ auth = "oauth"
 imap = { host = "imap.example.org" }
 "#;
         let prepared = prepare(&config(text), &mut store, &secrets(), true).unwrap();
-        assert_eq!(prepared.accounts.len(), 1);
+        // One that names an application signs in as that. One that names
+        // none signs in as Quill itself where this build was given an
+        // application for Google, and cannot sync, and says why, in a
+        // build from the source alone.
         assert_eq!(prepared.accounts[0].name, "Mail");
         assert!(prepared.accounts[0].sender.is_some());
-        assert!(
-            prepared.notices.iter().any(|notice| notice
+        let told = prepared.notices.iter().any(|notice| {
+            notice
                 .text
-                .starts_with("No App cannot sync: it has no `oauth_client_id`")),
-            "{:?}",
-            prepared.notices
-        );
+                .starts_with("No App cannot sync: it has no `oauth_client_id`")
+        });
+        if crate::oauth::GOOGLE_APPLICATION.is_some() {
+            assert_eq!(prepared.accounts.len(), 2);
+            assert!(!told, "{:?}", prepared.notices);
+        } else {
+            assert_eq!(prepared.accounts.len(), 1);
+            assert!(told, "{:?}", prepared.notices);
+        }
         // Nobody has signed in, and it is not a password that is missing.
         // (Nothing listens on port 1, so the connection is what fails
         // first; the sender is asked directly.)

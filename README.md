@@ -20,7 +20,7 @@ Every milestone in the spec, M0 to M10, is built. M0 to M4 and POP3 have passed 
 
 What needs a person, in the order it is worth doing:
 
-1. **Sign in to a Microsoft account.** Add it from the form and Microsoft's sign-in page opens: Quill is registered with Microsoft and needs nothing from you but the sign-in. Nothing here has yet met a real Microsoft 365 or Outlook.com mailbox. Gmail signs in with Google too, from the same form (Type: Google), but Quill has no application of its own there yet: you register one with Google once and give the form its client ID and secret ([docs/oauth.md](docs/oauth.md)). Gmail with an app password needs none of that, and the form says where to make one.
+1. **Sign in to a Microsoft account.** Add it from the form and Microsoft's sign-in page opens: Quill is registered with Microsoft and needs nothing from you but the sign-in. Nothing here has yet met a real Microsoft 365 or Outlook.com mailbox. Gmail signs in with Google the same way in the builds Quill is given out as: they carry Quill's registration with Google, which the source does not. That registration has not been through Google's verification, so Google shows a warning to click through and lets in only a limited number of people ([docs/oauth.md](docs/oauth.md)). A build you make from the source asks for a client of your own instead; an app password is the other way, and the form says where to make one.
 2. **Choose an editor**, if you would sooner write mail outside Quill's own: `editor = "vim"`, `"nano"`, `"pico"` or `"mg"` under `[compose]`, or Settings > Composing in the app. It is your own, with your own settings; `editor_path` names the program if it is not the one of that name on the `PATH`.
 3. **Allow notifications** when the app first asks, and make Quill the default mail program in Mail's settings if you want `mailto:` links to come here.
 4. **A licence, and somewhere to publish.** Quill is to be given out as source and as a download (GitHub, Homebrew), not through the App Store. A Developer ID to sign and notarize the download with is what makes it open on someone else's Mac without a warning.
@@ -47,6 +47,10 @@ open target/app/Quill.app
 ```
 
 The script builds the Rust core and the Swift shell, assembles `target/app/Quill.app`, and signs it ad hoc with the hardened runtime. The app opens your own mail, and the form for adding an account when there is none; `Quill.app/Contents/MacOS/Quill --demo` opens the demo mailbox instead.
+
+**Signing in to Google as Quill.** Quill's registration with Google is not in the source. `app/build-app.sh` looks for `google-client.json` at the top of the repository (the file Google's console gives for a "Desktop app" OAuth client; git ignores it), or takes `QUILL_GOOGLE_CLIENT_ID` and `QUILL_GOOGLE_CLIENT_SECRET` from the environment, and says which it found. With neither, the build works and the form asks whoever adds a Gmail account for a client of their own.
+
+**A build to give out.** `app/release.sh` makes a release build and zips it: `target/dist/Quill-VERSION-ARCH.zip`, and the checksum a Homebrew cask is written with. Signed ad hoc it has to be allowed by hand on anyone else's Mac (System Settings, Privacy & Security); with `QUILL_SIGN_IDENTITY` set to a Developer ID and `QUILL_NOTARY_PROFILE` to a saved notary profile it is signed and notarized, and simply opens.
 
 The app is not sandboxed: it runs your own editor on your own settings, which a sandboxed app cannot. It keeps its settings and mail in `~/Library/Application Support/Quill`, the same place as `quill` run in a terminal, so the two are one mailbox. Only one of them can have it open at a time: the second says that Quill is already open and stops, since two would fetch and send the same mail twice. (The commands that do one thing and exit, such as `quill keys`, are not held back.)
 

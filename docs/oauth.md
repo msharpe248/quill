@@ -2,7 +2,7 @@
 
 Microsoft 365 and Gmail do not take a password from a mail program. You sign in to the provider in your browser, and the provider hands Quill a sign-in it can use from then on. Quill never sees your password, and keeps the sign-in in the macOS Keychain.
 
-For this the provider has to know which application is asking. With Microsoft that is Quill itself: it is registered there, its application id is built in, and you only sign in. With Google there is no application of Quill's: you register one, once, and give Quill its id.
+For this the provider has to know which application is asking. That is Quill itself, with both: it is registered with Microsoft and with Google, and you only sign in. Registering an application of your own is for when you would sooner sign in as that, and for Google it is also what a Quill you built yourself from the source needs: Quill's registration with Google is carried by the builds Quill is given out as, and is not in the source.
 
 Nothing here has been checked against the real services yet. The steps follow the providers' documentation as it stood when this was written; if a screen has moved, the names of the settings are what to look for.
 
@@ -59,30 +59,33 @@ Over SSH there is no browser to open on the Mac you are sitting at. Quill shows 
 
 Quill reads Gmail over IMAP and sends over SMTP, signing in to both with the same sign-in.
 
-An app password is the other way to use Gmail, and needs none of this: turn on 2-Step Verification, create an app password at <https://myaccount.google.com/apppasswords>, and add the account in Quill with that as its password.
+To add a Gmail account, press `A` in Quill, type the address and continue: the form offers it as **Google (sign in)**, with nothing to fill in but its name. Continue, and Google's sign-in page opens in your browser; sign in there, agree to what Quill asks for, and come back. The same goes for an address of your own whose mail Google Workspace hosts.
 
-### Register the application
+Two things Google may show you on the way, both because Quill's registration with Google has not been through Google's verification:
+
+- **"Google hasn't verified this app."** Choose **Advanced**, then **Go to Quill**.
+- **"Access blocked"**, or an error saying the app is being tested. Quill's registration then lets in only the addresses listed for it. Use an app password, or an application of your own, below.
+
+An app password is the other way to use Gmail, and needs none of this: turn on 2-Step Verification, create an app password at <https://myaccount.google.com/apppasswords>, and add the account in Quill with the type **IMAP (password)** and that as its password.
+
+### Register an application of your own
+
+Only for someone who wants Quill to sign in as an application of their own.
 
 1. Go to <https://console.cloud.google.com> and create a project. Any name will do.
-2. Under **APIs & Services**, **Library**, find the **Gmail API** and enable it.
-3. Under **APIs & Services**, **OAuth consent screen**, set the application up as **External**, give it a name and your address, and add the scope `https://mail.google.com/`.
-4. While the application is in **Testing**, add your own Gmail address under **Test users**. Only test users can sign in.
-5. Under **APIs & Services**, **Credentials**, choose **Create credentials**, **OAuth client ID**, and the application type **Desktop app**.
-6. The page that follows shows a **Client ID** and a **Client secret**. Quill asks for both.
+2. Under **APIs & Services**, **OAuth consent screen** (it may open as **Google Auth Platform**), set the application up as **External** and give it a name and your address.
+3. Under **Audience**, add your own Gmail address to **Test users**. While the application is in **Testing**, only test users can sign in.
+4. Under **Data access**, add the scope `https://mail.google.com/`.
+5. Under **Clients**, create a client of the type **Desktop app**.
+6. The page that follows shows a **Client ID** and a **Client secret**. Both go in the config, below.
 
 Two things to know. Google calls the second value a secret, and says itself that for a desktop application it is not one: every copy of the application carries it. That is why it may sit in `config.toml`, where real passwords never do. And while the application is in Testing, Google ends each sign-in after seven days, so Quill will ask you to sign in again every week. Publishing the application ends that, and for the mail scope Google wants to verify it first.
 
-### Add the account in Quill
-
-Press `A`, type the Gmail address and continue. The form offers the account with a password, which for Google is an app password. Change **Type** to **Google (sign in)**: the form then asks for the Client ID and the Client secret in place of servers and a password. Continue, and Google's sign-in page opens in your browser; sign in there, agree to what Quill asks for, and come back.
-
-The application is asked for once. The next Google account you add is offered the same one, and is a Google account from the start. Signing in with Google is for Google's own mail servers: a Gmail address, or an address of your own whose mail Google Workspace hosts.
-
-If Quill is ever given an application of its own with Google, as it has with Microsoft, none of this section will be needed: a Gmail address will ask for nothing but the sign-in.
+In a Quill you built from the source, the form asks for these two when you choose the type **Google (sign in)**, and offers them again for the next Google account. In a build that carries Quill's own registration the form adds Google accounts as Quill itself, and an application of your own is named in the config, below.
 
 ### The account in config.toml
 
-What the form writes, and what to write by hand instead:
+What the form writes, less the two `oauth_client` lines, which are only for an application of your own:
 
 ```toml
 [[account]]

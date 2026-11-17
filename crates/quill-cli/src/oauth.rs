@@ -45,21 +45,44 @@ pub fn wanted(account: &AccountConfig) -> bool {
 /// and proves nothing.
 pub const MICROSOFT_APPLICATION: &str = "1f673243-3634-498b-8b7f-2425ba6f2490";
 
-/// The application Quill is registered as with Google: its client id and
-/// the "client secret" Google gives a desktop application with it, which
-/// is not a secret (every copy of the application carries it, and Google
-/// says so). `None`: Quill has no application of its own with Google yet,
-/// and an account that signs in with Google names one, in its config.
+/// The application Quill is registered as with Google, in a build that
+/// was given one: its client id and the "client secret" Google gives a
+/// desktop application with it.
 ///
-/// When there is one, every such account signs in through it unless its
-/// config names another, as with [`MICROSOFT_APPLICATION`], and the form
-/// that adds an account asks for nothing but the sign-in.
-pub const GOOGLE_APPLICATION: Option<(&str, &str)> = None;
+/// It is not in the source. A build is given it in two variables,
+/// `QUILL_GOOGLE_CLIENT_ID` and `QUILL_GOOGLE_CLIENT_SECRET`, as the
+/// builds Quill is given out as are (`app/build-app.sh` reads them from a
+/// file git ignores). The second is not a secret in the way a password is:
+/// every copy of a desktop application carries it, and Google says so. It
+/// is kept out of the source all the same, so that a build someone else
+/// makes from it does not sign in to Google as Quill.
+///
+/// With it, every account that signs in with Google signs in through it
+/// unless its config names another, as with [`MICROSOFT_APPLICATION`], and
+/// the form that adds an account asks for nothing but the sign-in.
+/// Without it (`None`: a build from the source alone) an account names an
+/// application of its own, and the form asks for one.
+pub const GOOGLE_APPLICATION: Option<(&str, &str)> = match (
+    option_env!("QUILL_GOOGLE_CLIENT_ID"),
+    option_env!("QUILL_GOOGLE_CLIENT_SECRET"),
+) {
+    (Some(id), Some(secret)) if !id.is_empty() && !secret.is_empty() => Some((id, secret)),
+    _ => None,
+};
 
 /// How the account signs in with OAuth, from its config: `None` for an
 /// account that uses a password, and the reason for one whose settings
 /// cannot work.
 pub fn setup(account: &AccountConfig) -> Result<Option<OAuthSetup>, String> {
+    setup_as(account, GOOGLE_APPLICATION)
+}
+
+/// [`setup`], with `google` as the application Quill is registered as
+/// with Google, if it is: what the build was given, or what a test says.
+fn setup_as(
+    account: &AccountConfig,
+    google: Option<(&'static str, &'static str)>,
+) -> Result<Option<OAuthSetup>, String> {
     if !wanted(account) {
         return Ok(None);
     }
@@ -85,7 +108,7 @@ pub fn setup(account: &AccountConfig) -> Result<Option<OAuthSetup>, String> {
                         .to_owned(),
                 );
             }
-            if let Some((id, secret)) = GOOGLE_APPLICATION {
+            if let Some((id, secret)) = google {
                 own_application = Some(id);
                 own_secret = Some(secret);
             }
@@ -356,20 +379,44 @@ mod tests {
         let setup = setup(&oauth).unwrap().unwrap();
         assert_eq!(setup.provider.name, "google");
         assert_eq!(setup.client.secret.unwrap().expose(), "not-really");
+
+        // In a build that was given Quill's own application, one that
+        // names none signs in as Quill itself, with both halves of it; so
+        // does one whose id is only spaces.
+        let quills = Some(("quill.apps.googleusercontent.com", "the-other-half"));
+        let unnamed = |id: &str| {
+            account(&format!(
+                "[[account]]\nname = \"Mail\"\ntype = \"imap\"\naddress = \"robin@example.com\"\n\
+                 auth = \"oauth\"\n{id}imap = {{ host = \"imap.gmail.com\" }}\n"
+            ))
+        };
+        for id in ["", "oauth_client_id = \"  \"\n"] {
+            let setup = setup_as(&unnamed(id), quills).unwrap().unwrap();
+            assert_eq!(setup.client.id, "quill.apps.googleusercontent.com");
+            assert_eq!(setup.client.secret.unwrap().expose(), "the-other-half");
+            // In a build from the source alone there is no such
+            // application, and the account has to name one.
+            assert!(
+                setup_as(&unnamed(id), None)
+                    .unwrap_err()
+                    .contains("oauth_client_id")
+            );
+        }
+        // An application of the user's own is not lent Quill's secret.
+        let theirs = unnamed("oauth_client_id = \"app-2\"\n");
+        for google in [quills, None] {
+            let setup = setup_as(&theirs, google).unwrap().unwrap();
+            assert_eq!(setup.client.id, "app-2");
+            assert!(setup.client.secret.is_none());
+        }
+        // What this build was given, if anything, is both halves or none.
+        if let Some((id, secret)) = GOOGLE_APPLICATION {
+            assert!(!id.is_empty() && !secret.is_empty());
+        }
     }
 
     #[test]
     fn settings_that_cannot_work_say_why() {
-        // Google has no application of Quill's: a mail server account that
-        // signs in with OAuth has to name one.
-        let no_id = account(
-            "[[account]]\nname = \"Mail\"\ntype = \"imap\"\naddress = \"robin@example.com\"\nauth = \"oauth\"\nimap = { host = \"imap.example.com\" }\n",
-        );
-        assert!(setup(&no_id).unwrap_err().contains("oauth_client_id"));
-        let blank = account(
-            "[[account]]\nname = \"Mail\"\ntype = \"imap\"\naddress = \"robin@example.com\"\nauth = \"oauth\"\noauth_client_id = \"  \"\nimap = { host = \"imap.example.com\" }\n",
-        );
-        assert!(setup(&blank).unwrap_err().contains("oauth_client_id"));
         let tenant = account(&format!("{GRAPH}oauth_tenant = \"not a tenant/\"\n"));
         assert!(setup(&tenant).unwrap_err().contains("tenant"));
         let pop = account(

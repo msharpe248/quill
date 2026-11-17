@@ -1747,16 +1747,25 @@ mod tests {
     #[tokio::test]
     async fn a_google_account_is_written_down_with_its_application_and_offered_again() {
         let rig = Rig::new();
-        // Before there is one, the form is offered no application for
-        // Google: Quill has none of its own.
+        // With no account that names an application, the form is offered
+        // Quill's own for Google, by its id alone and marked as Quill's,
+        // in a build that was given one; and none at all in a build from
+        // the source alone, where the form then asks for one.
         let look = AccountRequest::Discover {
             address: "sam@example.com".to_owned(),
         };
         let AccountEvent::Discovered { found, .. } = rig.service.handle(look.clone()).await else {
             panic!("not a discovery");
         };
-        assert_eq!(found.google_application, None);
-        assert!(!found.google_own);
+        let quills = oauth::GOOGLE_APPLICATION.map(|(id, _)| id.to_owned());
+        assert_eq!(
+            found.google_application,
+            quills.clone().map(|client_id| Box::new(GoogleApplication {
+                client_id,
+                client_secret: None,
+            }))
+        );
+        assert_eq!(found.google_own, quills.is_some());
 
         let saved = rig
             .service
@@ -1811,6 +1820,34 @@ mod tests {
             .await;
         assert_eq!(saved, AccountEvent::Saved(Ok("Work".to_owned())));
         assert_eq!(rig.config().accounts.len(), 2);
+
+        // In a build that was given Quill's own application, an account
+        // that signs in as Quill has neither half of it written down: it
+        // is Quill's to know.
+        let Some(quills) = quills else {
+            return;
+        };
+        let rig = Rig::new();
+        let AccountRequest::SaveSignIn { mut draft } = google("Personal", "robin@gmail.com") else {
+            unreachable!()
+        };
+        draft.application_id = quills.clone();
+        if let Some(google) = &mut draft.google {
+            google.client_secret = None;
+        }
+        let saved = rig
+            .service
+            .handle(AccountRequest::SaveSignIn { draft })
+            .await;
+        assert_eq!(saved, AccountEvent::Saved(Ok("Personal".to_owned())));
+        let text = config_text(&rig);
+        assert!(text.contains("auth = \"oauth\""), "{text}");
+        assert!(!text.contains("oauth_client"), "{text}");
+        // And it is still an account that signs in with Google, as Quill.
+        let config = rig.config();
+        let setup = oauth::setup(&config.accounts[0]).unwrap().unwrap();
+        assert_eq!(setup.provider.name, "google");
+        assert_eq!(setup.client.id, quills);
     }
 
     #[tokio::test]

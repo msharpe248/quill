@@ -4,3 +4,7 @@
 *.snap.new
 .DS_Store
 /.claude/
+# Quill's own application with Google, for the builds that are given out.
+# Never checked in: see app/build-app.sh.
+/google-client.json
+/target/dist

@@ -22,6 +22,15 @@
 # program to the Keychain and it asks once. This script never makes an
 # identity: that is for whoever owns the Keychain.
 #
+# Quill's own application with Google is not in the source: a build that
+# is to sign in to Google as Quill is given it here. It is read from
+# google-client.json at the top of the repository (the file Google's
+# console gives for a "Desktop app" client; git ignores it), or from where
+# QUILL_GOOGLE_CLIENT_FILE says, or it is given outright in
+# QUILL_GOOGLE_CLIENT_ID and QUILL_GOOGLE_CLIENT_SECRET, as a build on
+# another machine does from its own secrets. A build with none of these
+# works, and asks whoever adds a Gmail account for a client of their own.
+#
 # The bundle lands in target/app/Quill.app, or where QUILL_APP_OUT says: the
 # bundle of a Quill that is running must not be built over, so a build made
 # to check something while one is open goes somewhere else.
@@ -39,6 +48,21 @@ out="${QUILL_APP_OUT:-$root/target/app/Quill.app}"
 # The Command Line Tools carry the same compiler and can build the package.
 if ! swift --version 2>&1 | grep -q "Swift version"; then
     export DEVELOPER_DIR=/Library/Developer/CommandLineTools
+fi
+
+# Quill's own application with Google, for the core to be built with.
+# Neither half is ever printed.
+client="${QUILL_GOOGLE_CLIENT_FILE:-$root/google-client.json}"
+if [ -z "${QUILL_GOOGLE_CLIENT_ID:-}" ] && [ -f "$client" ]; then
+    QUILL_GOOGLE_CLIENT_ID="$(/usr/bin/plutil -extract installed.client_id raw -o - "$client")"
+    QUILL_GOOGLE_CLIENT_SECRET="$(/usr/bin/plutil -extract installed.client_secret raw -o - "$client")"
+fi
+if [ -n "${QUILL_GOOGLE_CLIENT_ID:-}" ] && [ -n "${QUILL_GOOGLE_CLIENT_SECRET:-}" ]; then
+    export QUILL_GOOGLE_CLIENT_ID QUILL_GOOGLE_CLIENT_SECRET
+    echo "==> Google sign-in: as Quill"
+else
+    unset QUILL_GOOGLE_CLIENT_ID QUILL_GOOGLE_CLIENT_SECRET
+    echo "==> Google sign-in: no client given, so this build asks for one"
 fi
 
 echo "==> core"
