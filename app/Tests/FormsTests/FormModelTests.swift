@@ -521,4 +521,54 @@ struct FormModelTests {
             ])
         #expect(FormModel.secretMarker == "<secret>")
     }
+
+    /// The question about a command's keys.
+    private func keysForm(_ keys: String = "", error: String? = nil) -> FormShow {
+        FormShow(
+            step: "keys_change", title: "Keys for Move to a Folder", note: "It has: m.", error: error,
+            fields: [
+                FormField(id: "keys", label: "New Key:", kind: .keys(value: keys), focus: true),
+                FormField(
+                    id: "how", label: "Do:",
+                    kind: .choice(
+                        value: "replace",
+                        options: [
+                            FormOption(id: "replace", title: "Use it in place of the keys it has"),
+                            FormOption(id: "add", title: "Add it to the keys it has"),
+                        ])),
+            ],
+            buttons: [
+                FormButton(id: "cancel", title: "Cancel", role: .cancel),
+                FormButton(id: "confirm", title: "Save", role: .confirm, enabled: !keys.isEmpty),
+            ])!
+    }
+
+    @Test func aKeyThatIsPressedIsToldToTheCoreAtOnceAndKept() {
+        var model = FormModel()
+        let update = model.show(keysForm())
+        #expect(update.focus == "keys")
+        #expect(model.rows[0].content == .keys(""))
+
+        // Pressed: the core is told what the form holds, with no button.
+        let used = model.record("ctrl-k", in: "keys")
+        #expect(used == FormUsed(step: "keys_change", button: nil, values: ["keys": "ctrl-k", "how": "replace"]))
+        #expect(model.rows[0].content == .keys("ctrl-k"))
+        // The same key again says nothing new.
+        #expect(model.record("ctrl-k", in: "keys") == nil)
+        // The core's answer, with the key in it, moves nothing: the field
+        // keeps the keyboard, for the second key of a pair.
+        let again = model.show(keysForm("ctrl-k"))
+        #expect(again.focus == nil)
+        #expect(model.rows[0].content == .keys("ctrl-k"))
+        #expect(model.record("g g", in: "keys")?.values["keys"] == "g g")
+        #expect(model.summary.contains("sheet field keys [keys] = \"g g\" (focus)"))
+
+        // Only a field that records keys takes them, and not more than a
+        // field's keys come to.
+        #expect(model.record("x", in: "how") == nil)
+        #expect(model.record("x", in: "nothing") == nil)
+        #expect(model.record(String(repeating: "x ", count: 100), in: "keys") == nil)
+        // Save sends what was recorded with the rest.
+        #expect(model.press("confirm", secrets: [:])?.values == ["keys": "g g", "how": "replace"])
+    }
 }

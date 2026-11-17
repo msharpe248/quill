@@ -555,6 +555,8 @@ impl Io<'_> {
                 Context::When => bridge::Context::Folders,
                 // Another box to type in over the panes.
                 Context::NewFolder => bridge::Context::Folders,
+                // A question in the host's sheet, as a certificate is.
+                Context::RecordKeys => bridge::Context::Certificate,
                 // A question to answer before anything is sent, as a
                 // certificate is.
                 Context::Unsubscribe => bridge::Context::Certificate,

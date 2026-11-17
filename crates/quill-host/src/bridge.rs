@@ -1406,6 +1406,8 @@ pub const MAX_FORM_BUTTONS: usize = 6;
 pub const MAX_FORM_ROWS: usize = 200;
 /// The most places after the point a number in a form is shown with.
 pub const MAX_FORM_DECIMALS: u8 = 3;
+/// The most bytes the keys a field has recorded come to, as written.
+pub const MAX_KEYS_TEXT: usize = 128;
 /// The most panes the settings window may have.
 pub const MAX_SETTINGS_PANES: usize = 12;
 /// The longest text a setting may be given, in bytes.
@@ -1651,6 +1653,20 @@ pub enum FormField {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         help: Option<String>,
     },
+    /// A key, or keys pressed one after another, taken by pressing them:
+    /// the shell records what is pressed while the field has the keyboard
+    /// and says it at once, as it says a choice that was changed. `value`
+    /// is the keys as Quill writes them (`ctrl-k`, `g g`), empty when
+    /// none has been pressed. Only a sheet has one.
+    Keys {
+        id: String,
+        label: String,
+        value: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        focus: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        help: Option<String>,
+    },
     /// Something that is on or off: a checkbox. `label` stands beside it
     /// as a field's does, and may be empty; `title` is the checkbox's own
     /// words.
@@ -1682,11 +1698,17 @@ pub enum FormField {
     /// Rows to look down and pick one of, and things to do: with the row
     /// picked, or with none. `empty` is said in the rows' place when
     /// there are none.
+    ///
+    /// `searchable` says the list is long: the shell puts a line to type
+    /// on over it that narrows the rows shown to those whose title or
+    /// detail has what is typed, and gives the rows more room.
     List {
         id: String,
         label: String,
         rows: Vec<FormRow>,
         actions: Vec<FormAction>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        searchable: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         empty: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1718,6 +1740,7 @@ impl FormField {
             | Self::Choice { id, .. }
             | Self::Static { id, .. }
             | Self::Code { id, .. }
+            | Self::Keys { id, .. }
             | Self::Toggle { id, .. }
             | Self::Number { id, .. }
             | Self::List { id, .. }
@@ -1732,6 +1755,7 @@ impl FormField {
             | Self::Choice { label, .. }
             | Self::Static { label, .. }
             | Self::Code { label, .. }
+            | Self::Keys { label, .. }
             | Self::Toggle { label, .. }
             | Self::Number { label, .. }
             | Self::List { label, .. }
@@ -1816,6 +1840,13 @@ impl FormField {
                     ));
                 }
             }
+            Self::Keys { value, .. } => {
+                if value.len() > MAX_KEYS_TEXT || value.chars().any(char::is_control) {
+                    return Err(format!(
+                        "the keys of a field are one line of at most {MAX_KEYS_TEXT} bytes"
+                    ));
+                }
+            }
             Self::Text { .. } | Self::Secret { .. } | Self::Static { .. } | Self::Code { .. } => {}
         }
         Ok(())
@@ -1826,9 +1857,10 @@ impl FormField {
     /// ([`FormField::code`]).
     pub fn value(&self) -> Option<&str> {
         match self {
-            Self::Text { value, .. } | Self::Choice { value, .. } | Self::Static { value, .. } => {
-                Some(value)
-            }
+            Self::Text { value, .. }
+            | Self::Choice { value, .. }
+            | Self::Static { value, .. }
+            | Self::Keys { value, .. } => Some(value),
             Self::Secret { .. }
             | Self::Code { .. }
             | Self::Toggle { .. }
@@ -1849,9 +1881,10 @@ impl FormField {
     /// Whether the keyboard starts in this field.
     pub fn focus(&self) -> bool {
         match self {
-            Self::Text { focus, .. } | Self::Secret { focus, .. } | Self::Choice { focus, .. } => {
-                *focus
-            }
+            Self::Text { focus, .. }
+            | Self::Secret { focus, .. }
+            | Self::Choice { focus, .. }
+            | Self::Keys { focus, .. } => *focus,
             Self::Static { .. }
             | Self::Code { .. }
             | Self::Toggle { .. }
@@ -1866,6 +1899,7 @@ impl FormField {
         match self {
             Self::Text { help, .. }
             | Self::Secret { help, .. }
+            | Self::Keys { help, .. }
             | Self::Choice { help, .. }
             | Self::Static { help, .. }
             | Self::Code { help, .. }
@@ -2204,8 +2238,15 @@ impl TryFrom<SettingsShowParams> for SettingsShow {
                 if !valid_form_id(field.id()) || !seen.insert(field.id()) {
                     return Err("each field of a pane has a name of its own".to_owned());
                 }
-                if matches!(field, FormField::Secret { .. } | FormField::Code { .. }) {
-                    return Err("settings have no secret and no code".to_owned());
+                if matches!(
+                    field,
+                    FormField::Secret { .. } | FormField::Code { .. } | FormField::Keys { .. }
+                ) {
+                    return Err(
+                        "settings have no secret, no code and no keys to record: those are a \
+                         sheet's"
+                            .to_owned(),
+                    );
                 }
                 if field.focus() {
                     return Err("no field of the settings has the focus".to_owned());
@@ -3325,6 +3366,7 @@ mod tests {
                     enabled: true,
                 })
                 .collect(),
+            searchable: false,
             empty: None,
             help: None,
         }

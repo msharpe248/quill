@@ -5,6 +5,7 @@ mod accounts;
 mod config_edit;
 mod discover;
 mod headless;
+mod keys_edit;
 mod oauth;
 mod password;
 mod paths;

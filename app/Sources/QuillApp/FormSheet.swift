@@ -33,6 +33,12 @@ final class FormSheet: NSObject, NSTextFieldDelegate {
     /// field name.
     private var controls: [String: NSControl] = [:]
     private var buttons: [String: NSButton] = [:]
+    /// The field a key was last recorded in, and when: a second key soon
+    /// after the first is the second of a pair (`g g`), and not another
+    /// key in its place.
+    private var lastKey: (field: String, at: Date)?
+    /// How long after one key a second still counts as following it.
+    private static let pairWithin: TimeInterval = 1.0
     /// How many times the sheet has been opened, for a scripted run's dump.
     private(set) var timesOpened = 0
 
@@ -96,6 +102,7 @@ final class FormSheet: NSObject, NSTextFieldDelegate {
         }
         controls = [:]
         buttons = [:]
+        lastKey = nil
         guard let sheet else { return }
         self.sheet = nil
         parent?.endSheet(sheet)
@@ -272,6 +279,19 @@ final class FormSheet: NSObject, NSTextFieldDelegate {
             let label = Self.wrapping(text, width: width, color: .labelColor)
             label.identifier = identifier
             return label
+        case let .keys(keys):
+            let recorder = KeyRecorder()
+            recorder.identifier = identifier
+            recorder.stringValue = keys
+            recorder.isEnabled = row.enabled
+            recorder.widthAnchor.constraint(equalToConstant: width).isActive = true
+            recorder.setAccessibilityLabel(row.label)
+            let id = row.id
+            recorder.onPress = { [weak self] key in self?.pressed(key: key, in: id) }
+            recorder.onReturn = { [weak self] in _ = self?.click(.confirm) }
+            recorder.onEscape = { [weak self] in _ = self?.click(.cancel) }
+            controls[row.id] = recorder
+            return recorder
         case let .code(code):
             // To be read off and typed somewhere else: large, and in
             // letters that are not taken for one another. Revealed here,
@@ -365,6 +385,29 @@ final class FormSheet: NSObject, NSTextFieldDelegate {
         }
     }
 
+    /// A key was pressed in a field that records keys. It is the field's
+    /// key from now, or, pressed soon after another, the second of a
+    /// pair. The core is told at once, and says in the form it sends back
+    /// whether the key can be had.
+    private func pressed(key: String, in id: String) {
+        let now = Date()
+        var keys = key
+        if let lastKey, lastKey.field == id, now.timeIntervalSince(lastKey.at) < Self.pairWithin,
+            let before = controls[id]?.stringValue, !before.isEmpty, !before.contains(" ")
+        {
+            keys = "\(before) \(key)"
+        }
+        lastKey = (id, now)
+        record(keys, in: id)
+    }
+
+    /// Puts `keys` in a field that records keys and tells the core.
+    private func record(_ keys: String, in id: String) {
+        guard let used = model.record(keys, in: id) else { return }
+        controls[id]?.stringValue = keys
+        send(used)
+    }
+
     @objc private func pressed(_ sender: NSButton) {
         guard let id = sender.identifier?.rawValue else { return }
         press(id)
@@ -399,6 +442,13 @@ final class FormSheet: NSObject, NSTextFieldDelegate {
         }
     }
 
+    /// The field that records keys which has the keyboard, if one has: for
+    /// a scripted run to press a real key in.
+    var recordingField: NSView? {
+        guard let sheet else { return nil }
+        return sheet.firstResponder as? KeyRecorder
+    }
+
     // MARK: - For a scripted run
 
     /// Puts `value` in the field of this name, as typing it or choosing it
@@ -415,6 +465,9 @@ final class FormSheet: NSObject, NSTextFieldDelegate {
             chose(popup)
         } else if control is NSSecureTextField {
             control.stringValue = value
+        } else if control is KeyRecorder {
+            // As pressing them does, all at once.
+            record(value, in: id)
         } else {
             control.stringValue = value
             model.type(value, in: id)

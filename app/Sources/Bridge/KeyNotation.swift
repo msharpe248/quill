@@ -62,6 +62,45 @@ public struct KeyNotation: Equatable, Sendable {
         return Chord(modifiers: modifiers, key: key.count == 1 ? key : key.lowercased())
     }
 
+    /// A key that was pressed, as Quill writes it: `j`, `G`, `ctrl-k`,
+    /// `shift-tab`, `cmd-enter`. `characters` is what the key types with
+    /// nothing held but shift, which is how AppKit reports a key apart from
+    /// its modifiers. `nil` for what is no key of Quill's: a modifier by
+    /// itself, or a key it has no name for.
+    ///
+    /// Shift is part of a letter or a sign (`G`, `?`) and is written only
+    /// with a key that has a name, as the core reads it.
+    public static func written(characters: String, modifiers: Modifiers) -> String? {
+        let scalars = Array(characters.unicodeScalars)
+        guard scalars.count == 1, let scalar = scalars.first else { return nil }
+        var held = modifiers
+        let key: String
+        if let name = Self.pressedNames[scalar.value] {
+            key = name
+        } else if (0xF704...0xF71B).contains(scalar.value) {
+            key = "f\(scalar.value - 0xF703)"
+        } else if scalar.value > 0x20, scalar.value != 0x7F, !(0xF700...0xF8FF).contains(scalar.value) {
+            key = String(Character(scalar))
+            held.remove(.shift)
+        } else {
+            return nil
+        }
+        var text = ""
+        if held.contains(.control) { text += "ctrl-" }
+        if held.contains(.option) { text += "alt-" }
+        if held.contains(.shift) { text += "shift-" }
+        if held.contains(.command) { text += "cmd-" }
+        return text + key
+    }
+
+    /// The keys with names, by what AppKit says each types.
+    private static let pressedNames: [UInt32: String] = [
+        0x0D: "enter", 0x03: "enter", 0x09: "tab", 0x19: "tab", 0x1B: "esc", 0x20: "space",
+        0x7F: "backspace", 0x08: "backspace", 0xF728: "delete",
+        0xF700: "up", 0xF701: "down", 0xF702: "left", 0xF703: "right",
+        0xF729: "home", 0xF72B: "end", 0xF72C: "pageup", 0xF72D: "pagedown",
+    ]
+
     /// The key as a menu shortcut, when a menu can own it: a single chord
     /// that includes `cmd`. Every other key belongs to the terminal, and a
     /// menu that claimed it would steal it from the core.

@@ -28,7 +28,7 @@ use quill_host::bridge::{
     SettingsShowParams, valid_form_id,
 };
 
-use crate::keymap::Keymap;
+use crate::keymap::{KeySeq, Keymap};
 use crate::state::Env;
 use crate::text;
 use crate::theme::Theme;
@@ -213,15 +213,17 @@ pub enum Pane {
     General,
     Accounts,
     Composing,
+    Keys,
     Privacy,
     Storage,
 }
 
 impl Pane {
-    pub const ALL: [Pane; 5] = [
+    pub const ALL: [Pane; 6] = [
         Pane::General,
         Pane::Accounts,
         Pane::Composing,
+        Pane::Keys,
         Pane::Privacy,
         Pane::Storage,
     ];
@@ -232,6 +234,7 @@ impl Pane {
             Pane::General => "general",
             Pane::Accounts => "accounts",
             Pane::Composing => "composing",
+            Pane::Keys => "keys",
             Pane::Privacy => "privacy",
             Pane::Storage => "storage",
         }
@@ -242,6 +245,7 @@ impl Pane {
             Pane::General => "General",
             Pane::Accounts => "Accounts",
             Pane::Composing => "Composing",
+            Pane::Keys => "Keys",
             Pane::Privacy => "Privacy",
             Pane::Storage => "Storage",
         }
@@ -253,6 +257,7 @@ impl Pane {
             Pane::General => "gearshape",
             Pane::Accounts => "at",
             Pane::Composing => "square.and.pencil",
+            Pane::Keys => "keyboard",
             Pane::Privacy => "hand.raised",
             Pane::Storage => "internaldrive",
         }
@@ -739,6 +744,120 @@ fn general(read: &SettingsRead, env: &Env) -> Vec<FormField> {
     ]
 }
 
+/// The name of the list of commands and their keys, in its pane.
+pub const BINDINGS: &str = "bindings";
+/// The actions of that list.
+pub const CHANGE_KEY: &str = "change";
+pub const DEFAULT_KEY: &str = "reset";
+pub const RESET_KEYS: &str = "reset_all";
+
+/// What a command with no key is said to have.
+pub const NO_KEY: &str = "No key";
+
+/// The name on the bridge of a command's row in the list of keys: its own
+/// name, with nothing in it a name there cannot have.
+pub fn binding_id(command: &str) -> String {
+    command.replace('.', "_")
+}
+
+/// The keys a command has, as they are written: `j, down`.
+pub fn keys_written(keys: &[KeySeq]) -> String {
+    if keys.is_empty() {
+        return NO_KEY.to_owned();
+    }
+    keys.iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// A change to the user's own keys, for `keys.toml`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeysChange {
+    /// Give each of these commands, by name, exactly these keys. A
+    /// command given none is left with no key.
+    Set(Vec<(String, Vec<String>)>),
+    /// Take what the file says of these commands out of it: each goes
+    /// back to the keys of the preset.
+    Reset(Vec<String>),
+    /// Take everything out of the file: every key is the preset's again.
+    ResetAll,
+}
+
+/// Every command with the keys it has, to look through and change. A
+/// command whose keys are not the preset's says so, and can be put back.
+fn keys(read: &SettingsRead, env: &Env) -> Vec<FormField> {
+    let preset = Keymap::preset(read.settings.keymap);
+    // A file that could not be read is not written over: nothing here
+    // can be changed until it is put right by hand.
+    let editable = read.keys_problem.is_none();
+    let mut any_changed = false;
+    let rows = env
+        .registry
+        .specs()
+        .iter()
+        .map(|spec| {
+            let now = read.keymap.keys_for(spec.id);
+            let changed = now != preset.keys_for(spec.id);
+            any_changed |= changed;
+            let mut actions = Vec::new();
+            if editable {
+                actions.push(CHANGE_KEY.to_owned());
+                if changed {
+                    actions.push(DEFAULT_KEY.to_owned());
+                }
+            }
+            FormRow {
+                id: binding_id(spec.name),
+                title: spec.title.to_owned(),
+                detail: Some(if changed {
+                    format!("{} \u{b7} yours", keys_written(now))
+                } else {
+                    keys_written(now)
+                }),
+                actions,
+            }
+        })
+        .collect();
+    vec![FormField::List {
+        id: BINDINGS.to_owned(),
+        label: String::new(),
+        rows,
+        actions: vec![
+            FormAction {
+                id: CHANGE_KEY.to_owned(),
+                title: "Change\u{2026}".to_owned(),
+                row: true,
+                enabled: editable,
+            },
+            FormAction {
+                id: DEFAULT_KEY.to_owned(),
+                title: "Use the Default".to_owned(),
+                row: true,
+                enabled: editable,
+            },
+            FormAction {
+                id: RESET_KEYS.to_owned(),
+                title: "Reset All\u{2026}".to_owned(),
+                row: false,
+                enabled: editable && any_changed,
+            },
+        ],
+        searchable: true,
+        empty: None,
+        help: Some(format!(
+            "The keys are the {} keys (General), with your own on top. A key changed here \
+             is written to keys.toml, beside the settings file, and holds at once. A key \
+             with \u{2318} works in the app and not in a terminal, which keeps \u{2318} \
+             for itself.",
+            match read.settings.keymap {
+                KeymapPreset::Vim => "Vim",
+                KeymapPreset::Mutt => "Mutt",
+            }
+        )),
+    }]
+}
+
 fn accounts(read: &SettingsRead, can: Can) -> Vec<FormField> {
     let rows = read
         .accounts
@@ -796,6 +915,7 @@ fn accounts(read: &SettingsRead, can: Can) -> Vec<FormField> {
                 enabled: can.accounts && can.remove,
             },
         ],
+        searchable: false,
         empty: Some("No accounts yet.".to_owned()),
         help: Some(
             "Edit\u{2026} changes an account\u{2019}s servers, the name it signs in with and its \
@@ -975,13 +1095,27 @@ pub fn describe(
             id: pane.id().to_owned(),
             title: pane.title().to_owned(),
             symbol: pane.symbol().to_owned(),
-            note: (pane == Pane::Accounts && !can.accounts).then(|| {
-                "This is the demo mailbox. Accounts are not added or signed in to here.".to_owned()
-            }),
+            note: match pane {
+                Pane::Accounts if !can.accounts => Some(
+                    "This is the demo mailbox. Accounts are not added or signed in to here."
+                        .to_owned(),
+                ),
+                // The user's own keys could not be read: the keys in force
+                // are the preset's, and theirs are not written over.
+                Pane::Keys => read.keys_problem.as_deref().map(|problem| {
+                    format!(
+                        "Your own keys, in keys.toml, have a mistake in them, so none can be \
+                         changed here until it is put right. {}",
+                        sentence(&text::sanitize_line(problem))
+                    )
+                }),
+                _ => None,
+            },
             fields: match pane {
                 Pane::General => general(read, env),
                 Pane::Accounts => accounts(read, can),
                 Pane::Composing => composing(read, env),
+                Pane::Keys => keys(read, env),
                 Pane::Privacy => privacy(read),
                 Pane::Storage => storage(read, env),
             },

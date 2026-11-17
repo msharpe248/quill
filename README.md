@@ -701,6 +701,7 @@ In the app, Settings… in the Quill menu (`cmd-,`) opens a settings window. It 
 | | List the messages of a conversation together | `threads` under `[ui]` | At once |
 | | Read mail in a web pane beside the list | `web_reading` under `[ui]` | At once |
 | Accounts | The accounts in the file, with Add an Account…, Sign In…, Edit… and Remove… | `[[account]]` | At once |
+| Keys | Every command and its keys, with Change…, Use the Default and Reset All… | `keys.toml` | At once |
 | Composing | Write in: Quill's own editor, Vim, nano, Pico or mg | `editor` under `[compose]` | When Quill is next opened |
 | | Program: the program to run as that editor, where it is not the one found by its name. Shown for any editor but Quill's own; emptied, the line is taken out of the file | `editor_path` under `[compose]` | When Quill is next opened |
 | | Format: Markdown or plain text | `format` under `[compose]` | At once |
@@ -717,6 +718,10 @@ Everything else is set in the file, and the button at the foot of each pane open
 The window shows what the file says. Edit the file by hand while it is open and the window catches up when you come back to it, and so does Quill, for the settings that take effect at once. If the file has a mistake in it, the window says so, offers to open the file, and changes nothing until the mistake is put right.
 
 ### Keys
+
+In the app, Settings > Keys lists every command with the keys it has. Type in the search field to find one by its name or by a key. Pick a command and press Change…, then press the key you want it to have: one key, or two one after the other for a pair such as `g g`. The sheet says what the command has now, and, if the key you pressed is another command's in the same place, which one it will be taken from when you save. A key that would cut another short (`g`, while `g g` is a key) is refused, and why is said. You can have the new key in place of the command's keys, as one more key for it, or leave the command with no key. "Use the Default" puts one command back to the keys Quill comes with, and "Reset All…" all of them. `esc`, `return` and `tab` work the sheet and cannot be pressed into it: bind those in the file.
+
+What you change there is written to `keys.toml`, beside `config.toml`, and holds at once: the menus, the hints and the list of keys follow. Your comments in the file are kept, a command put back to its own keys has its line taken out, and a file with a mistake in it is never written over: the pane says what is wrong and changes nothing until you have put it right. In a terminal there is no such pane, and the file is edited by hand.
 
 `keys.toml` maps a command name to a key or a list of keys. The names are the ones the help overlay's commands go by:
 

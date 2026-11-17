@@ -30,6 +30,7 @@ use crate::palette::{self, Item, Palette, What};
 
 mod edit;
 mod folders;
+mod keys;
 mod mouse;
 mod remove;
 mod settings;
@@ -37,6 +38,7 @@ mod sheet;
 use quill_host::bridge::{FormUsed, SettingsUsed};
 
 pub use self::folders::{FolderPrompt, ON_THE_SERVER, ON_THIS_MAC};
+pub use self::keys::{KeysAsk, KeysHow, KeysPrompt};
 pub use self::remove::{REMOVING, RemovePrompt, YES as REMOVE_YES};
 pub use self::settings::SettingsWindow;
 use crate::settings::Applied;
@@ -1344,6 +1346,8 @@ pub struct State {
     /// The box asking what a new folder is to be called, and where it is
     /// to be.
     pub new_folder: Option<FolderPrompt>,
+    /// The question, in a host's sheet, about the keys of a command.
+    pub keys: Option<KeysPrompt>,
     /// When the next snoozed message is due back.
     next_wake: Option<i64>,
     /// Certificates of existing accounts waiting for a decision. The first
@@ -1416,6 +1420,7 @@ impl State {
             settings: None,
             when: None,
             new_folder: None,
+            keys: None,
             next_wake: None,
             certificates: VecDeque::new(),
             setup_offered: false,
@@ -1454,6 +1459,9 @@ impl State {
         }
         if self.new_folder.is_some() {
             return Context::NewFolder;
+        }
+        if self.keys.is_some() {
+            return Context::RecordKeys;
         }
         if self.unsubscribe.is_some() {
             return Context::Unsubscribe;
@@ -2704,6 +2712,7 @@ impl State {
                     || self.sign_in.is_some()
                     || self.when.is_some()
                     || self.new_folder.is_some()
+                    || self.keys.is_some()
                     || !self.certificates.is_empty()
                     || !self.notices.is_empty()
                     || self.focus == Pane::Reader
@@ -2797,6 +2806,7 @@ impl State {
                 | Context::SignIn
                 | Context::When
                 | Context::NewFolder
+                | Context::RecordKeys
                 | Context::Unsubscribe
                 | Context::RemoveAccount
                 | Context::Setup
@@ -2991,6 +3001,8 @@ impl State {
             // Nothing was snoozed or sent.
         } else if self.new_folder.take().is_some() {
             // No folder was made.
+        } else if self.keys.take().is_some() {
+            // No key was changed.
         } else if self.unsubscribe.take().is_some() {
             // Nothing was asked of the list, written or opened.
         } else if self.remove.is_some() {
@@ -4156,6 +4168,14 @@ impl State {
             }
             AccountEvent::Settings { read, changed } => {
                 self.on_settings_read(env, read, changed, out);
+                return;
+            }
+            AccountEvent::KeysChanged { read, result } => {
+                self.on_settings_read(env, read, None, out);
+                // Why the keys are as they were, said in the window.
+                if let Err(why) = result {
+                    self.settings_answered(Some(text::sanitize_line(&why)));
+                }
                 return;
             }
             AccountEvent::RemoveAsked { account, found } => {

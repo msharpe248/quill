@@ -524,7 +524,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             return button
         // Settings have no secret and no code, and a list is laid out by
         // itself: the core sends none of these here.
-        case .secret, .code, .list:
+        case .secret, .code, .keys, .list:
             return NSView()
         }
     }
@@ -540,11 +540,24 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         if !field.label.isEmpty {
             block.addArrangedSubview(NSTextField(labelWithString: field.label))
         }
-        let height: CGFloat = 148
-        let source = ListSource(rows: list.rows) { [weak self] row in
+        // A list to be searched is a long one: it has more room, and a
+        // line to type on over it.
+        let height: CGFloat = list.searchable ? 300 : 148
+        let source = ListSource(rows: model.shownRows(in: field.id, of: pane)) { [weak self] row in
             self?.picked(row, in: field.id, of: pane)
         }
         tables[key] = source
+        if list.searchable {
+            let search = NSSearchField()
+            search.identifier = NSUserInterfaceItemIdentifier("\(key).search")
+            search.stringValue = model.search(in: field.id, of: pane)
+            search.placeholderString = "Search"
+            search.sendsSearchStringImmediately = true
+            search.target = self
+            search.action = #selector(searched(_:))
+            search.widthAnchor.constraint(equalToConstant: width).isActive = true
+            block.addArrangedSubview(search)
+        }
         let table = NSTableView()
         table.identifier = NSUserInterfaceItemIdentifier(key)
         table.headerView = nil
@@ -591,7 +604,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         }
         // The row that was picked is still picked, if it is still there.
         if let row = model.pickedRow(in: field.id, of: pane),
-            let index = list.rows.firstIndex(where: { $0.id == row })
+            let index = source.rows.firstIndex(where: { $0.id == row })
         {
             source.quiet = true
             table.selectRowIndexes([index], byExtendingSelection: false)
@@ -732,6 +745,35 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         tell(.settingsUsed(used))
     }
 
+    /// Something was typed over a list that can be searched: its rows are
+    /// narrowed to those that have it, here and now. The core is not told:
+    /// what is looked for is the window's own business, like the row picked.
+    @objc private func searched(_ sender: NSSearchField) {
+        guard let parts = sender.identifier?.rawValue.split(separator: ".").map(String.init), parts.count == 3
+        else { return }
+        search(sender.stringValue, in: parts[1], of: parts[0])
+    }
+
+    private func search(_ typed: String, in field: String, of pane: String) {
+        let key = "\(pane).\(field)"
+        guard let source = tables[key], let table = source.table else { return }
+        model.search(typed, in: field, of: pane)
+        source.quiet = true
+        source.rows = model.shownRows(in: field, of: pane)
+        table.reloadData()
+        // The row picked stays picked while it is still on show.
+        if let row = model.pickedRow(in: field, of: pane),
+            let index = source.rows.firstIndex(where: { $0.id == row })
+        {
+            table.selectRowIndexes([index], byExtendingSelection: false)
+            table.scrollRowToVisible(index)
+        } else {
+            table.deselectAll(nil)
+        }
+        source.quiet = false
+        picked(model.pickedRow(in: field, of: pane), in: field, of: pane)
+    }
+
     /// A button of the core's was pressed: the core is told which, and
     /// decides what that starts.
     @objc private func pressedButton(_ sender: NSButton) {
@@ -795,6 +837,26 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     /// Picks the row of a list (`pane.field`) that has this title, as a
     /// click on it does; an empty title picks none.
+    /// Types over the list of this name (`pane.field`), in place of what
+    /// is there. False when there is no such list to search.
+    func search(_ name: String, for typed: String) -> Bool {
+        let parts = name.split(separator: ".").map(String.init)
+        guard isOpen, parts.count == 2, let field = controlsSearch(name) else { return false }
+        field.stringValue = typed
+        search(typed, in: parts[1], of: parts[0])
+        return true
+    }
+
+    private func controlsSearch(_ name: String) -> NSSearchField? {
+        guard let table = tables[name]?.table else { return nil }
+        var view: NSView? = table
+        // The search field is in the same block as the table's frame.
+        while let current = view, !(current is NSStackView) {
+            view = current.superview
+        }
+        return (view as? NSStackView)?.arrangedSubviews.compactMap { $0 as? NSSearchField }.first
+    }
+
     func pick(_ name: String, rowTitled title: String) -> Bool {
         guard isOpen, let source = tables[name], let table = source.table else { return false }
         if title.isEmpty {
@@ -949,7 +1011,8 @@ private final class PaneController: NSViewController {
 /// The rows of a list, for its table, and word of which is picked.
 @MainActor
 private final class ListSource: NSObject, NSTableViewDataSource, NSTableViewDelegate {
-    let rows: [FormList.Row]
+    /// The rows on show: all of the list's, or those a search has left.
+    var rows: [FormList.Row]
     weak var table: NSTableView?
     /// A row is being picked by the window itself, to show what was picked
     /// before: nobody is told.

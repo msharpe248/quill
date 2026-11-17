@@ -1,0 +1,17 @@
+{
+  "jsonrpc": "2.0",
+  "method": "form.show",
+  "params": {
+    "step": "keys_change",
+    "title": "Keys for Move to a Folder",
+    "fields": [
+      {
+        "kind": "keys",
+        "id": "keys",
+        "label": "New Key:",
+        "value": "g\ng"
+      }
+    ],
+    "buttons": []
+  }
+}

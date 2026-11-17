@@ -487,7 +487,7 @@ private extension FormField {
     /// The fields each kind may have.
     static func allowedKeys(for kind: String) -> Set<String>? {
         switch kind {
-        case "text": ["kind", "id", "label", "value", "focus", "help"]
+        case "text", "keys": ["kind", "id", "label", "value", "focus", "help"]
         case "secret": ["kind", "id", "label", "focus", "help"]
         case "choice": ["kind", "id", "label", "value", "options", "focus", "help"]
         case "static", "code": ["kind", "id", "label", "value", "help"]
@@ -501,8 +501,8 @@ private extension FormField {
 
     /// The kinds of field a sheet's form has, and the kinds the settings
     /// window has: a sheet has none that report as they change, and the
-    /// settings have no secret and no code.
-    static let sheetKinds = ["text", "secret", "choice", "static", "code"]
+    /// settings have no secret, no code and no keys to record.
+    static let sheetKinds = ["text", "secret", "choice", "static", "code", "keys"]
     static let settingsKinds = ["text", "choice", "static", "toggle", "number", "list", "button"]
 
     /// A field of the message called `method`, which has fields of these
@@ -530,6 +530,8 @@ private extension FormField {
             kind = try .choice(value: object.string("value"), options: options)
         case "code":
             kind = try .code(value: FormSecret(object.string("value")))
+        case "keys":
+            kind = try .keys(value: object.string("value"))
         case "toggle":
             kind = try .toggle(title: object.string("title"), value: object.bool("value"))
         case "number":
@@ -551,7 +553,10 @@ private extension FormField {
                     id: action.string("id"), title: action.string("title"), row: action.bool("row"),
                     enabled: action.bool("enabled"))
             }
-            kind = try .list(FormList(rows: rows, actions: actions, empty: object.optionalString("empty")))
+            kind = try .list(
+                FormList(
+                    rows: rows, actions: actions, searchable: object.optionalBool("searchable") ?? false,
+                    empty: object.optionalString("empty")))
         case "button":
             kind = try .button(title: object.string("title"), enabled: object.bool("enabled"))
         default:
@@ -565,7 +570,7 @@ private extension FormField {
     var json: JSONValue {
         var object: [String: JSONValue] = ["kind": .string(kind.name), "id": .string(id), "label": .string(label)]
         switch kind {
-        case let .text(value), let .fixed(value):
+        case let .text(value), let .fixed(value), let .keys(value):
             object["value"] = .string(value)
         case .secret:
             break
@@ -608,6 +613,10 @@ private extension FormField {
                         "enabled": .bool(action.enabled),
                     ])
                 })
+            // Left out when false, as the core leaves it out.
+            if list.searchable {
+                object["searchable"] = .bool(true)
+            }
             if let empty = list.empty {
                 object["empty"] = .string(empty)
             }

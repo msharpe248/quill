@@ -75,6 +75,10 @@ import WebKit
 ///   up or `down`
 /// - `settingspick:PANE.FIELD=TITLE` pick the row of a list that has this
 ///   title, as a click on it does; with no title, none
+/// - `settingssearch:PANE.FIELD=TEXT` type over a list that can be searched,
+///   in place of what is there
+/// - `sheetkey:KEY` a real key press, in Quill's notation, to the field of
+///   the sheet that records keys, which must have the keyboard
 /// - `settingspress:PANE.FIELD.ACTION` press a button of a list
 /// - `settingskey:KEY` a real key event to the settings window, in Quill's
 ///   notation: `settingskey:esc`, `settingskey:cmd-w`
@@ -447,6 +451,21 @@ enum DebugScript {
                 note("no row \(title) in \(name) in the settings")
             }
             try? await Task.sleep(for: .milliseconds(200))
+        case "settingssearch":
+            let (name, typed) = split(argument, at: "=")
+            if !controller.settingsWindow.search(name, for: typed) {
+                note("no list \(name) to search in the settings")
+            }
+            try? await Task.sleep(for: .milliseconds(200))
+        case "sheetkey":
+            // A real key press, to the field of the sheet that records
+            // keys: as the user's own.
+            if let window = controller.formSheet.window, controller.formSheet.recordingField != nil {
+                press(argument, in: window)
+            } else {
+                note("no field recording keys to press \(argument) in")
+            }
+            try? await Task.sleep(for: .milliseconds(300))
         case "settingspress":
             if !controller.settingsWindow.press(argument) {
                 note("no button \(argument) to press in the settings")

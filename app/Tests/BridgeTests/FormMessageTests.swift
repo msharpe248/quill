@@ -36,6 +36,7 @@ import Testing
         #expect(
             form.fields.map(\.id) == [
                 "type", "name", "address", "host", "port", "security", "smtp_host", "password", "code",
+                "shortcut",
             ])
         #expect(
             form.fields[0]
@@ -64,7 +65,16 @@ import Testing
                     id: "code", label: "Code:", kind: .code(value: FormSecret("HJKL-MNPQ")),
                     help: "The code is good for 15 minutes."))
         #expect(form.fields[8].value == nil)
-        #expect(form.fields.map(\.isEditable) == [true, true, false, true, true, true, true, true, false])
+        // Keys that have been pressed, as Quill writes them: there to be
+        // pressed over.
+        #expect(
+            form.fields[9]
+                == FormField(
+                    id: "shortcut", label: "New Key:", kind: .keys(value: "g g"),
+                    help: "Press the key, or two keys one after the other."))
+        #expect(form.fields[9].value == "g g")
+        #expect(
+            form.fields.map(\.isEditable) == [true, true, false, true, true, true, true, true, false, true])
         #expect(
             form.buttons == [
                 FormButton(id: "cancel", title: "Cancel", role: .cancel),
@@ -191,7 +201,7 @@ import Testing
         #expect(throws: BridgeError.malformed("form.show: note is not a string")) {
             try show(#"{"step":"a","title":"x","note":null,"fields":[],"buttons":[]}"#)
         }
-        #expect(throws: BridgeError.malformed("form.show: a field is text, secret, choice, static or code")) {
+        #expect(throws: BridgeError.malformed("form.show: a field is text, secret, choice, static, code or keys")) {
             try show(
                 #"{"step":"a","title":"x","fields":[{"kind":"html","id":"a","label":"","value":""}],"buttons":[]}"#)
         }

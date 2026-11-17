@@ -1117,3 +1117,15 @@ The owner asked for three things: to have back what was deleted, after the ten s
 - The store, the engine and the UI each have tests for all of the above; the engine's run against the in-memory server, and making a folder runs against the scratch Dovecot (plain names, one that needs UTF-7, a name already there) and against a stand-in for Graph.
 - Not seen against a real server: any of it. The owner's own accounts were not touched.
 
+## Keys are changed in the settings window (2026-11-17)
+
+The owner: changing a key should not need the file. In the app it is a pane of Settings; in a terminal the file is enough, for now.
+
+- **A pane that lists every command with its keys** (`settings::keys`, `Pane::Keys`), from the registry and the keys in force. A command whose keys are not the preset's says "yours" and can be put back. The list is the bridge's `list`, with one thing new: `searchable`, which says the list is long, and has the shell put a line to type on over it and give it more room. What is typed there narrows the rows by title and by what is said under it, in the shell, which keeps it as it keeps the row picked; the core is not told.
+- **A key is pressed, not typed.** Changing one is a question in a sheet (`KeysPrompt`, `Context::RecordKeys`) with a field of a new kind, `keys`, which only a sheet has: while it has the keyboard the shell writes down what is pressed in place of acting on it (`KeyRecorder`, `KeyNotation.written`), and says it at once, as it says a choice that was changed. A second key within a second of the first makes a pair. The shell records and shows, and decides nothing.
+- **Whether the key can be had is the core's to say**, by the rules the keys are looked up by (`KeysPrompt::verdict`): a key another command has in a place the two share is taken from it on saving, and that is said first; a key that is how another begins, or that begins with another's, is refused, because one of the two could never be reached. Commands that share no place share keys freely, as `s` already does.
+- **Three keys are not recorded**: `esc`, `return` and `tab` work the sheet. They are bound in the file. Recording them would mean a sheet that cannot be left from the keyboard.
+- **The file is the service's to write** (`AccountRequest::Keys`, `keys_edit::apply`), like the config: read from disk for every change, changed as text so that comments stay, and never written when it could not be read, or when what would be written could not be. A command given the keys it comes with has its line taken out, so the file says only what was changed. A comment right above a line goes with the line; one that stands apart stays. The answer is the settings read again, and the keys in it hold from then (`Applied`).
+- **Not in a terminal.** The question is only ever opened where there are sheets. A terminal has `keys.toml` and `quill keys`.
+- **Not done:** recording `esc`, `return` or `tab`; saying which place a clash is in; swapping two commands' keys in one step; a pane for the terminal.
+

@@ -86,6 +86,13 @@
         "label": "Code:",
         "value": "HJKL-MNPQ",
         "help": "The code is good for 15 minutes."
+      },
+      {
+        "kind": "keys",
+        "id": "shortcut",
+        "label": "New Key:",
+        "value": "g g",
+        "help": "Press the key, or two keys one after the other."
       }
     ],
     "buttons": [

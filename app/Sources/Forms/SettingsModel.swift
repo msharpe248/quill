@@ -76,6 +76,8 @@ public struct SettingsModel: Equatable, Sendable {
     public private(set) var pane: String?
     /// The row picked in each list, by the list's pane and name.
     private var picked: [String: String] = [:]
+    /// What is typed over each list that can be searched, likewise.
+    private var searches: [String: String] = [:]
 
     public init() {}
 
@@ -156,6 +158,31 @@ public struct SettingsModel: Equatable, Sendable {
         guard pane(named: id) != nil else { return false }
         pane = id
         return true
+    }
+
+    /// What is typed over a list to narrow it.
+    public func search(in field: String, of pane: String) -> String {
+        searches[Self.key(pane, field)] ?? ""
+    }
+
+    /// The rows of a list that are on show: all of them, or, for a list
+    /// that can be searched, those that have what is typed over it.
+    public func shownRows(in field: String, of pane: String) -> [FormList.Row] {
+        guard case let .list(list)? = settings?.field(field, in: pane)?.kind else { return [] }
+        return list.searchable ? list.rows(matching: search(in: field, of: pane)) : list.rows
+    }
+
+    /// The user typed over a list that can be searched. A row that was
+    /// picked and is no longer on show is no longer picked: what cannot be
+    /// seen is not acted on.
+    public mutating func search(_ typed: String, in field: String, of pane: String) {
+        guard case let .list(list)? = settings?.field(field, in: pane)?.kind, list.searchable else { return }
+        searches[Self.key(pane, field)] = typed
+        if let row = pickedRow(in: field, of: pane),
+            !list.rows(matching: typed).contains(where: { $0.id == row })
+        {
+            picked[Self.key(pane, field)] = nil
+        }
     }
 
     /// The user picked a row of a list, or none. A row the list has not got
@@ -272,18 +299,26 @@ public struct SettingsModel: Equatable, Sendable {
                         "[number] = \(number.written(number.value)) (\(number.written(number.min)) to \(most)"
                         + ", \(number.unit ?? "no unit"))"
                 case let .list(list):
-                    let rows = list.rows.map { row in
+                    // The rows on show: for a list that can be searched,
+                    // those that what is typed over it has left.
+                    let rows = shownRows(in: field.id, of: described.id).map { row in
                         let mark = pickedRow(in: field.id, of: described.id) == row.id ? "*" : ""
                         return "\(mark)\(row.title.debugDescription) \((row.detail ?? "").debugDescription)"
                     }
                     let actions = list.actions.map { action in
                         "\(canPress(action.id, in: field.id, of: described.id) ? "+" : "-")\(action.id)"
                     }
-                    shown = "[list] rows: \(rows.joined(separator: "; ")) actions: \(actions.joined(separator: " "))"
+                    let searched =
+                        list.searchable
+                        ? " search: \(search(in: field.id, of: described.id).debugDescription)"
+                            + " (\(rows.count) of \(list.rows.count))" : ""
+                    shown =
+                        "[list]\(searched) rows: \(rows.joined(separator: "; "))"
+                        + " actions: \(actions.joined(separator: " "))"
                 case let .button(title, enabled):
                     shown = "[button] \(title.debugDescription)\(enabled ? "" : " (off)")"
-                // Settings have neither.
-                case .secret, .code:
+                // Settings have none of these.
+                case .secret, .code, .keys:
                     shown = "[\(field.kind.name)]"
                 }
                 lines.append("settings field \(name) \(shown)")

@@ -253,6 +253,61 @@ struct SettingsModelTests {
         #expect(refused15 == nil)
     }
 
+    /// A pane with a long list: one to be searched.
+    private func keys() -> SettingsPane {
+        SettingsPane(
+            id: "keys", title: "Keys", symbol: "keyboard",
+            fields: [
+                FormField(
+                    id: "bindings", label: "",
+                    kind: .list(
+                        FormList(
+                            rows: [
+                                FormList.Row(
+                                    id: "message_move", title: "Move to a folder", detail: "m", actions: ["change"]),
+                                FormList.Row(
+                                    id: "view_zoom", title: "Zoom the focused pane", detail: "Z \u{b7} yours",
+                                    actions: ["change"]),
+                                FormList.Row(
+                                    id: "nav_next", title: "Move down", detail: "j, down", actions: ["change"]),
+                            ],
+                            actions: [FormList.Action(id: "change", title: "Change\u{2026}", row: true)],
+                            searchable: true)))
+            ])
+    }
+
+    @Test func aLongListIsNarrowedByWhatIsTypedOverItAndTheCoreIsNotTold() {
+        var model = SettingsModel()
+        _ = model.show(settings([general(), keys(), accounts()]), remembered: nil)
+        #expect(model.search(in: "bindings", of: "keys") == "")
+        #expect(model.shownRows(in: "bindings", of: "keys").count == 3)
+
+        // By a title, or by the keys said under it.
+        model.search("move", in: "bindings", of: "keys")
+        #expect(model.shownRows(in: "bindings", of: "keys").map(\.id) == ["message_move", "nav_next"])
+        model.search("yours", in: "bindings", of: "keys")
+        #expect(model.shownRows(in: "bindings", of: "keys").map(\.id) == ["view_zoom"])
+
+        // A row picked stays picked while it is on show, and is let go
+        // of when it is not: what cannot be seen is not acted on.
+        model.pick(row: "view_zoom", in: "bindings", of: "keys")
+        #expect(model.canPress("change", in: "bindings", of: "keys"))
+        model.search("zoom", in: "bindings", of: "keys")
+        #expect(model.pickedRow(in: "bindings", of: "keys") == "view_zoom")
+        model.search("down", in: "bindings", of: "keys")
+        #expect(model.pickedRow(in: "bindings", of: "keys") == nil)
+        #expect(!model.canPress("change", in: "bindings", of: "keys"))
+
+        // What was typed is kept when the core sends the settings again.
+        _ = model.show(settings([general(), keys(), accounts()]), remembered: nil)
+        #expect(model.search(in: "bindings", of: "keys") == "down")
+        #expect(model.shownRows(in: "bindings", of: "keys").map(\.id) == ["nav_next"])
+        // A list that is not one to search is not narrowed by anything.
+        model.search("work", in: "accounts", of: "accounts")
+        #expect(model.search(in: "accounts", of: "accounts") == "")
+        #expect(model.shownRows(in: "accounts", of: "accounts").count == 2)
+    }
+
     @Test func aListsActionsGoByTheRowPicked() throws {
         var model = SettingsModel()
         _ = model.show(whole(), remembered: nil)

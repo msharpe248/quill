@@ -69,6 +69,7 @@ fn asked_in_a_sheet(context: Context) -> bool {
             | Context::SignIn
             | Context::When
             | Context::NewFolder
+            | Context::RecordKeys
             | Context::Unsubscribe
             | Context::RemoveAccount
     )
@@ -423,6 +424,7 @@ impl State {
             Context::SignIn => self.sign_in.as_ref()?.form(),
             Context::When => self.when.as_ref()?.form(),
             Context::NewFolder => self.new_folder.as_ref()?.form(),
+            Context::RecordKeys => self.keys.as_ref()?.form(env),
             Context::Unsubscribe => self.unsubscribe.as_ref()?.form(),
             Context::RemoveAccount => self.remove.as_ref()?.form(),
             Context::Setup => self.setup.as_ref()?.form(&env.tz),
@@ -471,6 +473,7 @@ impl State {
             }
             Context::When => self.answer_when_in_sheet(env, used, out),
             Context::NewFolder => self.answer_new_folder_in_sheet(env, used, out),
+            Context::RecordKeys => self.answer_keys_in_sheet(env, used, out),
             Context::Unsubscribe => match used.button() {
                 // As `enter`: the one thing the question described.
                 Some(CONFIRM) => self.answer_unsubscribe(env, out),

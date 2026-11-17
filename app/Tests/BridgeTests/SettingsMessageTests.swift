@@ -73,6 +73,14 @@ import Testing
             Issue.record("not a list")
             return
         }
+        // A long list says so, and is narrowed by what is typed over it:
+        // by a row's title or by what is said under it, whatever the case.
+        #expect(list.searchable)
+        #expect(list.rows(matching: "").count == 2)
+        #expect(list.rows(matching: "  ").count == 2)
+        #expect(list.rows(matching: "pers").map(\.title) == ["Personal"])
+        #expect(list.rows(matching: "MICROSOFT").map(\.title) == ["Work"])
+        #expect(list.rows(matching: "nobody").isEmpty)
         #expect(
             list.rows == [
                 FormList.Row(
@@ -355,7 +363,7 @@ import Testing
         #expect(throws: kinds) { try show(with(#"{"kind":"secret","id":"a","label":""}"#)) }
         #expect(throws: kinds) { try show(with(#"{"kind":"code","id":"a","label":"","value":"HJKL"}"#)) }
         // And a sheet has none of the settings' own.
-        #expect(throws: BridgeError.malformed("form.show: a field is text, secret, choice, static or code")) {
+        #expect(throws: BridgeError.malformed("form.show: a field is text, secret, choice, static, code or keys")) {
             try CoreToShell(
                 line:
                     #"{"jsonrpc":"2.0","method":"form.show","params":{"step":"a","title":"x","fields":[{"kind":"toggle","id":"a","label":"","title":"On","value":true}],"buttons":[]}}"#

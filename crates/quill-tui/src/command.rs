@@ -25,6 +25,9 @@ pub enum Context {
     /// Naming a folder to make, and saying where: on the account's
     /// server, or on this Mac.
     NewFolder,
+    /// Pressing the key a command is to have, in the settings window of
+    /// a host that has one.
+    RecordKeys,
     /// Being asked before unsubscribing from a mailing list.
     Unsubscribe,
     /// Being asked before an account is removed.
@@ -61,6 +64,7 @@ impl Context {
             Self::SignIn => "Signing in",
             Self::When => "Choosing a time",
             Self::NewFolder => "New folder",
+            Self::RecordKeys => "Changing a key",
             Self::Unsubscribe => "Unsubscribe",
             Self::RemoveAccount => "Remove an account",
             Self::Folders => "Move to a folder",
@@ -87,6 +91,7 @@ const EVERYWHERE: &[Context] = &[
     Context::SignIn,
     Context::When,
     Context::NewFolder,
+    Context::RecordKeys,
     Context::Unsubscribe,
     Context::RemoveAccount,
     Context::Folders,
@@ -1123,6 +1128,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
     const SIGNING_IN: &[Hint] = &[hint(&[NavBack], "give up")];
     const WHEN: &[Hint] = &[hint(&[NavOpen], "set"), hint(&[NavBack], "cancel")];
     const NEW_FOLDER: &[Hint] = &[hint(&[NavOpen], "make it"), hint(&[NavBack], "cancel")];
+    const RECORDING: &[Hint] = &[hint(&[NavBack], "cancel")];
     const FOLDERS: &[Hint] = &[hint(&[NavOpen], "move here"), hint(&[NavBack], "cancel")];
     const UNSUBSCRIBING: &[Hint] = &[hint(&[NavOpen], "go ahead"), hint(&[NavBack], "cancel")];
     const REMOVING: &[Hint] = &[hint(&[NavBack], "keep the account")];
@@ -1157,6 +1163,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         Context::SignIn => SIGNING_IN,
         Context::When => WHEN,
         Context::NewFolder => NEW_FOLDER,
+        Context::RecordKeys => RECORDING,
         Context::Links => LINKS,
         Context::Search => SEARCHING,
         Context::Palette => PALETTE,

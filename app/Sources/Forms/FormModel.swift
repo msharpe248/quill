@@ -16,6 +16,10 @@ public struct FormRow: Equatable, Sendable {
         /// Text to read off and type somewhere else, shown large. Only the
         /// view that draws it reveals it.
         case code(FormSecret)
+        /// A key, or keys one after another, taken by pressing them: what
+        /// has been pressed, as Quill writes it, and empty when nothing
+        /// has.
+        case keys(String)
     }
 
     public let id: String
@@ -81,7 +85,7 @@ public struct FormModel: Equatable, Sendable {
             let core: String
             let allowed: [String]?
             switch field.kind {
-            case let .text(value):
+            case let .text(value), let .keys(value):
                 (core, allowed) = (value, nil)
             case let .choice(value, options):
                 (core, allowed) = (value, options.map(\.id))
@@ -138,6 +142,8 @@ public struct FormModel: Equatable, Sendable {
                 content = .fixed(value)
             case let .code(value):
                 content = .code(value)
+            case let .keys(value):
+                content = .keys(entered[field.id] ?? value)
             // The settings window's kinds: in no form a sheet is given.
             case .toggle, .number, .list, .button:
                 content = .fixed("")
@@ -172,6 +178,19 @@ public struct FormModel: Equatable, Sendable {
             entered[id] != option
         else { return nil }
         entered[id] = option
+        return FormUsed(step: form.step, button: nil, values: entered)
+    }
+
+    /// The user pressed a key, or keys one after another, in a field that
+    /// records them. Returns what to tell the core, as for a choice that
+    /// was changed: whether the key can be had is the core's to say, in
+    /// the form it sends back. `nil` when nothing changed, or the field is
+    /// not one that records keys.
+    public mutating func record(_ keys: String, in id: String) -> FormUsed? {
+        guard let form, form.busy == nil, let field = form.fields.first(where: { $0.id == id }),
+            case .keys = field.kind, entered[id] != keys, keys.utf8.count <= FormField.mostKeysBytes
+        else { return nil }
+        entered[id] = keys
         return FormUsed(step: form.step, button: nil, values: entered)
     }
 
@@ -229,6 +248,8 @@ public struct FormModel: Equatable, Sendable {
             case let .code(code):
                 // Its placeholder, whatever it shows.
                 shown = "[code] = \(code)"
+            case let .keys(keys):
+                shown = "[keys] = \(keys.debugDescription)"
             }
             lines.append("sheet field \(row.id) \(shown)\(field.focus ? " (focus)" : "")")
         }

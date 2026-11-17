@@ -992,6 +992,10 @@ public struct FormField: Equatable, Sendable {
         /// somewhere else: a code to sign in with, the page to type it at.
         /// It is shown large, and nothing prints it.
         case code(value: FormSecret)
+        /// A key, or keys pressed one after another, taken by pressing
+        /// them: as Quill writes them, and empty when none has been
+        /// pressed. Only a sheet has one.
+        case keys(value: String)
         /// Something that is on or off: a checkbox, with its own words.
         case toggle(title: String, value: Bool)
         /// A number within bounds.
@@ -1010,6 +1014,7 @@ public struct FormField: Equatable, Sendable {
             case .choice: "choice"
             case .fixed: "static"
             case .code: "code"
+            case .keys: "keys"
             case .toggle: "toggle"
             case .number: "number"
             case .list: "list"
@@ -1034,11 +1039,14 @@ public struct FormField: Equatable, Sendable {
         self.help = help
     }
 
+    /// The most bytes the keys a field has recorded come to, as written.
+    public static let mostKeysBytes = 128
+
     /// What the field holds, as the core has it. A secret has nothing to
     /// say, and what a code field shows is the view's to reveal.
     public var value: String? {
         switch kind {
-        case let .text(value), let .choice(value, _), let .fixed(value): value
+        case let .text(value), let .choice(value, _), let .fixed(value), let .keys(value): value
         case .secret, .code, .toggle, .number, .list, .button: nil
         }
     }
@@ -1046,7 +1054,7 @@ public struct FormField: Equatable, Sendable {
     /// Whether the user can change what it holds.
     public var isEditable: Bool {
         switch kind {
-        case .text, .secret, .choice, .toggle, .number: true
+        case .text, .secret, .choice, .keys, .toggle, .number: true
         case .fixed, .code, .list, .button: false
         }
     }
@@ -1057,7 +1065,7 @@ public struct FormField: Equatable, Sendable {
     public var reportsAsChanged: Bool {
         switch kind {
         case .toggle, .number, .list, .button: true
-        case .text, .secret, .choice, .fixed, .code: false
+        case .text, .secret, .choice, .fixed, .code, .keys: false
         }
     }
 
@@ -1075,6 +1083,10 @@ public struct FormField: Equatable, Sendable {
             return number.isSound
         case let .list(list):
             return list.isSound
+        case let .keys(value):
+            // One line, of no more than the keys of a field come to.
+            return value.utf8.count <= FormField.mostKeysBytes
+                && !value.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F })
         case .text, .secret, .fixed, .code:
             return true
         }
@@ -1189,16 +1201,31 @@ public struct FormList: Equatable, Sendable {
 
     public let rows: [Row]
     public let actions: [Action]
+    /// The list is long: it has a line to type on over it that narrows
+    /// the rows shown, and more room.
+    public let searchable: Bool
     public let empty: String?
 
     /// The most rows a list may have, and the most actions.
     public static let mostRows = 200
     public static let mostActions = 6
 
-    public init(rows: [Row], actions: [Action], empty: String? = nil) {
+    public init(rows: [Row], actions: [Action], searchable: Bool = false, empty: String? = nil) {
         self.rows = rows
         self.actions = actions
+        self.searchable = searchable
         self.empty = empty
+    }
+
+    /// The rows that have `typed` in their title or in what is said under
+    /// it, whatever its case: all of them when nothing is typed.
+    public func rows(matching typed: String) -> [Row] {
+        let wanted = typed.trimmingCharacters(in: .whitespaces)
+        guard !wanted.isEmpty else { return rows }
+        return rows.filter { row in
+            row.title.localizedCaseInsensitiveContains(wanted)
+                || (row.detail?.localizedCaseInsensitiveContains(wanted) ?? false)
+        }
     }
 
     var isSound: Bool {
@@ -1221,7 +1248,9 @@ public struct FormList: Equatable, Sendable {
         return picked.actions.contains(action)
     }
 
-    static let allowedKeys: Set<String> = ["kind", "id", "label", "rows", "actions", "empty", "help"]
+    static let allowedKeys: Set<String> = [
+        "kind", "id", "label", "rows", "actions", "searchable", "empty", "help",
+    ]
 }
 
 /// The key that presses a button of a form.
@@ -1436,7 +1465,7 @@ public struct SettingsShow: Equatable, Sendable {
             else { return nil }
             for field in pane.fields {
                 switch field.kind {
-                case .secret, .code: return nil
+                case .secret, .code, .keys: return nil
                 case .text, .choice, .fixed, .toggle, .number, .list, .button: break
                 }
                 if field.focus || !field.isSound { return nil }

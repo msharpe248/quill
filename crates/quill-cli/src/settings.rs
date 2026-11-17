@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use quill_core::config::Config;
 use quill_tui::command::Registry;
-use quill_tui::settings::{AccountLine, Change, Settings, SettingsRead};
+use quill_tui::settings::{AccountLine, Change, KeysChange, Settings, SettingsRead};
 use quill_tui::setup::AccountEvent;
 
 use crate::{config_edit, oauth, setup};
@@ -42,6 +42,48 @@ pub fn answer(config_file: &Path, change: Option<Change>) -> AccountEvent {
         read: read(config_file).map(Box::new),
         changed,
     }
+}
+
+/// [`change_keys`], off the async threads: the files block.
+pub async fn keys_off_thread(config_file: PathBuf, change: KeysChange) -> AccountEvent {
+    tokio::task::spawn_blocking(move || change_keys(&config_file, &change))
+        .await
+        .unwrap_or_else(|err| AccountEvent::KeysChanged {
+            read: Err(err.to_string()),
+            result: Err(err.to_string()),
+        })
+}
+
+/// Makes `change` to the user's own keys, in `keys.toml` beside the
+/// config, and reads the settings as they then are: the keys with them.
+pub fn change_keys(config_file: &Path, change: &KeysChange) -> AccountEvent {
+    let result = write_keys(config_file, change);
+    AccountEvent::KeysChanged {
+        read: read(config_file).map(Box::new),
+        result,
+    }
+}
+
+/// Writes `change` into `keys.toml` as it stands now. A file that is not
+/// there yet is made by the first change.
+fn write_keys(config_file: &Path, change: &KeysChange) -> Result<(), String> {
+    let config = Config::parse(&text_of(config_file)?).map_err(|err| err.to_string())?;
+    let path = crate::paths::keys_file_in(config_dir(config_file));
+    let before = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(err) => return Err(format!("keys.toml cannot be read: {err}")),
+    };
+    let after = crate::keys_edit::apply(
+        &before,
+        change,
+        &quill_tui::keymap::Keymap::preset(config.ui.keymap),
+        &Registry::builtin(),
+    )?;
+    if after == before {
+        return Ok(());
+    }
+    config_edit::write(&path, &after).map_err(|err| format!("keys.toml cannot be written: {err}"))
 }
 
 /// The folder the config is in, where the themes and the keys are too.
@@ -128,6 +170,81 @@ mod tests {
 
     use super::*;
     use crate::paths::Paths;
+
+    #[test]
+    fn a_key_changed_in_the_window_is_in_keys_toml_and_in_what_is_read_back() {
+        let dir = TempDir::new().unwrap();
+        let config_file = dir.path().join("config.toml");
+        fs::write(&config_file, "[ui]\nkeymap = \"vim\"\n").unwrap();
+        let keys_file = dir.path().join("keys.toml");
+        let keys_of = |event: &AccountEvent, id: CommandId| -> Vec<String> {
+            match event {
+                AccountEvent::KeysChanged { read: Ok(read), .. } => read
+                    .keymap
+                    .keys_for(id)
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+                other => panic!("{other:?}"),
+            }
+        };
+        let set = |name: &str, keys: &[&str]| {
+            KeysChange::Set(vec![(
+                name.to_owned(),
+                keys.iter().map(|key| (*key).to_owned()).collect(),
+            )])
+        };
+
+        // There is no file yet: the first change makes it.
+        let answer = change_keys(&config_file, &set("message.move", &["ctrl-b"]));
+        assert!(matches!(
+            &answer,
+            AccountEvent::KeysChanged { result: Ok(()), .. }
+        ));
+        assert_eq!(keys_of(&answer, CommandId::MessageMove), ["ctrl-b"]);
+        assert_eq!(
+            fs::read_to_string(&keys_file).unwrap(),
+            "\"message.move\" = \"ctrl-b\"\n"
+        );
+
+        // A change that cannot be made says why, and the file and the
+        // keys are as they were.
+        let answer = change_keys(&config_file, &set("no.such.command", &["x"]));
+        match &answer {
+            AccountEvent::KeysChanged {
+                result: Err(why), ..
+            } => assert!(why.contains("no command called"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(keys_of(&answer, CommandId::MessageMove), ["ctrl-b"]);
+
+        // The user's own edit by hand, with a mistake in it, is not
+        // written over: it is theirs to put right.
+        let mistaken = "\"message.move\" = \"ctrl-b\"\n\"no.such.command\" = \"x\"\n";
+        fs::write(&keys_file, mistaken).unwrap();
+        let answer = change_keys(&config_file, &KeysChange::ResetAll);
+        match &answer {
+            AccountEvent::KeysChanged {
+                read: Ok(read),
+                result: Err(why),
+            } => {
+                assert!(why.contains("a mistake to put right first"), "{why}");
+                assert!(read.keys_problem.is_some());
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(fs::read_to_string(&keys_file).unwrap(), mistaken);
+
+        // Put right, everything can be put back.
+        fs::write(&keys_file, "\"message.move\" = \"ctrl-b\"\n").unwrap();
+        let answer = change_keys(&config_file, &KeysChange::ResetAll);
+        assert!(matches!(
+            &answer,
+            AccountEvent::KeysChanged { result: Ok(()), .. }
+        ));
+        assert_eq!(keys_of(&answer, CommandId::MessageMove), ["m"]);
+        assert_eq!(fs::read_to_string(&keys_file).unwrap(), "");
+    }
 
     /// A config a person has written, with their comments.
     const WRITTEN: &str = "# My settings\n\
@@ -610,7 +727,7 @@ mod tests {
         // Until it is opened there is nothing to show.
         assert!(app.state.settings_shown(&app.env).is_none());
         app.open();
-        assert_eq!(app.shown().panes().len(), 5);
+        assert_eq!(app.shown().panes().len(), 6);
         assert_eq!(app.shown().problem(), None);
         // The one theme the file names is shown for both appearances.
         assert_eq!(app.chosen("general", "theme_light"), "light");
@@ -940,7 +1057,7 @@ mod tests {
             "[ui]\ntheme = \"light\"   # mine\n",
         );
         app.open();
-        assert_eq!(app.shown().panes().len(), 5);
+        assert_eq!(app.shown().panes().len(), 6);
         assert_eq!(app.shown().problem(), None);
         app.set("general", "notifications", FormValue::Flag(false));
         assert_eq!(

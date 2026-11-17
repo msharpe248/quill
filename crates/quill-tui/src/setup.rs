@@ -300,6 +300,10 @@ pub enum AccountRequest {
     /// it stands, by whoever last wrote it. Answered with
     /// [`AccountEvent::Settings`].
     Settings(Option<crate::settings::Change>),
+    /// Make this change to the user's own keys, in `keys.toml`, and read
+    /// the settings afresh: the keys hold from the answer. Answered with
+    /// [`AccountEvent::KeysChanged`].
+    Keys(crate::settings::KeysChange),
 }
 
 /// A choice made in the UI that is kept between runs, in `config.toml`.
@@ -396,6 +400,12 @@ pub enum AccountEvent {
     /// The choice is in the config, or why it could not be written there.
     /// It holds for this run either way.
     Remembered(Result<(), String>),
+    /// The user's own keys were changed, or why they were not: then the
+    /// file is as it was. With it, what the settings say now.
+    KeysChanged {
+        read: Result<Box<crate::settings::SettingsRead>, String>,
+        result: Result<(), String>,
+    },
     /// What the config says now, for the host's settings window: or, when
     /// it cannot be read for what it says, why not. `changed` is the
     /// change that was asked for with it, and whether it was made; a
@@ -1426,6 +1436,7 @@ impl Setup {
             | AccountEvent::Removed { .. }
             | AccountEvent::EditAsked { .. }
             | AccountEvent::Remembered(_)
+            | AccountEvent::KeysChanged { .. }
             | AccountEvent::Settings { .. } => (Vec::new(), Outcome::Open),
         }
     }

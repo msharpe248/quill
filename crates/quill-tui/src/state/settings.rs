@@ -40,6 +40,15 @@ pub struct SettingsWindow {
 }
 
 impl State {
+    /// What the settings file was last read as saying, while the window
+    /// is open and it could be read.
+    pub(super) fn settings_read(&self) -> Option<&SettingsRead> {
+        match self.settings.as_ref()?.read.as_ref()? {
+            Ok(read) => Some(read),
+            Err(_) => None,
+        }
+    }
+
     /// What the host's settings window is to show, while it is open and
     /// the settings file has been read: every pane with its settings as
     /// the file has them, or what is wrong with the file. With it, a
@@ -110,6 +119,15 @@ impl State {
                             && action == BUTTON_PRESS =>
                     {
                         out.host.push(HostRequest::PickTheme);
+                        self.settings_answered(None);
+                    }
+                    // The list of keys: its actions are the question
+                    // about a command's keys, or a change made at once.
+                    SettingsDid::Action { action, row }
+                        if used.pane() == settings::Pane::Keys.id()
+                            && used.field() == settings::BINDINGS =>
+                    {
+                        self.on_keys_action(env, action, row.as_deref(), out);
                         self.settings_answered(None);
                     }
                     SettingsDid::Action { action, row } => {

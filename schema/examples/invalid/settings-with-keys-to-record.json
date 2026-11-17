@@ -1,0 +1,21 @@
+{
+  "jsonrpc": "2.0",
+  "method": "settings.show",
+  "params": {
+    "panes": [
+      {
+        "id": "keys",
+        "title": "Keys",
+        "symbol": "keyboard",
+        "fields": [
+          {
+            "kind": "keys",
+            "id": "shortcut",
+            "label": "New Key:",
+            "value": "g g"
+          }
+        ]
+      }
+    ]
+  }
+}

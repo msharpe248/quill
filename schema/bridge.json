@@ -1022,7 +1022,7 @@
               "type": "string"
             },
             "fields": {
-              "description": "The fields, in order. Each has a name of its own, and at most one has the focus. A sheet asks and waits for a button, so it has none of the kinds that say what the user did as they do it (toggle, number, list, button): those are the settings window's.",
+              "description": "The fields, in order. Each has a name of its own, and at most one has the focus. A sheet asks and waits for a button, so it has none of the kinds that say what the user did as they do it (toggle, number, list, button): those are the settings window's. A field that records keys is a sheet's alone.",
               "type": "array",
               "maxItems": 32,
               "items": {
@@ -1030,7 +1030,7 @@
                   { "$ref": "#/$defs/formField" },
                   {
                     "properties": {
-                      "kind": { "enum": ["text", "secret", "choice", "static", "code"] }
+                      "kind": { "enum": ["text", "secret", "choice", "static", "code", "keys"] }
                     }
                   }
                 ]
@@ -1077,6 +1077,24 @@
             "id": { "$ref": "#/$defs/formId" },
             "label": { "type": "string" },
             "value": { "type": "string" },
+            "focus": { "type": "boolean" },
+            "help": { "type": "string" }
+          }
+        },
+        {
+          "description": "A key, or keys pressed one after another, taken by pressing them. While the field has the keyboard the shell records what is pressed, in place of acting on it, and says it at once in form.used with no button, as it says a choice that was changed. `value` is the keys as Quill writes them (`ctrl-k`, `g g`), and is empty when none has been pressed. The shell records and shows; whether a key can be had is the core's to say, in the form it sends back. Only a sheet has one.",
+          "type": "object",
+          "required": ["kind", "id", "label", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "keys" },
+            "id": { "$ref": "#/$defs/formId" },
+            "label": { "type": "string" },
+            "value": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
+            },
             "focus": { "type": "boolean" },
             "help": { "type": "string" }
           }
@@ -1180,7 +1198,7 @@
           }
         },
         {
-          "description": "Rows to look down and pick one of, and things to do, as buttons under them. An action with `row` true is done to the row picked, and can be pressed only while a row that names it in its own `actions` is picked; one with `row` false needs no row. `empty` is said in the rows' place when there are none. Which row is picked is the shell's to keep.",
+          "description": "Rows to look down and pick one of, and things to do, as buttons under them. An action with `row` true is done to the row picked, and can be pressed only while a row that names it in its own `actions` is picked; one with `row` false needs no row. `empty` is said in the rows' place when there are none. Which row is picked is the shell's to keep. `searchable` says the list is long: the shell puts a line to type on over it, which narrows the rows shown to those whose title or detail has what is typed, and gives the rows more room. What is typed there is the shell's to keep, like the row picked, and the core is not told.",
           "type": "object",
           "required": ["kind", "id", "label", "rows", "actions"],
           "additionalProperties": false,
@@ -1225,6 +1243,7 @@
                 }
               }
             },
+            "searchable": { "type": "boolean" },
             "empty": { "type": "string" },
             "help": { "type": "string" }
           }

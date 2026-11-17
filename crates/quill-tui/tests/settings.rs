@@ -357,7 +357,7 @@ fn nothing_is_shown_until_the_window_is_opened_and_the_file_has_been_read() {
     );
     assert!(shown(&window).is_none());
     window.serve();
-    assert_eq!(window.shown().panes().len(), 5);
+    assert_eq!(window.shown().panes().len(), 6);
     // It is no question drawn over the panes: the terminal is as it was,
     // and the keys are still the list's.
     assert_eq!(window.harness.state.context(), Context::List);
@@ -1282,7 +1282,7 @@ fn a_file_with_a_mistake_in_it_shows_no_settings_and_changes_nothing() {
     // Put right, and the window come back to.
     window.file.mistake = None;
     window.open();
-    assert_eq!(window.shown().panes().len(), 5);
+    assert_eq!(window.shown().panes().len(), 6);
     assert_eq!(window.shown().problem(), None);
 }
 
