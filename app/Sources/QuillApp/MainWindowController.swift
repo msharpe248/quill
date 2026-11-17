@@ -270,6 +270,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         send: { [weak self] message in self?.bridge?.send(message) },
         openFile: { [weak self] in self?.editConfig(nil) })
 
+    /// The window of every key, which Help > Keyboard shortcuts brings up
+    /// and which stays up beside the mail.
+    private(set) lazy var keysWindow = KeysWindowController(
+        keepsPlace: !options.isScripted, beside: { [weak self] in self?.window })
+
     /// Copies a theme the user chose into the themes folder beside the
     /// settings file.
     let themeImport: ThemeImport
@@ -485,6 +490,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             )
             self.bridge = bridge
             environment["QUILL_SHELL_SOCKET"] = bridge.socketPath
+            // Whether there is an imported vimrc, for the settings window.
+            reportVimrc()
             // What the Mac looks like, for a core whose settings say to
             // follow it: said now, and whenever it changes. And said in the
             // core's environment as well, so that its first frame is drawn
@@ -586,6 +593,16 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             settingsWindow.show(settings)
         case .themesPick:
             showThemeChooser()
+        case let .editorSetup(setup):
+            switch setup {
+            case .importVimrc: importVimrc()
+            case .removeVimrc: removeImportedVimrc()
+            case .showScripts: showEditorScriptFolder()
+            }
+        case let .keysList(list):
+            keysWindow.set(list)
+        case .keysShow:
+            keysWindow.show()
         case let .readingShow(page):
             showReading(page)
         case let .readingScroll(by):
@@ -1507,18 +1524,28 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     /// Shows where `editor-command.sh` goes. Putting it there is the
     /// user's to do: the sandbox keeps the app from writing to the folder.
-    @objc func showEditorScriptFolder(_: Any?) {
+    /// Asked for from the settings window, where the editor is chosen.
+    func showEditorScriptFolder() {
         guard let folder = editorScriptFolder else { return }
         revealer(folder)
     }
 
     // MARK: - The user's vimrc
 
-    @objc func importVimrc(_: Any?) {
-        vimrcPicker(window) { [weak self] file in
+    /// Says what importing a vimrc means and asks for the file, on the
+    /// window it was asked from: the settings window, under the editor.
+    func importVimrc() {
+        vimrcPicker(sheetWindow) { [weak self] file in
             guard let file else { return }
             self?.importVimrc(from: file)
         }
+    }
+
+    /// Tells the core whether there is an imported vimrc: as the core is
+    /// started, and whenever one is imported or removed. The settings
+    /// window goes by it for what it offers under Vim.
+    private func reportVimrc() {
+        bridge?.send(.vimrcChanged(imported: vimrc.current != nil))
     }
 
     /// Copies a file in as the user's vimrc, in place of any copy already
@@ -1531,20 +1558,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         } catch {
             note("\(file.path) (refused: \(error))", in: &vimrcResults)
             problemReporter(
-                window, "The vimrc was not imported",
+                sheetWindow, "The vimrc was not imported",
                 "Quill could not import \(file.lastPathComponent): \(error).")
         }
+        reportVimrc()
     }
 
-    @objc func removeImportedVimrc(_: Any?) {
+    func removeImportedVimrc() {
         do {
             if try vimrc.remove() {
                 note("removed", in: &vimrcResults)
             }
         } catch {
             note("not removed: \(error)", in: &vimrcResults)
-            problemReporter(window, "The imported vimrc was not removed", "\(error).")
+            problemReporter(sheetWindow, "The imported vimrc was not removed", "\(error).")
         }
+        reportVimrc()
     }
 
     // MARK: - Themes
@@ -1789,8 +1818,6 @@ extension MainWindowController: NSMenuItemValidation {
         case #selector(closePane(_:)):
             // The reading pane is switched off, not closed.
             pane != nil && !(pane is WebPane)
-        case #selector(removeImportedVimrc(_:)):
-            vimrc.current != nil
         case #selector(importTheme(_:)):
             // The core is the one that makes the theme the one in force.
             coreIsRunning && bridge != nil && sheetWindow?.attachedSheet == nil

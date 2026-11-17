@@ -8,7 +8,7 @@
 #
 # Where it goes: ~/Library/Application Scripts/dev.quill.Quill/, and it must
 # be executable. Only you can put it there. Quill cannot write to that
-# folder; "Show Editor Script Folder" in the Quill menu opens it.
+# folder; "Show Editor Script Folder" in Settings > Composing opens it.
 #
 # What it is given: first the path of a helper inside Quill.app, which makes
 # Quill's pane the terminal of whatever it is told to run; then what Vim is

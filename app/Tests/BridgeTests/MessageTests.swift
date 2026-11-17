@@ -33,10 +33,10 @@ private enum Examples {
         let examples = try Examples.load("core-to-shell")
         #expect(
             examples.map(\.name) == [
-                "clipboard.write.json", "commands.list.json", "editor.place.json", "file.open.json",
-                "files.pick.json",
-                "files.save.json", "form.close.json", "form.show.json", "link.open.json", "notify.clear.json",
-                "notify.post.json", "pane.close.json",
+                "clipboard.write.json", "commands.list.json", "editor.place.json", "editor.setup.json",
+                "file.open.json", "files.pick.json",
+                "files.save.json", "form.close.json", "form.show.json", "keys.list.json", "keys.show.json",
+                "link.open.json", "notify.clear.json", "notify.post.json", "pane.close.json",
                 "pane.editor.json", "pane.play.json", "pane.preview.json",
                 "reading.close.json", "reading.place.json", "reading.scroll.json", "reading.show.json",
                 "settings.show.json", "spell.check.json",
@@ -60,7 +60,7 @@ private enum Examples {
                 "files.saved.json", "form.used.json", "notify.used.json", "settings.closed.json",
                 "settings.opened.json", "settings.used.json", "spell.checked.json",
                 "spell.suggested.json", "themes.imported.json", "thumbnail.made.json", "url.open.json",
-                "window.resized.json",
+                "vimrc.changed.json", "window.resized.json",
             ])
         for (name, text) in examples {
             let message = try ShellToCore(line: text)
@@ -103,6 +103,8 @@ private enum Examples {
             "theme-imported-with-a-hidden-name.json", "theme-imported-under-a-toml-name.json",
             "settings-button-with-nothing-on-it.json", "form-button-field-in-a-sheet.json",
             "editor-place-with-the-keys-and-nowhere-to-be.json", "editor-place-with-no-rows.json",
+            "editor-setup-of-a-kind-there-is-not.json", "editor-setup-with-a-path.json",
+            "key-line-that-says-nothing.json", "vimrc-changed-with-the-file.json",
         ] {
             #expect(examples.contains { $0.name == name }, "\(name) is missing")
         }
@@ -318,6 +320,71 @@ private enum Examples {
         ] {
             let line = #"{"jsonrpc":"2.0","method":"editor.place","params":\#(bad)}"#
             #expect(throws: BridgeError.self, "\(bad)") { try CoreToShell(line: line) }
+        }
+    }
+
+    @Test func theKeysAreAListUnderHeadingsAndTheWindowOfThemIsAskedForByItself() throws {
+        let examples = try Dictionary(uniqueKeysWithValues: Examples.load("core-to-shell").map { ($0.name, $0.text) })
+        let list = KeysList(
+            title: "Keyboard shortcuts",
+            sections: [
+                KeysList.Section(
+                    title: "Moving",
+                    keys: [
+                        KeysList.Line(title: "Next message", keys: ["j", "down"]),
+                        KeysList.Line(title: "First message", keys: ["g g"]),
+                    ]),
+                KeysList.Section(
+                    title: "Writing a message",
+                    keys: [
+                        KeysList.Line(title: "Send", keys: ["cmd-enter", "ctrl-x s"]),
+                        // A command no key is bound to is still listed.
+                        KeysList.Line(title: "Send later", keys: []),
+                    ]),
+            ])
+        #expect(try CoreToShell(line: examples["keys.list.json"]!) == .keysList(list))
+        #expect(try CoreToShell(line: examples["keys.show.json"]!) == .keysShow)
+        #expect(CoreToShell.keysShow.line == #"{"jsonrpc":"2.0","method":"keys.show","params":{}}"#)
+        for bad in [
+            #"{}"#, #"{"title":"Keys"}"#, #"{"sections":[]}"#, #"{"title":"Keys","sections":[],"front":true}"#,
+            #"{"title":"Keys","sections":[{"title":"Moving"}]}"#,
+            #"{"title":"Keys","sections":[{"title":"Moving","keys":[],"open":true}]}"#,
+            #"{"title":"Keys","sections":[{"title":"Moving","keys":[{"title":"Next","keys":"j"}]}]}"#,
+            #"{"title":"Keys","sections":[{"title":"Moving","keys":[{"title":"Next","keys":["j"],"name":"nav.next"}]}]}"#,
+        ] {
+            let line = #"{"jsonrpc":"2.0","method":"keys.list","params":\#(bad)}"#
+            #expect(throws: BridgeError.self, "\(bad)") { try CoreToShell(line: line) }
+        }
+        #expect(throws: BridgeError.self) {
+            try CoreToShell(line: #"{"jsonrpc":"2.0","method":"keys.show","params":{"front":true}}"#)
+        }
+    }
+
+    @Test func whatIsSetUpForAnEditorIsAWordAndTheVimrcIsOnlySaidToBeThere() throws {
+        let examples = try Dictionary(uniqueKeysWithValues: Examples.load("core-to-shell").map { ($0.name, $0.text) })
+        #expect(try CoreToShell(line: examples["editor.setup.json"]!) == .editorSetup(.importVimrc))
+        for setup in EditorSetup.allCases {
+            let line = #"{"jsonrpc":"2.0","method":"editor.setup","params":{"action":"\#(setup.rawValue)"}}"#
+            #expect(try CoreToShell(line: line) == .editorSetup(setup))
+            #expect(CoreToShell.editorSetup(setup).line == line)
+        }
+        #expect(EditorSetup.allCases.map(\.rawValue) == ["import_vimrc", "remove_vimrc", "show_scripts"])
+        for bad in [
+            #"{}"#, #"{"action":"run_shell"}"#, #"{"action":7}"#,
+            #"{"action":"import_vimrc","path":"/Users/robin/.vimrc"}"#,
+        ] {
+            let line = #"{"jsonrpc":"2.0","method":"editor.setup","params":\#(bad)}"#
+            #expect(throws: BridgeError.self, "\(bad)") { try CoreToShell(line: line) }
+        }
+
+        let answers = try Dictionary(uniqueKeysWithValues: Examples.load("shell-to-core").map { ($0.name, $0.text) })
+        #expect(try ShellToCore(line: answers["vimrc.changed.json"]!) == .vimrcChanged(imported: true))
+        #expect(
+            ShellToCore.vimrcChanged(imported: false).line
+                == #"{"jsonrpc":"2.0","method":"vimrc.changed","params":{"imported":false}}"#)
+        for bad in [#"{}"#, #"{"imported":"yes"}"#, #"{"imported":true,"path":"/Users/robin/.vimrc"}"#] {
+            let line = #"{"jsonrpc":"2.0","method":"vimrc.changed","params":\#(bad)}"#
+            #expect(throws: BridgeError.self, "\(bad)") { try ShellToCore(line: line) }
         }
     }
 

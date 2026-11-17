@@ -70,6 +70,14 @@ public enum CoreToShell: Equatable, Sendable {
     /// Ask the user to choose a theme to import, with the shell's own
     /// chooser. One that is imported is said with `themes.imported`.
     case themesPick
+    /// Something to do for the editor messages are written in, which only
+    /// the shell can do: asked for from the settings window.
+    case editorSetup(EditorSetup)
+    /// Every key there is, under headings, for the window of them: at
+    /// startup, and again whenever the keys change.
+    case keysList(KeysList)
+    /// Bring up the window of keys, showing the latest `keysList`.
+    case keysShow
 }
 
 /// A message the shell sends to the core.
@@ -112,8 +120,65 @@ public enum ShellToCore: Equatable, Sendable {
     /// A theme file was put in the themes folder beside the settings file,
     /// under this name.
     case themesImported(ThemesImported)
+    /// Whether the shell holds a vimrc the user imported: once as it
+    /// starts, and whenever that changes.
+    case vimrcChanged(imported: Bool)
     /// The app is quitting: flush and exit cleanly.
     case appWillQuit
+}
+
+/// Something only the shell can do for the editor messages are written in.
+/// A word, never a path: which file and which folder are the shell's.
+public enum EditorSetup: String, Equatable, Sendable, Codable, CaseIterable {
+    /// Ask the user for a vimrc and keep a copy of it, for the Vim that
+    /// runs inside the sandbox.
+    case importVimrc = "import_vimrc"
+    /// Take the copy away.
+    case removeVimrc = "remove_vimrc"
+    /// Show the folder the user's own editor script goes in.
+    case showScripts = "show_scripts"
+}
+
+/// Every key Quill has, as the window of them shows it: the core's list,
+/// under the core's headings, in the core's order.
+public struct KeysList: Equatable, Sendable, Codable {
+    /// What the window is called.
+    public var title: String
+    public var sections: [Section]
+
+    public init(title: String, sections: [Section]) {
+        self.title = title
+        self.sections = sections
+    }
+
+    /// The keys of one kind, or of one place, under a heading.
+    public struct Section: Equatable, Sendable, Codable {
+        public var title: String
+        public var keys: [Line]
+
+        public init(title: String, keys: [Line]) {
+            self.title = title
+            self.keys = keys
+        }
+
+        static let allowedKeys: Set<String> = ["title", "keys"]
+    }
+
+    /// What one command does and the keys it is on, in Quill's notation,
+    /// the preferred one first. None for a command no key is bound to.
+    public struct Line: Equatable, Sendable, Codable {
+        public var title: String
+        public var keys: [String]
+
+        public init(title: String, keys: [String]) {
+            self.title = title
+            self.keys = keys
+        }
+
+        static let allowedKeys: Set<String> = ["title", "keys"]
+    }
+
+    static let allowedKeys: Set<String> = ["title", "sections"]
 }
 
 public struct CommandInfo: Equatable, Sendable, Codable {

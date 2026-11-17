@@ -98,6 +98,17 @@ pub enum CoreToShell {
     /// chooser. One that is imported arrives as `themes.imported`.
     #[serde(rename = "themes.pick")]
     ThemesPick(NoParams),
+    /// Something to do for the editor messages are written in, which
+    /// only the shell can do: asked for from the settings window.
+    #[serde(rename = "editor.setup")]
+    EditorSetup(EditorSetup),
+    /// Every key Quill has, under headings, for the shell's window of
+    /// them: at startup, and again whenever the keys change.
+    #[serde(rename = "keys.list")]
+    KeysList(KeysList),
+    /// Bring up the window of keys, showing the latest `keys.list`.
+    #[serde(rename = "keys.show")]
+    KeysShow(NoParams),
 }
 
 /// A message the shell sends to the core.
@@ -157,6 +168,10 @@ pub enum ShellToCore {
     /// file, under this name.
     #[serde(rename = "themes.imported")]
     ThemesImported(ThemesImported),
+    /// Whether the shell holds a vimrc the user imported: once as it
+    /// starts, and whenever that changes.
+    #[serde(rename = "vimrc.changed")]
+    VimrcChanged(VimrcChanged),
     /// The app is quitting: flush and exit cleanly.
     #[serde(rename = "app.will_quit")]
     AppWillQuit(NoParams),
@@ -256,6 +271,64 @@ impl Appearance {
 pub struct AppearanceChanged {
     /// The Mac is in its dark appearance.
     pub dark: bool,
+}
+
+/// Whether the shell holds a vimrc the user imported, for the Vim that
+/// runs inside the sandbox. The file is the shell's alone: the core is told
+/// only that there is one, so that the settings window can offer to take
+/// it away.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VimrcChanged {
+    pub imported: bool,
+}
+
+/// Something only the shell can do for the editor messages are written
+/// in. A word, never a path: what file and what folder are the shell's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EditorSetup {
+    pub action: EditorSetupAction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EditorSetupAction {
+    /// Ask the user for a vimrc and keep a copy of it, for the Vim that
+    /// runs inside the sandbox. Answered by `vimrc.changed` if one is
+    /// taken.
+    ImportVimrc,
+    /// Take the copy away. Answered by `vimrc.changed`.
+    RemoveVimrc,
+    /// Show the folder the user's own editor script goes in.
+    ShowScripts,
+}
+
+/// Every key Quill has, as the shell's window of them shows it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KeysList {
+    /// What the window is called.
+    pub title: String,
+    pub sections: Vec<KeySection>,
+}
+
+/// The keys of one kind, or of one place, under a heading.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KeySection {
+    pub title: String,
+    pub keys: Vec<KeyLine>,
+}
+
+/// What one command is called and the keys it is on, in Quill's
+/// notation, the preferred one first. None at all for a command no key
+/// is bound to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KeyLine {
+    pub title: String,
+    pub keys: Vec<String>,
 }
 
 /// A theme the shell has put in the `themes` folder. It cannot be built or

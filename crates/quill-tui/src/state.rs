@@ -142,6 +142,11 @@ pub struct Env {
     /// reader's place and follow the list, as Quill's app has. A terminal
     /// has none, and web reading is not on offer there.
     pub web_pane: bool,
+    /// Whether the host has a window of its own for the list of every
+    /// key, as Quill's app has: asked for from a menu, the list goes
+    /// there and stays up beside the mail. Asked for by its key it is
+    /// drawn over the panes, whatever the host.
+    pub keys_window: bool,
     /// Web reading is on as Quill starts: `web_reading` under `[ui]` in
     /// the config. It means nothing without [`Env::web_pane`].
     pub web_reading: bool,
@@ -302,6 +307,8 @@ pub enum Action {
     /// The host has put a theme file of this name in the user's `themes`
     /// folder: the user chose it in the host's chooser.
     ThemeImported(String),
+    /// The host holds a vimrc the user imported, or holds none.
+    Vimrc(bool),
 }
 
 /// What was done with the host's settings window.
@@ -365,6 +372,12 @@ pub enum HostRequest {
     /// Ask the user to choose a theme to import, with the host's own
     /// chooser. Answered by [`Action::ThemeImported`], if one is.
     PickTheme,
+    /// Have the host do something for the editor messages are written
+    /// in that only it can: take in a vimrc, take it away, show where the
+    /// user's own script goes.
+    EditorSetup(quill_host::bridge::EditorSetupAction),
+    /// Bring up the host's window of every key.
+    ShowKeys,
     /// Show files in the host's viewer, starting with the one at `index`.
     /// Each is a path and what to call it.
     Preview {
@@ -1281,6 +1294,9 @@ pub struct State {
     /// panes, and is drawn over them while it has the keys. Worked out
     /// from the config and [`State::sidebar_flipped`] at every update.
     pub sidebar_hidden: bool,
+    /// The host holds a vimrc the user imported, for the Vim it runs: as
+    /// it last said. The settings window offers to take it away.
+    pub vimrc_imported: bool,
     /// The user has switched the accounts pane the other way from the
     /// one Quill started with.
     sidebar_flipped: bool,
@@ -1363,6 +1379,7 @@ impl State {
             web_reading: false,
             web_flipped: false,
             sidebar_hidden: false,
+            vimrc_imported: false,
             sidebar_flipped: false,
             editor_tips: false,
             tips_asked: None,
@@ -1461,6 +1478,17 @@ impl State {
         self.editor_tips = self.tips_asked.unwrap_or(env.editor_tips);
         match action {
             Action::Key(chord) => self.on_key(env, chord, &mut out),
+            // Asked for from the host's menu, the list of every key goes
+            // in the host's window, where it can stay up. The one drawn
+            // here, if it is up, has nothing left to do.
+            Action::Command(CommandId::HelpKeys)
+                if env.keys_window && self.is_enabled(env, CommandId::HelpKeys) =>
+            {
+                if self.help.is_some_and(|help| help.all) {
+                    self.help = None;
+                }
+                out.host.push(HostRequest::ShowKeys);
+            }
             Action::Command(id) => self.run(env, id, &mut out),
             Action::Resize(width, height) => self.size = (width, height),
             Action::Data(event) => self.on_data(env, event, &mut out),
@@ -1546,6 +1574,7 @@ impl State {
                 }
             }
             Action::ThemeImported(name) => self.on_theme_imported(env, name, &mut out),
+            Action::Vimrc(imported) => self.vimrc_imported = imported,
             Action::Paste(text) => match self.context() {
                 Context::Setup => {
                     if let Some(setup) = &mut self.setup {

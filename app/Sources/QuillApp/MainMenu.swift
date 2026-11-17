@@ -27,29 +27,14 @@ enum MainMenu {
             withTitle: "Reveal Settings File in Finder", action: #selector(MainWindowController.revealConfig(_:)),
             keyEquivalent: "")
         revealConfig.target = panes
-        // A theme made for Ghostty is chosen and copied in by the shell,
-        // as a vimrc is: the core cannot be shown a file the user chose.
+        // A theme made for Ghostty is chosen and copied in by the shell:
+        // the core cannot be shown a file the user chose. What there is to
+        // set up for an editor (a vimrc, the folder of the user's own
+        // script) is in the settings window, under the editor chosen.
         let importTheme = app.addItem(
             withTitle: "Import Theme\u{2026}", action: #selector(MainWindowController.importTheme(_:)),
             keyEquivalent: "")
         importTheme.target = panes
-        // The vimrc for writing mail in Vim is copied in by the shell: the
-        // core cannot be shown a file outside the sandbox, and has no need
-        // of this one.
-        // Where the user's own script for their own Vim goes: a folder the
-        // app can read and only the user can write to.
-        let scriptFolder = app.addItem(
-            withTitle: "Show Editor Script Folder",
-            action: #selector(MainWindowController.showEditorScriptFolder(_:)), keyEquivalent: "")
-        scriptFolder.target = panes
-        let importVimrc = app.addItem(
-            withTitle: "Import vimrc\u{2026}", action: #selector(MainWindowController.importVimrc(_:)),
-            keyEquivalent: "")
-        importVimrc.target = panes
-        let removeVimrc = app.addItem(
-            withTitle: "Remove Imported vimrc", action: #selector(MainWindowController.removeImportedVimrc(_:)),
-            keyEquivalent: "")
-        removeVimrc.target = panes
         app.addItem(.separator())
         app.addItem(withTitle: "Hide Quill", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         let hideOthers = app.addItem(

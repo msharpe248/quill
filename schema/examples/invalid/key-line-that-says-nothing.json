@@ -1,0 +1,1 @@
+{ "jsonrpc": "2.0", "method": "keys.list", "params": { "title": "Keyboard shortcuts", "sections": [{ "title": "Moving", "keys": [{ "keys": ["j"] }] }] } }

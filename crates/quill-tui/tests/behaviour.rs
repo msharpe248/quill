@@ -592,6 +592,48 @@ fn help_lists_the_commands_of_the_context_it_was_opened_from() {
 }
 
 #[test]
+fn asked_for_from_a_menu_the_list_of_every_key_goes_in_the_hosts_window() {
+    let shown = |harness: &Harness| {
+        harness
+            .host_requests
+            .iter()
+            .filter(|request| **request == HostRequest::ShowKeys)
+            .count()
+    };
+    // In a terminal there is no such window: the command draws the list,
+    // however it was run.
+    let mut harness = Harness::demo(200, 60);
+    harness.act(Action::Command(CommandId::HelpKeys));
+    assert!(harness.state.help.is_some_and(|help| help.all));
+    assert_eq!(shown(&harness), 0);
+
+    // In the app the menu's list is the window's, which stays up: nothing
+    // is drawn over the panes, and the keys stay with the mail.
+    let mut harness = Harness::demo(200, 60);
+    harness.env.keys_window = true;
+    harness.act(Action::Command(CommandId::HelpKeys));
+    assert!(harness.state.help.is_none());
+    assert_eq!(harness.state.context(), Context::List);
+    assert_eq!(shown(&harness), 1);
+    // Asked for again it is brought forward again: the host's business.
+    harness.act(Action::Command(CommandId::HelpKeys));
+    assert_eq!(shown(&harness), 2);
+    // By its key the list is still drawn here, for a glance.
+    harness.keys("K");
+    assert!(harness.state.help.is_some_and(|help| help.all));
+    assert_eq!(shown(&harness), 2);
+    // And gives way to the window when that is asked for.
+    harness.act(Action::Command(CommandId::HelpKeys));
+    assert!(harness.state.help.is_none());
+    assert_eq!(shown(&harness), 3);
+    // The help for where the keyboard is stays put: it is another list.
+    harness.keys("?");
+    harness.act(Action::Command(CommandId::HelpKeys));
+    assert!(harness.state.help.is_some_and(|help| !help.all));
+    assert_eq!(shown(&harness), 4);
+}
+
+#[test]
 fn the_list_of_every_key_has_each_command_once_wherever_it_is_opened_from() {
     use quill_tui::view::help::{HelpLine, all_lines, all_text};
 

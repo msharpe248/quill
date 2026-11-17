@@ -748,6 +748,129 @@ fn the_button_that_imports_a_theme_has_the_host_show_its_chooser() {
 }
 
 #[test]
+fn under_the_editor_is_what_there_is_to_set_up_for_the_one_chosen() {
+    use quill_host::bridge::EditorSetupAction;
+
+    let mut window = Window::new(CONFIG);
+    window.open();
+    let buttons = |window: &Window| -> Vec<(String, String)> {
+        let shown = window.shown();
+        let pane = shown
+            .panes()
+            .iter()
+            .find(|pane| pane.id == "composing")
+            .unwrap();
+        pane.fields
+            .iter()
+            .filter_map(|field| match field {
+                FormField::Button { id, title, .. } => Some((id.clone(), title.clone())),
+                _ => None,
+            })
+            .collect()
+    };
+    let named = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(id, title)| ((*id).to_owned(), (*title).to_owned()))
+            .collect()
+    };
+    let press = |window: &mut Window, field: &str, action: &str, row: Option<&str>| {
+        let used = SettingsUsed::action("composing", field, action, row).unwrap();
+        window
+            .harness
+            .act(Action::Settings(SettingsAct::Used(used)));
+        window.serve();
+    };
+    let asked = |window: &Window| -> Vec<EditorSetupAction> {
+        window
+            .harness
+            .host_requests
+            .iter()
+            .filter_map(|request| match request {
+                HostRequest::EditorSetup(action) => Some(*action),
+                _ => None,
+            })
+            .collect()
+    };
+
+    // Quill's own editor needs nothing, and nothing is offered.
+    assert_eq!(buttons(&window), named(&[]));
+    press(&mut window, "import_vimrc", "press", None);
+    assert_eq!(asked(&window), []);
+
+    // The Mac's Vim runs in the sandbox, out of reach of the user's own
+    // vimrc: one can be taken in. The buttons are right under the editor.
+    window.choose("composing", "editor", "vim");
+    assert_eq!(
+        buttons(&window),
+        named(&[("import_vimrc", "Import vimrc\u{2026}")])
+    );
+    let shown = window.shown();
+    let pane = shown
+        .panes()
+        .iter()
+        .find(|pane| pane.id == "composing")
+        .unwrap();
+    assert!(matches!(&pane.fields[0], FormField::Choice { id, .. } if id == "editor"));
+    assert!(matches!(&pane.fields[1], FormField::Button { id, .. } if id == "import_vimrc"));
+    let (requests, before) = (window.harness.account_requests.len(), window.answers());
+    press(&mut window, "import_vimrc", "press", None);
+    assert_eq!(asked(&window), [EditorSetupAction::ImportVimrc]);
+    // The host does it: the service is asked nothing, and the window is
+    // told the settings again, as for anything done in it.
+    assert_eq!(window.harness.account_requests.len(), requests);
+    assert_eq!(window.answers(), before + 1);
+    // There is none to take away yet, so that is not on offer.
+    press(&mut window, "remove_vimrc", "press", None);
+    assert_eq!(asked(&window), [EditorSetupAction::ImportVimrc]);
+
+    // The host says it has one: it can be replaced, or taken away.
+    window.harness.act(Action::Vimrc(true));
+    assert_eq!(
+        buttons(&window),
+        named(&[
+            ("import_vimrc", "Import Another vimrc\u{2026}"),
+            ("remove_vimrc", "Remove Imported vimrc"),
+        ])
+    );
+    press(&mut window, "remove_vimrc", "press", None);
+    assert_eq!(
+        asked(&window),
+        [
+            EditorSetupAction::ImportVimrc,
+            EditorSetupAction::RemoveVimrc
+        ]
+    );
+    window.harness.act(Action::Vimrc(false));
+    assert_eq!(
+        buttons(&window),
+        named(&[("import_vimrc", "Import vimrc\u{2026}")])
+    );
+    window.harness.act(Action::Vimrc(true));
+
+    // The user's own Vim reads the user's own vimrc: nothing is imported
+    // for it, whatever the host holds. What it needs is its script.
+    window.choose("composing", "editor", "script");
+    assert_eq!(
+        buttons(&window),
+        named(&[("show_scripts", "Show Editor Script Folder")])
+    );
+    press(&mut window, "import_vimrc", "press", None);
+    press(&mut window, "remove_vimrc", "press", None);
+    press(&mut window, "show_scripts", "open", None);
+    press(&mut window, "show_scripts", "press", Some("row"));
+    assert_eq!(asked(&window).len(), 2);
+    press(&mut window, "show_scripts", "press", None);
+    assert_eq!(asked(&window).last(), Some(&EditorSetupAction::ShowScripts));
+
+    // nano has nothing of the kind.
+    window.choose("composing", "editor", "nano");
+    assert_eq!(buttons(&window), named(&[]));
+    press(&mut window, "show_scripts", "press", None);
+    assert_eq!(asked(&window).len(), 3);
+}
+
+#[test]
 fn an_imported_theme_becomes_the_theme_in_force() {
     // While Quill is dark it is the dark theme that is changed.
     let mut window = with_a_theme_for_each();

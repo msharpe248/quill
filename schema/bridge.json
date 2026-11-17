@@ -33,7 +33,10 @@
         { "$ref": "#/$defs/reading.place" },
         { "$ref": "#/$defs/editor.place" },
         { "$ref": "#/$defs/settings.show" },
-        { "$ref": "#/$defs/themes.pick" }
+        { "$ref": "#/$defs/themes.pick" },
+        { "$ref": "#/$defs/editor.setup" },
+        { "$ref": "#/$defs/keys.list" },
+        { "$ref": "#/$defs/keys.show" }
       ]
     },
     "shellToCore": {
@@ -54,6 +57,7 @@
         { "$ref": "#/$defs/settings.used" },
         { "$ref": "#/$defs/appearance.changed" },
         { "$ref": "#/$defs/themes.imported" },
+        { "$ref": "#/$defs/vimrc.changed" },
         { "$ref": "#/$defs/app.will_quit" }
       ]
     },
@@ -1491,6 +1495,110 @@
             }
           }
         }
+      }
+    },
+
+    "editor.setup": {
+      "description": "Core to shell. Something to do for the editor messages are written in, which only the shell can do. It is asked for from a button in the settings window, under the editor chosen there: which buttons there are goes by the editor, and is the core's to say. import_vimrc: say what importing means, ask the user for a file, and keep a copy of it for the Vim that runs inside the sandbox (which cannot read the user's own); remove_vimrc: take that copy away; either is answered by vimrc.changed when something changed. show_scripts: show the folder the user's own editor script goes in. A word and never a path: which file and which folder are the shell's own business.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "editor.setup" },
+        "params": {
+          "type": "object",
+          "required": ["action"],
+          "additionalProperties": false,
+          "properties": {
+            "action": { "enum": ["import_vimrc", "remove_vimrc", "show_scripts"] }
+          }
+        }
+      }
+    },
+
+    "vimrc.changed": {
+      "description": "Shell to core. Whether the shell holds a vimrc the user imported, for the Vim that runs inside the sandbox: sent once as the shell starts and whenever one is imported or removed. The file is the shell's alone and the core never reads it; the core goes by this only to say, in the settings window, whether there is one to replace or take away.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "vimrc.changed" },
+        "params": {
+          "type": "object",
+          "required": ["imported"],
+          "additionalProperties": false,
+          "properties": {
+            "imported": { "type": "boolean" }
+          }
+        }
+      }
+    },
+
+    "keys.list": {
+      "description": "Core to shell, at startup and again whenever the keys change. Every key Quill has, under headings and in the order to show them: what the list drawn in the terminal has. The shell keeps the latest for its window of keys, which keys.show brings up, and draws a window that is open again. It shows what it is given and works nothing out.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "keys.list" },
+        "params": {
+          "type": "object",
+          "required": ["title", "sections"],
+          "additionalProperties": false,
+          "properties": {
+            "title": {
+              "description": "What the window is called.",
+              "type": "string",
+              "minLength": 1
+            },
+            "sections": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["title", "keys"],
+                "additionalProperties": false,
+                "properties": {
+                  "title": { "type": "string", "minLength": 1 },
+                  "keys": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["title", "keys"],
+                      "additionalProperties": false,
+                      "properties": {
+                        "title": {
+                          "description": "What the command does.",
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "keys": {
+                          "description": "The key sequences bound to it, preferred first, in Quill's notation. Empty for a command no key is bound to.",
+                          "type": "array",
+                          "items": { "type": "string", "minLength": 1 }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "keys.show": {
+      "description": "Core to shell. Bring up the window of keys, showing the latest keys.list: the user asked for the list of every key from a menu. The window is not modal and stays up beside the mail until the user closes it. Asked for by its key, the list is drawn in the terminal instead and this is not sent.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "keys.show" },
+        "params": { "type": "object", "additionalProperties": false }
       }
     },
 

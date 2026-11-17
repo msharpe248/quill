@@ -1002,7 +1002,7 @@ fn the_app_has_one_command_for_the_web_pane_and_no_page_beside_the_reader() {
         let entries: Vec<(&str, &str)> = lines
             .iter()
             .filter_map(|line| match line {
-                quill_tui::view::help::HelpLine::Entry { keys, title } => {
+                quill_tui::view::help::HelpLine::Entry { keys, title, .. } => {
                     Some((keys.as_str(), *title))
                 }
                 _ => None,

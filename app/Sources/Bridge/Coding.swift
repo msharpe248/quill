@@ -346,6 +346,14 @@ private struct AppearanceChangedParams: Codable {
     var dark: Bool
 }
 
+private struct VimrcChangedParams: Codable {
+    var imported: Bool
+}
+
+private struct EditorSetupParams: Codable {
+    var action: String
+}
+
 /// `themes.imported` as it is on the wire, before its name is checked.
 private struct ThemesImportedParams: Codable {
     var name: String
@@ -806,6 +814,14 @@ private extension SettingsUsed {
     }
 }
 
+/// Refuses a field an object inside a message's params does not have.
+private func requireOnly(_ allowed: Set<String>, in value: JSONValue, of method: String) throws {
+    let extra = Set((value.object ?? [:]).keys).subtracting(allowed)
+    guard extra.isEmpty else {
+        throw BridgeError.malformed("\(method): unexpected \(extra.sorted().joined(separator: ", "))")
+    }
+}
+
 public extension CoreToShell {
     init(line: String) throws {
         let envelope = try Envelope(line: line)
@@ -1006,6 +1022,29 @@ public extension CoreToShell {
         case "themes.pick":
             try envelope.requireOnly([])
             self = .themesPick
+        case "editor.setup":
+            let params = try envelope.decode(EditorSetupParams.self, allowing: ["action"])
+            guard let setup = EditorSetup(rawValue: params.action) else {
+                throw BridgeError.malformed("editor.setup: action is import_vimrc, remove_vimrc or show_scripts")
+            }
+            self = .editorSetup(setup)
+        case "keys.list":
+            let list = try envelope.decode(KeysList.self, allowing: KeysList.allowedKeys)
+            // The fields of each section and each line are checked as
+            // strictly as the rest.
+            if case let .array(sections)? = envelope.params.object?["sections"] {
+                for section in sections {
+                    try requireOnly(KeysList.Section.allowedKeys, in: section, of: "keys.list")
+                    guard case let .array(lines)? = section.object?["keys"] else { continue }
+                    for line in lines {
+                        try requireOnly(KeysList.Line.allowedKeys, in: line, of: "keys.list")
+                    }
+                }
+            }
+            self = .keysList(list)
+        case "keys.show":
+            try envelope.requireOnly([])
+            self = .keysShow
         default:
             throw BridgeError.unknownMethod(envelope.method)
         }
@@ -1063,6 +1102,12 @@ public extension CoreToShell {
             encodeLine(method: "settings.show", params: settings.json)
         case .themesPick:
             encodeLine(method: "themes.pick", params: NoParams())
+        case let .editorSetup(setup):
+            encodeLine(method: "editor.setup", params: EditorSetupParams(action: setup.rawValue))
+        case let .keysList(list):
+            encodeLine(method: "keys.list", params: list)
+        case .keysShow:
+            encodeLine(method: "keys.show", params: NoParams())
         }
     }
 }
@@ -1167,6 +1212,9 @@ public extension ShellToCore {
                 throw BridgeError.malformed("themes.imported: not a name a theme can have")
             }
             self = .themesImported(imported)
+        case "vimrc.changed":
+            let params = try envelope.decode(VimrcChangedParams.self, allowing: ["imported"])
+            self = .vimrcChanged(imported: params.imported)
         case "app.will_quit":
             try envelope.requireOnly([])
             self = .appWillQuit
@@ -1211,6 +1259,8 @@ public extension ShellToCore {
             encodeLine(method: "appearance.changed", params: AppearanceChangedParams(dark: dark))
         case let .themesImported(imported):
             encodeLine(method: "themes.imported", params: imported)
+        case let .vimrcChanged(imported):
+            encodeLine(method: "vimrc.changed", params: VimrcChangedParams(imported: imported))
         case .appWillQuit:
             encodeLine(method: "app.will_quit", params: NoParams())
         }

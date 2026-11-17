@@ -220,6 +220,7 @@ impl Harness {
             hooks_enabled: true,
             // As in a terminal: there is no web view pane to read in.
             web_pane: false,
+            keys_window: false,
             web_reading: false,
             sidebar: true,
             editor_tips: true,

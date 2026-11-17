@@ -24,8 +24,8 @@ use quill_core::config::{
     ReplyPosition,
 };
 use quill_host::bridge::{
-    FormAction, FormField, FormOption, FormRow, FormValue, Number, SettingsPane, SettingsShow,
-    SettingsShowParams, valid_form_id,
+    EditorSetupAction, FormAction, FormField, FormOption, FormRow, FormValue, Number, SettingsPane,
+    SettingsShow, SettingsShowParams, valid_form_id,
 };
 
 use crate::keymap::Keymap;
@@ -440,10 +440,17 @@ pub struct Can {
     pub add: bool,
     /// An account can be signed in to now, and no sign-in is under way.
     pub sign_in: bool,
+    /// The host holds a vimrc the user imported, which can be taken away.
+    pub vimrc: bool,
 }
 
 /// The name of the button that imports a theme, in the general pane.
 pub const IMPORT_THEME: &str = "import_theme";
+/// The names of the buttons under the editor, in the composing pane: which
+/// of them there are goes by the editor chosen.
+pub const IMPORT_VIMRC: &str = "import_vimrc";
+pub const REMOVE_VIMRC: &str = "remove_vimrc";
+pub const SHOW_SCRIPTS: &str = "show_scripts";
 /// The name of the list of accounts, in its pane.
 pub const ACCOUNTS: &str = "accounts";
 /// The actions of that list.
@@ -752,7 +759,63 @@ fn accounts(read: &SettingsRead, can: Can) -> Vec<FormField> {
     }]
 }
 
-fn composing(read: &SettingsRead, env: &Env) -> Vec<FormField> {
+/// What there is to set up for the editor the settings name, where the
+/// host runs editors itself: a vimrc for the Vim that runs in its sandbox,
+/// the folder the user's own script goes in, and for the rest nothing.
+fn editor_setup(editor: ComposeEditor, env: &Env, can: Can) -> Vec<FormField> {
+    if !env.editor_pane {
+        return Vec::new();
+    }
+    let button = |id: &str, title: &str, help: &str| FormField::Button {
+        id: id.to_owned(),
+        label: String::new(),
+        title: title.to_owned(),
+        enabled: true,
+        help: Some(help.to_owned()),
+    };
+    match editor {
+        ComposeEditor::Vim if can.vimrc => vec![
+            button(
+                IMPORT_VIMRC,
+                "Import Another vimrc\u{2026}",
+                "Vim uses the copy of your vimrc that Quill keeps. A change to your own \
+                 file is not picked up until it is imported again.",
+            ),
+            button(
+                REMOVE_VIMRC,
+                "Remove Imported vimrc",
+                "Without one, Vim starts with its own defaults.",
+            ),
+        ],
+        ComposeEditor::Vim => vec![button(
+            IMPORT_VIMRC,
+            "Import vimrc\u{2026}",
+            "This Vim runs inside Quill\u{2019}s sandbox and cannot read your ~/.vimrc. \
+             Quill can keep a copy of it for Vim to use.",
+        )],
+        ComposeEditor::Script => vec![button(
+            SHOW_SCRIPTS,
+            "Show Editor Script Folder",
+            "Your own Vim is started by editor-command.sh in this folder, with your own \
+             vimrc and plugins. Nothing is imported for it.",
+        )],
+        ComposeEditor::Builtin | ComposeEditor::Nano | ComposeEditor::Pico | ComposeEditor::Mg => {
+            Vec::new()
+        }
+    }
+}
+
+/// What a button under the editor asks of the host, by the button's name.
+pub fn editor_setup_named(field: &str) -> Option<EditorSetupAction> {
+    match field {
+        IMPORT_VIMRC => Some(EditorSetupAction::ImportVimrc),
+        REMOVE_VIMRC => Some(EditorSetupAction::RemoveVimrc),
+        SHOW_SCRIPTS => Some(EditorSetupAction::ShowScripts),
+        _ => None,
+    }
+}
+
+fn composing(read: &SettingsRead, env: &Env, can: Can) -> Vec<FormField> {
     let settings = &read.settings;
     // What the file says is always among the choices, as with the theme.
     let mut editors = editors_offered(env);
@@ -761,8 +824,8 @@ fn composing(read: &SettingsRead, env: &Env) -> Vec<FormField> {
     }
     let running = editor_running(env);
     let mut editor_help = format!(
-        "Vim, nano and Pico are the ones that come with macOS. Your own Vim needs your \
-         editor-command.sh: see Show Editor Script Folder in the Quill menu. {NEXT_START}"
+        "Vim, nano and Pico are the ones that come with macOS. Your own Vim is started \
+         by a script of yours. {NEXT_START}"
     );
     if running != settings.editor {
         editor_help.push_str(&format!(
@@ -775,17 +838,19 @@ fn composing(read: &SettingsRead, env: &Env) -> Vec<FormField> {
             }
         ));
     }
-    vec![
-        choice(
-            Setting::Editor,
-            "Write in:",
-            settings.editor.as_str(),
-            editors
-                .into_iter()
-                .map(|editor| option(editor.as_str(), editor_title(editor)))
-                .collect(),
-            Some(editor_help),
-        ),
+    let mut fields = vec![choice(
+        Setting::Editor,
+        "Write in:",
+        settings.editor.as_str(),
+        editors
+            .into_iter()
+            .map(|editor| option(editor.as_str(), editor_title(editor)))
+            .collect(),
+        Some(editor_help),
+    )];
+    // Under the editor, what there is to set up for that one.
+    fields.extend(editor_setup(settings.editor, env, can));
+    fields.extend([
         choice(
             Setting::Format,
             "Format:",
@@ -830,7 +895,8 @@ fn composing(read: &SettingsRead, env: &Env) -> Vec<FormField> {
                     .to_owned(),
             ),
         },
-    ]
+    ]);
+    fields
 }
 
 fn privacy(read: &SettingsRead) -> Vec<FormField> {
@@ -910,7 +976,7 @@ pub fn describe(
             fields: match pane {
                 Pane::General => general(read, env),
                 Pane::Accounts => accounts(read, can),
-                Pane::Composing => composing(read, env),
+                Pane::Composing => composing(read, env, can),
                 Pane::Privacy => privacy(read),
                 Pane::Storage => storage(read, env),
             },

@@ -347,6 +347,8 @@ impl Io<'_> {
                 HostRequest::OpenUrl(url) => self.host.open_url(&url),
                 HostRequest::PickFiles => self.host.pick_files(),
                 HostRequest::PickTheme => self.host.pick_theme(),
+                HostRequest::EditorSetup(action) => self.host.editor_setup(action),
+                HostRequest::ShowKeys => self.host.show_keys(),
                 HostRequest::Preview { files, index } => {
                     let files: Vec<(&std::path::Path, &str)> = files
                         .iter()
@@ -566,6 +568,14 @@ impl Io<'_> {
         self.last_host_state = Some(current);
     }
 
+    /// Tells the host every key there is, for its window of them, where
+    /// it has one: as Quill starts, and whenever the keys change.
+    fn send_keys(&self, env: &Env) {
+        if env.keys_window {
+            self.host.keys(keys_list(env));
+        }
+    }
+
     /// Tells the host where its reading pane stands, when that has
     /// changed: how many columns the terminal keeps beside it.
     fn mirror_place(&mut self, state: &State, env: &Env) {
@@ -726,6 +736,38 @@ fn terminal_color((red, green, blue): (u8, u8, u8)) -> bridge::TerminalColor {
     bridge::TerminalColor::rgb(red, green, blue)
 }
 
+/// Every key as the host's window of them shows it: what the list drawn
+/// over the panes has, under the same headings and in the same order.
+pub fn keys_list(env: &Env) -> bridge::KeysList {
+    let mut sections: Vec<bridge::KeySection> = Vec::new();
+    for line in view::help::all_lines(&env.registry, &env.keymap, env.web_pane) {
+        match line {
+            view::help::HelpLine::Heading(title) => sections.push(bridge::KeySection {
+                title: title.to_owned(),
+                keys: Vec::new(),
+            }),
+            view::help::HelpLine::Entry { id, title, .. } => {
+                if let Some(section) = sections.last_mut() {
+                    section.keys.push(bridge::KeyLine {
+                        title: title.to_owned(),
+                        keys: env
+                            .keymap
+                            .keys_for(id)
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect(),
+                    });
+                }
+            }
+            view::help::HelpLine::Blank => {}
+        }
+    }
+    bridge::KeysList {
+        title: view::help::ALL_KEYS_TITLE.to_owned(),
+        sections,
+    }
+}
+
 /// Every command as the host sees it: its name, title, keys and placement.
 pub fn command_infos(env: &Env) -> Vec<CommandInfo> {
     env.registry
@@ -780,6 +822,7 @@ async fn event_loop(
         state.update(env, Action::Notify(notice));
     }
     io.host.commands(command_infos(env));
+    io.send_keys(env);
     for request in state.startup_requests() {
         io.data.send(request);
     }
@@ -894,6 +937,7 @@ async fn event_loop(
                 HostEvent::SettingsUsed(used) => Some(Action::Settings(SettingsAct::Used(used))),
                 HostEvent::SystemAppearance { dark } => Some(Action::SystemAppearance { dark }),
                 HostEvent::ThemeImported(name) => Some(Action::ThemeImported(name)),
+                HostEvent::Vimrc { imported } => Some(Action::Vimrc(imported)),
                 HostEvent::Thumbnail { id, ok } => {
                     io.thumbnail_made(id, ok);
                     None
@@ -927,6 +971,7 @@ async fn event_loop(
             if let Some(settings) = effects.settings.take() {
                 if settings.apply(env) {
                     io.host.commands(command_infos(env));
+                    io.send_keys(env);
                 }
                 state.dirty = true;
             }
@@ -1157,6 +1202,7 @@ mod tests {
             hooks: Vec::new(),
             hooks_enabled: false,
             web_pane: false,
+            keys_window: false,
             web_reading: false,
             sidebar: true,
             editor_tips: true,
@@ -1217,6 +1263,53 @@ mod tests {
         assert_eq!(
             sheet_change(Some(&signing_in), None),
             Some(SheetChange::Close)
+        );
+    }
+
+    #[test]
+    fn the_hosts_list_of_keys_is_the_list_drawn_here_under_the_same_headings() {
+        let env = env();
+        let list = keys_list(&env);
+        assert_eq!(list.title, "Keyboard shortcuts");
+        // Every command the list drawn here has, once, with its keys.
+        let drawn = view::help::all_lines(&env.registry, &env.keymap, env.web_pane);
+        let headings: Vec<&str> = drawn
+            .iter()
+            .filter_map(|line| match line {
+                view::help::HelpLine::Heading(title) => Some(*title),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            list.sections
+                .iter()
+                .map(|section| section.title.as_str())
+                .collect::<Vec<_>>(),
+            headings
+        );
+        assert!(headings.contains(&"Writing a message"));
+        let entries = drawn
+            .iter()
+            .filter(|line| matches!(line, view::help::HelpLine::Entry { .. }))
+            .count();
+        let lines: Vec<&bridge::KeyLine> = list
+            .sections
+            .iter()
+            .flat_map(|section| &section.keys)
+            .collect();
+        assert_eq!(lines.len(), entries);
+        assert!(list.sections.iter().all(|section| !section.keys.is_empty()));
+        let down = lines
+            .iter()
+            .find(|line| line.title == "Next item or line")
+            .map(|line| line.keys.clone());
+        assert_eq!(down, Some(vec!["j".to_owned(), "down".to_owned()]));
+        // And it is a message the bridge can carry.
+        let message = bridge::CoreToShell::KeysList(list);
+        let line = bridge::encode(&message).unwrap();
+        assert_eq!(
+            bridge::decode::<bridge::CoreToShell>(&line).unwrap(),
+            message
         );
     }
 

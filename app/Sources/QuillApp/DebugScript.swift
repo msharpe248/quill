@@ -43,7 +43,10 @@ import WebKit
 /// - `importvimrc:PATH` import this file as the user's vimrc, as if it had
 ///   been chosen in the panel; inside the sandbox it must be in the app's
 ///   container. Neither the alert nor the panel is ever shown to a script:
-///   the menu item itself is answered as if the user had cancelled
+///   the settings window's button is answered as if the user had cancelled
+/// - `keys:close`     close the window of keys, which `menu:help.keys`
+///   brings up; `keysearch:TEXT` types into its search field. Its picture
+///   is written with `.keys.png` after the dump's name
 /// - `typeeditor:TEXT` type text into the editor that has the text of the
 ///   message being written, as keys and not as a paste, wherever the
 ///   keyboard is
@@ -350,6 +353,21 @@ enum DebugScript {
             try? await Task.sleep(for: .milliseconds(300))
         case "importvimrc":
             controller.importVimrc(from: URL(fileURLWithPath: argument))
+            try? await Task.sleep(for: .milliseconds(300))
+        case "keys":
+            // `keys:close` closes the window of keys, as its close button
+            // does. It is brought up from the Help menu, with `menu:`.
+            if argument == "close" {
+                controller.keysWindow.close()
+            } else {
+                note("keys:\(argument) is not a step")
+            }
+            try? await Task.sleep(for: .milliseconds(200))
+        case "keysearch":
+            if !controller.keysWindow.search(for: argument) {
+                note("no window of keys to search for \(argument)")
+            }
+            try? await Task.sleep(for: .milliseconds(200))
         case "typeeditor":
             if !controller.typeIntoEditor(argument) {
                 note("no editor to type \(argument) into")
@@ -747,6 +765,10 @@ enum DebugScript {
         // then what the core described: a line for each pane and for each
         // field (`settings field general.theme [choice] = dark (dark|light)`).
         lines.append(contentsOf: controller.settingsWindow.summary)
+        // keys window: closed | open, with its title and size, whether it
+        // floats and has the keyboard, what is typed in its search field,
+        // and a line for every heading and every command it shows.
+        lines.append(contentsOf: controller.keysWindow.summary)
         let toolbar = (controller.window?.toolbar?.items ?? [])
             .filter { $0.itemIdentifier != .flexibleSpace }
             .map { "\($0.isEnabled ? "+" : "-")\($0.itemIdentifier.rawValue)" }
@@ -865,6 +887,14 @@ enum DebugScript {
             }
             try? bitmap.representation(using: .png, properties: [:])?
                 .write(to: destination.appendingPathExtension("settings.png"))
+        }
+        // The window of keys, likewise a window of its own.
+        if let keys = controller.keysWindow.windowIfOpen, let frame = keys.contentView?.superview,
+            let bitmap = frame.bitmapImageRepForCachingDisplay(in: frame.bounds)
+        {
+            frame.cacheDisplay(in: frame.bounds, to: bitmap)
+            try? bitmap.representation(using: .png, properties: [:])?
+                .write(to: destination.appendingPathExtension("keys.png"))
         }
         do {
             try Data(lines.joined(separator: "\n").utf8).write(to: destination)

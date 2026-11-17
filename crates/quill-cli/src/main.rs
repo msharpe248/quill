@@ -492,6 +492,8 @@ fn suit_host(env: &mut quill_tui::state::Env, shell: bool, vim: Option<std::ffi:
     // And a web view pane that can stand in the reader's place. A
     // terminal has none, whatever the config says about reading in one.
     env.web_pane = shell;
+    // And a window for the list of every key, which stays up.
+    env.keys_window = shell;
 }
 
 /// What the app said the Mac looks like as it started the core: `dark` or

@@ -1,0 +1,23 @@
+{
+  "jsonrpc": "2.0",
+  "method": "keys.list",
+  "params": {
+    "title": "Keyboard shortcuts",
+    "sections": [
+      {
+        "title": "Moving",
+        "keys": [
+          { "title": "Next message", "keys": ["j", "down"] },
+          { "title": "First message", "keys": ["g g"] }
+        ]
+      },
+      {
+        "title": "Writing a message",
+        "keys": [
+          { "title": "Send", "keys": ["cmd-enter", "ctrl-x s"] },
+          { "title": "Send later", "keys": [] }
+        ]
+      }
+    ]
+  }
+}

@@ -122,6 +122,7 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
         // And only it has a web view pane to read mail in. What the config
         // says is kept for it.
         web_pane: false,
+        keys_window: false,
         web_reading: config.ui.web_reading,
         sidebar: config.ui.sidebar,
         editor_tips: config.compose.editor_tips,

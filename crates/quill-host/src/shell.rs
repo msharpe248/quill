@@ -185,6 +185,9 @@ fn read_loop(stream: UnixStream, events: UnboundedSender<HostEvent>) {
             Ok(ShellToCore::ThemesImported(imported)) => {
                 HostEvent::ThemeImported(imported.name().to_owned())
             }
+            Ok(ShellToCore::VimrcChanged(changed)) => HostEvent::Vimrc {
+                imported: changed.imported,
+            },
             Ok(ShellToCore::AppWillQuit(_)) => HostEvent::WillQuit,
             Err(err) => HostEvent::Problem(unreadable(&line, &err)),
         };

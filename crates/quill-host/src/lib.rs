@@ -74,6 +74,9 @@ pub enum HostEvent {
     /// The host has put a theme file of this name in the `themes` folder
     /// beside the settings file.
     ThemeImported(String),
+    /// Whether the host holds a vimrc the user imported, for the Vim it
+    /// runs: said as it starts, and whenever that changes.
+    Vimrc { imported: bool },
     /// The app is quitting: flush and exit cleanly.
     WillQuit,
     /// The shell has gone. There is nothing left to draw for.
@@ -280,6 +283,25 @@ pub trait Host: Send + Sync {
     /// [`HostEvent::ThemeImported`]. Only a shell has a chooser.
     fn pick_theme(&self) {
         self.send(CoreToShell::ThemesPick(NoParams {}));
+    }
+
+    /// Asks the host to do something for the editor messages are written
+    /// in that only it can: take in a vimrc, take it away, show where the
+    /// user's own script goes. Only a shell runs editors of its own.
+    fn editor_setup(&self, action: bridge::EditorSetupAction) {
+        self.send(CoreToShell::EditorSetup(bridge::EditorSetup { action }));
+    }
+
+    /// Tells the host every key there is, for its window of them: at
+    /// startup, and whenever the keys change.
+    fn keys(&self, keys: bridge::KeysList) {
+        self.send(CoreToShell::KeysList(keys));
+    }
+
+    /// Brings up the host's window of keys. Only a shell has one: in a
+    /// terminal the list is drawn over the panes.
+    fn show_keys(&self) {
+        self.send(CoreToShell::KeysShow(NoParams {}));
     }
 
     /// Puts text on the system clipboard, if this host can. Returns

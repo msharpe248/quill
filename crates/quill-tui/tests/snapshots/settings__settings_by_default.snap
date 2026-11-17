@@ -24,7 +24,7 @@ expression: outline(&window.shown())
    more: Rules, saved searches and each account’s servers are set in the settings file. Hooks and templates are files beside it.
 == Composing (composing, square.and.pencil)
    editor "Write in:": choice = builtin of builtin "Quill’s own editor" | vim "Vim" | nano "nano" | pico "Pico" | script "Your own Vim, by your script"
-     help: Vim, nano and Pico are the ones that come with macOS. Your own Vim needs your editor-command.sh: see Show Editor Script Folder in the Quill menu. Takes effect when Quill is next opened.
+     help: Vim, nano and Pico are the ones that come with macOS. Your own Vim is started by a script of yours. Takes effect when Quill is next opened.
    format "Format:": choice = markdown of markdown "Markdown, sent as formatted text" | plain "Plain text"
    reply_position "Replies:": choice = above of above "Above the quoted message" | below "Below the quoted message"
    spell_check "Spelling:": toggle "Check spelling as you type" = true

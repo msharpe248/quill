@@ -16,7 +16,12 @@ use crate::text;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HelpLine {
     Heading(&'static str),
-    Entry { keys: String, title: &'static str },
+    Entry {
+        /// The command's keys in a line, or that it has none.
+        keys: String,
+        title: &'static str,
+        id: CommandId,
+    },
     Blank,
 }
 
@@ -46,6 +51,7 @@ fn entry(keymap: &Keymap, spec: &CommandSpec) -> HelpLine {
             keys.join(", ")
         },
         title: spec.title,
+        id: spec.id,
     }
 }
 
@@ -139,7 +145,7 @@ pub fn all_text(registry: &Registry, keymap: &Keymap, web_pane: bool) -> String 
         match line {
             HelpLine::Blank => {}
             HelpLine::Heading(title) => out.push_str(title),
-            HelpLine::Entry { keys, title } => {
+            HelpLine::Entry { keys, title, .. } => {
                 out.push_str(&format!("  {}  {title}", text::fit(keys, keys_width)));
             }
         }
@@ -204,7 +210,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         let line = match line {
             HelpLine::Blank => continue,
             HelpLine::Heading(title) => Line::styled(*title, styles.heading()),
-            HelpLine::Entry { keys, title } => Line::from(vec![
+            HelpLine::Entry { keys, title, .. } => Line::from(vec![
                 Span::raw("  "),
                 Span::styled(text::fit(keys, keys_width), styles.key()),
                 Span::raw("  "),
