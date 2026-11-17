@@ -16,9 +16,9 @@ On 2026-11-16 the owner chose to give Quill out as source and as a download (Git
 
 What each milestone left undone is listed under it in `DECISIONS.md`.
 
-Each milestone had its own branch off the last up to `m4-rendering-media`, which now carries everything since: the milestones overlapped too much to keep apart. `main` is where the owner last accepted the work; leave it for them to move.
+Quill is public at https://github.com/msharpe248/quill since 2026-11-16, under the MIT License with the Commons Clause (`LICENSE`). `main` is what is published, and is where work goes now; the milestone branches (`m2-imap-read`, `m3-compose-send`, `m4-rendering-media`) are local history and are not pushed.
 
-Commit finished, checked work as you go. There is no remote.
+Commit finished, checked work as you go, locally. Push only when the owner says to: a push is public. Before any commit, `git config user.email` must be the owner's GitHub no-reply address, and nothing checked in may carry their own address, their employer's name, either half of the Google client, or anything about their own accounts and mail.
 
 ## Checks
 
