@@ -28,6 +28,9 @@ pub enum Context {
     /// Pressing the key a command is to have, in the settings window of
     /// a host that has one.
     RecordKeys,
+    /// Choosing a theme's colours, or being asked before one is deleted,
+    /// in the settings window of a host that has one.
+    EditTheme,
     /// Being asked before unsubscribing from a mailing list.
     Unsubscribe,
     /// Being asked before an account is removed.
@@ -65,6 +68,7 @@ impl Context {
             Self::When => "Choosing a time",
             Self::NewFolder => "New folder",
             Self::RecordKeys => "Changing a key",
+            Self::EditTheme => "Changing a theme",
             Self::Unsubscribe => "Unsubscribe",
             Self::RemoveAccount => "Remove an account",
             Self::Folders => "Move to a folder",
@@ -92,6 +96,7 @@ const EVERYWHERE: &[Context] = &[
     Context::When,
     Context::NewFolder,
     Context::RecordKeys,
+    Context::EditTheme,
     Context::Unsubscribe,
     Context::RemoveAccount,
     Context::Folders,
@@ -1163,7 +1168,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         Context::SignIn => SIGNING_IN,
         Context::When => WHEN,
         Context::NewFolder => NEW_FOLDER,
-        Context::RecordKeys => RECORDING,
+        Context::RecordKeys | Context::EditTheme => RECORDING,
         Context::Links => LINKS,
         Context::Search => SEARCHING,
         Context::Palette => PALETTE,

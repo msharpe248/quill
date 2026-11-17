@@ -36,7 +36,7 @@ import Testing
         #expect(
             form.fields.map(\.id) == [
                 "type", "name", "address", "host", "port", "security", "smtp_host", "password", "code",
-                "shortcut",
+                "shortcut", "background",
             ])
         #expect(
             form.fields[0]
@@ -73,8 +73,14 @@ import Testing
                     id: "shortcut", label: "New Key:", kind: .keys(value: "g g"),
                     help: "Press the key, or two keys one after the other."))
         #expect(form.fields[9].value == "g g")
+        // A colour to pick, as the bridge says one.
+        #expect(form.fields[10] == FormField(id: "background", label: "Background:", kind: .color(value: "#1a1b26")))
+        #expect(form.fields[10].value == "#1a1b26")
+        #expect(!form.fields[10].reportsAsChanged)
         #expect(
-            form.fields.map(\.isEditable) == [true, true, false, true, true, true, true, true, false, true])
+            form.fields.map(\.isEditable) == [
+                true, true, false, true, true, true, true, true, false, true, true,
+            ])
         #expect(
             form.buttons == [
                 FormButton(id: "cancel", title: "Cancel", role: .cancel),
@@ -201,7 +207,9 @@ import Testing
         #expect(throws: BridgeError.malformed("form.show: note is not a string")) {
             try show(#"{"step":"a","title":"x","note":null,"fields":[],"buttons":[]}"#)
         }
-        #expect(throws: BridgeError.malformed("form.show: a field is text, secret, choice, static, code or keys")) {
+        let sheetKinds = BridgeError.malformed(
+            "form.show: a field is text, secret, choice, static, code, keys or color")
+        #expect(throws: sheetKinds) {
             try show(
                 #"{"step":"a","title":"x","fields":[{"kind":"html","id":"a","label":"","value":""}],"buttons":[]}"#)
         }

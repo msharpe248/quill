@@ -35,12 +35,14 @@ mod mouse;
 mod remove;
 mod settings;
 mod sheet;
-use quill_host::bridge::{FormUsed, SettingsUsed};
+mod themes;
+use quill_host::bridge::{FormUsed, Number, SettingsUsed};
 
 pub use self::folders::{FolderPrompt, ON_THE_SERVER, ON_THIS_MAC};
 pub use self::keys::{KeysAsk, KeysHow, KeysPrompt};
 pub use self::remove::{REMOVING, RemovePrompt, YES as REMOVE_YES};
 pub use self::settings::SettingsWindow;
+pub use self::themes::{ThemeAsk, ThemePrompt};
 use crate::settings::Applied;
 
 use crate::setup::{
@@ -48,7 +50,7 @@ use crate::setup::{
     SignInStage,
 };
 use crate::template::{self, Template};
-use crate::theme::{Look, Styles};
+use crate::theme::{Look, Styles, Theme};
 use crate::vim::{self, ExternalEditor, Verdict};
 use crate::{text, view};
 pub use mouse::{Mouse, MouseKind};
@@ -171,6 +173,12 @@ pub struct Env {
     /// told once, so this is what holds until Quill is started again,
     /// whatever the config has come to say since.
     pub cache_gb: f64,
+    /// The font the host's terminals have, by its family's name, and its
+    /// size in points: `font` and `font_size` under `[ui]`. Where there
+    /// is none said the host has its own. A terminal Quill runs in has
+    /// the font it has, and nothing here changes it.
+    pub font: Option<String>,
+    pub font_size: Option<Number>,
 }
 
 impl Env {
@@ -345,6 +353,10 @@ pub struct Effects {
     /// What the host has just said the system's appearance is, for the
     /// run loop to put into [`Env`] likewise ([`Look::system_dark`]).
     pub system_dark: Option<bool>,
+    /// A theme to draw with while it is being made, or `Some(None)` when
+    /// that is over, for the run loop to put into [`Env`] likewise
+    /// ([`Look::trying`]).
+    pub trying: Option<Option<Theme>>,
 }
 
 impl Effects {
@@ -355,6 +367,7 @@ impl Effects {
             && self.accounts.is_empty()
             && self.settings.is_none()
             && self.system_dark.is_none()
+            && self.trying.is_none()
     }
 }
 
@@ -474,6 +487,10 @@ pub struct HostState {
     /// Whether the settings say light, dark, or as the system is: the
     /// host's own windows go by it.
     pub appearance: quill_core::config::Appearance,
+    /// The font the host's terminals are to have, and its size in points,
+    /// as the settings say: nothing a terminal Quill runs in can be told.
+    pub font: Option<String>,
+    pub font_size: Option<Number>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1348,6 +1365,9 @@ pub struct State {
     pub new_folder: Option<FolderPrompt>,
     /// The question, in a host's sheet, about the keys of a command.
     pub keys: Option<KeysPrompt>,
+    /// The question, in a host's sheet, about a theme: its colours and
+    /// its name, or whether it is to be deleted.
+    pub theme_prompt: Option<ThemePrompt>,
     /// When the next snoozed message is due back.
     next_wake: Option<i64>,
     /// Certificates of existing accounts waiting for a decision. The first
@@ -1421,6 +1441,7 @@ impl State {
             when: None,
             new_folder: None,
             keys: None,
+            theme_prompt: None,
             next_wake: None,
             certificates: VecDeque::new(),
             setup_offered: false,
@@ -1462,6 +1483,9 @@ impl State {
         }
         if self.keys.is_some() {
             return Context::RecordKeys;
+        }
+        if self.theme_prompt.is_some() {
+            return Context::EditTheme;
         }
         if self.unsubscribe.is_some() {
             return Context::Unsubscribe;
@@ -1734,6 +1758,7 @@ impl State {
                 .push(AccountRequest::Remember(Preference::EditorTips(false)));
         }
         self.follow_selection(env, &mut out);
+        self.follow_theme_draft(env, &mut out);
         self.settle_notifications(&mut out);
         // With no accounts there is nothing to read: offer to add one,
         // once, instead of an empty window.
@@ -2713,6 +2738,7 @@ impl State {
                     || self.when.is_some()
                     || self.new_folder.is_some()
                     || self.keys.is_some()
+                    || self.theme_prompt.is_some()
                     || !self.certificates.is_empty()
                     || !self.notices.is_empty()
                     || self.focus == Pane::Reader
@@ -2764,6 +2790,8 @@ impl State {
             background: env.styles.background_rgb(),
             foreground: env.styles.text_rgb(),
             appearance: env.look.appearance,
+            font: env.font.clone(),
+            font_size: env.font_size,
         }
     }
 
@@ -2807,6 +2835,7 @@ impl State {
                 | Context::When
                 | Context::NewFolder
                 | Context::RecordKeys
+                | Context::EditTheme
                 | Context::Unsubscribe
                 | Context::RemoveAccount
                 | Context::Setup
@@ -3003,6 +3032,8 @@ impl State {
             // No folder was made.
         } else if self.keys.take().is_some() {
             // No key was changed.
+        } else if self.theme_prompt.take().is_some() {
+            // No theme was changed.
         } else if self.unsubscribe.take().is_some() {
             // Nothing was asked of the list, written or opened.
         } else if self.remove.is_some() {
@@ -4173,6 +4204,14 @@ impl State {
             AccountEvent::KeysChanged { read, result } => {
                 self.on_settings_read(env, read, None, out);
                 // Why the keys are as they were, said in the window.
+                if let Err(why) = result {
+                    self.settings_answered(Some(text::sanitize_line(&why)));
+                }
+                return;
+            }
+            AccountEvent::ThemesChanged { read, result } => {
+                self.on_settings_read(env, read, None, out);
+                // Why the themes are as they were, said in the window.
                 if let Err(why) = result {
                     self.settings_answered(Some(text::sanitize_line(&why)));
                 }

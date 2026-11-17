@@ -61,6 +61,13 @@ pub struct SavedSearch {
     pub query: String,
 }
 
+/// The smallest and the largest the font of the app's terminals may be,
+/// in points.
+pub const FONT_SMALLEST: u32 = 6;
+pub const FONT_LARGEST: u32 = 72;
+/// The most bytes the name of a font's family comes to.
+pub const MAX_FONT_NAME: usize = 128;
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct UiConfig {
@@ -603,6 +610,22 @@ impl Config {
                 self.ui.reader_width
             )));
         }
+        let sizes = FONT_SMALLEST as f32..=FONT_LARGEST as f32;
+        if !sizes.contains(&self.ui.font_size) {
+            return Err(ConfigError::Invalid(format!(
+                "ui.font_size must be between {FONT_SMALLEST} and {FONT_LARGEST}, got {}",
+                self.ui.font_size
+            )));
+        }
+        if let Some(font) = &self.ui.font
+            && (font.trim().is_empty()
+                || font.len() > MAX_FONT_NAME
+                || font.chars().any(char::is_control))
+        {
+            return Err(ConfigError::Invalid(
+                "ui.font must be the name of a font, on one line".to_owned(),
+            ));
+        }
         if !self.storage.cache_gb.is_finite() || self.storage.cache_gb < 0.0 {
             return Err(ConfigError::Invalid(
                 "storage.cache_gb must be 0 (no limit) or more".to_owned(),
@@ -963,6 +986,22 @@ smtp = { host = "smtp.fastmail.com", port = 465, tls = "implicit" }
     fn an_unknown_enum_value_is_rejected() {
         assert!(Config::parse("[ui]\nkeymap = \"emacs\"\n").is_err());
         assert!(Config::parse("[privacy]\nremote_images = \"always\"\n").is_err());
+    }
+
+    #[test]
+    fn the_font_is_a_name_and_a_size_a_terminal_can_have() {
+        let config = Config::parse("[ui]\nfont = \"Menlo\"\nfont_size = 14.5\n").unwrap();
+        assert_eq!(config.ui.font.as_deref(), Some("Menlo"));
+        assert_eq!(config.ui.font_size, 14.5);
+        for bad in [
+            "font_size = 2",
+            "font_size = 500",
+            "font = \"\"",
+            "font = \"a\\nb\"",
+        ] {
+            let err = Config::parse(&format!("[ui]\n{bad}\n")).unwrap_err();
+            assert!(matches!(err, ConfigError::Invalid(_)), "{bad}: {err:?}");
+        }
     }
 
     #[test]

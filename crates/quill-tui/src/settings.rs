@@ -24,8 +24,8 @@ use quill_core::config::{
     ReplyPosition,
 };
 use quill_host::bridge::{
-    FormAction, FormField, FormOption, FormRow, FormValue, Number, SettingsPane, SettingsShow,
-    SettingsShowParams, valid_form_id,
+    FormAction, FormField, FormOption, FormRow, FormValue, MAX_FONT_NAME, MAX_FORM_ROWS, Number,
+    SettingsPane, SettingsShow, SettingsShowParams, valid_form_id,
 };
 
 use crate::keymap::{KeySeq, Keymap};
@@ -44,6 +44,11 @@ pub struct Settings {
     pub theme_light: String,
     /// The theme while Quill is dark, likewise.
     pub theme_dark: String,
+    /// The font of the app's terminals, by its family's name, where the
+    /// file names one.
+    pub font: Option<String>,
+    /// And its size, in points.
+    pub font_size: Number,
     pub keymap: KeymapPreset,
     pub notifications: bool,
     pub threads: bool,
@@ -65,6 +70,8 @@ impl Settings {
             appearance: config.ui.appearance,
             theme_light: config.ui.theme_for(false).to_owned(),
             theme_dark: config.ui.theme_for(true).to_owned(),
+            font: config.ui.font.clone(),
+            font_size: font_size(config.ui.font_size),
             keymap: config.ui.keymap,
             notifications: config.ui.notifications,
             threads: config.ui.threads,
@@ -82,12 +89,28 @@ impl Settings {
     }
 }
 
+/// A size of font as the window has it: to one place after the point, as
+/// the file's number is read.
+pub fn font_size(points: f32) -> Number {
+    Number::new(f64::from(points))
+        .unwrap_or(Number::from(13))
+        .rounded(FONT_DECIMALS)
+}
+
+/// The smallest and the largest a font may be, in points: what the
+/// settings file is held to (`quill_core::config`).
+pub const FONT_SMALLEST: u32 = quill_core::config::FONT_SMALLEST;
+pub const FONT_LARGEST: u32 = quill_core::config::FONT_LARGEST;
+const FONT_DECIMALS: u8 = 1;
+
 /// One of the settings the window has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Setting {
     Appearance,
     ThemeLight,
     ThemeDark,
+    Font,
+    FontSize,
     Keymap,
     Notifications,
     Threads,
@@ -103,10 +126,12 @@ pub enum Setting {
 }
 
 impl Setting {
-    pub const ALL: [Setting; 15] = [
+    pub const ALL: [Setting; 17] = [
         Setting::Appearance,
         Setting::ThemeLight,
         Setting::ThemeDark,
+        Setting::Font,
+        Setting::FontSize,
         Setting::Keymap,
         Setting::Notifications,
         Setting::Threads,
@@ -128,6 +153,8 @@ impl Setting {
             Setting::Appearance => "appearance",
             Setting::ThemeLight => "theme_light",
             Setting::ThemeDark => "theme_dark",
+            Setting::Font => "font",
+            Setting::FontSize => "font_size",
             Setting::Keymap => "keymap",
             Setting::Notifications => "notifications",
             Setting::Threads => "threads",
@@ -149,6 +176,8 @@ impl Setting {
             Setting::Appearance
             | Setting::ThemeLight
             | Setting::ThemeDark
+            | Setting::Font
+            | Setting::FontSize
             | Setting::Keymap
             | Setting::Notifications
             | Setting::Threads
@@ -170,10 +199,11 @@ impl Setting {
             Setting::Appearance
             | Setting::ThemeLight
             | Setting::ThemeDark
-            | Setting::Keymap
-            | Setting::Notifications
-            | Setting::Threads
-            | Setting::WebReading => Pane::General,
+            | Setting::Font
+            | Setting::FontSize => Pane::Appearance,
+            Setting::Keymap | Setting::Notifications | Setting::Threads | Setting::WebReading => {
+                Pane::General
+            }
             Setting::Editor
             | Setting::EditorPath
             | Setting::Format
@@ -211,6 +241,7 @@ impl Setting {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pane {
     General,
+    Appearance,
     Accounts,
     Composing,
     Keys,
@@ -219,8 +250,9 @@ pub enum Pane {
 }
 
 impl Pane {
-    pub const ALL: [Pane; 6] = [
+    pub const ALL: [Pane; 7] = [
         Pane::General,
+        Pane::Appearance,
         Pane::Accounts,
         Pane::Composing,
         Pane::Keys,
@@ -232,6 +264,7 @@ impl Pane {
     pub fn id(self) -> &'static str {
         match self {
             Pane::General => "general",
+            Pane::Appearance => "appearance",
             Pane::Accounts => "accounts",
             Pane::Composing => "composing",
             Pane::Keys => "keys",
@@ -243,6 +276,7 @@ impl Pane {
     pub fn title(self) -> &'static str {
         match self {
             Pane::General => "General",
+            Pane::Appearance => "Appearance",
             Pane::Accounts => "Accounts",
             Pane::Composing => "Composing",
             Pane::Keys => "Keys",
@@ -255,6 +289,7 @@ impl Pane {
     pub fn symbol(self) -> &'static str {
         match self {
             Pane::General => "gearshape",
+            Pane::Appearance => "paintpalette",
             Pane::Accounts => "at",
             Pane::Composing => "square.and.pencil",
             Pane::Keys => "keyboard",
@@ -281,6 +316,11 @@ pub enum Change {
         name: String,
         dark: bool,
     },
+    /// The font of the app's terminals, by its family's name, or none
+    /// named: the app's own.
+    Font(Option<String>),
+    /// Its size, in points.
+    FontSize(Number),
     Keymap(KeymapPreset),
     Notifications(bool),
     Threads(bool),
@@ -314,6 +354,8 @@ impl Change {
             Change::Appearance(_) => Setting::Appearance,
             Change::ThemeLight(_) | Change::ThemeInForce { dark: false, .. } => Setting::ThemeLight,
             Change::ThemeDark(_) | Change::ThemeInForce { dark: true, .. } => Setting::ThemeDark,
+            Change::Font(_) => Setting::Font,
+            Change::FontSize(_) => Setting::FontSize,
             Change::Keymap(_) => Setting::Keymap,
             Change::Notifications(_) => Setting::Notifications,
             Change::Threads(_) => Setting::Threads,
@@ -340,7 +382,8 @@ impl Change {
             Change::Keymap(preset) => Written::Word(preset.as_str()),
             Change::Editor(editor) => Written::Word(editor.as_str()),
             Change::EditorPath(Some(path)) => Written::Word(path),
-            Change::EditorPath(None) => Written::Gone,
+            Change::EditorPath(None) | Change::Font(None) => Written::Gone,
+            Change::Font(Some(family)) => Written::Word(family),
             Change::Format(format) => Written::Word(format.as_str()),
             Change::ReplyPosition(position) => Written::Word(position.as_str()),
             Change::RemoteImages(remote) => Written::Word(remote.as_str()),
@@ -349,9 +392,9 @@ impl Change {
             | Change::WebReading(on)
             | Change::SpellCheck(on) => Written::Flag(*on),
             Change::UndoSendSeconds(seconds) => Written::Whole(i64::from(*seconds)),
-            Change::CacheGb(gigabytes) => match gigabytes.whole() {
+            Change::CacheGb(number) | Change::FontSize(number) => match number.whole() {
                 Some(whole) => Written::Whole(whole),
-                None => Written::Decimal(gigabytes.get()),
+                None => Written::Decimal(number.get()),
             },
         }
     }
@@ -368,15 +411,50 @@ pub struct AccountLine {
     pub signs_in: bool,
 }
 
+/// A theme there is to choose, as the window lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThemeLine {
+    pub name: String,
+    /// It is a file in the user's `themes` folder: theirs to change and
+    /// to delete. One Quill comes with is not, unless a file of theirs
+    /// has its name and stands in its place.
+    pub own: bool,
+    /// The theme, ready to draw with, or why its file cannot be used.
+    pub theme: Result<Theme, String>,
+}
+
+impl ThemeLine {
+    /// The themes Quill comes with, as they are listed where the user has
+    /// none of their own.
+    pub fn builtins() -> Vec<Self> {
+        Theme::builtin_names()
+            .filter_map(|name| {
+                Some(Self {
+                    name: name.to_owned(),
+                    own: false,
+                    theme: Ok(Theme::builtin(name)?),
+                })
+            })
+            .collect()
+    }
+}
+
+impl SettingsRead {
+    /// The names of the themes there are to choose from.
+    pub fn theme_names(&self) -> Vec<&str> {
+        self.themes.iter().map(|line| line.name.as_str()).collect()
+    }
+}
+
 /// What the settings file says, read a moment ago: the answer to
 /// `AccountRequest::Settings`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsRead {
     pub settings: Settings,
     pub accounts: Vec<AccountLine>,
-    /// The themes there are to choose from, by name: the ones Quill comes
-    /// with, then the user's own.
-    pub themes: Vec<String>,
+    /// The themes there are to choose from: the ones Quill comes with,
+    /// then the user's own.
+    pub themes: Vec<ThemeLine>,
     /// The theme the file names for when Quill is light, ready to draw
     /// with, or the one that stands in for it.
     pub theme_light: Theme,
@@ -399,6 +477,8 @@ pub struct Applied {
     pub appearance: Appearance,
     pub theme_light: Theme,
     pub theme_dark: Theme,
+    pub font: Option<String>,
+    pub font_size: Number,
     pub keymap: Keymap,
     pub notifications: bool,
     pub threads: bool,
@@ -417,6 +497,8 @@ impl Applied {
             appearance: settings.appearance,
             theme_light: read.theme_light.clone(),
             theme_dark: read.theme_dark.clone(),
+            font: settings.font.clone(),
+            font_size: settings.font_size,
             keymap: read.keymap.clone(),
             notifications: settings.notifications,
             threads: settings.threads,
@@ -441,6 +523,8 @@ impl Applied {
         env.look.light = self.theme_light;
         env.look.dark = self.theme_dark;
         env.restyle();
+        env.font = self.font;
+        env.font_size = Some(self.font_size);
         env.keymap = self.keymap;
         env.notifications = self.notifications;
         env.threads = self.threads;
@@ -469,10 +553,20 @@ pub struct Can {
     pub remove: bool,
     /// An account can be asked to be changed now.
     pub edit: bool,
+    /// A theme can be changed or deleted now: the host asks in a sheet,
+    /// and no such question is up.
+    pub themes: bool,
 }
 
-/// The name of the button that imports a theme, in the general pane.
-pub const IMPORT_THEME: &str = "import_theme";
+/// How many themes are listed before the list is one to search.
+const MANY_THEMES: usize = 8;
+
+/// The name of the list of themes, in the appearance pane.
+pub const THEMES: &str = "themes";
+/// The actions of that list.
+pub const EDIT_THEME: &str = "edit";
+pub const DELETE_THEME: &str = "delete";
+pub const IMPORT_THEME: &str = "import";
 /// The name of the list of accounts, in its pane.
 pub const ACCOUNTS: &str = "accounts";
 /// The actions of that list.
@@ -515,7 +609,7 @@ pub fn account_id(name: &str) -> String {
 
 /// A theme's name as a person reads it: the ones Quill comes with are
 /// given a capital, and the user's own are left as they named them.
-fn theme_title(name: &str) -> String {
+pub(crate) fn theme_title(name: &str) -> String {
     if Theme::builtin_names().any(|builtin| builtin == name) {
         let mut letters = name.chars();
         letters
@@ -642,9 +736,9 @@ fn theme_choice(
     let mut themes: Vec<FormOption> = read
         .themes
         .iter()
-        .map(|name| option(theme_id(name), theme_title(name)))
+        .map(|line| option(theme_id(&line.name), theme_title(&line.name)))
         .collect();
-    if !read.themes.iter().any(|name| name == named) {
+    if !read.themes.iter().any(|line| line.name == named) {
         themes.push(option(
             theme_id(named),
             format!("{} (not found)", text::sanitize_line(named)),
@@ -661,7 +755,41 @@ fn theme_choice(
     )
 }
 
-fn general(read: &SettingsRead, env: &Env) -> Vec<FormField> {
+/// What is said of a theme under its name in the list of them.
+fn theme_detail(line: &ThemeLine, settings: &Settings) -> String {
+    let theme = match &line.theme {
+        Ok(theme) => theme,
+        Err(problem) => {
+            return format!(
+                "Cannot be used. {}",
+                sentence(&text::sanitize_line(problem))
+            );
+        }
+    };
+    let mut said = vec![match theme.is_dark() {
+        Some(true) => "Dark",
+        Some(false) => "Light",
+        None => "The terminal\u{2019}s own colours",
+    }];
+    let builtin = Theme::builtin_names().any(|builtin| builtin == line.name);
+    match (builtin, line.own) {
+        (true, false) => said.push("comes with Quill"),
+        (true, true) => said.push("Quill\u{2019}s, changed by you"),
+        (false, _) => {}
+    }
+    match (
+        line.name == settings.theme_light,
+        line.name == settings.theme_dark,
+    ) {
+        (true, true) => said.push("the theme in use"),
+        (true, false) => said.push("the light theme"),
+        (false, true) => said.push("the dark theme"),
+        (false, false) => {}
+    }
+    said.join(" \u{b7} ")
+}
+
+fn appearance(read: &SettingsRead, env: &Env, can: Can) -> Vec<FormField> {
     let settings = &read.settings;
     // What "as the Mac is" comes to now, where the host has said.
     let system = match env.look.system_dark {
@@ -699,17 +827,90 @@ fn general(read: &SettingsRead, env: &Env) -> Vec<FormField> {
             read.theme_dark_problem.as_ref(),
             None,
         ),
-        FormField::Button {
-            id: IMPORT_THEME.to_owned(),
-            label: String::new(),
-            title: "Import Theme\u{2026}".to_owned(),
-            enabled: true,
+        FormField::Font {
+            id: Setting::Font.key().to_owned(),
+            label: "Font:".to_owned(),
+            value: settings.font.clone().unwrap_or_default(),
+            help: None,
+        },
+        FormField::Number {
+            id: Setting::FontSize.key().to_owned(),
+            label: "Size:".to_owned(),
+            value: settings.font_size,
+            min: Number::from(FONT_SMALLEST),
+            max: Some(Number::from(FONT_LARGEST)),
+            step: Number::from(1),
+            decimals: FONT_DECIMALS,
+            unit: Some("points".to_owned()),
             help: Some(
-                "Themes made for Ghostty can be imported. Themes of your own are files in \
-                 the themes folder beside the settings file."
+                "The font of Quill\u{2019}s own window, and of an editor in it. In a terminal \
+                 Quill has the terminal\u{2019}s font."
                     .to_owned(),
             ),
         },
+        FormField::List {
+            id: THEMES.to_owned(),
+            label: "Themes:".to_owned(),
+            // The window lists so many and no more; the pop-ups above
+            // have every one.
+            rows: read
+                .themes
+                .iter()
+                .take(MAX_FORM_ROWS)
+                .map(|line| {
+                    let mut actions = Vec::new();
+                    if line.theme.is_ok() {
+                        actions.push(EDIT_THEME.to_owned());
+                    }
+                    if line.own {
+                        actions.push(DELETE_THEME.to_owned());
+                    }
+                    FormRow {
+                        id: theme_id(&line.name),
+                        title: theme_title(&line.name),
+                        detail: Some(theme_detail(line, settings)),
+                        actions,
+                    }
+                })
+                .collect(),
+            actions: vec![
+                FormAction {
+                    id: EDIT_THEME.to_owned(),
+                    title: "Edit\u{2026}".to_owned(),
+                    row: true,
+                    enabled: can.themes,
+                },
+                FormAction {
+                    id: DELETE_THEME.to_owned(),
+                    title: "Delete\u{2026}".to_owned(),
+                    row: true,
+                    enabled: can.themes,
+                },
+                FormAction {
+                    id: IMPORT_THEME.to_owned(),
+                    title: "Import\u{2026}".to_owned(),
+                    row: false,
+                    enabled: true,
+                },
+            ],
+            // Past a handful there is a line to type on over them, and
+            // more room.
+            searchable: read.themes.len() > MANY_THEMES,
+            empty: None,
+            help: Some(
+                "Edit\u{2026} changes a theme\u{2019}s colours, and Quill is drawn in them as they \
+                 are chosen. Saved under another name it is a new theme, and the one it was \
+                 made from is left as it was. Themes made for Ghostty can be imported. Your \
+                 own themes are files in the themes folder beside the settings file."
+                    .to_owned(),
+            ),
+        },
+    ]
+}
+
+fn general(read: &SettingsRead) -> Vec<FormField> {
+    let settings = &read.settings;
+    vec![
         choice(
             Setting::Keymap,
             "Keys:",
@@ -782,6 +983,25 @@ pub enum KeysChange {
     Reset(Vec<String>),
     /// Take everything out of the file: every key is the preset's again.
     ResetAll,
+}
+
+/// A change to the user's own themes, in the `themes` folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ThemesChange {
+    /// Save `theme` under the name it has. It was made from the theme
+    /// listed as `from`: under that name it takes its place, and under
+    /// another it is a new theme, written as `from` is where that is one
+    /// of Quill's own files, with what is written beside its colours
+    /// kept. `select` says the theme is to be the one in use from now,
+    /// and whether Quill is dark as that is asked.
+    Save {
+        from: String,
+        theme: Theme,
+        select: Option<bool>,
+    },
+    /// Delete the theme of this name: its file, and the lines of the
+    /// settings file that name it.
+    Delete { name: String },
 }
 
 /// Every command with the keys it has, to look through and change. A
@@ -1112,7 +1332,8 @@ pub fn describe(
                 _ => None,
             },
             fields: match pane {
-                Pane::General => general(read, env),
+                Pane::General => general(read),
+                Pane::Appearance => appearance(read, env, can),
                 Pane::Accounts => accounts(read, can),
                 Pane::Composing => composing(read, env),
                 Pane::Keys => keys(read, env),
@@ -1186,12 +1407,12 @@ pub fn change(
                 Setting::ThemeLight | Setting::ThemeDark => read
                     .themes
                     .iter()
-                    .find(|name| &theme_id(name) == chosen)
-                    .map(|name| {
+                    .find(|line| &theme_id(&line.name) == chosen)
+                    .map(|line| {
                         if setting == Setting::ThemeLight {
-                            Change::ThemeLight(name.clone())
+                            Change::ThemeLight(line.name.clone())
                         } else {
-                            Change::ThemeDark(name.clone())
+                            Change::ThemeDark(line.name.clone())
                         }
                     })
                     // The theme the file names and nobody has: it is shown,
@@ -1245,6 +1466,16 @@ pub fn change(
             }
             _ => Err(format!("{label} is not typed.")),
         },
+        (FormField::Font { .. }, FormValue::Text(family)) => {
+            let family = family.trim();
+            if family.is_empty() {
+                Ok(Change::Font(None))
+            } else if family.len() <= MAX_FONT_NAME && !family.chars().any(char::is_control) {
+                Ok(Change::Font(Some(family.to_owned())))
+            } else {
+                Err(format!("{label} is the name of a font."))
+            }
+        }
         (FormField::Toggle { .. }, FormValue::Flag(on)) => match setting {
             Setting::Notifications => Ok(Change::Notifications(*on)),
             Setting::Threads => Ok(Change::Threads(*on)),
@@ -1278,6 +1509,7 @@ pub fn change(
                     .map(Change::UndoSendSeconds)
                     .ok_or_else(|| format!("{label} is a whole number of seconds.")),
                 Setting::CacheGb => Ok(Change::CacheGb(number)),
+                Setting::FontSize => Ok(Change::FontSize(number)),
                 _ => Err(format!("{label} is not a number.")),
             }
         }
@@ -1414,11 +1646,30 @@ mod tests {
             let change = Change::CacheGb(Number::new(gigabytes).unwrap());
             assert_eq!(change.written(), written);
         }
+        // A font named is written; none named is the key taken out. A
+        // size is written as a person writes it.
+        assert_eq!(
+            Change::Font(Some("JetBrains Mono".to_owned())).written(),
+            Written::Word("JetBrains Mono")
+        );
+        assert_eq!(Change::Font(None).written(), Written::Gone);
+        assert_eq!(
+            Change::FontSize(Number::from(14)).written(),
+            Written::Whole(14)
+        );
+        assert_eq!(
+            Change::FontSize(font_size(13.5)).written(),
+            Written::Decimal(13.5)
+        );
+        // As the file's number is read, to one place.
+        assert_eq!(font_size(13.3), Number::new(13.3).unwrap());
         for setting in Setting::ALL {
             let change = match setting {
                 Setting::Appearance => Change::Appearance(Appearance::Dark),
                 Setting::ThemeLight => Change::ThemeLight("light".to_owned()),
                 Setting::ThemeDark => Change::ThemeDark("dark".to_owned()),
+                Setting::Font => Change::Font(None),
+                Setting::FontSize => Change::FontSize(Number::from(13)),
                 Setting::Keymap => Change::Keymap(KeymapPreset::Vim),
                 Setting::Notifications => Change::Notifications(true),
                 Setting::Threads => Change::Threads(true),

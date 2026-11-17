@@ -53,7 +53,14 @@ import Testing
         let general = settings.panes[0]
         #expect(general.note == nil)
         #expect(general.more == "Rules and saved searches are set in the settings file.")
-        #expect(general.fields.map(\.id) == ["theme", "notifications", "nickname"])
+        #expect(general.fields.map(\.id) == ["theme", "notifications", "nickname", "font"])
+        // A font to choose, by its family's name.
+        #expect(
+            general.fields[3]
+                == FormField(
+                    id: "font", label: "Font:", kind: .font(value: "JetBrains Mono"),
+                    help: "The font of Quill's own window."))
+        #expect(general.fields[3].value == "JetBrains Mono")
         #expect(
             general.fields[0].kind
                 == .choice(
@@ -110,7 +117,7 @@ import Testing
         #expect(settings.field("cache_gb", in: "composing") == composing.fields[1])
         #expect(settings.field("cache_gb", in: "general") == nil)
         // Which kinds say what the user did as they do it.
-        #expect(general.fields.map(\.reportsAsChanged) == [false, true, false])
+        #expect(general.fields.map(\.reportsAsChanged) == [false, true, false, true])
         #expect(accounts.fields[0].reportsAsChanged && composing.fields[0].reportsAsChanged)
     }
 
@@ -358,12 +365,14 @@ import Testing
         }
         // The kinds a pane has, which are not all of a sheet's.
         let kinds = BridgeError.malformed(
-            "settings.show: a field is text, choice, static, toggle, number, list or button")
+            "settings.show: a field is text, choice, static, toggle, number, list, button or font")
         #expect(throws: kinds) { try show(with(#"{"kind":"slider","id":"a","label":"","value":1}"#)) }
         #expect(throws: kinds) { try show(with(#"{"kind":"secret","id":"a","label":""}"#)) }
         #expect(throws: kinds) { try show(with(#"{"kind":"code","id":"a","label":"","value":"HJKL"}"#)) }
         // And a sheet has none of the settings' own.
-        #expect(throws: BridgeError.malformed("form.show: a field is text, secret, choice, static, code or keys")) {
+        let sheetKinds = BridgeError.malformed(
+            "form.show: a field is text, secret, choice, static, code, keys or color")
+        #expect(throws: sheetKinds) {
             try CoreToShell(
                 line:
                     #"{"jsonrpc":"2.0","method":"form.show","params":{"step":"a","title":"x","fields":[{"kind":"toggle","id":"a","label":"","title":"On","value":true}],"buttons":[]}}"#

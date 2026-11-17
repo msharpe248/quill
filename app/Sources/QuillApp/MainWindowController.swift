@@ -474,7 +474,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             window?.title = state.title.isEmpty ? "Quill" : state.title
             window?.subtitle = state.unread > 0 ? "\(state.unread) unread" : ""
             NSApp.dockTile.badgeLabel = state.unread > 0 ? String(state.unread) : nil
-            setTerminalColours(background: state.background, foreground: state.foreground)
+            setTerminalLook(
+                background: state.background, foreground: state.foreground, font: state.font,
+                fontSize: state.fontSize)
             setAppearance(state.appearance ?? .system)
         case let .panePreview(preview):
             let items = preview.items.map { PreviewItem(url: URL(fileURLWithPath: $0.path), title: $0.title) }
@@ -1159,18 +1161,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         closePane()
     }
 
-    // MARK: - The terminals' colours
+    // MARK: - The terminals' colours and font
 
-    /// Gives every terminal the colours of the core's theme, as the colours
-    /// of what no program has painted: the edge of the core's own terminal,
+    /// Gives every terminal the font the settings name, and its size; with
+    /// none named the terminals have their own. And gives them the colours
+    /// of the core's theme, as the colours of what no program has painted:
+    /// the edge of the core's own terminal,
     /// and all of an editor's that sets no colours. A theme that leaves
     /// them to the terminal says none, and the terminals keep their own,
     /// which are light or dark as the Mac is. The terminals share one look,
     /// so an editor that is running changes with the rest.
-    private func setTerminalColours(background: String?, foreground: String?) {
+    private func setTerminalLook(background: String?, foreground: String?, font: String?, fontSize: Double?) {
         var appearance = terminalAppearance
         appearance.background = background
         appearance.foreground = foreground
+        appearance.fontFamily = font
+        appearance.fontSize = fontSize.map { Float($0) } ?? TerminalAppearance().fontSize
         guard appearance != terminalAppearance else { return }
         terminalAppearance = appearance
         surface.setAppearance(appearance)
@@ -1570,6 +1576,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     var terminalColours: String {
         "background \(terminalAppearance.background ?? "its own"), "
             + "foreground \(terminalAppearance.foreground ?? "its own")"
+    }
+
+    /// The font the terminals were last given, for the dump.
+    var terminalFont: String {
+        "\(terminalAppearance.fontFamily ?? "its own") at \(terminalAppearance.fontSize) points"
     }
 
     /// The reading pane's web view, for the picture in the dump.

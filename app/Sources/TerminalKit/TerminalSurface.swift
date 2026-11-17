@@ -79,6 +79,22 @@ public struct TerminalAppearance: Sendable, Equatable {
     /// The foreground, likewise.
     var checkedForeground: String? { Self.channels(of: foreground) == nil ? nil : foreground }
 
+    /// The font's family as it may be given to the terminal: a name on one
+    /// line, whatever was handed in. Anything else is no family, and the
+    /// terminal keeps its own font.
+    var checkedFontFamily: String? {
+        guard let fontFamily, !fontFamily.isEmpty, fontFamily.utf8.count <= 128,
+            !fontFamily.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F })
+        else { return nil }
+        return fontFamily
+    }
+
+    /// The font's size as it may be given to the terminal: one a terminal
+    /// can be read at, whatever was handed in.
+    var checkedFontSize: Float {
+        fontSize.isFinite ? Swift.min(Swift.max(fontSize, 6), 72) : 13
+    }
+
     /// The red, green and blue of a `#rrggbb` colour, or nil for anything
     /// else.
     static func channels(of colour: String?) -> (red: UInt8, green: UInt8, blue: UInt8)? {

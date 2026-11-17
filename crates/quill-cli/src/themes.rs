@@ -207,7 +207,7 @@ fn source_of(what: &str, folders: &[PathBuf]) -> Result<PathBuf, String> {
 /// Writes `text` to `file`, all or nothing, for the user alone to read
 /// and write: beside the old one, and moved into its place. The folder is
 /// made if it is not there, the user's alone too.
-fn write_private(file: &Path, text: &str) -> std::io::Result<()> {
+pub(crate) fn write_private(file: &Path, text: &str) -> std::io::Result<()> {
     let folder = file
         .parent()
         .ok_or_else(|| std::io::Error::other("the theme has no folder to go in"))?;

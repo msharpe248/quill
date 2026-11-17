@@ -47,6 +47,8 @@ final class FormSheet: NSObject, NSTextFieldDelegate {
     private static let margin: CGFloat = 20
     /// How large a code to be read off is drawn, in points.
     private static let codeSize: CGFloat = 18
+    /// How large a well a colour is picked in is drawn.
+    private static let wellSize = NSSize(width: 44, height: 24)
 
     init(send: @escaping (FormUsed) -> Void) {
         self.send = send
@@ -64,7 +66,22 @@ final class FormSheet: NSObject, NSTextFieldDelegate {
     /// `parent` if it is not up.
     func show(_ form: FormShow, on parent: NSWindow?) {
         guard let parent else { return }
+        // A form that differs only in the colours its wells hold is not
+        // laid out again: a well a colour is being picked in stays the
+        // well the colour panel is picking for.
+        let coloursOnly = sheet != nil && model.differsOnlyInColors(from: form)
+        let picking = controls.first { ($0.value as? NSColorWell)?.isActive == true }?.key
         let update = model.show(form)
+        if coloursOnly {
+            for row in model.rows {
+                if case let .color(hex) = row.content, let well = controls[row.id] as? NSColorWell,
+                    row.id != picking, let colour = Self.colour(hex)
+                {
+                    well.color = colour
+                }
+            }
+            return
+        }
         // What a secret field holds is kept across a redraw of the same
         // step by handing it from the old field to the new one, here and
         // nowhere else.
@@ -91,14 +108,29 @@ final class FormSheet: NSObject, NSTextFieldDelegate {
         if let focus = update.focus ?? hadFocus {
             focusField(focus)
         }
+        // The colour panel goes on picking for the well it was picking
+        // for, which is a new view now.
+        if let picking, let well = controls[picking] as? NSColorWell {
+            well.activate(true)
+        }
     }
 
     /// Takes the sheet down. Nothing typed in it is kept.
     func close() {
         model.close()
-        // A field's own copy of what was typed goes with the field.
+        // A field's own copy of what was typed goes with the field, and
+        // the colour panel with the well it was picking for.
+        var wasPicking = false
         for control in controls.values {
-            control.stringValue = ""
+            if let well = control as? NSColorWell {
+                wasPicking = wasPicking || well.isActive
+                well.deactivate()
+            } else {
+                control.stringValue = ""
+            }
+        }
+        if wasPicking, NSColorPanel.sharedColorPanelExists {
+            NSColorPanel.shared.orderOut(nil)
         }
         controls = [:]
         buttons = [:]
@@ -145,41 +177,110 @@ final class FormSheet: NSObject, NSTextFieldDelegate {
             column.addArrangedSubview(Self.wrapping(note, width: inner, color: .secondaryLabelColor))
         }
 
-        let rows = model.rows
-        if !rows.isEmpty {
-            let labels = rows.map { row -> NSTextField in
+        // Fields in a column of labels and controls, and each run of
+        // colours two to a line: a theme has many.
+        var run: [FormRow] = []
+        var wells: [FormRow] = []
+        for row in model.rows {
+            if case .color = row.content {
+                if !run.isEmpty {
+                    column.addArrangedSubview(grid(of: run, width: inner, keeping: kept))
+                    run = []
+                }
+                wells.append(row)
+            } else {
+                if !wells.isEmpty {
+                    column.addArrangedSubview(wellGrid(of: wells, width: inner))
+                    wells = []
+                }
+                run.append(row)
+            }
+        }
+        if !run.isEmpty {
+            column.addArrangedSubview(grid(of: run, width: inner, keeping: kept))
+        }
+        if !wells.isEmpty {
+            column.addArrangedSubview(wellGrid(of: wells, width: inner))
+        }
+        return finish(column, form: form, inner: inner)
+    }
+
+    /// Fields with their labels in a column beside them.
+    private func grid(of rows: [FormRow], width inner: CGFloat, keeping kept: [String: String]) -> NSView {
+        let labels = rows.map { row -> NSTextField in
+            let label = NSTextField(labelWithString: row.label)
+            label.alignment = .right
+            return label
+        }
+        // The labels' column is as wide as the longest of them, and the
+        // fields have the rest.
+        let spacing: CGFloat = 8
+        let labelWidth = min(labels.map(\.intrinsicContentSize.width).max() ?? 0, inner / 2).rounded(.up)
+        let fieldWidth = inner - labelWidth - spacing
+        let grid = NSGridView()
+        grid.rowSpacing = 8
+        grid.columnSpacing = spacing
+        grid.rowAlignment = .firstBaseline
+        for (row, label) in zip(rows, labels) {
+            let control = makeControl(for: row, width: fieldWidth, kept: kept[row.id])
+            grid.addRow(with: [label, control])
+            if let help = row.help, !help.isEmpty {
+                let small = Self.wrapping(
+                    help, width: fieldWidth, color: .secondaryLabelColor,
+                    font: .systemFont(ofSize: NSFont.smallSystemFontSize))
+                let added = grid.addRow(with: [NSGridCell.emptyContentView, small])
+                // Close under the field it is about.
+                added.topPadding = -4
+            }
+        }
+        grid.column(at: 0).xPlacement = .trailing
+        grid.column(at: 0).width = labelWidth
+        grid.column(at: 1).xPlacement = .leading
+        grid.column(at: 1).width = fieldWidth
+        return grid
+    }
+
+    /// Colours to pick, two to a line: each a label and a well beside it.
+    private func wellGrid(of rows: [FormRow], width inner: CGFloat) -> NSView {
+        let spacing: CGFloat = 8
+        let between: CGFloat = 24
+        let labelWidth = ((inner - between) / 2 - spacing - Self.wellSize.width).rounded(.down)
+        let grid = NSGridView()
+        grid.rowSpacing = 8
+        grid.columnSpacing = spacing
+        grid.rowAlignment = .none
+        grid.yPlacement = .center
+        var index = 0
+        while index < rows.count {
+            var cells: [NSView] = []
+            for row in rows[index..<min(index + 2, rows.count)] {
                 let label = NSTextField(labelWithString: row.label)
                 label.alignment = .right
-                return label
+                label.lineBreakMode = .byTruncatingTail
+                cells.append(label)
+                cells.append(makeControl(for: row, width: Self.wellSize.width, kept: nil))
             }
-            // The labels' column is as wide as the longest of them, and
-            // the fields have the rest.
-            let spacing: CGFloat = 8
-            let labelWidth = min(labels.map(\.intrinsicContentSize.width).max() ?? 0, inner / 2).rounded(.up)
-            let fieldWidth = inner - labelWidth - spacing
-            let grid = NSGridView()
-            grid.rowSpacing = 8
-            grid.columnSpacing = spacing
-            grid.rowAlignment = .firstBaseline
-            for (row, label) in zip(rows, labels) {
-                let control = makeControl(for: row, width: fieldWidth, kept: kept[row.id])
-                grid.addRow(with: [label, control])
-                if let help = row.help, !help.isEmpty {
-                    let small = Self.wrapping(
-                        help, width: fieldWidth, color: .secondaryLabelColor,
-                        font: .systemFont(ofSize: NSFont.smallSystemFontSize))
-                    let added = grid.addRow(with: [NSGridCell.emptyContentView, small])
-                    // Close under the field it is about.
-                    added.topPadding = -4
-                }
+            while cells.count < 4 {
+                cells.append(NSGridCell.emptyContentView)
             }
-            grid.column(at: 0).xPlacement = .trailing
-            grid.column(at: 0).width = labelWidth
-            grid.column(at: 1).xPlacement = .leading
-            grid.column(at: 1).width = fieldWidth
-            column.addArrangedSubview(grid)
+            grid.addRow(with: cells)
+            index += 2
         }
+        for column in [0, 2] {
+            grid.column(at: column).xPlacement = .trailing
+            grid.column(at: column).width = labelWidth
+        }
+        for column in [1, 3] {
+            grid.column(at: column).xPlacement = .leading
+            grid.column(at: column).width = Self.wellSize.width
+        }
+        grid.column(at: 1).trailingPadding = between - spacing
+        return grid
+    }
 
+    /// The form's foot: what is wrong, what is being waited for, and the
+    /// buttons; and the whole of it sized.
+    private func finish(_ column: NSStackView, form: FormShow, inner: CGFloat) -> (view: NSView, size: NSSize) {
         if let error = form.error, !error.isEmpty {
             let label = Self.wrapping(error, width: inner, color: .systemRed)
             label.setAccessibilityLabel("Error: \(error)")
@@ -279,6 +380,19 @@ final class FormSheet: NSObject, NSTextFieldDelegate {
             let label = Self.wrapping(text, width: width, color: .labelColor)
             label.identifier = identifier
             return label
+        case let .color(hex):
+            let well = NSColorWell(frame: NSRect(origin: .zero, size: Self.wellSize))
+            well.identifier = identifier
+            well.colorWellStyle = .default
+            well.color = Self.colour(hex) ?? .black
+            well.isEnabled = row.enabled
+            well.target = self
+            well.action = #selector(picked(_:))
+            well.widthAnchor.constraint(equalToConstant: Self.wellSize.width).isActive = true
+            well.heightAnchor.constraint(equalToConstant: Self.wellSize.height).isActive = true
+            well.setAccessibilityLabel(row.label)
+            controls[row.id] = well
+            return well
         case let .keys(keys):
             let recorder = KeyRecorder()
             recorder.identifier = identifier
@@ -385,6 +499,37 @@ final class FormSheet: NSObject, NSTextFieldDelegate {
         }
     }
 
+    /// A colour was picked in a well: the core is told at once, and draws
+    /// with it.
+    @objc private func picked(_ sender: NSColorWell) {
+        guard let id = sender.identifier?.rawValue, let hex = Self.hex(of: sender.color) else { return }
+        pick(hex, in: id)
+    }
+
+    private func pick(_ hex: String, in id: String) {
+        takeTyping()
+        if let used = model.pick(hex, in: id) {
+            send(used)
+        }
+    }
+
+    /// The colour a `#rrggbb` names.
+    private static func colour(_ hex: String) -> NSColor? {
+        guard StateUpdate.isColor(hex), let value = UInt32(hex.dropFirst(), radix: 16) else { return nil }
+        return NSColor(
+            srgbRed: CGFloat(value >> 16 & 0xff) / 255, green: CGFloat(value >> 8 & 0xff) / 255,
+            blue: CGFloat(value & 0xff) / 255, alpha: 1)
+    }
+
+    /// A colour as the bridge says one: `#rrggbb` in lower case.
+    private static func hex(of colour: NSColor) -> String? {
+        guard let colour = colour.usingColorSpace(.sRGB) else { return nil }
+        let channel = { (part: CGFloat) in Int((min(max(part, 0), 1) * 255).rounded()) }
+        return String(
+            format: "#%02x%02x%02x", channel(colour.redComponent), channel(colour.greenComponent),
+            channel(colour.blueComponent))
+    }
+
     /// A key was pressed in a field that records keys. It is the field's
     /// key from now, or, pressed soon after another, the second of a
     /// pair. The core is told at once, and says in the form it sends back
@@ -468,6 +613,11 @@ final class FormSheet: NSObject, NSTextFieldDelegate {
         } else if control is KeyRecorder {
             // As pressing them does, all at once.
             record(value, in: id)
+        } else if let well = control as? NSColorWell {
+            // As picking it in the colour panel does, with no panel.
+            guard let colour = Self.colour(value) else { return false }
+            well.color = colour
+            pick(value, in: id)
         } else {
             control.stringValue = value
             model.type(value, in: id)

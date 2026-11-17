@@ -212,10 +212,21 @@ public struct StateUpdate: Equatable, Sendable, Codable {
     /// Whether the app is to be light, dark, or as the Mac is: what the
     /// settings say. Left out, it is as the Mac is.
     public var appearance: Appearance?
+    /// The font the terminal UI is drawn in, by its family's name, for
+    /// every terminal the shell shows. Left out, it is the shell's own.
+    public var font: String?
+    /// How large that font is, in points. Left out, it is the shell's own.
+    public var fontSize: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case context, enabled, checked, unread, title, background, foreground, appearance, font
+        case fontSize = "font_size"
+    }
 
     public init(
         context: Context, enabled: [String], checked: [String] = [], unread: Int, title: String,
-        background: String? = nil, foreground: String? = nil, appearance: Appearance? = nil
+        background: String? = nil, foreground: String? = nil, appearance: Appearance? = nil,
+        font: String? = nil, fontSize: Double? = nil
     ) {
         self.context = context
         self.enabled = enabled
@@ -225,15 +236,29 @@ public struct StateUpdate: Equatable, Sendable, Codable {
         self.background = background
         self.foreground = foreground
         self.appearance = appearance
+        self.font = font
+        self.fontSize = fontSize
     }
 
     static let allowedKeys: Set<String> = [
-        "context", "enabled", "checked", "unread", "title", "background", "foreground", "appearance",
+        "context", "enabled", "checked", "unread", "title", "background", "foreground", "appearance", "font",
+        "font_size",
     ]
+
+    /// The smallest and the largest a terminal's font is said to be, in
+    /// points.
+    public static let fontSizes: ClosedRange<Double> = 6...72
+
+    /// Whether `text` is the name of a font's family as the bridge says
+    /// one: one line, not empty, and no longer than a name comes to.
+    static func isFontName(_ text: String) -> Bool {
+        !text.isEmpty && text.utf8.count <= FormField.mostFontBytes
+            && !text.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F })
+    }
 
     /// Whether `text` is a colour as the bridge says one: `#` and six hex
     /// digits in lower case.
-    static func isColor(_ text: String) -> Bool {
+    public static func isColor(_ text: String) -> Bool {
         let digits = text.utf8.dropFirst()
         return text.hasPrefix("#") && digits.count == 6
             && digits.allSatisfy { (0x30...0x39).contains($0) || (0x61...0x66).contains($0) }
@@ -996,6 +1021,12 @@ public struct FormField: Equatable, Sendable {
         /// them: as Quill writes them, and empty when none has been
         /// pressed. Only a sheet has one.
         case keys(value: String)
+        /// A colour, picked as the Mac has colours picked: `#rrggbb` in
+        /// lower case. Only a sheet has one.
+        case color(value: String)
+        /// A font for the terminal, by its family's name, with the shell's
+        /// own font under the empty name. The settings window's only.
+        case font(value: String)
         /// Something that is on or off: a checkbox, with its own words.
         case toggle(title: String, value: Bool)
         /// A number within bounds.
@@ -1015,6 +1046,8 @@ public struct FormField: Equatable, Sendable {
             case .fixed: "static"
             case .code: "code"
             case .keys: "keys"
+            case .color: "color"
+            case .font: "font"
             case .toggle: "toggle"
             case .number: "number"
             case .list: "list"
@@ -1041,12 +1074,16 @@ public struct FormField: Equatable, Sendable {
 
     /// The most bytes the keys a field has recorded come to, as written.
     public static let mostKeysBytes = 128
+    /// The most bytes the name of a font's family comes to.
+    public static let mostFontBytes = 128
 
     /// What the field holds, as the core has it. A secret has nothing to
     /// say, and what a code field shows is the view's to reveal.
     public var value: String? {
         switch kind {
-        case let .text(value), let .choice(value, _), let .fixed(value), let .keys(value): value
+        case let .text(value), let .choice(value, _), let .fixed(value), let .keys(value), let .color(value),
+            let .font(value):
+            value
         case .secret, .code, .toggle, .number, .list, .button: nil
         }
     }
@@ -1054,7 +1091,7 @@ public struct FormField: Equatable, Sendable {
     /// Whether the user can change what it holds.
     public var isEditable: Bool {
         switch kind {
-        case .text, .secret, .choice, .keys, .toggle, .number: true
+        case .text, .secret, .choice, .keys, .color, .font, .toggle, .number: true
         case .fixed, .code, .list, .button: false
         }
     }
@@ -1064,8 +1101,8 @@ public struct FormField: Equatable, Sendable {
     /// which a sheet has none of.
     public var reportsAsChanged: Bool {
         switch kind {
-        case .toggle, .number, .list, .button: true
-        case .text, .secret, .choice, .fixed, .code, .keys: false
+        case .toggle, .number, .list, .button, .font: true
+        case .text, .secret, .choice, .fixed, .code, .keys, .color: false
         }
     }
 
@@ -1087,6 +1124,10 @@ public struct FormField: Equatable, Sendable {
             // One line, of no more than the keys of a field come to.
             return value.utf8.count <= FormField.mostKeysBytes
                 && !value.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F })
+        case let .color(value):
+            return StateUpdate.isColor(value)
+        case let .font(value):
+            return StateUpdate.isFontName(value) || value.isEmpty
         case .text, .secret, .fixed, .code:
             return true
         }
@@ -1465,8 +1506,8 @@ public struct SettingsShow: Equatable, Sendable {
             else { return nil }
             for field in pane.fields {
                 switch field.kind {
-                case .secret, .code, .keys: return nil
-                case .text, .choice, .fixed, .toggle, .number, .list, .button: break
+                case .secret, .code, .keys, .color: return nil
+                case .text, .choice, .fixed, .toggle, .number, .list, .button, .font: break
                 }
                 if field.focus || !field.isSound { return nil }
             }

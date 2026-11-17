@@ -344,6 +344,31 @@ pub fn set(text: &str, change: &Change) -> Result<String, String> {
     set_value(text, setting.section(), key, written)
 }
 
+/// `text` with no setting naming the theme called `name`: each of `theme`,
+/// `theme_light` and `theme_dark` under `[ui]` that names it is taken out,
+/// and is then as it is when the file does not say. For a theme that is
+/// about to be deleted. A file Quill cannot read is not changed.
+pub fn forget_theme(text: &str, name: &str) -> Result<String, String> {
+    Config::parse(text).map_err(|err| format!("config.toml has a mistake to fix first: {err}"))?;
+    let mut document: DocumentMut = text
+        .parse()
+        .map_err(|err| format!("config.toml cannot be read: {err}"))?;
+    let Some(ui) = document.get_mut("ui").and_then(Item::as_table_like_mut) else {
+        return Ok(text.to_owned());
+    };
+    let mut any = false;
+    for key in ["theme", "theme_light", "theme_dark"] {
+        if ui.get(key).and_then(Item::as_str) == Some(name) {
+            ui.remove(key);
+            any = true;
+        }
+    }
+    if !any {
+        return Ok(text.to_owned());
+    }
+    checked(document.to_string())
+}
+
 /// `text` without `key` in `section`: the setting is as it is when the
 /// file does not say. A file that never said is left exactly as it is.
 fn remove_value(text: &str, section: &str, key: &str) -> Result<String, String> {

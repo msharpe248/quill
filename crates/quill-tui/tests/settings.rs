@@ -71,7 +71,7 @@ impl File {
         Ok(Box::new(SettingsRead {
             settings: self.settings.clone(),
             accounts: self.accounts.clone(),
-            themes: Theme::builtin_names().map(str::to_owned).collect(),
+            themes: quill_tui::settings::ThemeLine::builtins(),
             theme_light: Theme::builtin(&self.settings.theme_light).unwrap(),
             theme_light_problem: None,
             theme_dark: Theme::builtin(&self.settings.theme_dark).unwrap(),
@@ -109,6 +109,8 @@ impl File {
                 (true, true) => settings.theme_dark = name,
                 (true, false) => settings.theme_light = name,
             },
+            Change::Font(family) => settings.font = family,
+            Change::FontSize(points) => settings.font_size = points,
             Change::Keymap(preset) => settings.keymap = preset,
             Change::Notifications(on) => settings.notifications = on,
             Change::Threads(on) => settings.threads = on,
@@ -329,6 +331,7 @@ fn outline(shown: &SettingsShow) -> String {
                     format!("button \"{title}\"{}", if *enabled { "" } else { ", off" })
                 }
                 FormField::Text { value, .. } => format!("text = {value:?}"),
+                FormField::Font { value, .. } => format!("font = {value:?}"),
                 other => format!("{other:?}"),
             };
             lines.push(format!("   {} \"{}\": {holds}", field.id(), field.label()));
@@ -357,7 +360,7 @@ fn nothing_is_shown_until_the_window_is_opened_and_the_file_has_been_read() {
     );
     assert!(shown(&window).is_none());
     window.serve();
-    assert_eq!(window.shown().panes().len(), 6);
+    assert_eq!(window.shown().panes().len(), 7);
     // It is no question drawn over the panes: the terminal is as it was,
     // and the keys are still the list's.
     assert_eq!(window.harness.state.context(), Context::List);
@@ -404,7 +407,7 @@ fn a_change_goes_to_the_service_and_the_window_shows_what_the_file_then_says() {
     let mut window = Window::new(CONFIG);
     window.open();
     let before = window.answers();
-    window.choose("general", "theme_dark", "light");
+    window.choose("appearance", "theme_dark", "light");
     assert_eq!(
         window.harness.account_requests.last(),
         Some(&AccountRequest::Settings(Some(Change::ThemeDark(
@@ -413,7 +416,7 @@ fn a_change_goes_to_the_service_and_the_window_shows_what_the_file_then_says() {
     );
     assert_eq!(window.file.settings.theme_dark, "light");
     assert!(matches!(
-        window.field("general", "theme_dark"),
+        window.field("appearance", "theme_dark"),
         FormField::Choice { value, .. } if value == "light"
     ));
     // The host is told the settings once for the change, when it is made.
@@ -441,11 +444,11 @@ fn a_change_goes_to_the_service_and_the_window_shows_what_the_file_then_says() {
 
     // What the window never offered is not asked of the service at all.
     let asked = window.harness.account_requests.len();
-    window.choose("general", "theme_dark", "solarized");
-    window.choose("general", "theme_light", "solarized");
-    window.choose("general", "appearance", "sepia");
+    window.choose("appearance", "theme_dark", "solarized");
+    window.choose("appearance", "theme_light", "solarized");
+    window.choose("appearance", "appearance", "sepia");
     // The old one pop-up of themes is gone from the window.
-    window.choose("general", "theme", "light");
+    window.choose("appearance", "theme", "light");
     window.set(
         "composing",
         "undo_send_seconds",
@@ -487,7 +490,7 @@ fn the_settings_that_hold_at_once_do_and_the_two_that_wait_do_not() {
             false
         )
     );
-    window.choose("general", "theme_dark", "terminal");
+    window.choose("appearance", "theme_dark", "terminal");
     window.choose("general", "keymap", "mutt");
     window.set("general", "notifications", FormValue::Flag(false));
     window.set("general", "threads", FormValue::Flag(false));
@@ -553,16 +556,16 @@ fn the_host_is_told_the_colours_of_the_theme_from_the_moment_it_is_changed() {
         colours(&window),
         (Some((0x1a, 0x1b, 0x26)), Some((0xc0, 0xca, 0xf5)))
     );
-    window.choose("general", "theme_dark", "light");
+    window.choose("appearance", "theme_dark", "light");
     assert_eq!(
         colours(&window),
         (Some((0xfa, 0xfa, 0xfa)), Some((0x38, 0x3a, 0x42)))
     );
     // The terminal's own colours: nothing is said, and the app's
     // terminals keep theirs.
-    window.choose("general", "theme_dark", "terminal");
+    window.choose("appearance", "theme_dark", "terminal");
     assert_eq!(colours(&window), (None, None));
-    window.choose("general", "theme_dark", "dark");
+    window.choose("appearance", "theme_dark", "dark");
     assert_eq!(
         colours(&window),
         (Some((0x1a, 0x1b, 0x26)), Some((0xc0, 0xca, 0xf5)))
@@ -600,14 +603,14 @@ fn light_or_dark_by_the_settings_and_the_host_is_told_which() {
         ("dark".to_owned(), DARK, Appearance::System)
     );
     assert!(matches!(
-        window.field("general", "appearance"),
+        window.field("appearance", "appearance"),
         FormField::Choice { value, options, .. }
             if value == "system" && options.iter().map(|option| option.id.as_str()).eq(["system", "light", "dark"])
     ));
 
     // Light: the light theme at once, and the host is told to be light,
     // with the colours of that theme for its terminals.
-    window.choose("general", "appearance", "light");
+    window.choose("appearance", "appearance", "light");
     assert_eq!(window.file.settings.appearance, Appearance::Light);
     assert_eq!(
         theme_in_force(&window),
@@ -615,15 +618,15 @@ fn light_or_dark_by_the_settings_and_the_host_is_told_which() {
     );
     // The theme for the appearance that is not in force can be changed,
     // and nothing is drawn differently.
-    window.choose("general", "theme_dark", "terminal");
+    window.choose("appearance", "theme_dark", "terminal");
     assert_eq!(theme_in_force(&window).0, "light");
     // Dark: that one.
-    window.choose("general", "appearance", "dark");
+    window.choose("appearance", "appearance", "dark");
     assert_eq!(
         theme_in_force(&window),
         ("terminal".to_owned(), None, Appearance::Dark)
     );
-    window.choose("general", "theme_dark", "dark");
+    window.choose("appearance", "theme_dark", "dark");
     assert_eq!(
         theme_in_force(&window),
         ("dark".to_owned(), DARK, Appearance::Dark)
@@ -633,7 +636,7 @@ fn light_or_dark_by_the_settings_and_the_host_is_told_which() {
     assert_eq!(theme_in_force(&window).0, "dark");
     // Back to the system's: light, since that is what it was last said
     // to be.
-    window.choose("general", "appearance", "system");
+    window.choose("appearance", "appearance", "system");
     assert_eq!(
         theme_in_force(&window),
         ("light".to_owned(), LIGHT, Appearance::System)
@@ -661,7 +664,7 @@ fn as_the_system_is_follows_the_system_as_the_host_says_it_changes() {
     // The window says what the Mac is now, beside the choice.
     let help = |window: &Window| {
         window
-            .field("general", "appearance")
+            .field("appearance", "appearance")
             .help()
             .unwrap_or_default()
             .to_owned()
@@ -687,7 +690,7 @@ fn as_the_system_is_follows_the_system_as_the_host_says_it_changes() {
     // And both pop-ups show it.
     for field in ["theme_light", "theme_dark"] {
         assert!(matches!(
-            old.field("general", field),
+            old.field("appearance", field),
             FormField::Choice { value, .. } if value == "light"
         ));
     }
@@ -703,7 +706,7 @@ fn in_a_terminal_nobody_says_what_the_system_is_and_it_is_dark() {
     assert_eq!(window.harness.env.styles.theme_name(), "dark");
     // The window is not told the Mac is anything.
     assert_eq!(
-        window.field("general", "appearance").help(),
+        window.field("appearance", "appearance").help(),
         Some("System follows the Mac, and changes with it.")
     );
 }
@@ -713,19 +716,22 @@ fn the_button_that_imports_a_theme_has_the_host_show_its_chooser() {
     let mut window = Window::new(CONFIG);
     window.open();
     assert!(matches!(
-        window.field("general", "import_theme"),
-        FormField::Button { title, enabled: true, .. } if title == "Import Theme\u{2026}"
+        window.field("appearance", "themes"),
+        FormField::List { actions, .. }
+            if actions.iter().any(|action| {
+                action.id == "import" && action.title == "Import\u{2026}" && action.enabled && !action.row
+            })
     ));
     let asked = window.harness.account_requests.len();
     let before = window.answers();
     let press = |window: &mut Window, field: &str, action: &str, row: Option<&str>| {
-        let used = SettingsUsed::action("general", field, action, row).unwrap();
+        let used = SettingsUsed::action("appearance", field, action, row).unwrap();
         window
             .harness
             .act(Action::Settings(SettingsAct::Used(used)));
         window.serve();
     };
-    press(&mut window, "import_theme", "press", None);
+    press(&mut window, "themes", "import", None);
     assert_eq!(
         window.harness.host_requests.last(),
         Some(&HostRequest::PickTheme)
@@ -743,10 +749,9 @@ fn the_button_that_imports_a_theme_has_the_host_show_its_chooser() {
             .filter(|request| **request == HostRequest::PickTheme)
             .count()
     };
-    press(&mut window, "import_theme", "open", None);
-    press(&mut window, "import_theme", "press", Some("row"));
-    press(&mut window, "theme_dark", "press", None);
-    window.set("general", "import_theme", FormValue::Flag(true));
+    press(&mut window, "themes", "open", None);
+    press(&mut window, "theme_dark", "import", None);
+    window.set("appearance", "themes", FormValue::Flag(true));
     assert_eq!(chooser(&window), 1);
 }
 
@@ -1282,7 +1287,7 @@ fn a_file_with_a_mistake_in_it_shows_no_settings_and_changes_nothing() {
     // Put right, and the window come back to.
     window.file.mistake = None;
     window.open();
-    assert_eq!(window.shown().panes().len(), 6);
+    assert_eq!(window.shown().panes().len(), 7);
     assert_eq!(window.shown().problem(), None);
 }
 
@@ -1312,8 +1317,8 @@ fn a_file_that_says_what_the_window_does_not_offer_is_shown_as_it_is() {
         changed: None,
     }));
     // The light theme is one there is, and says nothing.
-    assert_eq!(window.field("general", "theme_light").help(), None);
-    match window.field("general", "theme_dark") {
+    assert_eq!(window.field("appearance", "theme_light").help(), None);
+    match window.field("appearance", "theme_dark") {
         FormField::Choice {
             value,
             options,

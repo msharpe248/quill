@@ -239,6 +239,52 @@ pub struct StateUpdate {
     /// the Mac is.
     #[serde(default, skip_serializing_if = "Appearance::is_system")]
     pub appearance: Appearance,
+    /// The font the terminal UI is drawn in, by its family's name, for
+    /// every terminal the shell shows. Left out, it is the shell's own.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "font_named"
+    )]
+    pub font: Option<String>,
+    /// How large that font is, in points. Left out, it is the shell's own.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "font_sized"
+    )]
+    pub font_size: Option<Number>,
+}
+
+/// The smallest and the largest a terminal's font is said to be, in
+/// points.
+pub const FONT_SMALLEST: f64 = 6.0;
+pub const FONT_LARGEST: f64 = 72.0;
+
+/// The name of a font's family as it is decoded: one line, and not empty.
+fn font_named<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    let name = String::deserialize(deserializer)?;
+    if name.is_empty() || name.len() > MAX_FONT_NAME || name.chars().any(char::is_control) {
+        return Err(serde::de::Error::custom(format!(
+            "the name of a font is one line of at most {MAX_FONT_NAME} bytes"
+        )));
+    }
+    Ok(Some(name))
+}
+
+/// The size of a font as it is decoded: one a terminal can have.
+fn font_sized<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Number>, D::Error> {
+    let points = Number::deserialize(deserializer)?;
+    if !(FONT_SMALLEST..=FONT_LARGEST).contains(&points.get()) {
+        return Err(serde::de::Error::custom(format!(
+            "a font is from {FONT_SMALLEST} to {FONT_LARGEST} points"
+        )));
+    }
+    Ok(Some(points))
 }
 
 /// Whether the app is light, dark, or as the Mac is.
@@ -1408,6 +1454,8 @@ pub const MAX_FORM_ROWS: usize = 200;
 pub const MAX_FORM_DECIMALS: u8 = 3;
 /// The most bytes the keys a field has recorded come to, as written.
 pub const MAX_KEYS_TEXT: usize = 128;
+/// The most bytes the name of a font's family comes to.
+pub const MAX_FONT_NAME: usize = 128;
 /// The most panes the settings window may have.
 pub const MAX_SETTINGS_PANES: usize = 12;
 /// The longest text a setting may be given, in bytes.
@@ -1551,7 +1599,7 @@ impl TryFrom<FormShowParams> for FormShow {
             }
             if field.reports_as_changed() {
                 return Err(
-                    "a sheet has no toggle, number or list: those are the settings window's"
+                    "a sheet has no toggle, number, list or font: those are the settings window's"
                         .to_owned(),
                 );
             }
@@ -1667,6 +1715,27 @@ pub enum FormField {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         help: Option<String>,
     },
+    /// A colour, chosen as the Mac has colours chosen: the shell shows it
+    /// in a well, and says the colour picked as it is picked, as it says a
+    /// choice that was changed. Only a sheet has one.
+    Color {
+        id: String,
+        label: String,
+        value: TerminalColor,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        help: Option<String>,
+    },
+    /// A font for the terminal, by its family's name: the shell offers
+    /// the fonts on this Mac whose letters are all one width, which only
+    /// it can list, and its own font under the empty name. A family that
+    /// is not on this Mac is shown as that. The settings window's only.
+    Font {
+        id: String,
+        label: String,
+        value: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        help: Option<String>,
+    },
     /// Something that is on or off: a checkbox. `label` stands beside it
     /// as a field's does, and may be empty; `title` is the checkbox's own
     /// words.
@@ -1741,6 +1810,8 @@ impl FormField {
             | Self::Static { id, .. }
             | Self::Code { id, .. }
             | Self::Keys { id, .. }
+            | Self::Color { id, .. }
+            | Self::Font { id, .. }
             | Self::Toggle { id, .. }
             | Self::Number { id, .. }
             | Self::List { id, .. }
@@ -1756,6 +1827,8 @@ impl FormField {
             | Self::Static { label, .. }
             | Self::Code { label, .. }
             | Self::Keys { label, .. }
+            | Self::Color { label, .. }
+            | Self::Font { label, .. }
             | Self::Toggle { label, .. }
             | Self::Number { label, .. }
             | Self::List { label, .. }
@@ -1769,7 +1842,11 @@ impl FormField {
     pub fn reports_as_changed(&self) -> bool {
         matches!(
             self,
-            Self::Toggle { .. } | Self::Number { .. } | Self::List { .. } | Self::Button { .. }
+            Self::Toggle { .. }
+                | Self::Number { .. }
+                | Self::List { .. }
+                | Self::Button { .. }
+                | Self::Font { .. }
         )
     }
 
@@ -1847,7 +1924,18 @@ impl FormField {
                     ));
                 }
             }
-            Self::Text { .. } | Self::Secret { .. } | Self::Static { .. } | Self::Code { .. } => {}
+            Self::Font { value, .. } => {
+                if value.len() > MAX_FONT_NAME || value.chars().any(char::is_control) {
+                    return Err(format!(
+                        "the name of a font is one line of at most {MAX_FONT_NAME} bytes"
+                    ));
+                }
+            }
+            Self::Text { .. }
+            | Self::Secret { .. }
+            | Self::Static { .. }
+            | Self::Code { .. }
+            | Self::Color { .. } => {}
         }
         Ok(())
     }
@@ -1860,7 +1948,9 @@ impl FormField {
             Self::Text { value, .. }
             | Self::Choice { value, .. }
             | Self::Static { value, .. }
-            | Self::Keys { value, .. } => Some(value),
+            | Self::Keys { value, .. }
+            | Self::Font { value, .. } => Some(value),
+            Self::Color { value, .. } => Some(value.as_str()),
             Self::Secret { .. }
             | Self::Code { .. }
             | Self::Toggle { .. }
@@ -1887,6 +1977,8 @@ impl FormField {
             | Self::Keys { focus, .. } => *focus,
             Self::Static { .. }
             | Self::Code { .. }
+            | Self::Color { .. }
+            | Self::Font { .. }
             | Self::Toggle { .. }
             | Self::Number { .. }
             | Self::List { .. }
@@ -1900,6 +1992,8 @@ impl FormField {
             Self::Text { help, .. }
             | Self::Secret { help, .. }
             | Self::Keys { help, .. }
+            | Self::Color { help, .. }
+            | Self::Font { help, .. }
             | Self::Choice { help, .. }
             | Self::Static { help, .. }
             | Self::Code { help, .. }
@@ -2240,11 +2334,14 @@ impl TryFrom<SettingsShowParams> for SettingsShow {
                 }
                 if matches!(
                     field,
-                    FormField::Secret { .. } | FormField::Code { .. } | FormField::Keys { .. }
+                    FormField::Secret { .. }
+                        | FormField::Code { .. }
+                        | FormField::Keys { .. }
+                        | FormField::Color { .. }
                 ) {
                     return Err(
-                        "settings have no secret, no code and no keys to record: those are a \
-                         sheet's"
+                        "settings have no secret, no code, no keys to record and no colour to \
+                         pick: those are a sheet's"
                             .to_owned(),
                     );
                 }

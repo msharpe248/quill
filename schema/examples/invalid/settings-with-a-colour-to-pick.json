@@ -1,0 +1,21 @@
+{
+  "jsonrpc": "2.0",
+  "method": "settings.show",
+  "params": {
+    "panes": [
+      {
+        "id": "appearance",
+        "title": "Appearance",
+        "symbol": "paintpalette",
+        "fields": [
+          {
+            "kind": "color",
+            "id": "background",
+            "label": "Background:",
+            "value": "#1a1b26"
+          }
+        ]
+      }
+    ]
+  }
+}

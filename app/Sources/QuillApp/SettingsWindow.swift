@@ -61,6 +61,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private static let fileButtonTitle = "Open Settings File\u{2026}"
     /// The tag of a button that is pressed, and is not a checkbox.
     private static let pushButton = 1
+    /// What the terminal's own font is called among the fonts to choose.
+    private static let ownFontTitle = "Quill\u{2019}s Own"
 
     init(
         memory: any SettingsPaneMemory, keepsPlace: Bool, send: @escaping (ShellToCore) -> Void,
@@ -522,9 +524,36 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             button.tag = Self.pushButton
             controls[key] = button
             return button
-        // Settings have no secret and no code, and a list is laid out by
-        // itself: the core sends none of these here.
-        case .secret, .code, .keys, .list:
+        case let .font(family):
+            // The fonts on this Mac that a terminal can be drawn in, with
+            // the terminal's own font first. A font the settings name that
+            // is not on this Mac is shown as that, and stays chosen until
+            // another is.
+            let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+            popup.identifier = identifier
+            popup.addItem(withTitle: Self.ownFontTitle)
+            popup.lastItem?.representedObject = ""
+            popup.menu?.addItem(.separator())
+            let families = FixedPitchFonts.families
+            if !family.isEmpty, !families.contains(family) {
+                popup.addItem(withTitle: "\(family) (not on this Mac)")
+                popup.lastItem?.representedObject = family
+            }
+            for name in families {
+                popup.addItem(withTitle: name)
+                popup.lastItem?.representedObject = name
+            }
+            if let index = popup.itemArray.firstIndex(where: { $0.representedObject as? String == family }) {
+                popup.selectItem(at: index)
+            }
+            popup.target = self
+            popup.action = #selector(chose(_:))
+            popup.setAccessibilityLabel(field.label)
+            controls[key] = popup
+            return popup
+        // Settings have no secret, no code and no colour to pick, and a
+        // list is laid out by itself: the core sends none of these here.
+        case .secret, .code, .keys, .color, .list:
             return NSView()
         }
     }

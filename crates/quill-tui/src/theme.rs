@@ -45,7 +45,54 @@ const ANSI_NAMES: [&str; 16] = [
     "bright-white",
 ];
 
+/// What the sixteen colours a terminal names are in the terminal most
+/// others took them from (xterm). Every terminal sets its own, so this is
+/// only what such a colour is shown as where one has to be shown.
+const XTERM: [(u8, u8, u8); 16] = [
+    (0x00, 0x00, 0x00),
+    (0xcd, 0x00, 0x00),
+    (0x00, 0xcd, 0x00),
+    (0xcd, 0xcd, 0x00),
+    (0x00, 0x00, 0xee),
+    (0xcd, 0x00, 0xcd),
+    (0x00, 0xcd, 0xcd),
+    (0xe5, 0xe5, 0xe5),
+    (0x7f, 0x7f, 0x7f),
+    (0xff, 0x00, 0x00),
+    (0x00, 0xff, 0x00),
+    (0xff, 0xff, 0x00),
+    (0x5c, 0x5c, 0xff),
+    (0xff, 0x00, 0xff),
+    (0x00, 0xff, 0xff),
+    (0xff, 0xff, 0xff),
+];
+
 impl ColorSpec {
+    /// The name a theme file has for one of the terminal's own sixteen
+    /// colours: `blue`, `bright-black`.
+    pub fn ansi_name(index: u8) -> Option<&'static str> {
+        ANSI_NAMES.get(usize::from(index)).copied()
+    }
+
+    /// The colour as red, green and blue, as near as can be said: itself,
+    /// its entry in the 256, and for what only the terminal can say (its
+    /// own sixteen, its own background and text) what a terminal usually
+    /// has. `ground` says the colour is one that is drawn on, and `dark`
+    /// that Quill is dark: the terminal's own background is then taken
+    /// for black, and its own text for white.
+    ///
+    /// For showing a colour to someone who is choosing another. Nothing is
+    /// drawn with it.
+    pub fn roughly(self, ground: bool, dark: bool) -> (u8, u8, u8) {
+        match self {
+            Self::Rgb(red, green, blue) => (red, green, blue),
+            Self::Indexed(index @ 0..=15) => XTERM[usize::from(index)],
+            Self::Indexed(index) => rgb_of(Color::Indexed(index)).unwrap_or((0, 0, 0)),
+            Self::Default if ground == dark => (0, 0, 0),
+            Self::Default => (0xff, 0xff, 0xff),
+        }
+    }
+
     fn parse(text: &str) -> Result<Self, String> {
         let lower = text.trim().to_ascii_lowercase();
         if lower == "default" {
@@ -130,6 +177,157 @@ pub struct Colors {
     pub error: ColorSpec,
     /// One colour per account, reused in order when there are more accounts.
     pub accounts: Vec<ColorSpec>,
+}
+
+/// One of the colours a theme has, by what it is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Slot {
+    Background,
+    Text,
+    Dim,
+    Border,
+    BorderFocused,
+    SelectionFg,
+    SelectionBg,
+    SelectionInactiveBg,
+    Unread,
+    Starred,
+    Accent,
+    Key,
+    Error,
+    /// The colour of the account at this place among the accounts.
+    Account(usize),
+}
+
+impl Slot {
+    /// Every colour a theme has but the accounts', in the order a file
+    /// has them.
+    pub const FIXED: [Slot; 13] = [
+        Slot::Background,
+        Slot::Text,
+        Slot::Dim,
+        Slot::Border,
+        Slot::BorderFocused,
+        Slot::SelectionFg,
+        Slot::SelectionBg,
+        Slot::SelectionInactiveBg,
+        Slot::Unread,
+        Slot::Starred,
+        Slot::Accent,
+        Slot::Key,
+        Slot::Error,
+    ];
+
+    /// The most account colours a theme is shown and changed with.
+    pub const MOST_ACCOUNTS: usize = 6;
+
+    /// The key a theme file has it under, in `[colors]`. The accounts'
+    /// colours are one key between them, `accounts`.
+    pub fn key(self) -> &'static str {
+        match self {
+            Slot::Background => "background",
+            Slot::Text => "text",
+            Slot::Dim => "dim",
+            Slot::Border => "border",
+            Slot::BorderFocused => "border_focused",
+            Slot::SelectionFg => "selection_fg",
+            Slot::SelectionBg => "selection_bg",
+            Slot::SelectionInactiveBg => "selection_inactive_bg",
+            Slot::Unread => "unread",
+            Slot::Starred => "starred",
+            Slot::Accent => "accent",
+            Slot::Key => "key",
+            Slot::Error => "error",
+            Slot::Account(_) => "accounts",
+        }
+    }
+
+    /// What it is called where a person chooses it.
+    pub fn title(self) -> String {
+        match self {
+            Slot::Background => "Background".to_owned(),
+            Slot::Text => "Text".to_owned(),
+            Slot::Dim => "Quiet text".to_owned(),
+            Slot::Border => "Borders".to_owned(),
+            Slot::BorderFocused => "Border in use".to_owned(),
+            Slot::SelectionFg => "Selected text".to_owned(),
+            Slot::SelectionBg => "Selection".to_owned(),
+            Slot::SelectionInactiveBg => "Selection, at rest".to_owned(),
+            Slot::Unread => "Unread".to_owned(),
+            Slot::Starred => "Starred".to_owned(),
+            Slot::Accent => "Headings".to_owned(),
+            Slot::Key => "Keys".to_owned(),
+            Slot::Error => "Errors".to_owned(),
+            Slot::Account(index) => format!("Account {}", index + 1),
+        }
+    }
+
+    /// Whether it is a colour other colours are drawn on.
+    pub fn is_ground(self) -> bool {
+        matches!(
+            self,
+            Slot::Background | Slot::SelectionBg | Slot::SelectionInactiveBg
+        )
+    }
+}
+
+impl Colors {
+    /// The colour in a slot. The bar of a pane at rest is the selection's
+    /// own where the theme has none for it; an account's is `None` where
+    /// the theme has fewer accounts' colours than that.
+    pub fn get(&self, slot: Slot) -> Option<ColorSpec> {
+        Some(match slot {
+            Slot::Background => self.background,
+            Slot::Text => self.text,
+            Slot::Dim => self.dim,
+            Slot::Border => self.border,
+            Slot::BorderFocused => self.border_focused,
+            Slot::SelectionFg => self.selection_fg,
+            Slot::SelectionBg => self.selection_bg,
+            Slot::SelectionInactiveBg => self.selection_inactive_bg.unwrap_or(self.selection_bg),
+            Slot::Unread => self.unread,
+            Slot::Starred => self.starred,
+            Slot::Accent => self.accent,
+            Slot::Key => self.key,
+            Slot::Error => self.error,
+            Slot::Account(index) => return self.accounts.get(index).copied(),
+        })
+    }
+
+    /// Gives a slot another colour. An account the theme has no colour
+    /// for is left without one.
+    pub fn set(&mut self, slot: Slot, spec: ColorSpec) {
+        match slot {
+            Slot::Background => self.background = spec,
+            Slot::Text => self.text = spec,
+            Slot::Dim => self.dim = spec,
+            Slot::Border => self.border = spec,
+            Slot::BorderFocused => self.border_focused = spec,
+            Slot::SelectionFg => self.selection_fg = spec,
+            Slot::SelectionBg => self.selection_bg = spec,
+            Slot::SelectionInactiveBg => self.selection_inactive_bg = Some(spec),
+            Slot::Unread => self.unread = spec,
+            Slot::Starred => self.starred = spec,
+            Slot::Accent => self.accent = spec,
+            Slot::Key => self.key = spec,
+            Slot::Error => self.error = spec,
+            Slot::Account(index) => {
+                if let Some(account) = self.accounts.get_mut(index) {
+                    *account = spec;
+                }
+            }
+        }
+    }
+
+    /// The slots there are colours to choose for: every fixed one, and
+    /// one for each account colour the theme has, up to a few.
+    pub fn slots(&self) -> Vec<Slot> {
+        let accounts = self.accounts.len().min(Slot::MOST_ACCOUNTS);
+        Slot::FIXED
+            .into_iter()
+            .chain((0..accounts).map(Slot::Account))
+            .collect()
+    }
 }
 
 impl Default for Colors {
@@ -264,6 +462,9 @@ pub struct Look {
     pub light: Theme,
     /// The theme while Quill is dark.
     pub dark: Theme,
+    /// A theme being made, drawn with while it is: it is seen as its
+    /// colours are chosen. It is in no file yet, and may never be.
+    pub trying: Option<Theme>,
 }
 
 impl Look {
@@ -274,6 +475,7 @@ impl Look {
             system_dark: None,
             light: theme.clone(),
             dark: theme,
+            trying: None,
         }
     }
 
@@ -282,8 +484,12 @@ impl Look {
         self.appearance.is_dark(self.system_dark)
     }
 
-    /// The theme in force.
+    /// The theme in force: the one being made while one is, and
+    /// otherwise the one for the appearance.
     pub fn theme(&self) -> &Theme {
+        if let Some(trying) = &self.trying {
+            return trying;
+        }
         if self.is_dark() {
             &self.dark
         } else {
@@ -646,6 +852,7 @@ mod tests {
             system_dark: None,
             light: Theme::builtin("light").unwrap(),
             dark: Theme::builtin("dark").unwrap(),
+            trying: None,
         };
         // Nobody has said what the system is, as in a terminal: dark.
         assert!(look.is_dark());
@@ -664,11 +871,71 @@ mod tests {
         look.system_dark = Some(false);
         assert_eq!(look.theme().name, "dark");
 
+        // A theme being made is drawn with whatever the appearance.
+        look.trying = Some(Theme::terminal());
+        assert_eq!(look.theme().name, "terminal");
+        look.appearance = Appearance::Light;
+        assert_eq!(look.theme().name, "terminal");
+        look.trying = None;
+        assert_eq!(look.theme().name, "light");
+
         // One theme for both is that theme always.
         let mut one = Look::one(Theme::terminal());
         assert_eq!(one.theme().name, "terminal");
         one.system_dark = Some(false);
         assert_eq!(one.theme().name, "terminal");
+    }
+
+    #[test]
+    fn every_colour_of_a_theme_has_a_slot_to_read_and_change_it_by() {
+        let mut colors = Theme::builtin("dark").unwrap().colors;
+        let slots = colors.slots();
+        assert_eq!(slots.len(), 13 + 4);
+        // Every key a theme file may have under `[colors]` is a slot's.
+        let mut keys: Vec<&str> = slots.iter().map(|slot| slot.key()).collect();
+        keys.dedup();
+        for key in &keys {
+            let text = format!("name = \"t\"\n[colors]\n{key} = {}\n", {
+                if *key == "accounts" {
+                    "[\"red\"]"
+                } else {
+                    "\"red\""
+                }
+            });
+            assert!(Theme::parse(&text).is_ok(), "{key}");
+        }
+        assert_eq!(keys.len(), 14);
+        // The bar of a pane at rest is the selection's until it has its own.
+        assert_eq!(
+            colors.get(Slot::SelectionInactiveBg),
+            Some(colors.selection_bg)
+        );
+        let red = ColorSpec::Rgb(0xff, 0, 0);
+        for slot in slots {
+            colors.set(slot, red);
+            assert_eq!(colors.get(slot), Some(red), "{slot:?}");
+        }
+        assert_eq!(colors.selection_inactive_bg, Some(red));
+        assert_eq!(colors.accounts, vec![red; 4]);
+        // An account the theme has no colour for is left without one.
+        colors.set(Slot::Account(9), red);
+        assert_eq!(colors.get(Slot::Account(9)), None);
+        assert_eq!(colors.accounts.len(), 4);
+    }
+
+    #[test]
+    fn a_colour_only_the_terminal_can_say_is_shown_as_terminals_usually_have_it() {
+        assert_eq!(ColorSpec::Rgb(1, 2, 3).roughly(false, true), (1, 2, 3));
+        assert_eq!(ColorSpec::Indexed(1).roughly(false, true), (0xcd, 0, 0));
+        assert_eq!(ColorSpec::Indexed(196).roughly(false, true), (255, 0, 0));
+        // The terminal's own background and text, in a dark Quill and a
+        // light one.
+        assert_eq!(ColorSpec::Default.roughly(true, true), (0, 0, 0));
+        assert_eq!(ColorSpec::Default.roughly(false, true), (255, 255, 255));
+        assert_eq!(ColorSpec::Default.roughly(true, false), (255, 255, 255));
+        assert_eq!(ColorSpec::Default.roughly(false, false), (0, 0, 0));
+        assert_eq!(ColorSpec::ansi_name(8), Some("bright-black"));
+        assert_eq!(ColorSpec::ansi_name(16), None);
     }
 
     #[test]

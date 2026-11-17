@@ -214,6 +214,9 @@ public struct SettingsModel: Equatable, Sendable {
         case let (.choice(old, options), .text(new)):
             guard old != new, options.contains(where: { $0.id == new }) else { return nil }
             (kind, sent) = (.choice(value: new, options: options), value)
+        case let (.font(old), .text(new)):
+            guard old != new, new.utf8.count <= FormField.mostFontBytes else { return nil }
+            (kind, sent) = (.font(value: new), value)
         case let (.toggle(title, old), .flag(new)):
             guard old != new else { return nil }
             (kind, sent) = (.toggle(title: title, value: new), value)
@@ -317,8 +320,10 @@ public struct SettingsModel: Equatable, Sendable {
                         + " actions: \(actions.joined(separator: " "))"
                 case let .button(title, enabled):
                     shown = "[button] \(title.debugDescription)\(enabled ? "" : " (off)")"
+                case let .font(family):
+                    shown = "[font] = \(family.debugDescription)"
                 // Settings have none of these.
-                case .secret, .code, .keys:
+                case .secret, .code, .keys, .color:
                     shown = "[\(field.kind.name)]"
                 }
                 lines.append("settings field \(name) \(shown)")

@@ -54,7 +54,7 @@ The script builds the Rust core and the Swift shell, assembles `target/app/Quill
 
 The app is not sandboxed: it runs your own editor on your own settings, which a sandboxed app cannot. It keeps its settings and mail in `~/Library/Application Support/Quill`, the same place as `quill` run in a terminal, so the two are one mailbox. Only one of them can have it open at a time: the second says that Quill is already open and stops, since two would fetch and send the same mail twice. (The commands that do one thing and exit, such as `quill keys`, are not held back.)
 
-Settings… in the Quill menu (`cmd-,`) opens a settings window for the settings changed most; see "The Settings window". The app is light, dark or as the Mac is, with a theme for each, and Import Theme… in the same menu brings in any theme made for Ghostty; see "Themes".
+Settings… in the Quill menu (`cmd-,`) opens a settings window for the settings changed most; see "The Settings window". The app is light, dark or as the Mac is, with a theme for each, and Import Theme… in the same menu brings in any theme made for Ghostty; a theme's colours are changed, and themes of your own made and deleted, in Settings, Appearance, where the font and its size are chosen too; see "Themes".
 
 Closing the window does not quit Quill. As with any mail program on a Mac, the red button (or `cmd-w`) only puts the window away: Quill stays in the Dock, goes on fetching and sending mail, and still announces new mail and shows the unread count. A click on its Dock icon, Window > Main Window (`cmd-0`), a notification or a mail link brings the window back as you left it. `cmd-q` quits.
 
@@ -692,14 +692,16 @@ In the app, Settings… in the Quill menu (`cmd-,`) opens a settings window. It 
 
 | Pane | Settings | Key in `config.toml` | Takes effect |
 |---|---|---|---|
-| General | Appearance: System, Light or Dark | `appearance` under `[ui]` | At once, the app's own windows included |
-| | Light theme | `theme_light` under `[ui]` | At once |
-| | Dark theme | `theme_dark` under `[ui]` | At once |
-| | Import Theme… | a file in `themes/`, and the theme in force | At once |
-| | Keys: Vim or Mutt | `keymap` under `[ui]` | At once, menus included |
+| General | Keys: Vim or Mutt | `keymap` under `[ui]` | At once, menus included |
 | | Show a notification when mail arrives | `notifications` under `[ui]` | At once |
 | | List the messages of a conversation together | `threads` under `[ui]` | At once |
 | | Read mail in a web pane beside the list | `web_reading` under `[ui]` | At once |
+| Appearance | Appearance: System, Light or Dark | `appearance` under `[ui]` | At once, the app's own windows included |
+| | Light theme | `theme_light` under `[ui]` | At once |
+| | Dark theme | `theme_dark` under `[ui]` | At once |
+| | Font: one of the fonts on this Mac whose letters are all one width, or Quill's own | `font` under `[ui]` | At once |
+| | Size, in points | `font_size` under `[ui]` | At once |
+| | Themes: every theme there is, with Edit…, Delete… and Import… | files in `themes/`, and the theme in force | At once |
 | Accounts | The accounts in the file, with Add an Account…, Sign In…, Edit… and Remove… | `[[account]]` | At once |
 | Keys | Every command and its keys, with Change…, Use the Default and Reset All… | `keys.toml` | At once |
 | Composing | Write in: Quill's own editor, Vim, nano, Pico or mg | `editor` under `[compose]` | When Quill is next opened |
@@ -713,7 +715,7 @@ In the app, Settings… in the Quill menu (`cmd-,`) opens a settings window. It 
 
 The two that wait for the next start say so in the window, and say what Quill is going by until then.
 
-Everything else is set in the file, and the button at the foot of each pane opens it: rules, saved searches, an account's servers, name and signature, the reader's width, the font, the mouse; and beside it your keys (`keys.toml`), themes, templates and hooks. "Reveal Settings File in Finder", in the same menu, shows where the file is.
+Everything else is set in the file, and the button at the foot of each pane opens it: rules, saved searches, an account's servers, name and signature, the reader's width, the mouse; and beside it your keys (`keys.toml`), themes, templates and hooks. "Reveal Settings File in Finder", in the same menu, shows where the file is.
 
 The window shows what the file says. Edit the file by hand while it is open and the window catches up when you come back to it, and so does Quill, for the settings that take effect at once. If the file has a mistake in it, the window says so, offers to open the file, and changes nothing until the mistake is put right.
 
@@ -818,9 +820,21 @@ theme_dark = "Dracula"
 - `theme`, the key there has always been, is the theme for whichever of the two is not said. So a config that says only `theme = "light"` has that one theme whatever the appearance, exactly as before, and a config that says nothing has `dark`.
 - **In a terminal nobody says what the Mac is**, and `"system"` is dark there: Quill draws with `theme_dark`. A terminal program cannot ask its terminal what it looks like and rely on the answer. Say `appearance = "light"` to have the light theme in a terminal.
 
-In the app all of this is in Settings, General: Appearance, Light theme, Dark theme. Each pop-up lists the three themes Quill comes with and every theme in your `themes` folder, by name.
+In the app all of this is in Settings, Appearance: Appearance, Light theme, Dark theme. Each pop-up lists the three themes Quill comes with and every theme in your `themes` folder, by name.
 
-**Importing a theme made for Ghostty.** In the app, Import Theme… (in Settings, General, and in the Quill menu) opens a chooser with every theme of a Ghostty installed on this Mac: type to search by name, show only the dark ones or the light ones, and each row has a patch of the theme's colours. Import copies the theme into your `themes` folder and makes it the theme in force: the one theme, if your settings have one for both appearances, and otherwise the theme of the appearance Quill has at that moment. Other… imports a theme file from anywhere.
+**Changing a theme's colours, in the app.** Settings, Appearance lists every theme, with what each is: dark or light, one Quill comes with, the one in use. Pick one and press Edit… for a sheet with the theme's name and a well for each of its colours: the background, the text, quiet text, the borders, the selection, unread, starred, headings, keys, errors, and a colour for each account. Click a well for the Mac's colour picker. Quill's own window is drawn in the colours as you choose them, so the mail behind the sheet is the preview; Cancel puts it back as it was. If the text would be hard to read on the background you chose, the sheet says so and leaves the choice to you.
+
+- **Save under the same name** changes the theme. A theme of your own in Quill's format keeps everything else in its file: your comments, and the colours you did not touch, written as you wrote them.
+- **Save under another name** makes a new theme and leaves the one it was made from as it was. The new theme becomes the one in use: the one theme, if your settings have one for both appearances, and otherwise the theme of the appearance Quill has at that moment.
+- **The themes Quill comes with stay as they are.** Editing Dark starts a theme called "Dark copy"; give it any name no other theme has.
+- **A theme made for Ghostty** that you change is saved as one of Quill's own (`NAME.toml`), with the colours Quill had worked out for it written out, and the file it was is taken away if you kept its name.
+- A colour a theme leaves to the terminal (`"default"`, `"blue"`) has no fixed colour to show: its well shows what a terminal usually has, and the theme keeps what it said unless you pick another colour there.
+
+**Delete…** removes a theme of your own, after asking: its file is taken out of the `themes` folder, which cannot be undone, and if the settings named it they go back to the theme they had before. The themes Quill comes with have no Delete.
+
+**The font.** Settings, Appearance has Font and Size for Quill's own window, and for an editor running in it. Font lists the fonts on this Mac whose letters are all one width, with "Quill's Own" first; both take effect at once. They are `font` and `font_size` under `[ui]` (a size from 6 to 72 points; no `font` line means Quill's own). In a terminal Quill has the terminal's font, and these two settings do nothing there.
+
+**Importing a theme made for Ghostty.** In the app, Import… (under the list of themes in Settings, Appearance) and Import Theme… in the Quill menu open a chooser with every theme of a Ghostty installed on this Mac: type to search by name, show only the dark ones or the light ones, and each row has a patch of the theme's colours. Import copies the theme into your `themes` folder and makes it the theme in force: the one theme, if your settings have one for both appearances, and otherwise the theme of the appearance Quill has at that moment. Other… imports a theme file from anywhere.
 
 Ghostty's themes are looked for in `/Applications/Ghostty.app`, then in `~/Applications/Ghostty.app`, then in `~/.config/ghostty/themes`, where Ghostty keeps themes of your own. Other… imports one kept anywhere else, and opens on the last of those folders.
 

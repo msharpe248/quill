@@ -557,6 +557,7 @@ impl Io<'_> {
                 Context::NewFolder => bridge::Context::Folders,
                 // A question in the host's sheet, as a certificate is.
                 Context::RecordKeys => bridge::Context::Certificate,
+                Context::EditTheme => bridge::Context::Certificate,
                 // A question to answer before anything is sent, as a
                 // certificate is.
                 Context::Unsubscribe => bridge::Context::Certificate,
@@ -594,6 +595,8 @@ impl Io<'_> {
                 Appearance::Light => bridge::Appearance::Light,
                 Appearance::Dark => bridge::Appearance::Dark,
             },
+            font: current.font.clone(),
+            font_size: current.font_size,
         });
         self.last_host_state = Some(current);
     }
@@ -1012,6 +1015,13 @@ async fn event_loop(
                 env.restyle();
                 state.dirty = true;
             }
+            // And a theme being made, which is drawn with as its colours
+            // are chosen, until it is saved or given up.
+            if let Some(trying) = effects.trying.take() {
+                env.look.trying = trying;
+                env.restyle();
+                state.dirty = true;
+            }
             io.perform(effects);
             if state.web_reading != web {
                 width_due = state
@@ -1246,6 +1256,8 @@ mod tests {
             sidebar: true,
             editor_tips: true,
             cache_gb: 5.0,
+            font: None,
+            font_size: None,
         }
     }
 

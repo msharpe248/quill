@@ -1129,7 +1129,11 @@ fn the_host_is_told_what_applies_where_the_focus_is() {
         background,
         foreground,
         appearance,
+        font,
+        font_size,
     } = harness.state.host_state(&harness.env);
+    // The host's own font, until the settings name one.
+    assert_eq!((font, font_size), (None, None));
     // As the system is, until the settings say otherwise.
     assert_eq!(appearance, quill_core::config::Appearance::System);
     assert_eq!(context, Context::List);

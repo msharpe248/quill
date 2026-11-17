@@ -158,6 +158,19 @@
             "appearance": {
               "description": "Whether the app is to be light, dark, or as the Mac is: what the settings say. The shell's own parts go by it: with light or dark, its windows, sheets and the reading pane are that, whatever the Mac is; with system, or left out, they are as the Mac is and change with it.",
               "enum": ["system", "light", "dark"]
+            },
+            "font": {
+              "description": "The font the terminal UI is drawn in, by its family's name, for every terminal the shell shows. Left out, it is the shell's own. A family that is not on this Mac leaves the shell's own too.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
+            },
+            "font_size": {
+              "description": "How large that font is, in points. Left out, it is the shell's own.",
+              "type": "number",
+              "minimum": 6,
+              "maximum": 72
             }
           }
         }
@@ -1022,7 +1035,7 @@
               "type": "string"
             },
             "fields": {
-              "description": "The fields, in order. Each has a name of its own, and at most one has the focus. A sheet asks and waits for a button, so it has none of the kinds that say what the user did as they do it (toggle, number, list, button): those are the settings window's. A field that records keys is a sheet's alone.",
+              "description": "The fields, in order. Each has a name of its own, and at most one has the focus. A sheet asks and waits for a button, so it has none of the kinds that say what the user did as they do it (toggle, number, list, button, font): those are the settings window's. A field that records keys is a sheet's alone, and so is one a colour is picked in.",
               "type": "array",
               "maxItems": 32,
               "items": {
@@ -1030,7 +1043,7 @@
                   { "$ref": "#/$defs/formField" },
                   {
                     "properties": {
-                      "kind": { "enum": ["text", "secret", "choice", "static", "code", "keys"] }
+                      "kind": { "enum": ["text", "secret", "choice", "static", "code", "keys", "color"] }
                     }
                   }
                 ]
@@ -1096,6 +1109,36 @@
               "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
             },
             "focus": { "type": "boolean" },
+            "help": { "type": "string" }
+          }
+        },
+        {
+          "description": "A colour, chosen as the Mac has colours chosen: the shell shows it in a well, and says the colour picked at once in form.used with no button, as it says a choice that was changed. `value` is #rrggbb in lower case, and so is what comes back. Only a sheet has one.",
+          "type": "object",
+          "required": ["kind", "id", "label", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "color" },
+            "id": { "$ref": "#/$defs/formId" },
+            "label": { "type": "string" },
+            "value": { "type": "string", "pattern": "^#[0-9a-f]{6}$" },
+            "help": { "type": "string" }
+          }
+        },
+        {
+          "description": "A font for the terminal, by its family's name. The shell offers the fonts on this Mac whose letters are all one width, which only it can list, and its own font under the empty name; a family that is not on this Mac is shown as that. What is chosen comes back in settings.used as text. The settings window's only.",
+          "type": "object",
+          "required": ["kind", "id", "label", "value"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "font" },
+            "id": { "$ref": "#/$defs/formId" },
+            "label": { "type": "string" },
+            "value": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
+            },
             "help": { "type": "string" }
           }
         },
@@ -1388,7 +1431,7 @@
                         { "$ref": "#/$defs/formField" },
                         {
                           "properties": {
-                            "kind": { "enum": ["text", "choice", "static", "toggle", "number", "list", "button"] },
+                            "kind": { "enum": ["text", "choice", "static", "toggle", "number", "list", "button", "font"] },
                             "focus": { "const": false }
                           }
                         }

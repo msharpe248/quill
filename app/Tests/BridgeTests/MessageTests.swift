@@ -140,7 +140,9 @@ private enum Examples {
                         title: "Inbox (unified) - 12 unread",
                         background: "#1a1b26",
                         foreground: "#c0caf5",
-                        appearance: .dark
+                        appearance: .dark,
+                        font: "JetBrains Mono",
+                        fontSize: 13.5
                     )))
         #expect(try CoreToShell(line: examples["themes.pick.json"]!) == .themesPick)
         #expect(try CoreToShell(line: examples["pane.close.json"]!) == .paneClose)

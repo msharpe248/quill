@@ -20,6 +20,8 @@ public struct FormRow: Equatable, Sendable {
         /// has been pressed, as Quill writes it, and empty when nothing
         /// has.
         case keys(String)
+        /// A well holding this colour, `#rrggbb`, to pick another in.
+        case color(String)
     }
 
     public let id: String
@@ -85,13 +87,13 @@ public struct FormModel: Equatable, Sendable {
             let core: String
             let allowed: [String]?
             switch field.kind {
-            case let .text(value), let .keys(value):
+            case let .text(value), let .keys(value), let .color(value):
                 (core, allowed) = (value, nil)
             case let .choice(value, options):
                 (core, allowed) = (value, options.map(\.id))
-            // The last three are the settings window's, and are in no
+            // The last five are the settings window's, and are in no
             // form a sheet is given.
-            case .secret, .fixed, .code, .toggle, .number, .list, .button:
+            case .secret, .fixed, .code, .toggle, .number, .list, .button, .font:
                 continue
             }
             nextTold[field.id] = core
@@ -144,8 +146,10 @@ public struct FormModel: Equatable, Sendable {
                 content = .code(value)
             case let .keys(value):
                 content = .keys(entered[field.id] ?? value)
+            case let .color(value):
+                content = .color(entered[field.id] ?? value)
             // The settings window's kinds: in no form a sheet is given.
-            case .toggle, .number, .list, .button:
+            case .toggle, .number, .list, .button, .font:
                 content = .fixed("")
             }
             return FormRow(
@@ -192,6 +196,36 @@ public struct FormModel: Equatable, Sendable {
         else { return nil }
         entered[id] = keys
         return FormUsed(step: form.step, button: nil, values: entered)
+    }
+
+    /// The user picked a colour in a well. Returns what to tell the core,
+    /// as for a choice that was changed, so that what is drawn in the
+    /// colour can change with it. `nil` when nothing changed, the field is
+    /// not a well, or what was picked is not a colour as the bridge says
+    /// one.
+    public mutating func pick(_ color: String, in id: String) -> FormUsed? {
+        guard let form, form.busy == nil, let field = form.fields.first(where: { $0.id == id }),
+            case .color = field.kind, entered[id] != color, StateUpdate.isColor(color)
+        else { return nil }
+        entered[id] = color
+        return FormUsed(step: form.step, button: nil, values: entered)
+    }
+
+    /// Whether `next` is the form on show but for the colours its wells
+    /// hold: the view then has nothing to lay out again, and a well a
+    /// colour is being picked in is left to its picking.
+    public func differsOnlyInColors(from next: FormShow) -> Bool {
+        guard let form, form.step == next.step, form.title == next.title, form.note == next.note,
+            form.error == next.error, form.busy == next.busy, form.buttons == next.buttons,
+            form.fields.count == next.fields.count
+        else { return false }
+        return zip(form.fields, next.fields).allSatisfy { old, new in
+            guard old.id == new.id, old.label == new.label, old.help == new.help, old.focus == new.focus else {
+                return false
+            }
+            if case .color = old.kind, case .color = new.kind { return true }
+            return old.kind == new.kind
+        }
     }
 
     /// The user pressed a button. Returns what to tell the core, or `nil`
@@ -250,6 +284,8 @@ public struct FormModel: Equatable, Sendable {
                 shown = "[code] = \(code)"
             case let .keys(keys):
                 shown = "[keys] = \(keys.debugDescription)"
+            case let .color(color):
+                shown = "[color] = \(color)"
             }
             lines.append("sheet field \(row.id) \(shown)\(field.focus ? " (focus)" : "")")
         }

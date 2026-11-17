@@ -703,6 +703,7 @@ enum DebugScript {
         lines.append("terminal: \(controller.gridSummary)")
         // terminal colours: background #1a1b26, foreground #c0caf5
         lines.append("terminal colours: \(controller.terminalColours)")
+        lines.append("terminal font: \(controller.terminalFont)")
         // window columns: 147 (core told 147)
         let room = controller.windowColumns.map(String.init) ?? "unknown"
         let told = controller.windowColumnsSent.map(String.init) ?? "nothing"

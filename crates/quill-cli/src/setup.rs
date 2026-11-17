@@ -132,6 +132,8 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
         editor_tips: config.compose.editor_tips,
         // What the sync engine is told once, as it starts.
         cache_gb: config.storage.cache_gb,
+        font: config.ui.font.clone(),
+        font_size: quill_host::bridge::Number::new(f64::from(config.ui.font_size)),
     };
     Loaded {
         config,
@@ -230,6 +232,7 @@ pub fn look_of(
             system_dark: None,
             light,
             dark,
+            trying: None,
         },
         [dark_problem, light_problem],
     )

@@ -45,4 +45,23 @@ import Testing
             #expect(appearance.palette == .followsMac, "\(bad.debugDescription)")
         }
     }
+
+    @Test func onlyAFontsNameAndASizeATerminalCanHaveAreGivenToTheTerminal() {
+        // With none named the terminal keeps its own font.
+        #expect(TerminalAppearance().checkedFontFamily == nil)
+        #expect(TerminalAppearance().checkedFontSize == 13)
+        let named = TerminalAppearance(fontFamily: "JetBrains Mono", fontSize: 14.5)
+        #expect(named.checkedFontFamily == "JetBrains Mono")
+        #expect(named.checkedFontSize == 14.5)
+        // The name goes into the terminal's configuration as a line of it:
+        // nothing that could be another line is one.
+        for bad in ["", "Menlo\nkeybind = all", "Menlo\r", "Men\u{7f}lo", String(repeating: "m", count: 129)] {
+            #expect(TerminalAppearance(fontFamily: bad).checkedFontFamily == nil, "\(bad.debugDescription)")
+        }
+        // A size no terminal is read at is brought to one that is.
+        #expect(TerminalAppearance(fontSize: 2).checkedFontSize == 6)
+        #expect(TerminalAppearance(fontSize: 500).checkedFontSize == 72)
+        #expect(TerminalAppearance(fontSize: .nan).checkedFontSize == 13)
+        #expect(TerminalAppearance(fontSize: .infinity).checkedFontSize == 13)
+    }
 }

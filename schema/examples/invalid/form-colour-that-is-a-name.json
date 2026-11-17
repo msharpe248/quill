@@ -1,0 +1,17 @@
+{
+  "jsonrpc": "2.0",
+  "method": "form.show",
+  "params": {
+    "step": "theme_edit",
+    "title": "The Theme \u201cEvening\u201d",
+    "fields": [
+      {
+        "kind": "color",
+        "id": "background",
+        "label": "Background:",
+        "value": "black"
+      }
+    ],
+    "buttons": []
+  }
+}

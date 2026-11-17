@@ -9,6 +9,8 @@
     "title": "Inbox (unified) - 12 unread",
     "background": "#1a1b26",
     "foreground": "#c0caf5",
-    "appearance": "dark"
+    "appearance": "dark",
+    "font": "JetBrains Mono",
+    "font_size": 13.5
   }
 }

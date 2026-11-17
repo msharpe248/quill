@@ -15,9 +15,9 @@
 //! the window brings Quill in line with the file as it stands, whoever
 //! wrote it last.
 
-use quill_host::bridge::{BUTTON_PRESS, SettingsDid, SettingsShow};
+use quill_host::bridge::{SettingsDid, SettingsShow};
 
-use super::{Effects, Env, HostRequest, Notice, SettingsAct, State};
+use super::{Effects, Env, Notice, SettingsAct, State};
 use crate::command::CommandId;
 use crate::settings::{self, Applied, Can, Change, SettingsRead};
 use crate::setup::{AccountRequest, SignIn, SignInStage};
@@ -66,6 +66,7 @@ impl State {
                         && self.sign_in.is_none(),
                     remove: self.can_remove_account(env),
                     edit: self.can_edit_account(env),
+                    themes: self.themes_can_change(env),
                 },
                 window.refused.as_deref(),
             ),
@@ -111,14 +112,13 @@ impl State {
                             Err(reason) => self.settings_answered(Some(reason)),
                         }
                     }
-                    // The button that imports a theme: the host has the
-                    // chooser, and says what was chosen when something is.
-                    SettingsDid::Action { action, row: None }
-                        if used.pane() == settings::Pane::General.id()
-                            && used.field() == settings::IMPORT_THEME
-                            && action == BUTTON_PRESS =>
+                    // The list of themes: a theme to import, and the
+                    // questions about one's colours and about deleting it.
+                    SettingsDid::Action { action, row }
+                        if used.pane() == settings::Pane::Appearance.id()
+                            && used.field() == settings::THEMES =>
                     {
-                        out.host.push(HostRequest::PickTheme);
+                        self.on_theme_action(env, &read, action, row.as_deref(), out);
                         self.settings_answered(None);
                     }
                     // The list of keys: its actions are the question

@@ -137,6 +137,9 @@ pub fn spawn_remembering(config_file: PathBuf) -> AccountsLink {
                 AccountRequest::Keys(change) => {
                     settings::keys_off_thread(config_file.clone(), change).await
                 }
+                AccountRequest::Themes(change) => {
+                    settings::themes_off_thread(config_file.clone(), change).await
+                }
                 _ => continue,
             };
             if events_tx.send(event).is_err() {
@@ -351,6 +354,9 @@ impl Service {
             }
             AccountRequest::Keys(change) => {
                 settings::keys_off_thread(self.config_file.clone(), change).await
+            }
+            AccountRequest::Themes(change) => {
+                settings::themes_off_thread(self.config_file.clone(), change).await
             }
         }
     }

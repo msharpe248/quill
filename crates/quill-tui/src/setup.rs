@@ -304,6 +304,10 @@ pub enum AccountRequest {
     /// the settings afresh: the keys hold from the answer. Answered with
     /// [`AccountEvent::KeysChanged`].
     Keys(crate::settings::KeysChange),
+    /// Save a theme into the user's `themes` folder, or delete one from
+    /// it, and read the settings afresh. Answered with
+    /// [`AccountEvent::ThemesChanged`].
+    Themes(crate::settings::ThemesChange),
 }
 
 /// A choice made in the UI that is kept between runs, in `config.toml`.
@@ -403,6 +407,12 @@ pub enum AccountEvent {
     /// The user's own keys were changed, or why they were not: then the
     /// file is as it was. With it, what the settings say now.
     KeysChanged {
+        read: Result<Box<crate::settings::SettingsRead>, String>,
+        result: Result<(), String>,
+    },
+    /// A theme was saved or deleted, or why it was not: then the folder
+    /// is as it was. With it, what the settings say now.
+    ThemesChanged {
         read: Result<Box<crate::settings::SettingsRead>, String>,
         result: Result<(), String>,
     },
@@ -1437,6 +1447,7 @@ impl Setup {
             | AccountEvent::EditAsked { .. }
             | AccountEvent::Remembered(_)
             | AccountEvent::KeysChanged { .. }
+            | AccountEvent::ThemesChanged { .. }
             | AccountEvent::Settings { .. } => (Vec::new(), Outcome::Open),
         }
     }

@@ -457,4 +457,24 @@ struct SettingsModelTests {
         #expect(transient.pane == "privacy")
         #expect(DefaultsSettingsPaneMemory(defaults: defaults).pane == "composing")
     }
+
+    @Test func aFontIsChosenByItsFamilysNameAndTheTerminalsOwnByNone() {
+        let pane = SettingsPane(
+            id: "appearance", title: "Appearance", symbol: "paintpalette",
+            fields: [FormField(id: "font", label: "Font:", kind: .font(value: ""))])
+        var model = SettingsModel()
+        _ = model.show(settings([pane]), remembered: nil)
+        #expect(model.summary.contains("settings field appearance.font [font] = \"\""))
+        let used = model.set(.text("JetBrains Mono"), in: "font", of: "appearance")
+        #expect(used == SettingsUsed(pane: "appearance", field: "font", did: .set(.text("JetBrains Mono"))))
+        // What the window shows is changed at once, as the pop-up has been.
+        #expect(model.settings?.field("font", in: "appearance")?.kind == .font(value: "JetBrains Mono"))
+        // The same again says nothing new; the terminal's own is no name.
+        #expect(model.set(.text("JetBrains Mono"), in: "font", of: "appearance") == nil)
+        #expect(model.set(.text(""), in: "font", of: "appearance") != nil)
+        // It takes a name and nothing else, and not one longer than a name.
+        #expect(model.set(.flag(true), in: "font", of: "appearance") == nil)
+        #expect(model.set(.number(12), in: "font", of: "appearance") == nil)
+        #expect(model.set(.text(String(repeating: "m", count: 129)), in: "font", of: "appearance") == nil)
+    }
 }

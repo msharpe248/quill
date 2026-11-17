@@ -37,6 +37,13 @@
             "id": "nickname",
             "label": "Called:",
             "value": "Robin"
+          },
+          {
+            "kind": "font",
+            "id": "font",
+            "label": "Font:",
+            "value": "JetBrains Mono",
+            "help": "The font of Quill's own window."
           }
         ],
         "more": "Rules and saved searches are set in the settings file."

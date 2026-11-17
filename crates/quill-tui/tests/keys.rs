@@ -31,7 +31,7 @@ fn read_with(own: &str) -> Box<SettingsRead> {
     Box::new(SettingsRead {
         settings: Settings::of(&config),
         accounts: Vec::new(),
-        themes: Theme::builtin_names().map(str::to_owned).collect(),
+        themes: quill_tui::settings::ThemeLine::builtins(),
         theme_light: Theme::builtin("light").unwrap(),
         theme_light_problem: None,
         theme_dark: Theme::builtin("dark").unwrap(),

@@ -93,6 +93,12 @@
         "label": "New Key:",
         "value": "g g",
         "help": "Press the key, or two keys one after the other."
+      },
+      {
+        "kind": "color",
+        "id": "background",
+        "label": "Background:",
+        "value": "#1a1b26"
       }
     ],
     "buttons": [

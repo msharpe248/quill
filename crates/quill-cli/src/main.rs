@@ -14,6 +14,7 @@ mod service;
 mod settings;
 mod setup;
 mod signin;
+mod theme_edit;
 mod themes;
 
 /// The IMAP crate's own test server, for tests here that need a real one: a

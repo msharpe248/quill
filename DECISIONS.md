@@ -1129,3 +1129,38 @@ The owner: changing a key should not need the file. In the app it is a pane of S
 - **Not in a terminal.** The question is only ever opened where there are sheets. A terminal has `keys.toml` and `quill keys`.
 - **Not done:** recording `esc`, `return` or `tab`; saying which place a clash is in; swapping two commands' keys in one step; a pane for the terminal.
 
+## Themes are made, changed and deleted in the settings window, and the font is chosen there (2026-11-17)
+
+The owner: a theme editor; a new name given while editing makes a new theme; a way to delete themes; the font and its size chosen too. Most of it is for the app, and all of it was built there: in a terminal a theme is a file and the font is the terminal's.
+
+- **A pane of its own, Appearance** (`Pane::Appearance`): Appearance, Light theme and Dark theme moved there from General, with Font, Size and the list of themes. The Import Theme… button of General is the list's Import… now; the menu's item is as it was.
+- **The list has every theme** with what it is (`ThemeLine`: the name, whether a file of the user's is it, and the theme or why its file cannot be used). The service loads each as startup would, on every read of the settings. Up to 200 are listed (a list's most); the pop-ups have every one. Past eight the list is one to search.
+- **Editing is a question in a sheet** (`ThemePrompt`, `Context::EditTheme`): a name and a well for each colour, a field of a new kind, `color`, which only a sheet has. The shell shows an `NSColorWell` and says the colour picked at once, as it says a choice that was changed; the core decides everything. Wells are laid two to a line, by kind: a theme has seventeen.
+- **The theme is drawn with as it is made** (`Look::trying`, set by the run loop from `Effects::trying`, asked for at the end of every `update` by `State::follow_theme_draft` whenever what is wanted and what `Env` has differ). `Env::styles` is still made from `Env::look` by `restyle` and nothing else. Cancel, `esc`, saving and the sheet going any other way all end it by the same comparison.
+- **A colour the theme leaves to the terminal is kept unless another is picked.** A well must show something for `"default"` or `"blue"`: it shows what terminals usually have (`ColorSpec::roughly`, the xterm sixteen, black and white for the terminal's own two by whether the theme is dark). What comes back from a well is compared with what was shown, and only a difference fixes the colour. So opening Terminal and saving a copy changes nothing in it.
+- **Names.** Saved under the name it had, a theme of the user's is changed. Under another it is a new theme, the old one is untouched, and the new one becomes the theme in force, as an imported one does (`Change::ThemeInForce`): having watched Quill drawn in it, going back to the old theme on Save would look like a failure. A name another theme has is refused, and so is one that differs from another only in its capitals, which one folder cannot hold both of. **The themes Quill comes with are not saved over**: editing one starts "Dark copy". The exception is a file of the user's that already stands in a built-in's place (`themes/dark.toml`, which the file format has always allowed): that file is theirs and is saved over.
+- **A theme saved is one of Quill's own files** (`theme_edit::written`, `NAME.toml`). Made from one of Quill's own, the file is changed as text (`toml_edit`): only the lines of the colours that changed, so comments and the user's own way of writing a colour stay, under a new name too. Made from a Ghostty theme or a built-in, every colour is written out. Nothing is written that does not read back as the theme that was asked for.
+- **A Ghostty theme changed under its own name** becomes `NAME.toml`, and the plain `NAME` file is taken away: `NAME.toml` is found first, so the old file would only be left to come back when the theme is deleted. The original is still wherever it was imported from.
+- **Deleting asks first** and has no key on its button. The settings file is made to stop naming the theme before anything is deleted (`config_edit::forget_theme`), and if it cannot be read nothing is; every file the name answers to goes. A file standing in a built-in's place goes and the settings go on naming the built-in. **It is not the Trash**: the service is the core's, which has no Trash to move to, and the question says it cannot be undone.
+- **Text that cannot be read is said, not refused**: under 4.5 against the background the sheet says so (`contrast::BODY`). The theme is the user's.
+- **The font** is `font` and `font_size` under `[ui]`, which the config has always read and nothing used. They go to the shell in `state.update` (`font`, `font_size`), like the theme's two colours, and hold at once: the terminals share one look, so the editor's pane changes with Quill's. `font_size` is held to 6 to 72 and `font` to one line, in the config, on the bridge (both sides) and again in `TerminalKit`, where the name becomes a line of libghostty's configuration.
+- **Which fonts there are is the shell's to say**: a field of a new kind, `font`, the settings window's only. The shell offers the fixed-pitch families on this Mac (`FixedPitchFonts`) and its own under the empty name; a family the file names that is not on this Mac is shown as that. The other way was a message telling the core the Mac's fonts so that it could describe a `choice`: more bridge for a list the core has no other use for.
+- **The bridge gained**: field kinds `color` (sheets) and `font` (settings); `font` and `font_size` in `state.update`.
+
+### Seen
+
+- In a check build, demo mailbox, scratch settings and home (scripted): the Appearance pane with a theme of the test's own listed; Edit… on it, the sheet with its eighteen fields; a colour put in a well, and the terminal drawn on it at once (`terminal colours` in the dump, and the picture); a second colour; saved as "Dusk": `themes/Dusk.toml` written with the first file's lines kept and the two colours changed, `theme = "Dusk"` in the settings file, the first theme's file untouched, the list and both pop-ups showing it. Font set to Menlo and the size to 16: the terminal went from 147 columns of 8 px cells to 118 of 10, and the core was told.
+- The core's tests cover what the sheet says and takes, the names refused, the preview, what is asked of the service; the service's cover the files (kept lines, the Ghostty case, deleting, a settings file with a mistake in it) and the whole road from a press in the window to the file and the screen.
+
+### Not seen
+
+- **A real click on a well.** A scripted run must show no panel, and the Mac's colour picker is one: the colour was put in the well by the script, which runs the same action a pick does. Not seen: the picker opening, dragging in it while the sheet is redrawn (the sheet is not laid out again when only colours changed, and a well that was being picked in is made the picker's again when it is; both are reasoned, neither watched), the picker closing with the sheet.
+- The font pop-up opened by hand, and a font named in the file that is not on this Mac.
+- A hand in the sheet at all; VoiceOver; the sheet on a small screen (it is about 470 points tall with seventeen wells).
+
+### Not done
+
+- Nothing for a terminal: no `quill theme delete`, no editor drawn over the panes.
+- The sixteen colours an editor's pane names are still libghostty's own two sets (see "Themes, and light and dark").
+- Bigger and Smaller in the View menu (`cmd-+`, `cmd--`); line spacing and thicker strokes, which libghostty has settings for.
+- Putting a deleted theme in the Trash.

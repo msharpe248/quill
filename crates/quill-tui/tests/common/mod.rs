@@ -225,6 +225,8 @@ impl Harness {
             sidebar: true,
             editor_tips: true,
             cache_gb: 5.0,
+            font: None,
+            font_size: None,
         };
         adjust(&mut env);
         let scratch = tempfile::tempdir().unwrap();
@@ -270,6 +272,11 @@ impl Harness {
         // And what the host has said the system's appearance is.
         if let Some(dark) = effects.system_dark.take() {
             self.env.look.system_dark = Some(dark);
+            self.env.restyle();
+        }
+        // And a theme being made.
+        if let Some(trying) = effects.trying.take() {
+            self.env.look.trying = trying;
             self.env.restyle();
         }
     }

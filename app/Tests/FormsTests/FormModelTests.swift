@@ -571,4 +571,65 @@ struct FormModelTests {
         // Save sends what was recorded with the rest.
         #expect(model.press("confirm", secrets: [:])?.values == ["keys": "g g", "how": "replace"])
     }
+
+    /// The question about a theme's colours.
+    private func themeForm(background: String = "#101018", note: String = "Quill is drawn in these.") -> FormShow {
+        FormShow(
+            step: "theme_edit", title: "The Theme \u{201c}Evening\u{201d}", note: note,
+            fields: [
+                FormField(id: "name", label: "Name:", kind: .text(value: "Evening"), focus: true),
+                FormField(id: "background", label: "Background:", kind: .color(value: background)),
+                FormField(id: "text", label: "Text:", kind: .color(value: "#e0e0f0")),
+            ],
+            buttons: [
+                FormButton(id: "cancel", title: "Cancel", role: .cancel),
+                FormButton(id: "confirm", title: "Save", role: .confirm),
+            ])!
+    }
+
+    @Test func aColourThatIsPickedIsToldToTheCoreAtOnceWithWhatWasTyped() {
+        var model = FormModel()
+        _ = model.show(themeForm())
+        #expect(model.rows[1].content == .color("#101018"))
+        model.type("Morning", in: "name")
+
+        // Picked: the core is told what the form holds, with no button.
+        let used = model.pick("#203040", in: "background")
+        #expect(
+            used
+                == FormUsed(
+                    step: "theme_edit", button: nil,
+                    values: ["name": "Morning", "background": "#203040", "text": "#e0e0f0"]))
+        #expect(model.rows[1].content == .color("#203040"))
+        // The same colour again says nothing new.
+        #expect(model.pick("#203040", in: "background") == nil)
+        // Only a well takes a colour, and only a colour as the bridge
+        // says one.
+        #expect(model.pick("#203040", in: "name") == nil)
+        #expect(model.pick("#203040", in: "nothing") == nil)
+        for bad in ["", "blue", "#fff", "#20304", "#2030400", "#20304G", "#20304g", "#203040\n"] {
+            #expect(model.pick(bad, in: "text") == nil, "\(bad.debugDescription)")
+        }
+        // The core's answer has the colour, and what was typed is kept.
+        let again = model.show(themeForm(background: "#203040"))
+        #expect(again.sameStep && again.focus == nil)
+        #expect(model.rows[0].content == .text("Morning"))
+        #expect(model.summary.contains("sheet field background [color] = #203040"))
+        // Save sends the colours with the rest.
+        #expect(
+            model.press("confirm", secrets: [:])?.values
+                == ["name": "Morning", "background": "#203040", "text": "#e0e0f0"])
+    }
+
+    @Test func aFormThatDiffersOnlyInItsColoursIsNotOneToLayOutAgain() {
+        var model = FormModel()
+        // With no form up there is nothing it is the same as.
+        #expect(!model.differsOnlyInColors(from: themeForm()))
+        _ = model.show(themeForm())
+        #expect(model.differsOnlyInColors(from: themeForm()))
+        #expect(model.differsOnlyInColors(from: themeForm(background: "#ffffff")))
+        // Anything else that is said differently is another form to draw.
+        #expect(!model.differsOnlyInColors(from: themeForm(note: "The text is hard to read.")))
+        #expect(!model.differsOnlyInColors(from: keysForm()))
+    }
 }

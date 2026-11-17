@@ -16,7 +16,9 @@ use std::path::{Path, PathBuf};
 
 use quill_core::config::Config;
 use quill_tui::command::Registry;
-use quill_tui::settings::{AccountLine, Change, KeysChange, Settings, SettingsRead};
+use quill_tui::settings::{
+    AccountLine, Change, KeysChange, Settings, SettingsRead, ThemeLine, ThemesChange,
+};
 use quill_tui::setup::AccountEvent;
 
 use crate::{config_edit, oauth, setup};
@@ -86,6 +88,44 @@ fn write_keys(config_file: &Path, change: &KeysChange) -> Result<(), String> {
     config_edit::write(&path, &after).map_err(|err| format!("keys.toml cannot be written: {err}"))
 }
 
+/// [`change_themes`], off the async threads: the files block.
+pub async fn themes_off_thread(config_file: PathBuf, change: ThemesChange) -> AccountEvent {
+    tokio::task::spawn_blocking(move || change_themes(&config_file, &change))
+        .await
+        .unwrap_or_else(|err| AccountEvent::ThemesChanged {
+            read: Err(err.to_string()),
+            result: Err(err.to_string()),
+        })
+}
+
+/// Saves or deletes a theme in the `themes` folder beside the config, and
+/// reads the settings as they then are: the themes with them.
+pub fn change_themes(config_file: &Path, change: &ThemesChange) -> AccountEvent {
+    let dir = config_dir(config_file);
+    let result = match change {
+        ThemesChange::Save {
+            from,
+            theme,
+            select,
+        } => crate::theme_edit::save(dir, from, theme).and_then(|()| match select {
+            // A new theme is the one in use from now, as one imported is.
+            Some(dark) => make(
+                config_file,
+                &Change::ThemeInForce {
+                    name: theme.name.clone(),
+                    dark: *dark,
+                },
+            ),
+            None => Ok(()),
+        }),
+        ThemesChange::Delete { name } => crate::theme_edit::delete(config_file, dir, name),
+    };
+    AccountEvent::ThemesChanged {
+        read: read(config_file).map(Box::new),
+        result,
+    }
+}
+
 /// The folder the config is in, where the themes and the keys are too.
 fn config_dir(config_file: &Path) -> &Path {
     config_file.parent().unwrap_or(Path::new("."))
@@ -143,7 +183,16 @@ fn read(config_file: &Path) -> Result<SettingsRead, String> {
                 signs_in: oauth::wanted(account),
             })
             .collect(),
-        themes: setup::themes_in(dir),
+        themes: setup::themes_in(dir)
+            .into_iter()
+            .map(|name| ThemeLine {
+                own: crate::paths::theme_files_in(dir, &name)
+                    .iter()
+                    .any(|(file, _)| file.is_file()),
+                theme: setup::load_theme(dir, &name).map_err(|none| none.why),
+                name,
+            })
+            .collect(),
         theme_light: look.light,
         theme_light_problem,
         theme_dark: look.dark,
@@ -288,7 +337,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let read = read_of(answer(&file(&dir), None));
         assert_eq!(read.settings, Settings::of(&Config::default()));
-        assert_eq!(read.themes, ["dark", "light", "terminal"]);
+        assert_eq!(read.theme_names(), ["dark", "light", "terminal"]);
         assert!(read.accounts.is_empty());
         assert_eq!(
             (
@@ -350,7 +399,7 @@ mod tests {
         assert_eq!(read.settings.keymap, KeymapPreset::Vim);
         assert_eq!(read.settings.undo_send_seconds, 10);
         assert_eq!(
-            read.themes,
+            read.theme_names(),
             [
                 "dark",
                 "light",
@@ -427,7 +476,7 @@ mod tests {
         // what is wrong with it is said for as long as the file names it.
         write(&dir, "themes/Night Owl+", "background = #1e2030\n");
         let read = read_of(answer(&file(&dir), None));
-        assert!(!read.themes.contains(&"Night Owl+".to_owned()));
+        assert!(!read.theme_names().contains(&"Night Owl+"));
         assert_eq!(
             read.theme_light_problem.as_deref(),
             Some(
@@ -671,10 +720,20 @@ mod tests {
                     self.env.look.system_dark = Some(dark);
                     self.env.restyle();
                 }
+                if let Some(trying) = effects.trying.take() {
+                    self.env.look.trying = trying;
+                    self.env.restyle();
+                }
                 for request in effects.accounts {
                     match request {
                         AccountRequest::Settings(change) => {
                             waiting.push_back(Action::Account(answer(&file(&self.dir), change)));
+                        }
+                        AccountRequest::Themes(change) => {
+                            waiting.push_back(Action::Account(change_themes(
+                                &file(&self.dir),
+                                &change,
+                            )));
                         }
                         AccountRequest::Remember(_) => {}
                         other => panic!("{other:?}"),
@@ -727,21 +786,21 @@ mod tests {
         // Until it is opened there is nothing to show.
         assert!(app.state.settings_shown(&app.env).is_none());
         app.open();
-        assert_eq!(app.shown().panes().len(), 6);
+        assert_eq!(app.shown().panes().len(), 7);
         assert_eq!(app.shown().problem(), None);
         // The one theme the file names is shown for both appearances.
-        assert_eq!(app.chosen("general", "theme_light"), "light");
-        assert_eq!(app.chosen("general", "theme_dark"), "light");
-        assert_eq!(app.chosen("general", "appearance"), "system");
+        assert_eq!(app.chosen("appearance", "theme_light"), "light");
+        assert_eq!(app.chosen("appearance", "theme_dark"), "light");
+        assert_eq!(app.chosen("appearance", "appearance"), "system");
         // Opening wrote nothing.
         assert_eq!(app.text(), WRITTEN);
 
         // The theme for the appearance Quill has: drawn with from now on.
         // It is written under a key of its own, and the line the user
         // wrote is left as they wrote it.
-        app.choose("general", "theme_dark", "dark");
-        assert_eq!(app.chosen("general", "theme_dark"), "dark");
-        assert_eq!(app.chosen("general", "theme_light"), "light");
+        app.choose("appearance", "theme_dark", "dark");
+        assert_eq!(app.chosen("appearance", "theme_dark"), "dark");
+        assert_eq!(app.chosen("appearance", "theme_light"), "light");
         assert_eq!(app.env.styles.theme_name(), "dark");
         assert_eq!(
             app.text(),
@@ -898,8 +957,12 @@ mod tests {
                 "theme_dark",
                 FormValue::Text("solarized".to_owned()),
             ),
-            ("general", "theme", FormValue::Text("dark".to_owned())),
-            ("general", "appearance", FormValue::Text("dim".to_owned())),
+            ("appearance", "theme", FormValue::Text("dark".to_owned())),
+            (
+                "appearance",
+                "appearance",
+                FormValue::Text("dim".to_owned()),
+            ),
             ("general", "keymap", FormValue::Text("emacs".to_owned())),
             ("composing", "editor", FormValue::Text("emacs".to_owned())),
             (
@@ -928,7 +991,7 @@ mod tests {
                 "notifications",
                 FormValue::Text("yes".to_owned()),
             ),
-            ("general", "theme_light", FormValue::Flag(true)),
+            ("appearance", "theme_light", FormValue::Flag(true)),
             (
                 "composing",
                 "undo_send_seconds",
@@ -1057,7 +1120,7 @@ mod tests {
             "[ui]\ntheme = \"light\"   # mine\n",
         );
         app.open();
-        assert_eq!(app.shown().panes().len(), 6);
+        assert_eq!(app.shown().panes().len(), 7);
         assert_eq!(app.shown().problem(), None);
         app.set("general", "notifications", FormValue::Flag(false));
         assert_eq!(
@@ -1087,10 +1150,10 @@ mod tests {
         );
         // Nothing happens by itself: the file is read when the window is
         // opened or come back to.
-        assert_eq!(app.chosen("general", "theme_dark"), "light");
+        assert_eq!(app.chosen("appearance", "theme_dark"), "light");
         app.open();
-        assert_eq!(app.chosen("general", "theme_dark"), "terminal");
-        assert_eq!(app.chosen("general", "theme_light"), "terminal");
+        assert_eq!(app.chosen("appearance", "theme_dark"), "terminal");
+        assert_eq!(app.chosen("appearance", "theme_light"), "terminal");
         assert_eq!(app.env.styles.theme_name(), "terminal");
         // Closed, the window is told nothing more.
         app.act(Action::Settings(SettingsAct::Closed));
@@ -1180,7 +1243,7 @@ mod tests {
         // Light, in the settings window: light whatever the Mac is, and
         // the shell is told to be light too.
         app.open();
-        app.choose("general", "appearance", "light");
+        app.choose("appearance", "appearance", "light");
         assert_eq!(
             look(&app),
             ("Paper".to_owned(), paper.0, paper.1, Appearance::Light)
@@ -1192,7 +1255,7 @@ mod tests {
         app.act(Action::SystemAppearance { dark: true });
         assert_eq!(look(&app).0, "Paper");
         // Dark.
-        app.choose("general", "appearance", "dark");
+        app.choose("appearance", "appearance", "dark");
         assert_eq!(
             look(&app),
             ("Night Owl+".to_owned(), night.0, night.1, Appearance::Dark)
@@ -1200,7 +1263,7 @@ mod tests {
         app.act(Action::SystemAppearance { dark: false });
         assert_eq!(look(&app).0, "Night Owl+");
         // And back to the system's, which is light now.
-        app.choose("general", "appearance", "system");
+        app.choose("appearance", "appearance", "system");
         assert_eq!(
             look(&app),
             ("Paper".to_owned(), paper.0, paper.1, Appearance::System)
@@ -1213,15 +1276,15 @@ mod tests {
 
         // The theme of the appearance in force is changed and drawn with
         // at once; the other's is changed and waits its turn.
-        app.choose("general", "theme_light", "light");
+        app.choose("appearance", "theme_light", "light");
         assert_eq!(look(&app).0, "light");
-        app.choose("general", "theme_dark", "dark");
+        app.choose("appearance", "theme_dark", "dark");
         assert_eq!(look(&app).0, "light");
         app.act(Action::SystemAppearance { dark: true });
         assert_eq!(look(&app).0, "dark");
         // `terminal` is a theme like any other: nothing is said of its
         // colours, and the app's terminals keep their own.
-        app.choose("general", "theme_dark", "terminal");
+        app.choose("appearance", "theme_dark", "terminal");
         assert_eq!(
             look(&app),
             ("terminal".to_owned(), None, None, Appearance::System)
@@ -1266,7 +1329,7 @@ mod tests {
     fn a_theme_the_shell_imported_is_read_from_the_folder_and_selected() {
         let mut app = App::over(Some(WRITTEN));
         app.open();
-        let themes = |app: &App| match app.field("general", "theme_dark") {
+        let themes = |app: &App| match app.field("appearance", "theme_dark") {
             FormField::Choice { options, .. } => options
                 .into_iter()
                 .map(|option| option.title)
@@ -1289,10 +1352,10 @@ mod tests {
         );
         assert_eq!(app.shown().problem(), None);
         // Both pop-ups show it, by a name the bridge can carry.
-        assert!(app.chosen("general", "theme_dark").starts_with("x_"));
+        assert!(app.chosen("appearance", "theme_dark").starts_with("x_"));
         assert_eq!(
-            app.chosen("general", "theme_light"),
-            app.chosen("general", "theme_dark")
+            app.chosen("appearance", "theme_light"),
+            app.chosen("appearance", "theme_dark")
         );
         app.act(Action::SystemAppearance { dark: false });
         assert_eq!(app.env.styles.theme_name(), "Night Owl+");
@@ -1300,7 +1363,7 @@ mod tests {
         // Once the two appearances have themes of their own, an imported
         // theme is the theme of the one in force: the light one while the
         // Mac is light.
-        app.choose("general", "theme_dark", "dark");
+        app.choose("appearance", "theme_dark", "dark");
         write(&app.dir, "themes/Paper", PAPER);
         app.act(Action::ThemeImported("Paper".to_owned()));
         assert_eq!(app.env.styles.theme_name(), "Paper");
@@ -1350,7 +1413,7 @@ mod tests {
         );
         app.open();
         assert!(themes(&app).contains(&"broken".to_owned()));
-        app.choose("general", "theme_dark", "broken");
+        app.choose("appearance", "theme_dark", "broken");
         assert_eq!(app.text(), before);
         assert!(
             app.shown().problem().is_some_and(|problem| problem
@@ -1358,5 +1421,127 @@ mod tests {
             "{:?}",
             app.shown().problem()
         );
+    }
+    fn press_theme(app: &mut App, action: &str, name: Option<&str>) {
+        let row = name.map(quill_tui::settings::theme_id);
+        let used = SettingsUsed::action("appearance", "themes", action, row.as_deref()).unwrap();
+        app.act(Action::Settings(SettingsAct::Used(used)));
+    }
+
+    /// What the sheet's fields hold, with these put in their place, told
+    /// to the core as the app tells it: with a button, or with none when
+    /// a colour was picked.
+    fn tell_sheet(app: &mut App, changed: &[(&str, &str)], button: Option<&str>) {
+        let form = app.state.form(&app.env).unwrap();
+        let mut values: Vec<(String, String)> = form
+            .fields()
+            .iter()
+            .filter_map(|field| Some((field.id().to_owned(), field.value()?.to_owned())))
+            .collect();
+        for (id, value) in changed {
+            let held = values.iter_mut().find(|(field, _)| field == id).unwrap();
+            held.1 = (*value).to_owned();
+        }
+        let values: Vec<(&str, &str)> = values
+            .iter()
+            .map(|(id, value)| (id.as_str(), value.as_str()))
+            .collect();
+        app.act(Action::FormUsed(
+            quill_host::bridge::FormUsed::new(form.step(), button, &values, &[]).unwrap(),
+        ));
+    }
+
+    #[test]
+    fn a_theme_made_in_the_window_is_a_file_in_the_folder_and_the_theme_in_use() {
+        let mut app = App::over(None);
+        write(&app.dir, "themes/Night Owl+", NIGHT);
+        app.open();
+        press_theme(&mut app, "edit", Some("Night Owl+"));
+        // Drawn with while it is being changed, colour by colour.
+        assert_eq!(app.env.styles.theme_name(), "Night Owl+");
+        tell_sheet(&mut app, &[("background", "#102030")], None);
+        assert_eq!(look(&app).1, Some((0x10, 0x20, 0x30)));
+        tell_sheet(&mut app, &[("name", "Midnight")], Some("confirm"));
+
+        // A file of Quill's own, and the one it was made from as it was.
+        let themes = app.dir.path().join("config/themes");
+        let text = fs::read_to_string(themes.join("Midnight.toml")).unwrap();
+        assert!(text.contains("\nname = \"Midnight\"\n"), "{text}");
+        assert!(text.contains("\nbackground = \"#102030\"\n"), "{text}");
+        assert_eq!(
+            fs::read_to_string(themes.join("Night Owl+")).unwrap(),
+            NIGHT
+        );
+        // It is the theme, in the settings file and on the screen.
+        assert_eq!(app.text(), "[ui]\ntheme = \"Midnight\"\n");
+        assert_eq!(app.env.styles.theme_name(), "Midnight");
+        assert_eq!(app.env.look.trying, None);
+        assert_eq!(look(&app).1, Some((0x10, 0x20, 0x30)));
+        assert_eq!(
+            app.chosen("appearance", "theme_dark"),
+            quill_tui::settings::theme_id("Midnight")
+        );
+
+        // Changed again under its own name: the same file, and seen.
+        press_theme(&mut app, "edit", Some("Midnight"));
+        tell_sheet(&mut app, &[("text", "#ffffff")], Some("confirm"));
+        assert_eq!(look(&app).2, Some((0xff, 0xff, 0xff)));
+        assert_eq!(app.text(), "[ui]\ntheme = \"Midnight\"\n");
+
+        // Deleted: the file goes, the settings stop naming it, and Quill
+        // is drawn in the theme it comes with.
+        press_theme(&mut app, "delete", Some("Midnight"));
+        tell_sheet(&mut app, &[], Some("confirm"));
+        assert!(!themes.join("Midnight.toml").exists());
+        assert_eq!(app.text(), "[ui]\n");
+        assert_eq!(app.env.styles.theme_name(), "dark");
+        assert!(themes.join("Night Owl+").exists());
+    }
+
+    #[test]
+    fn the_font_named_in_the_window_is_in_the_file_and_the_shell_is_told_at_once() {
+        let mut app = App::over(None);
+        app.open();
+        assert!(matches!(
+            app.field("appearance", "font"),
+            FormField::Font { value, .. } if value.is_empty()
+        ));
+        let told = |app: &App| {
+            let state = app.state.host_state(&app.env);
+            (state.font, state.font_size.map(Number::get))
+        };
+        assert_eq!(told(&app), (None, Some(13.0)));
+        app.set(
+            "appearance",
+            "font",
+            FormValue::Text("JetBrains Mono".to_owned()),
+        );
+        app.set(
+            "appearance",
+            "font_size",
+            FormValue::Number(Number::new(14.5).unwrap()),
+        );
+        assert_eq!(
+            app.text(),
+            "[ui]\nfont = \"JetBrains Mono\"\nfont_size = 14.5\n"
+        );
+        assert_eq!(told(&app), (Some("JetBrains Mono".to_owned()), Some(14.5)));
+        // The app's own font again: the line is taken out.
+        app.set("appearance", "font", FormValue::Text(String::new()));
+        app.set(
+            "appearance",
+            "font_size",
+            FormValue::Number(Number::from(12)),
+        );
+        assert_eq!(app.text(), "[ui]\nfont_size = 12\n");
+        assert_eq!(told(&app), (None, Some(12.0)));
+        // A size no terminal is given is refused, and the file left alone.
+        app.set(
+            "appearance",
+            "font_size",
+            FormValue::Number(Number::from(200)),
+        );
+        assert_eq!(app.text(), "[ui]\nfont_size = 12\n");
+        assert!(app.shown().problem().unwrap().contains("from 6 to 72"));
     }
 }

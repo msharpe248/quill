@@ -490,7 +490,7 @@ private extension FormField {
         case "text", "keys": ["kind", "id", "label", "value", "focus", "help"]
         case "secret": ["kind", "id", "label", "focus", "help"]
         case "choice": ["kind", "id", "label", "value", "options", "focus", "help"]
-        case "static", "code": ["kind", "id", "label", "value", "help"]
+        case "static", "code", "color", "font": ["kind", "id", "label", "value", "help"]
         case "toggle": ["kind", "id", "label", "title", "value", "help"]
         case "number": FormNumber.allowedKeys
         case "list": FormList.allowedKeys
@@ -501,9 +501,10 @@ private extension FormField {
 
     /// The kinds of field a sheet's form has, and the kinds the settings
     /// window has: a sheet has none that report as they change, and the
-    /// settings have no secret, no code and no keys to record.
-    static let sheetKinds = ["text", "secret", "choice", "static", "code", "keys"]
-    static let settingsKinds = ["text", "choice", "static", "toggle", "number", "list", "button"]
+    /// settings have no secret, no code, no keys to record and no colour
+    /// to pick.
+    static let sheetKinds = ["text", "secret", "choice", "static", "code", "keys", "color"]
+    static let settingsKinds = ["text", "choice", "static", "toggle", "number", "list", "button", "font"]
 
     /// A field of the message called `method`, which has fields of these
     /// `kinds`: a form's, or a settings pane's.
@@ -532,6 +533,10 @@ private extension FormField {
             kind = try .code(value: FormSecret(object.string("value")))
         case "keys":
             kind = try .keys(value: object.string("value"))
+        case "color":
+            kind = try .color(value: object.string("value"))
+        case "font":
+            kind = try .font(value: object.string("value"))
         case "toggle":
             kind = try .toggle(title: object.string("title"), value: object.bool("value"))
         case "number":
@@ -570,7 +575,7 @@ private extension FormField {
     var json: JSONValue {
         var object: [String: JSONValue] = ["kind": .string(kind.name), "id": .string(id), "label": .string(label)]
         switch kind {
-        case let .text(value), let .fixed(value), let .keys(value):
+        case let .text(value), let .fixed(value), let .keys(value), let .color(value), let .font(value):
             object["value"] = .string(value)
         case .secret:
             break
@@ -851,6 +856,14 @@ public extension CoreToShell {
                 }
             }
             try envelope.requireNotNull("appearance")
+            try envelope.requireNotNull("font")
+            try envelope.requireNotNull("font_size")
+            if let font = state.font, !StateUpdate.isFontName(font) {
+                throw BridgeError.malformed("state.update: font is not the name of a font")
+            }
+            if let size = state.fontSize, !StateUpdate.fontSizes.contains(size) {
+                throw BridgeError.malformed("state.update: font_size is not a size a font has")
+            }
             self = .stateUpdate(state)
         case "pane.preview":
             let params = try envelope.decode(PanePreviewParams.self, allowing: PanePreview.allowedKeys)

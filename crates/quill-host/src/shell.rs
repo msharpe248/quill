@@ -273,6 +273,8 @@ mod tests {
             background: None,
             foreground: None,
             appearance: bridge::Appearance::System,
+            font: None,
+            font_size: None,
         });
         host.close_pane();
 

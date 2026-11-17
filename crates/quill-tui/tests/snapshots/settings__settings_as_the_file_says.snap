@@ -3,17 +3,29 @@ source: crates/quill-tui/tests/settings.rs
 expression: outline(&shown)
 ---
 == General (general, gearshape)
-   appearance "Appearance:": choice = system of system "System" | light "Light" | dark "Dark"
-     help: System follows the Mac, and changes with it.
-   theme_light "Light theme:": choice = light of dark "Dark" | light "Light" | terminal "Terminal"
-   theme_dark "Dark theme:": choice = light of dark "Dark" | light "Light" | terminal "Terminal"
-   import_theme "": button "Import Theme…"
-     help: Themes made for Ghostty can be imported. Themes of your own are files in the themes folder beside the settings file.
    keymap "Keys:": choice = mutt of vim "Vim" | mutt "Mutt"
      help: Keys of your own in keys.toml stay on top of either.
    notifications "New mail:": toggle "Show a notification when mail arrives" = false
    threads "Message list:": toggle "List the messages of a conversation together" = false
    web_reading "Reading:": toggle "Read mail in a web pane beside the list" = true
+   more: Rules and saved searches are set in the settings file. Hooks and templates are files beside it.
+== Appearance (appearance, paintpalette)
+   appearance "Appearance:": choice = system of system "System" | light "Light" | dark "Dark"
+     help: System follows the Mac, and changes with it.
+   theme_light "Light theme:": choice = light of dark "Dark" | light "Light" | terminal "Terminal"
+   theme_dark "Dark theme:": choice = light of dark "Dark" | light "Light" | terminal "Terminal"
+   font "Font:": font = ""
+   font_size "Size:": number = 13 from 6 to 72 by 1, 1 places, points
+     help: The font of Quill’s own window, and of an editor in it. In a terminal Quill has the terminal’s font.
+   themes "Themes:": list
+     row "Dark": Dark · comes with Quill [edit]
+     row "Light": Light · comes with Quill · the theme in use [edit]
+     row "Terminal": The terminal’s own colours · comes with Quill [edit]
+     action edit "Edit…", of a row
+     action delete "Delete…", of a row
+     action import "Import…"
+     empty: 
+     help: Edit… changes a theme’s colours, and Quill is drawn in them as they are chosen. Saved under another name it is a new theme, and the one it was made from is left as it was. Themes made for Ghostty can be imported. Your own themes are files in the themes folder beside the settings file.
    more: Rules and saved searches are set in the settings file. Hooks and templates are files beside it.
 == Accounts (accounts, at)
    accounts "": list

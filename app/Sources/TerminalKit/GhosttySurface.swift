@@ -186,10 +186,10 @@ final class GhosttySurface: TerminalSurface {
 
     private static func configuration(for appearance: TerminalAppearance) -> TerminalConfiguration {
         TerminalConfiguration { builder in
-            if let family = appearance.fontFamily {
+            if let family = appearance.checkedFontFamily {
                 builder.withFontFamily(family)
             }
-            builder.withFontSize(appearance.fontSize)
+            builder.withFontSize(appearance.checkedFontSize)
             builder.withWindowPaddingX(0)
             builder.withWindowPaddingY(0)
             // Ghostty's own shortcuts (cmd-c, cmd-a, cmd-z, cmd-enter and the
