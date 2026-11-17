@@ -196,6 +196,13 @@ impl SyncHandle {
     /// Starts syncing `account`, in place of any account with the same id:
     /// a new account, or an old one whose settings changed. Must be called
     /// on the engine's Tokio runtime.
+    ///
+    /// An account that is replaced stops reading at once. The change or
+    /// the message its queue had in hand is finished with the settings it
+    /// was begun with, and only then does the queue run with the new ones.
+    /// Mail of the account's that was waiting to be tried again is tried
+    /// then, at once, if the account has a server to send through: what
+    /// it was waiting for may be what changed.
     pub fn set_account(&self, account: SyncAccount) {
         Engine::set_account(&self.engine, account);
     }
@@ -385,18 +392,60 @@ struct Running {
     wake: Notify,
     /// Wakes the queue runner before its next due time.
     queue: Notify,
-    /// The sync loop and the queue runner, to stop them when the account is
+    /// The sync loop and the watch, to stop them when the account is
     /// replaced or removed.
     task: Mutex<Vec<JoinHandle<()>>>,
+    /// The queue runner, apart from those: it changes things on the
+    /// server and in the store, and is not cut off in the middle of one
+    /// when the account is replaced.
+    queue_task: Mutex<Option<JoinHandle<()>>>,
+    /// The account has been replaced: the queue runner takes up nothing
+    /// more, and ends when what it has in hand is done.
+    retired: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Running {
+    /// Stops everything the account is doing, where it stands: for an
+    /// account that is removed, and as the engine stops. A change or a
+    /// message it had in hand is found as one cut short by a crash is.
     fn stop(&self) {
         if let Ok(mut tasks) = self.task.lock() {
             for task in tasks.drain(..) {
                 task.abort();
             }
         }
+        if let Ok(mut queue) = self.queue_task.lock()
+            && let Some(task) = queue.take()
+        {
+            task.abort();
+        }
+    }
+
+    /// Stops the account reading at once, and has its queue runner end
+    /// when the change or the message it has in hand is done: for an
+    /// account whose settings are being replaced, which goes on existing.
+    /// Returns the queue runner, to be waited for before another runs the
+    /// same queue.
+    ///
+    /// The queue runner is not cut off, as the rest is. Cut off, a claim
+    /// it had asked the store for would still be made, by nobody: the
+    /// message claimed would be neither sent nor given back, and a new
+    /// runner would never see it.
+    fn retire(&self) -> Option<JoinHandle<()>> {
+        self.retired
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        if let Ok(mut tasks) = self.task.lock() {
+            for task in tasks.drain(..) {
+                task.abort();
+            }
+        }
+        // Asleep until something is due, it wakes to see that it is over.
+        self.queue.notify_one();
+        self.queue_task.lock().ok()?.take()
+    }
+
+    fn is_retired(&self) -> bool {
+        self.retired.load(std::sync::atomic::Ordering::SeqCst)
     }
 }
 
@@ -451,7 +500,19 @@ impl Engine {
             wake: Notify::new(),
             queue: Notify::new(),
             task: Mutex::new(Vec::new()),
+            queue_task: Mutex::new(None),
+            retired: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         });
+        // In the account's place from here, so that nothing asked of it
+        // meanwhile is asked of the one it replaces.
+        let Ok(mut accounts) = engine.accounts.write() else {
+            return;
+        };
+        let replaced = accounts.insert(id, Arc::clone(&running));
+        // What the account was stops reading, and its queue runner is let
+        // finish what it has in hand: the new one waits for it, so that
+        // the queue is never run by two.
+        let before = replaced.as_ref().and_then(|replaced| replaced.retire());
         let sync = tokio::spawn({
             let engine = Arc::clone(engine);
             let running = Arc::clone(&running);
@@ -460,7 +521,22 @@ impl Engine {
         let queue = tokio::spawn({
             let engine = Arc::clone(engine);
             let running = Arc::clone(&running);
-            async move { engine.run_queue(&running).await }
+            async move {
+                if let Some(before) = before {
+                    let _ = before.await;
+                }
+                // Mail that was waiting, for a server to send through or
+                // for one that answers, is tried with these settings now
+                // and not at its next turn, where there is a server to
+                // try. Only here, with any runner that had the old
+                // settings gone: made due any sooner, it could be taken
+                // by that one, and put back to wait for what the account
+                // now has.
+                if running.account.sender.is_some() {
+                    let _ = engine.db(move |store| store.hurry_sends(id, now())).await;
+                }
+                engine.run_queue(&running).await;
+            }
         });
         let watch = tokio::spawn({
             let engine = Arc::clone(engine);
@@ -468,15 +544,13 @@ impl Engine {
             async move { engine.watch(&running).await }
         });
         if let Ok(mut tasks) = running.task.lock() {
-            tasks.extend([sync, queue, watch]);
+            tasks.extend([sync, watch]);
         }
-        let replaced = engine
-            .accounts
-            .write()
-            .ok()
-            .and_then(|mut accounts| accounts.insert(id, running));
-        if let Some(replaced) = replaced {
-            replaced.stop();
+        if let Ok(mut task) = running.queue_task.lock() {
+            *task = Some(queue);
+        }
+        drop(accounts);
+        if replaced.is_some() {
             // Its pass may have been cut short mid-way.
             engine.emit(SyncEvent::Syncing {
                 account: id,
@@ -930,7 +1004,22 @@ impl Engine {
             // the send that queued them on the next turn of this loop.
             let mut waiting_until: Option<i64> = None;
             loop {
-                let claimed = self.db(move |store| store.claim_operation(id, now())).await;
+                // An account that has been replaced takes up nothing
+                // more: what is left is the next runner's.
+                if running.is_retired() {
+                    return;
+                }
+                // Asked again where the claim is made: between here and
+                // there the account may have been replaced.
+                let retired = Arc::clone(&running.retired);
+                let claimed = self
+                    .db(move |store| {
+                        if retired.load(std::sync::atomic::Ordering::SeqCst) {
+                            return Ok(None);
+                        }
+                        store.claim_operation(id, now())
+                    })
+                    .await;
                 match claimed {
                     Ok(Some(operation)) => {
                         if let Some(retry_at) = self.carry_out(running, operation).await {
@@ -949,7 +1038,18 @@ impl Engine {
             }
             if waiting_until.is_none() {
                 loop {
-                    let claimed = self.db(move |store| store.claim_send(id, now())).await;
+                    if running.is_retired() {
+                        return;
+                    }
+                    let retired = Arc::clone(&running.retired);
+                    let claimed = self
+                        .db(move |store| {
+                            if retired.load(std::sync::atomic::Ordering::SeqCst) {
+                                return Ok(None);
+                            }
+                            store.claim_send(id, now())
+                        })
+                        .await;
                     match claimed {
                         Ok(Some(outgoing)) => {
                             let queued_more = self.send(account, outgoing).await;
@@ -981,6 +1081,9 @@ impl Engine {
                 Some(at) => Duration::from_secs(u64::try_from(at - now()).unwrap_or(0).max(1)),
                 None => Duration::from_secs(24 * 60 * 60),
             };
+            if running.is_retired() {
+                return;
+            }
             tokio::select! {
                 () = tokio::time::sleep(wait) => {}
                 () = running.queue.notified() => {}

@@ -896,12 +896,9 @@ impl Service {
         }
         let id = self.register(&account)?;
         // Mail that was waiting, for a server to send through or for one
-        // that answers, is tried with the new settings now.
-        self.store
-            .lock()
-            .map_err(|_| "the store is unavailable after an earlier failure".to_owned())?
-            .hurry_sends(id, now())
-            .map_err(|err| err.to_string())?;
+        // that answers, is tried with the new settings as soon as the
+        // engine has the account as it now is: the engine hurries it, when
+        // nothing with the old settings can take it first.
         Ok(sync_account(id, &account, imap, &self.secrets, None))
     }
 
@@ -1017,15 +1014,9 @@ impl Service {
             smtp.fingerprint = Some(sender.clone());
         }
         drop(once);
-        if sending {
-            // Mail that was waiting on this answer goes now, not at its
-            // next retry.
-            self.store
-                .lock()
-                .map_err(|_| "the store is unavailable after an earlier failure".to_owned())?
-                .hurry_sends(id, now())
-                .map_err(|err| err.to_string())?;
-        }
+        // Mail that was waiting on this answer goes when the engine has
+        // the account as it now is, and not at its next retry: the engine
+        // hurries what an account it is given again was waiting to send.
         let tokens = oauth::tokens(&account, &self.secrets, &mut None)?;
         Ok(sync_account(id, &account, imap, &self.secrets, tokens))
     }
@@ -1111,6 +1102,8 @@ fn sentence(message: &str) -> String {
     out
 }
 
+/// The time now, for the tests' own mail.
+#[cfg(test)]
 fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

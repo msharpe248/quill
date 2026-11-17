@@ -2126,14 +2126,15 @@ async fn an_account_with_no_way_to_send_says_so() {
     );
 
     // The account is given a server, as when it is edited: what was
-    // waiting is hurried, and goes.
+    // waiting goes, with nothing more asked. It is the engine that
+    // hurries it, once the queue is run with the new settings and by
+    // nothing else: the runner that had no server may be in the middle of
+    // looking for more to send, and must not be the one to find it.
     let backend = rig.backend.clone();
     rig.handle.set_account(SyncAccount {
         sender: Some(Arc::new(rig.post.clone())),
         ..SyncAccount::reading(rig.account, "Work", Arc::new(backend))
     });
-    assert_eq!(rig.store.hurry_sends(rig.account, now()).unwrap(), 1);
-    rig.handle.send(SyncRequest::Queue);
     rig.until(|event| matches!(event, SyncEvent::Sent { .. }))
         .await;
     assert_eq!(rig.post.0.lock().unwrap().sent.len(), 1);

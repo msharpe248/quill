@@ -1164,3 +1164,13 @@ The owner: a theme editor; a new name given while editing makes a new theme; a w
 - The sixteen colours an editor's pane names are still libghostty's own two sets (see "Themes, and light and dark").
 - Bigger and Smaller in the View menu (`cmd-+`, `cmd--`); line spacing and thicker strokes, which libghostty has settings for.
 - Putting a deleted theme in the Trash.
+
+## An account given again does not lose the mail that was waiting (2026-11-17)
+
+Found by a test that failed once on GitHub and about one time in fifty here with the Mac busy: mail waiting for an account to have a sending server was never sent after the account was given one.
+
+- **What happened.** Replacing an account in the engine started its new tasks and cut the old ones off where they stood. The old queue runner, the one with no server, could be in the middle of looking for more to send. Made due at that moment, the waiting message was taken by it: found to have no server and put back to wait an hour, or, where the runner was cut off after asking the store for it, claimed by nobody and left as "being sent", which only the next start puts right. Either way the user had given the account a server and the mail did not go.
+- **The queue runner of an account that is replaced is let finish** what it has in hand, with the settings it began with, and takes up nothing more (`Running::retire`; asked before a claim and again where the claim is made). It is not cut off. The new runner waits for it, so the queue is never run by two. Reading and watching are still cut off at once: they change nothing that is not put right by the next pass.
+- **The engine hurries what was waiting, and only it does** (`set_account`: when the queue starts with the new settings, if the account has a server to send through). The accounts service did it before handing the account over, which is what made the message due while the old runner could still take it. At the start of a run nothing changes: `accounts::prepare` already hurried the same mail.
+- **An account that is removed, and the engine stopping, cut off as before.** What was in hand then is found as after a crash, and a message that may have gone is held for the user and not sent twice.
+- **Seen:** the test that failed, 960 times with 24 at once, none failing (it had failed 4 times in 288, and 14 in 720); the engine's whole suite 36 times under the same load.
