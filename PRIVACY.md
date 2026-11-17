@@ -32,6 +32,7 @@ When you sign in to a Gmail or Google Workspace account, Quill asks Google for a
 - Your Google data is read from Google by the copy of Quill on your Mac and is stored only on that Mac.
 - It is not sent to Quill's author or to any other party.
 - It is not used for advertising, is not sold, and is not used to train AI or machine-learning models.
+- Quill has no AI features: it does not use Google's services or your Google data to make, change or analyse pictures, video, sound or text with AI.
 - No person other than you reads it.
 
 Quill's use of information received from Google APIs adheres to the [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy), including the Limited Use requirements.
@@ -46,4 +47,4 @@ The same holds for accounts that sign in with Microsoft: Quill reads and sends t
 
 Open an issue on the page Quill is published from: <https://github.com/msharpe248/quill/issues>.
 
-*Last changed: 16 November 2026.*
+*Last changed: 17 November 2026.*
