@@ -215,7 +215,7 @@ impl Harness {
             // As in a terminal: Vim is the user's own, and programs run.
             editor_pane: false,
             external: quill_tui::vim::ExternalEditor::Vim,
-            vim_program: None,
+            editor_program: None,
             hooks: Vec::new(),
             hooks_enabled: true,
             // As in a terminal: there is no web view pane to read in.

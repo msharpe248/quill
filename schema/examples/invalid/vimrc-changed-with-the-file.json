@@ -1,1 +1,0 @@
-{ "jsonrpc": "2.0", "method": "vimrc.changed", "params": { "imported": true, "path": "/Users/robin/.vimrc" } }

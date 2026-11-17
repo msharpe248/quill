@@ -67,8 +67,7 @@ public struct EditorSlot: Equatable, Sendable {
     }
 
     /// The core asked for an editor on the draft called `title`. `available`
-    /// says whether there is a Vim to run: the Mac's own, or the user's
-    /// script, whichever was asked for.
+    /// says whether the program it named is there to run.
     public mutating func request(title: String, available: Bool) -> Answer {
         requests += 1
         if isRunning {
@@ -117,10 +116,12 @@ public enum PoliteStop {
     ///   command.
     /// - nano (Pico): `ctrl-c`, which cancels a question it is asking and
     ///   otherwise only says where the cursor is.
+    /// - mg: `ctrl-g`, which gives up whatever it was asking or doing.
     public static func leaveMode(for editor: EditorKind) -> String {
         switch editor {
-        case .vim, .script: "\u{1B}"
+        case .vim: "\u{1B}"
         case .nano: "\u{03}"
+        case .mg: "\u{07}"
         }
     }
 
@@ -134,10 +135,17 @@ public enum PoliteStop {
     ///   left it, then `:wqa` and return.
     /// - nano (Pico): `ctrl-x`. It was started in its tool mode, where
     ///   leaving saves without asking.
+    /// - mg: `ctrl-x ctrl-c`, which leaves, and `y` twice. With something
+    ///   unsaved it asks whether to save it, and then, of text with no
+    ///   newline at its end, whether to add one: yes to both. With
+    ///   nothing to ask it has gone already, and the answers go nowhere.
+    ///   (Saving first with `ctrl-x ctrl-s` would leave an answer typed
+    ///   into the message whenever the second question is not asked.)
     public static func saveAndQuit(for editor: EditorKind) -> String {
         switch editor {
-        case .vim, .script: "\u{1C}\u{0E}:wqa\r"
+        case .vim: "\u{1C}\u{0E}:wqa\r"
         case .nano: "\u{18}"
+        case .mg: "\u{18}\u{03}yy"
         }
     }
 

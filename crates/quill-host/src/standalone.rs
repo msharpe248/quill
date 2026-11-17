@@ -114,9 +114,6 @@ impl Host for StandaloneHost {
             // Nor a chooser of themes: `quill theme import` is how one is
             // imported from a terminal.
             | CoreToShell::ThemesPick(_)
-            // Nor a vimrc to take in: in a terminal the user's own Vim
-            // reads the user's own.
-            | CoreToShell::EditorSetup(_)
             // Nor a window of keys: the list is drawn over the panes.
             | CoreToShell::KeysList(_)
             | CoreToShell::KeysShow(_)

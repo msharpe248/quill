@@ -1,174 +1,88 @@
 import Bridge
 import Foundation
 
-/// How an editor is started on a draft: the program, its arguments, the
-/// whole of its environment and the folder it starts in.
+/// How an editor is started on a draft: the program, its arguments, its
+/// environment and the folder it starts in.
 ///
-/// The draft's path and its folder come from outside the shell. Each is an
-/// argument or an environment value, whole: neither is ever written into a
-/// command for an editor to parse, nor passed through a shell. The one
-/// command Vim is given is a constant, and the other editors are given
-/// none.
+/// The command is the core's, whole (`pane.editor`): the user's own editor,
+/// by its absolute path, with the arguments that kind of editor is given.
+/// The shell adds nothing to it and takes nothing from it, and it is an
+/// argv, never a line for a shell. The editor is the user's in every way:
+/// it has the environment the app has, so it reads their own settings from
+/// their own home folder.
 public struct EditorLaunch: Equatable, Sendable {
     public let executable: URL
     /// The arguments after the program's own name.
     public let arguments: [String]
-    /// Every variable the editor is given. It inherits no other.
+    /// Every variable the editor is given.
     public let environment: [String: String]
     /// The draft's own folder.
     public let workingDirectory: URL
-    /// The program is the user's own script, which macOS runs outside the
-    /// sandbox. Its environment and the folder it starts in are then not
-    /// the shell's to choose, and `environment` is empty.
-    public let userScript: Bool
 
-    /// What `-u` is given when the user has imported no vimrc: Vim's own
-    /// defaults, and no file.
-    public static let defaults = "DEFAULTS"
-
-    /// The command that loads Quill's plugin once the draft is open, as the
-    /// argument of `-c`, for the Vim that comes with macOS. It is the same
-    /// for every launch: it has no path in it. Vim reads where the plugin is
-    /// from a variable in its environment, as a value, and escapes it itself
-    /// before using it as a file's name.
-    ///
-    /// `-S file` would be shorter, but Vim runs that as the command
-    /// `source file` with the path written into it, where a space, a quote
-    /// or a `%` in the name of the folder the app is installed in would be
-    /// read as part of the command.
-    public static let loadPlugin = "execute 'source' fnameescape($QUILL_VIM_PLUGIN)"
-
-    /// The same for a Vim started by the user's own script. Nothing can be
-    /// put in that Vim's environment, so the draft's folder is taken from
-    /// the draft that Vim has just opened: the core puts a copy of the
-    /// plugin beside it. Still a constant, with no path in it.
-    public static let loadPluginBesideDraft =
-        "let g:quill_dir = expand('%:p:h') | execute 'source' fnameescape(g:quill_dir . '/quill.vim')"
-
-    /// Run before any file is read: modelines are off for every buffer.
-    /// In a group of its own, because a vimrc that starts with a bare
-    /// `autocmd!` clears every command that is in no group.
-    public static let noModelines =
-        "augroup QuillNoModelines | execute 'autocmd BufReadPre * setlocal nomodeline' | augroup END"
-
-    /// A program that does nothing and fails. Vim is told this is the shell,
-    /// so `:!` and `:shell` start nothing: no program is run from Vim.
-    public static let noShell = "/usr/bin/false"
-
-    /// What Vim takes from the shell's own environment, when it is there:
-    /// the language and the time zone. Nothing else is passed down, so no
-    /// `VIMINIT`, `EXINIT`, `SHELL` or `PATH` of the user's reaches Vim.
-    public static let inherited = ["LANG", "LC_ALL", "LC_CTYPE", "TZ"]
-
-    /// What Pico (and so the Mac's nano) is given: save on leaving, without
-    /// asking.
-    public static let picoToolMode = "-t"
-
-    /// What nano is given to start on a line: the one the message's body
-    /// starts on, past the header fields. It knows nothing of the draft's
-    /// shape; Vim's plugin puts the cursor for Vim. A number the
-    /// core gave, and so only ever digits.
-    public static func startAt(_ line: Int) -> String {
-        "+\(line)"
-    }
+    /// The variable that says where the draft's folder is. Quill's plugin
+    /// for Vim is read from there, and reads it to find its notes.
+    public static let draftFolderVariable = "QUILL_DRAFT_DIR"
 
     /// - Parameters:
-    ///   - editor: the editor to run: one macOS has, or the user's own Vim
-    ///     by their script.
-    ///   - draft: the file to edit and its folder, as the core named them.
-    ///   - vimrc: the user's imported vimrc, if they have one. Only the
-    ///     Mac's own Vim is given it.
+    ///   - request: what the core asked for.
     ///   - term: `TERM`, as the main terminal has it.
-    ///   - home: the app's own home folder: inside the sandbox, its
-    ///     container.
-    ///   - temporaryDirectory: the app's own temporary folder.
-    ///   - base: the shell's environment, from which only `inherited` is
-    ///     taken.
-    public init(
-        editor: EditorToRun,
-        draft: PaneEditor,
-        vimrc: URL?,
-        term: String,
-        home: String,
-        temporaryDirectory: String,
-        base: [String: String]
-    ) {
-        workingDirectory = URL(fileURLWithPath: draft.dir, isDirectory: true)
-        let system: SystemEditor
-        switch editor {
-        case let .system(found):
-            system = found
-        case let .script(script):
-            // The user's own Vim, with their own vimrc, viminfo and swap
-            // files: it is theirs, as it is in a terminal. What Quill asks
-            // of it is what it asks there: modelines off for the draft, and
-            // its plugin. The script is handed the helper first.
-            executable = script.script
-            arguments = [
-                script.helper.path,
-                "-N",
-                "--cmd", Self.noModelines,
-                "-c", Self.loadPluginBesideDraft,
-                "--",
-                draft.path,
-            ]
-            environment = [:]
-            userScript = true
-            return
-        }
-        executable = system.binary
-        userScript = false
-        switch system.kind {
-        case .vim, .script:
-            arguments = [
-                // A vimrc named with -u leaves Vim behaving as vi did, which
-                // no vimrc written for Vim expects. -N says otherwise first.
-                "-N",
-                // Naming a vimrc, or none, also keeps Vim from reading the
-                // one macOS has for everybody.
-                "-u", vimrc?.path ?? Self.defaults,
-                // No viminfo file and no swap file: nothing is kept of a
-                // message but the draft.
-                "-i", "NONE",
-                "-n",
-                // A message quotes other people's words, and a line of them
-                // that looks like a modeline must not set options here,
-                // whatever the vimrc says about modelines.
-                "--cmd", Self.noModelines,
-                "-c", Self.loadPlugin,
-                // Whatever follows is a file, even if it were to start with
-                // a dash or a plus.
-                "--",
-                draft.path,
-            ]
-        case .nano:
-            // Pico's "tool mode", for an editor run by another program:
-            // leaving saves the draft without asking, and the file is never
-            // written under another name. The path is absolute, so it
-            // never reads as an option.
-            arguments = [Self.picoToolMode, Self.startAt(draft.line), draft.path]
-        }
-        var environment: [String: String] = [:]
-        for name in Self.inherited {
-            environment[name] = base[name]
-        }
-        if environment["LANG"] == nil {
-            environment["LANG"] = "en_US.UTF-8"
-        }
+    ///   - base: the environment programs the app starts are given
+    ///     (`ProgramEnvironment`).
+    public init(request: PaneEditor, term: String, base: [String: String]) {
+        executable = URL(fileURLWithPath: request.program)
+        arguments = request.arguments
+        workingDirectory = URL(fileURLWithPath: request.dir, isDirectory: true)
+        var environment = base
         environment["TERM"] = term
-        environment["HOME"] = home
-        environment["TMPDIR"] = temporaryDirectory
-        environment["SHELL"] = Self.noShell
-        if let plugin = system.plugin {
-            // Vim knows where its own files are, so `VIM` and `VIMRUNTIME`
-            // are left for it to work out. Only the plugin is Quill's, and
-            // it reads the draft's folder from here.
-            environment["QUILL_VIM_PLUGIN"] = plugin.path
-            environment["QUILL_DRAFT_DIR"] = draft.dir
-        }
+        environment["COLORTERM"] = "truecolor"
+        environment[Self.draftFolderVariable] = request.dir
         self.environment = environment
     }
 
     /// The program's name and its arguments, as it is started.
     public var argv: [String] { [executable.path] + arguments }
+}
+
+/// The environment of the programs the app starts: the core, and through
+/// it the user's own editor.
+///
+/// An app opened from the Dock or the Finder is not started by a shell, so
+/// it has the Mac's own `PATH` and not the one the user's shell sets up.
+/// Homebrew's two folders are put after it when they are there, so that a
+/// program installed that way is found by its name: after, so that nothing
+/// already found changes.
+public enum ProgramEnvironment {
+    /// The `PATH` every Mac has.
+    public static let systemPath = "/usr/bin:/bin:/usr/sbin:/sbin"
+    /// Where Homebrew puts programs, on Apple silicon and on Intel.
+    public static let homebrewFolders = ["/opt/homebrew/bin", "/usr/local/bin"]
+
+    /// `inherited` (or the Mac's own, when there is none) with each of
+    /// Homebrew's folders that `isFolder` finds put after it, unless it is
+    /// among them already.
+    public static func path(inherited: String?, isFolder: (String) -> Bool) -> String {
+        var folders = (inherited.flatMap { $0.isEmpty ? nil : $0 } ?? systemPath)
+            .split(separator: ":", omittingEmptySubsequences: true).map(String.init)
+        for folder in homebrewFolders where !folders.contains(folder) && isFolder(folder) {
+            folders.append(folder)
+        }
+        return folders.joined(separator: ":")
+    }
+
+    /// What the app inherited, with the `PATH` above and a language where
+    /// none was said: a terminal program with none takes its text for ASCII.
+    public static func environment(inherited: [String: String], isFolder: (String) -> Bool) -> [String: String] {
+        var environment = inherited
+        environment["PATH"] = path(inherited: inherited["PATH"], isFolder: isFolder)
+        if environment["LANG"] == nil, environment["LC_ALL"] == nil {
+            environment["LANG"] = "en_US.UTF-8"
+        }
+        return environment
+    }
+
+    /// Whether there is a folder at `path`.
+    public static func folderExists(_ path: String) -> Bool {
+        var isFolder: ObjCBool = false
+        return FileManager.default.fileExists(atPath: path, isDirectory: &isFolder) && isFolder.boolValue
+    }
 }

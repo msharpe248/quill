@@ -1,8 +1,8 @@
 //! Where Quill keeps its files.
 //!
-//! Inside the app sandbox `HOME` is the app's container, so the same layout
-//! serves the standalone binary and the bundled one. This moves behind
-//! `quill-host` when that crate arrives in M1.
+//! The same layout serves `quill` in a terminal and the core inside Quill's
+//! app, and since the app is not sandboxed it is the same place: the two
+//! are one mailbox, which only one of them may have open at a time.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};

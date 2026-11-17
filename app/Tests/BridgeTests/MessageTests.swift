@@ -33,8 +33,8 @@ private enum Examples {
         let examples = try Examples.load("core-to-shell")
         #expect(
             examples.map(\.name) == [
-                "clipboard.write.json", "commands.list.json", "editor.place.json", "editor.setup.json",
-                "file.open.json", "files.pick.json",
+                "clipboard.write.json", "commands.list.json", "editor.place.json", "file.open.json",
+                "files.pick.json",
                 "files.save.json", "form.close.json", "form.show.json", "keys.list.json", "keys.show.json",
                 "link.open.json", "notify.clear.json", "notify.post.json", "pane.close.json",
                 "pane.editor.json", "pane.play.json", "pane.preview.json",
@@ -60,7 +60,7 @@ private enum Examples {
                 "files.saved.json", "form.used.json", "notify.used.json", "settings.closed.json",
                 "settings.opened.json", "settings.used.json", "spell.checked.json",
                 "spell.suggested.json", "themes.imported.json", "thumbnail.made.json", "url.open.json",
-                "vimrc.changed.json", "window.resized.json",
+                "window.resized.json",
             ])
         for (name, text) in examples {
             let message = try ShellToCore(line: text)
@@ -85,7 +85,10 @@ private enum Examples {
         #expect(examples.count >= 6)
         for name in [
             "notification-with-no-id.json", "too-many-notification-actions.json", "url-that-is-not-mail.json",
-            "misspelt-word-with-no-length.json", "too-many-suggestions.json", "editor-on-a-relative-path.json",
+            "misspelt-word-with-no-length.json", "too-many-suggestions.json", "editor-in-a-relative-folder.json",
+            "editor-of-a-kind-there-is-not.json", "editor-named-by-its-path.json",
+            "editor-program-found-by-its-name.json", "editor-with-no-program.json",
+            "editor-command-as-a-line.json",
             "form-secret-sent-by-the-core.json", "form-choice-with-no-options.json",
             "form-code-with-the-focus.json", "form-code-with-nothing-to-show.json",
             "form-field-of-an-unknown-kind.json", "form-used-with-a-button-that-is-no-name.json",
@@ -103,8 +106,7 @@ private enum Examples {
             "theme-imported-with-a-hidden-name.json", "theme-imported-under-a-toml-name.json",
             "settings-button-with-nothing-on-it.json", "form-button-field-in-a-sheet.json",
             "editor-place-with-the-keys-and-nowhere-to-be.json", "editor-place-with-no-rows.json",
-            "editor-setup-of-a-kind-there-is-not.json", "editor-setup-with-a-path.json",
-            "key-line-that-says-nothing.json", "vimrc-changed-with-the-file.json",
+            "key-line-that-says-nothing.json",
         ] {
             #expect(examples.contains { $0.name == name }, "\(name) is missing")
         }
@@ -357,34 +359,6 @@ private enum Examples {
         }
         #expect(throws: BridgeError.self) {
             try CoreToShell(line: #"{"jsonrpc":"2.0","method":"keys.show","params":{"front":true}}"#)
-        }
-    }
-
-    @Test func whatIsSetUpForAnEditorIsAWordAndTheVimrcIsOnlySaidToBeThere() throws {
-        let examples = try Dictionary(uniqueKeysWithValues: Examples.load("core-to-shell").map { ($0.name, $0.text) })
-        #expect(try CoreToShell(line: examples["editor.setup.json"]!) == .editorSetup(.importVimrc))
-        for setup in EditorSetup.allCases {
-            let line = #"{"jsonrpc":"2.0","method":"editor.setup","params":{"action":"\#(setup.rawValue)"}}"#
-            #expect(try CoreToShell(line: line) == .editorSetup(setup))
-            #expect(CoreToShell.editorSetup(setup).line == line)
-        }
-        #expect(EditorSetup.allCases.map(\.rawValue) == ["import_vimrc", "remove_vimrc", "show_scripts"])
-        for bad in [
-            #"{}"#, #"{"action":"run_shell"}"#, #"{"action":7}"#,
-            #"{"action":"import_vimrc","path":"/Users/robin/.vimrc"}"#,
-        ] {
-            let line = #"{"jsonrpc":"2.0","method":"editor.setup","params":\#(bad)}"#
-            #expect(throws: BridgeError.self, "\(bad)") { try CoreToShell(line: line) }
-        }
-
-        let answers = try Dictionary(uniqueKeysWithValues: Examples.load("shell-to-core").map { ($0.name, $0.text) })
-        #expect(try ShellToCore(line: answers["vimrc.changed.json"]!) == .vimrcChanged(imported: true))
-        #expect(
-            ShellToCore.vimrcChanged(imported: false).line
-                == #"{"jsonrpc":"2.0","method":"vimrc.changed","params":{"imported":false}}"#)
-        for bad in [#"{}"#, #"{"imported":"yes"}"#, #"{"imported":true,"path":"/Users/robin/.vimrc"}"#] {
-            let line = #"{"jsonrpc":"2.0","method":"vimrc.changed","params":\#(bad)}"#
-            #expect(throws: BridgeError.self, "\(bad)") { try ShellToCore(line: line) }
         }
     }
 
@@ -698,12 +672,18 @@ private enum Examples {
 
     @Test func theEditorDecodesToWhatItSays() throws {
         let examples = try Dictionary(uniqueKeysWithValues: Examples.load("core-to-shell").map { ($0.name, $0.text) })
-        let folder = "/Users/robin/Library/Containers/dev.quill.Quill/Data/tmp/quill-edit-812"
-        #expect(
-            try CoreToShell(line: examples["pane.editor.json"]!)
-                == .paneEditor(
-                    PaneEditor(
-                        path: folder + "/message.quill", dir: folder, title: "Re: Q4 roadmap", editor: .vim, line: 7)!))
+        let folder = "/Users/robin/Library/Caches/Quill/edit-812"
+        let asked = PaneEditor(
+            dir: folder, title: "Re: Q4 roadmap", editor: .vim,
+            argv: [
+                "/opt/homebrew/bin/vim", "-N", "--cmd",
+                "augroup QuillNoModelines | execute 'autocmd BufReadPre * setlocal nomodeline' | augroup END",
+                "-c", "execute 'source' fnameescape($QUILL_DRAFT_DIR . '/quill.vim')", "--",
+                folder + "/message.quill",
+            ])!
+        #expect(try CoreToShell(line: examples["pane.editor.json"]!) == .paneEditor(asked))
+        #expect(asked.program == "/opt/homebrew/bin/vim")
+        #expect(asked.arguments.first == "-N" && asked.arguments.last == folder + "/message.quill")
 
         let answers = try Dictionary(uniqueKeysWithValues: Examples.load("shell-to-core").map { ($0.name, $0.text) })
         #expect(
@@ -723,36 +703,49 @@ private enum Examples {
         #expect(hungUp.line == #"{"jsonrpc":"2.0","method":"editor.exited","params":{"ran":true,"status":-1}}"#)
         #expect(try ShellToCore(line: hungUp.line) == hungUp)
 
-        // Paths and a title keep whatever is in them through the line.
+        // A folder, an argument and a title keep whatever is in them
+        // through the line: each is a value, never part of a command.
         let awkward = PaneEditor(
-            path: "/tmp/it's \"quoted\"/line\nbreak/caf\u{E9}.quill", dir: "/tmp/it's \"quoted\"/line\nbreak",
-            title: "Re: \u{1F4EC} \"hello\"\n")!
+            dir: "/tmp/it's \"quoted\"/line\nbreak", title: "Re: \u{1F4EC} \"hello\"\n",
+            argv: ["/opt/my vim/vim", "-c", "echo 'a b' | q", "/tmp/it's \"quoted\"/line\nbreak/caf\u{E9}.quill"])!
         #expect(!CoreToShell.paneEditor(awkward).line.contains("\n"))
         #expect(try CoreToShell(line: CoreToShell.paneEditor(awkward).line) == .paneEditor(awkward))
         // No title is a title.
         #expect(
-            CoreToShell.paneEditor(PaneEditor(path: "/d/m", dir: "/d", title: "")!).line
-                == #"{"jsonrpc":"2.0","method":"pane.editor","params":{"dir":"/d","editor":"vim","line":1,"path":"/d/m","title":""}}"#
+            CoreToShell.paneEditor(PaneEditor(dir: "/d", title: "", argv: ["/usr/bin/vim", "/d/m"])!).line
+                == #"{"jsonrpc":"2.0","method":"pane.editor","params":{"argv":["/usr/bin/vim","/d/m"],"dir":"/d","editor":"vim","title":""}}"#
         )
-        // Each editor is asked for by its word, and each word comes back
-        // as the editor it was.
-        #expect(EditorKind.allCases.map(\.rawValue) == ["vim", "nano", "script"])
+        // Each kind of editor is said by its word, and each word comes
+        // back as the kind it was.
+        #expect(EditorKind.allCases.map(\.rawValue) == ["vim", "nano", "mg"])
         for kind in EditorKind.allCases {
-            let asked = CoreToShell.paneEditor(PaneEditor(path: "/d/m", dir: "/d", title: "", editor: kind, line: 12)!)
+            let asked = CoreToShell.paneEditor(
+                PaneEditor(dir: "/d", title: "", editor: kind, argv: ["/usr/bin/x", "+12", "/d/m"])!)
             #expect(asked.line.contains(#""editor":"\#(kind.rawValue)""#))
-            #expect(asked.line.contains(#""line":12"#))
             #expect(try CoreToShell(line: asked.line) == asked)
         }
     }
 
     @Test func theEditorHoldsOnlyWhatTheSchemaAllows() {
-        // Both paths absolute.
-        #expect(PaneEditor(path: "/d/message.quill", dir: "/d", title: "x") != nil)
-        #expect(PaneEditor(path: "message.quill", dir: "/d", title: "x") == nil)
-        #expect(PaneEditor(path: "/d/message.quill", dir: "d", title: "x") == nil)
-        #expect(PaneEditor(path: "/d/message.quill", dir: "", title: "x") == nil)
-        #expect(PaneEditor(path: "", dir: "/d", title: "x") == nil)
-        #expect(PaneEditor(path: "~/message.quill", dir: "/d", title: "x") == nil)
+        // The folder absolute, and the program named by its absolute path:
+        // never a name to be looked for, and never nothing.
+        let argv = ["/usr/bin/vim", "/d/message.quill"]
+        #expect(PaneEditor(dir: "/d", title: "x", argv: argv) != nil)
+        #expect(PaneEditor(dir: "d", title: "x", argv: argv) == nil)
+        #expect(PaneEditor(dir: "", title: "x", argv: argv) == nil)
+        #expect(PaneEditor(dir: "~/d", title: "x", argv: argv) == nil)
+        #expect(PaneEditor(dir: "/d", title: "x", argv: []) == nil)
+        #expect(PaneEditor(dir: "/d", title: "x", argv: ["vim", "/d/message.quill"]) == nil)
+        #expect(PaneEditor(dir: "/d", title: "x", argv: ["./vim"]) == nil)
+        // No more arguments, and none longer, than an editor is given, and
+        // none that could end early as a C string.
+        let most = PaneEditor.mostArguments
+        #expect(PaneEditor(dir: "/d", title: "x", argv: ["/v"] + Array(repeating: "a", count: most - 1)) != nil)
+        #expect(PaneEditor(dir: "/d", title: "x", argv: ["/v"] + Array(repeating: "a", count: most)) == nil)
+        let longest = String(repeating: "a", count: PaneEditor.longestArgument)
+        #expect(PaneEditor(dir: "/d", title: "x", argv: ["/v", longest]) != nil)
+        #expect(PaneEditor(dir: "/d", title: "x", argv: ["/v", longest + "a"]) == nil)
+        #expect(PaneEditor(dir: "/d", title: "x", argv: ["/v", "a\u{0}b"]) == nil)
 
         // A status from -255 to 255.
         #expect(EditorExited.statuses == -255...255)
@@ -771,61 +764,54 @@ private enum Examples {
     }
 
     @Test func editorErrorsSayWhatIsWrong() {
-        #expect(throws: BridgeError.malformed("pane.editor: the path and the dir must be absolute")) {
-            try CoreToShell(
-                line:
-                    #"{"jsonrpc":"2.0","method":"pane.editor","params":{"path":"m.quill","dir":"/d","title":"x","editor":"vim","line":1}}"#
-            )
-        }
-        #expect(throws: BridgeError.malformed("pane.editor: the path and the dir must be absolute")) {
-            try CoreToShell(
-                line:
-                    #"{"jsonrpc":"2.0","method":"pane.editor","params":{"path":"/d/m","dir":"d","title":"x","editor":"vim","line":1}}"#
-            )
-        }
-        // Which editor is one of a few words. A program's path is not one,
-        // nor an editor the app cannot run, nor leaving it out.
-        for editor in [
-            "/usr/bin/vim", "/opt/homebrew/bin/nvim", "Vim", "pico", "mg", "emacs", "system", "bundled",
-            "editor-command.sh", "",
+        let unusable = BridgeError.malformed(
+            "pane.editor: the dir must be absolute and the argv a program by its absolute path")
+        for bad in [
+            #"{"dir":"d","title":"x","editor":"vim","argv":["/usr/bin/vim","/d/m"]}"#,
+            #"{"dir":"/d","title":"x","editor":"vim","argv":["vim","/d/m"]}"#,
+            #"{"dir":"/d","title":"x","editor":"vim","argv":[]}"#,
         ] {
-            #expect(throws: BridgeError.malformed("pane.editor: editor is vim, nano or script, never a program")) {
+            #expect(throws: unusable, "\(bad)") {
+                try CoreToShell(line: #"{"jsonrpc":"2.0","method":"pane.editor","params":\#(bad)}"#)
+            }
+        }
+        // What kind of editor it is is one of a few words. A program's
+        // path is not one, nor leaving it out.
+        for editor in ["/usr/bin/vim", "/opt/homebrew/bin/nvim", "Vim", "pico", "emacs", "script", ""] {
+            #expect(throws: BridgeError.malformed("pane.editor: editor is vim, nano or mg, never a program")) {
                 try CoreToShell(
                     line:
-                        #"{"jsonrpc":"2.0","method":"pane.editor","params":{"path":"/d/m","dir":"/d","title":"x","editor":"\#(editor)","line":1}}"#
+                        #"{"jsonrpc":"2.0","method":"pane.editor","params":{"dir":"/d","title":"x","editor":"\#(editor)","argv":["/usr/bin/vim"]}}"#
                 )
             }
         }
         #expect(throws: BridgeError.malformed("pane.editor: missing editor")) {
             try CoreToShell(
-                line: #"{"jsonrpc":"2.0","method":"pane.editor","params":{"path":"/d/m","dir":"/d","title":"x"}}"#)
+                line: #"{"jsonrpc":"2.0","method":"pane.editor","params":{"dir":"/d","title":"x","argv":["/v"]}}"#)
         }
-        // The line the body starts on is a line there can be.
-        for line in [0, -1, 1_000_001] {
-            #expect(throws: BridgeError.malformed("pane.editor: line is from 1 to 1000000")) {
-                try CoreToShell(
-                    line:
-                        #"{"jsonrpc":"2.0","method":"pane.editor","params":{"path":"/d/m","dir":"/d","title":"x","editor":"nano","line":\#(line)}}"#
-                )
-            }
-            #expect(PaneEditor(path: "/d/m", dir: "/d", title: "x", editor: .nano, line: line) == nil)
+        #expect(throws: BridgeError.malformed("pane.editor: missing argv")) {
+            try CoreToShell(
+                line: #"{"jsonrpc":"2.0","method":"pane.editor","params":{"dir":"/d","title":"x","editor":"vim"}}"#)
         }
-        #expect(throws: BridgeError.malformed("pane.editor: missing line")) {
+        // The command is an argv, never a line.
+        #expect(throws: BridgeError.self) {
             try CoreToShell(
                 line:
-                    #"{"jsonrpc":"2.0","method":"pane.editor","params":{"path":"/d/m","dir":"/d","title":"x","editor":"nano"}}"#
+                    #"{"jsonrpc":"2.0","method":"pane.editor","params":{"dir":"/d","title":"x","editor":"vim","argv":"/usr/bin/vim /d/m"}}"#
             )
         }
         #expect(throws: BridgeError.malformed("pane.editor: missing dir")) {
-            try CoreToShell(line: #"{"jsonrpc":"2.0","method":"pane.editor","params":{"path":"/d/m","title":"x"}}"#)
+            try CoreToShell(
+                line: #"{"jsonrpc":"2.0","method":"pane.editor","params":{"title":"x","editor":"vim","argv":["/v"]}}"#)
         }
         #expect(throws: BridgeError.malformed("pane.editor: missing title")) {
-            try CoreToShell(line: #"{"jsonrpc":"2.0","method":"pane.editor","params":{"path":"/d/m","dir":"/d"}}"#)
+            try CoreToShell(
+                line: #"{"jsonrpc":"2.0","method":"pane.editor","params":{"dir":"/d","editor":"vim","argv":["/v"]}}"#)
         }
-        #expect(throws: BridgeError.malformed("pane.editor: unexpected vimrc")) {
+        #expect(throws: BridgeError.malformed("pane.editor: unexpected path")) {
             try CoreToShell(
                 line:
-                    #"{"jsonrpc":"2.0","method":"pane.editor","params":{"path":"/d/m","dir":"/d","title":"x","vimrc":"/etc/vimrc"}}"#
+                    #"{"jsonrpc":"2.0","method":"pane.editor","params":{"dir":"/d","title":"x","editor":"vim","argv":["/v"],"path":"/d/m"}}"#
             )
         }
         #expect(throws: BridgeError.malformed("editor.exited: the status must be from -255 to 255")) {
@@ -860,7 +846,7 @@ private enum Examples {
         }
         #expect(throws: BridgeError.unknownMethod("pane.editor")) {
             try ShellToCore(
-                line: #"{"jsonrpc":"2.0","method":"pane.editor","params":{"path":"/d/m","dir":"/d","title":"x"}}"#)
+                line: #"{"jsonrpc":"2.0","method":"pane.editor","params":{"dir":"/d","title":"x"}}"#)
         }
     }
 

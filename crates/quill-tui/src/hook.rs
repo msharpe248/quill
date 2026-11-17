@@ -4,7 +4,7 @@
 //! A hook is named in `hooks.toml` beside the config, by an absolute path
 //! and its arguments: an argv, never a line for a shell. It runs only when
 //! the user picks it for the message they are on, and only in a terminal:
-//! Quill's own app is sandboxed and launches nothing outside its bundle.
+//! running the user's programs from Quill's own app has not been tried.
 //!
 //! The program is the user's; the message is not. So the program gets the
 //! message as bytes on a pipe and a few of its headers as clean single

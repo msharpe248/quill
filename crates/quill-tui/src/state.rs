@@ -121,22 +121,24 @@ pub struct Env {
     /// panes. What is chosen from with the keyboard (the palette, the
     /// pickers, the help) is drawn here whatever the host.
     pub sheets: bool,
-    /// Whether the host runs Vim itself, in a pane of its own, as
-    /// Quill's app does. In a terminal Quill runs the user's own Vim
-    /// there, and gives it a copy of the plugin.
+    /// Whether the host runs an editor itself, in a terminal of its own
+    /// laid over the text's place, as Quill's app does. In a terminal
+    /// Quill runs it there, and it has the whole screen. Either way it
+    /// is the user's own editor, started with the same command.
     pub editor_pane: bool,
     /// The editor outside Quill that a message is handed to: the one the
     /// config names (`editor` under `[compose]`), and Vim when it names
     /// Quill's own.
     pub external: ExternalEditor,
-    /// The program a terminal runs as Vim, when it is not to be `vim`.
-    pub vim_program: Option<std::ffi::OsString>,
+    /// The program run as that editor, when it is not to be the one of
+    /// its name on the `PATH`: `editor_path` under `[compose]`, or for
+    /// Vim what `QUILL_VIM` says.
+    pub editor_program: Option<std::ffi::OsString>,
     /// The user's programs that a message can be given to, from
     /// `hooks.toml`.
     pub hooks: Vec<Hook>,
-    /// Whether the user's programs may be run from here at all. Never in
-    /// Quill's own app: it is sandboxed, and starts nothing outside its
-    /// bundle.
+    /// Whether the user's programs may be run from here at all. Not in
+    /// Quill's own app, where it has not been tried.
     pub hooks_enabled: bool,
     /// Whether the host has a web view pane that can stand in the
     /// reader's place and follow the list, as Quill's app has. A terminal
@@ -307,8 +309,6 @@ pub enum Action {
     /// The host has put a theme file of this name in the user's `themes`
     /// folder: the user chose it in the host's chooser.
     ThemeImported(String),
-    /// The host holds a vimrc the user imported, or holds none.
-    Vimrc(bool),
 }
 
 /// What was done with the host's settings window.
@@ -372,10 +372,6 @@ pub enum HostRequest {
     /// Ask the user to choose a theme to import, with the host's own
     /// chooser. Answered by [`Action::ThemeImported`], if one is.
     PickTheme,
-    /// Have the host do something for the editor messages are written
-    /// in that only it can: take in a vimrc, take it away, show where the
-    /// user's own script goes.
-    EditorSetup(quill_host::bridge::EditorSetupAction),
     /// Bring up the host's window of every key.
     ShowKeys,
     /// Show files in the host's viewer, starting with the one at `index`.
@@ -1294,9 +1290,6 @@ pub struct State {
     /// panes, and is drawn over them while it has the keys. Worked out
     /// from the config and [`State::sidebar_flipped`] at every update.
     pub sidebar_hidden: bool,
-    /// The host holds a vimrc the user imported, for the Vim it runs: as
-    /// it last said. The settings window offers to take it away.
-    pub vimrc_imported: bool,
     /// The user has switched the accounts pane the other way from the
     /// one Quill started with.
     sidebar_flipped: bool,
@@ -1379,7 +1372,6 @@ impl State {
             web_reading: false,
             web_flipped: false,
             sidebar_hidden: false,
-            vimrc_imported: false,
             sidebar_flipped: false,
             editor_tips: false,
             tips_asked: None,
@@ -1574,7 +1566,6 @@ impl State {
                 }
             }
             Action::ThemeImported(name) => self.on_theme_imported(env, name, &mut out),
-            Action::Vimrc(imported) => self.vimrc_imported = imported,
             Action::Paste(text) => match self.context() {
                 Context::Setup => {
                     if let Some(setup) = &mut self.setup {
@@ -3187,12 +3178,9 @@ impl State {
         out.data.push(DataRequest::EditOut {
             account: compose.account,
             content: Box::new(content.clone()),
-            // The Vim the app starts itself is told where the plugin is
-            // in the app; the user's own, in a terminal or by their
-            // script, is given a copy beside the draft. No other editor
-            // has a use for it.
-            plugin: env.external.is_vim()
-                && (!env.editor_pane || env.external == ExternalEditor::Script),
+            // A Vim is given a copy of the plugin beside the draft. No
+            // other editor has a use for it.
+            plugin: env.external.is_vim(),
             share: if body_only {
                 vim::Share::Body
             } else {
@@ -3266,30 +3254,20 @@ impl State {
             // Said in the message's own pane, where the next key clears
             // it: the message is still there to write.
             let editor = env.external;
-            compose.error = Some(if env.editor_pane && editor == ExternalEditor::Script {
-                "Quill found no editor-command.sh it can run, so the message stays \
-                 here. \"Show Editor Script Folder\" in the Quill menu shows where \
-                 it goes."
-                    .to_owned()
-            } else if env.editor_pane && editor.in_the_app().is_none() {
-                format!(
-                    "{} does not run inside Quill's app, so the message stays here. \
-                     In the app, `editor` can be vim, nano, pico or script.",
-                    editor.name()
-                )
-            } else if env.editor_pane {
-                format!(
-                    "The {} that comes with macOS could not be started, so the message \
-                     stays here.",
-                    editor.name()
-                )
-            } else {
-                format!(
+            compose.error = Some(match &env.editor_program {
+                Some(named) => format!(
+                    "{} could not be started, so the message stays here. Quill looked \
+                     for {}, which `editor_path` or QUILL_VIM names.",
+                    editor.name(),
+                    text::sanitize_line(&named.to_string_lossy())
+                ),
+                None => format!(
                     "{} could not be started, so the message stays here. Quill runs \
-                     the `{}` on your PATH.",
+                     the `{}` on your PATH; `editor_path` in the settings file names \
+                     another.",
                     editor.name(),
                     editor.program()
-                )
+                ),
             });
             out.data.push(DataRequest::EditDrop { dir });
         } else if status != 0 {

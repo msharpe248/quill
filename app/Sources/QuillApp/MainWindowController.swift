@@ -67,8 +67,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     private(set) var editorSlot = EditorSlot()
     /// What waits for the editor to end: the core being told to stop.
     private var afterEditor: (() -> Void)?
-    /// The user's vimrc, as Quill keeps it.
-    let vimrc: ImportedVimrc
     /// The folder the core reads `config.toml` from.
     let configFolder: URL
 
@@ -125,63 +123,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             panel.beginSheetModal(for: window, completionHandler: finish)
         } else {
             finish(panel.runModal())
-        }
-    }
-
-    /// Tells the user what importing a vimrc means, then asks which file,
-    /// and hands it to the completion; `nil` means they thought better of
-    /// it. A scripted run replaces it, so that a check never waits on an
-    /// alert or a panel.
-    var vimrcPicker: (NSWindow?, @escaping (URL?) -> Void) -> Void = { window, done in
-        let alert = NSAlert()
-        alert.messageText = "Import a vimrc for writing mail in Vim?"
-        alert.informativeText = """
-            Quill copies the file you choose into its own folder and uses the copy. Your file is \
-            not changed, and later changes to it are not picked up. Importing again replaces the copy.
-
-            Vim runs inside Quill\u{2019}s sandbox. Plugins and settings that run other programs, \
-            or that read files outside Quill\u{2019}s folder, will not work.
-            """
-        alert.addButton(withTitle: "Choose File\u{2026}")
-        alert.addButton(withTitle: "Cancel")
-        let choose: () -> Void = {
-            let panel = NSOpenPanel()
-            panel.message = "Choose a vimrc to copy into Quill"
-            panel.prompt = "Import"
-            panel.canChooseFiles = true
-            panel.canChooseDirectories = false
-            panel.allowsMultipleSelection = false
-            panel.resolvesAliases = true
-            // A vimrc is usually a file whose name starts with a dot, in
-            // the user's own home folder and not the app's.
-            panel.showsHiddenFiles = true
-            if let home = getpwuid(getuid())?.pointee.pw_dir {
-                panel.directoryURL = URL(fileURLWithPath: String(cString: home), isDirectory: true)
-            }
-            let finish: (NSApplication.ModalResponse) -> Void = { response in
-                done(response == .OK ? panel.url : nil)
-            }
-            if let window {
-                panel.beginSheetModal(for: window, completionHandler: finish)
-            } else {
-                finish(panel.runModal())
-            }
-        }
-        let answer: (NSApplication.ModalResponse) -> Void = { response in
-            if response == .alertFirstButtonReturn {
-                choose()
-            } else {
-                done(nil)
-            }
-        }
-        if let window {
-            alert.beginSheetModal(for: window) { response in
-                // Out of the way before the panel takes its place.
-                alert.window.orderOut(nil)
-                answer(response)
-            }
-        } else {
-            answer(alert.runModal())
         }
     }
 
@@ -319,9 +260,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
             .appendingPathComponent("Library/Application Support", isDirectory: true)
-        vimrc = ImportedVimrc(
-            folder: ImportedVimrc.folder(
-                applicationSupport: support, configFolder: options.coreEnvironment["QUILL_CONFIG_DIR"]))
         // A run whose core was pointed at another config folder, as a
         // scratch run is, shows that one and leaves the user's own alone.
         if let folder = options.coreEnvironment["QUILL_CONFIG_DIR"], folder.hasPrefix("/") {
@@ -490,8 +428,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             )
             self.bridge = bridge
             environment["QUILL_SHELL_SOCKET"] = bridge.socketPath
-            // Whether there is an imported vimrc, for the settings window.
-            reportVimrc()
             // What the Mac looks like, for a core whose settings say to
             // follow it: said now, and whenever it changes. And said in the
             // core's environment as well, so that its first frame is drawn
@@ -593,12 +529,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             settingsWindow.show(settings)
         case .themesPick:
             showThemeChooser()
-        case let .editorSetup(setup):
-            switch setup {
-            case .importVimrc: importVimrc()
-            case .removeVimrc: removeImportedVimrc()
-            case .showScripts: showEditorScriptFolder()
-            }
         case let .keysList(list):
             keysWindow.set(list)
         case .keysShow:
@@ -808,6 +738,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         case .exited(code: 0):
             // The user quit from inside the terminal UI.
             NSApp.terminate(nil)
+        case .exited(code: CoreLocator.alreadyOpenStatus):
+            presentFailure(
+                "Quill is already open on this mailbox in a terminal. Quit it there, then open Quill again.")
         case let .exited(code):
             presentFailure("The Quill core stopped unexpectedly (exit code \(code)).")
         case let .signaled(signal):
@@ -1344,51 +1277,33 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     /// is always answered: now, when nothing is started, and otherwise when
     /// the editor ends.
     private func openEditor(_ request: PaneEditor) {
-        var found: EditorToRun?
-        if !editorSlot.isRunning {
-            do {
-                // The one place macOS keeps its own, or the one script in
-                // the one folder that is the user's to fill, and nowhere
-                // else.
-                found = try EditorToRun(
-                    request.editor, inBundle: Bundle.main.bundleURL, scriptsFolder: editorScriptFolder)
-            } catch {
-                NSLog("Quill: there is no Vim to run: %@", String(describing: error))
-            }
+        // The program is the core's to find. It is looked at once more
+        // here, so that one that has gone since is an answer and not a
+        // terminal with nothing in it.
+        let available =
+            editorSlot.isRunning || FileManager.default.isExecutableFile(atPath: request.program)
+        if !available {
+            NSLog("Quill: the editor is not there to run: %@", request.program)
         }
-        switch editorSlot.request(title: request.title, available: found != nil) {
+        switch editorSlot.request(title: request.title, available: available) {
         case let .refuse(answer):
             if editorSlot.isRunning {
                 NSLog("Quill: an editor was asked for while one is running; the second was not started")
             }
             bridge?.send(.editorExited(answer))
         case .start:
-            guard let found else {
-                // Not reached: a start is only answered when there is one.
-                if let answer = editorSlot.ended(.failedToStart) {
-                    bridge?.send(.editorExited(answer))
-                }
-                return
-            }
-            startEditor(found, on: request)
+            startEditor(request)
         }
     }
 
-    private func startEditor(_ found: EditorToRun, on request: PaneEditor) {
+    private func startEditor(_ request: PaneEditor) {
         let launch = EditorLaunch(
-            editor: found,
-            draft: request,
-            vimrc: vimrc.current,
-            term: CoreLocator.term,
-            // In the sandbox these are the app's container.
-            home: NSHomeDirectory(),
-            temporaryDirectory: NSTemporaryDirectory(),
-            base: ProcessInfo.processInfo.environment
-        )
+            request: request, term: CoreLocator.term,
+            base: CoreLocator.programEnvironment(extra: options.coreEnvironment))
         // As the core's terminal looks now: a surface made with another
         // look would give that look to both.
         let terminal = makeTerminalSurface(appearance: terminalAppearance)
-        let running = RunningEditor(surface: terminal, kind: found.kind)
+        let running = RunningEditor(surface: terminal, kind: request.editor)
         editor = running
         terminal.onExit = { [weak self, weak running] exit in
             guard let self, let running else { return }
@@ -1402,18 +1317,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         // sight until it does. It starts once it has a size.
         terminalStack.put(editor: terminal.view)
         placeEditor()
-        // Raw from the start, as the core's terminal is: inside the sandbox
-        // Vim cannot change its terminal's modes itself.
+        // On a terminal as any terminal gives it: the editor is the user's
+        // own, and sets its terminal's modes for itself.
         terminal.start(
             TerminalCommand(
                 executable: launch.executable,
                 arguments: launch.arguments,
                 environment: launch.environment,
                 workingDirectory: launch.workingDirectory,
-                // The user's own script is outside the sandbox, and the Vim
-                // it starts sets its terminal's modes as in any terminal.
-                rawTerminal: !launch.userScript,
-                userScript: launch.userScript
+                rawTerminal: false
             ))
     }
 
@@ -1514,68 +1426,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     // MARK: - The user's editor script
 
-    /// The folder macOS runs the user's own scripts from, for this app:
-    /// `~/Library/Application Scripts/<the app's id>/`. The app can read it
-    /// and cannot write to it. `nil` if macOS will not say where it is.
-    var editorScriptFolder: URL? {
-        try? FileManager.default.url(
-            for: .applicationScriptsDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-    }
-
-    /// Shows where `editor-command.sh` goes. Putting it there is the
-    /// user's to do: the sandbox keeps the app from writing to the folder.
-    /// Asked for from the settings window, where the editor is chosen.
-    func showEditorScriptFolder() {
-        guard let folder = editorScriptFolder else { return }
-        revealer(folder)
-    }
-
-    // MARK: - The user's vimrc
-
-    /// Says what importing a vimrc means and asks for the file, on the
-    /// window it was asked from: the settings window, under the editor.
-    func importVimrc() {
-        vimrcPicker(sheetWindow) { [weak self] file in
-            guard let file else { return }
-            self?.importVimrc(from: file)
-        }
-    }
-
-    /// Tells the core whether there is an imported vimrc: as the core is
-    /// started, and whenever one is imported or removed. The settings
-    /// window goes by it for what it offers under Vim.
-    private func reportVimrc() {
-        bridge?.send(.vimrcChanged(imported: vimrc.current != nil))
-    }
-
-    /// Copies a file in as the user's vimrc, in place of any copy already
-    /// there. The Vim that is running, if one is, keeps the one it started
-    /// with.
-    func importVimrc(from file: URL) {
-        do {
-            let size = try vimrc.importFile(file)
-            note("\(file.path) (imported, \(size) bytes)", in: &vimrcResults)
-        } catch {
-            note("\(file.path) (refused: \(error))", in: &vimrcResults)
-            problemReporter(
-                sheetWindow, "The vimrc was not imported",
-                "Quill could not import \(file.lastPathComponent): \(error).")
-        }
-        reportVimrc()
-    }
-
-    func removeImportedVimrc() {
-        do {
-            if try vimrc.remove() {
-                note("removed", in: &vimrcResults)
-            }
-        } catch {
-            note("not removed: \(error)", in: &vimrcResults)
-            problemReporter(sheetWindow, "The imported vimrc was not removed", "\(error).")
-        }
-        reportVimrc()
-    }
-
     // MARK: - Themes
 
     /// Shows the chooser of themes to import, on the settings window when
@@ -1661,9 +1511,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     /// The mail addresses passed on to the core, in order.
     private(set) var urlsPassedOn: [String] = []
-
-    /// What became of each vimrc import or removal, in order.
-    private(set) var vimrcResults: [String] = []
 
     /// What became of each theme import, in order.
     private(set) var themeResults: [String] = []

@@ -24,8 +24,8 @@ use quill_core::config::{
     ReplyPosition,
 };
 use quill_host::bridge::{
-    EditorSetupAction, FormAction, FormField, FormOption, FormRow, FormValue, Number, SettingsPane,
-    SettingsShow, SettingsShowParams, valid_form_id,
+    FormAction, FormField, FormOption, FormRow, FormValue, Number, SettingsPane, SettingsShow,
+    SettingsShowParams, valid_form_id,
 };
 
 use crate::keymap::Keymap;
@@ -49,6 +49,8 @@ pub struct Settings {
     pub threads: bool,
     pub web_reading: bool,
     pub editor: ComposeEditor,
+    /// The program run as that editor, where the file names one.
+    pub editor_path: Option<String>,
     pub format: ComposeFormat,
     pub reply_position: ReplyPosition,
     pub spell_check: bool,
@@ -68,6 +70,7 @@ impl Settings {
             threads: config.ui.threads,
             web_reading: config.ui.web_reading,
             editor: config.compose.editor,
+            editor_path: config.compose.editor_path.clone(),
             format: config.compose.format,
             reply_position: config.compose.reply_position,
             spell_check: config.compose.spell_check,
@@ -90,6 +93,7 @@ pub enum Setting {
     Threads,
     WebReading,
     Editor,
+    EditorPath,
     Format,
     ReplyPosition,
     SpellCheck,
@@ -99,7 +103,7 @@ pub enum Setting {
 }
 
 impl Setting {
-    pub const ALL: [Setting; 14] = [
+    pub const ALL: [Setting; 15] = [
         Setting::Appearance,
         Setting::ThemeLight,
         Setting::ThemeDark,
@@ -108,6 +112,7 @@ impl Setting {
         Setting::Threads,
         Setting::WebReading,
         Setting::Editor,
+        Setting::EditorPath,
         Setting::Format,
         Setting::ReplyPosition,
         Setting::SpellCheck,
@@ -128,6 +133,7 @@ impl Setting {
             Setting::Threads => "threads",
             Setting::WebReading => "web_reading",
             Setting::Editor => "editor",
+            Setting::EditorPath => "editor_path",
             Setting::Format => "format",
             Setting::ReplyPosition => "reply_position",
             Setting::SpellCheck => "spell_check",
@@ -148,6 +154,7 @@ impl Setting {
             | Setting::Threads
             | Setting::WebReading => "ui",
             Setting::Editor
+            | Setting::EditorPath
             | Setting::Format
             | Setting::ReplyPosition
             | Setting::SpellCheck
@@ -168,6 +175,7 @@ impl Setting {
             | Setting::Threads
             | Setting::WebReading => Pane::General,
             Setting::Editor
+            | Setting::EditorPath
             | Setting::Format
             | Setting::ReplyPosition
             | Setting::SpellCheck
@@ -186,7 +194,10 @@ impl Setting {
     /// under a message that is out. The room for downloaded mail is given
     /// to the sync engine once, as it starts.
     pub fn at_once(self) -> bool {
-        !matches!(self, Setting::Editor | Setting::CacheGb)
+        !matches!(
+            self,
+            Setting::Editor | Setting::EditorPath | Setting::CacheGb
+        )
     }
 
     fn named(pane: &str, key: &str) -> Option<Self> {
@@ -270,6 +281,9 @@ pub enum Change {
     Threads(bool),
     WebReading(bool),
     Editor(ComposeEditor),
+    /// The program run as the editor, or none named: the one of the
+    /// editor's name on the `PATH`.
+    EditorPath(Option<String>),
     Format(ComposeFormat),
     ReplyPosition(ReplyPosition),
     SpellCheck(bool),
@@ -281,6 +295,8 @@ pub enum Change {
 /// A setting's value as the file has it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Written<'a> {
+    /// Nothing: the key is taken out of the file.
+    Gone,
     Word(&'a str),
     Flag(bool),
     Whole(i64),
@@ -298,6 +314,7 @@ impl Change {
             Change::Threads(_) => Setting::Threads,
             Change::WebReading(_) => Setting::WebReading,
             Change::Editor(_) => Setting::Editor,
+            Change::EditorPath(_) => Setting::EditorPath,
             Change::Format(_) => Setting::Format,
             Change::ReplyPosition(_) => Setting::ReplyPosition,
             Change::SpellCheck(_) => Setting::SpellCheck,
@@ -317,6 +334,8 @@ impl Change {
             | Change::ThemeInForce { name, .. } => Written::Word(name),
             Change::Keymap(preset) => Written::Word(preset.as_str()),
             Change::Editor(editor) => Written::Word(editor.as_str()),
+            Change::EditorPath(Some(path)) => Written::Word(path),
+            Change::EditorPath(None) => Written::Gone,
             Change::Format(format) => Written::Word(format.as_str()),
             Change::ReplyPosition(position) => Written::Word(position.as_str()),
             Change::RemoteImages(remote) => Written::Word(remote.as_str()),
@@ -440,17 +459,10 @@ pub struct Can {
     pub add: bool,
     /// An account can be signed in to now, and no sign-in is under way.
     pub sign_in: bool,
-    /// The host holds a vimrc the user imported, which can be taken away.
-    pub vimrc: bool,
 }
 
 /// The name of the button that imports a theme, in the general pane.
 pub const IMPORT_THEME: &str = "import_theme";
-/// The names of the buttons under the editor, in the composing pane: which
-/// of them there are goes by the editor chosen.
-pub const IMPORT_VIMRC: &str = "import_vimrc";
-pub const REMOVE_VIMRC: &str = "remove_vimrc";
-pub const SHOW_SCRIPTS: &str = "show_scripts";
 /// The name of the list of accounts, in its pane.
 pub const ACCOUNTS: &str = "accounts";
 /// The actions of that list.
@@ -544,19 +556,32 @@ fn editor_title(editor: ComposeEditor) -> &'static str {
         ComposeEditor::Vim => "Vim",
         ComposeEditor::Nano => "nano",
         ComposeEditor::Pico => "Pico",
-        ComposeEditor::Mg => "mg (in a terminal only)",
-        ComposeEditor::Script => "Your own Vim, by your script",
+        ComposeEditor::Mg => "mg",
     }
 }
 
-/// The editors on offer where Quill is running. Inside Quill's app mg is
-/// not one: the mg that comes with macOS does not survive being started in
-/// the app's sandbox.
-pub fn editors_offered(env: &Env) -> Vec<ComposeEditor> {
-    ComposeEditor::ALL
-        .into_iter()
-        .filter(|editor| !(env.editor_pane && *editor == ComposeEditor::Mg))
-        .collect()
+/// The editors on offer: the same wherever Quill is running.
+pub fn editors_offered() -> Vec<ComposeEditor> {
+    ComposeEditor::ALL.to_vec()
+}
+
+/// The name on the `PATH` of the program an editor is, when none is named.
+fn editor_program(editor: ComposeEditor) -> Option<&'static str> {
+    match editor {
+        ComposeEditor::Builtin => None,
+        ComposeEditor::Vim => Some(ExternalEditor::Vim.program()),
+        ComposeEditor::Nano => Some(ExternalEditor::Nano.program()),
+        ComposeEditor::Pico => Some(ExternalEditor::Pico.program()),
+        ComposeEditor::Mg => Some(ExternalEditor::Mg.program()),
+    }
+}
+
+/// Whether `path` can name the program an editor is: a whole path, one
+/// from the home folder, or a name to look for. As the settings file is
+/// read ([`quill_core::config`]).
+fn names_a_program(path: &str) -> bool {
+    let whole = path.starts_with('/') || path.starts_with("~/");
+    !path.contains('\0') && (whole || !path.contains('/'))
 }
 
 /// What messages are written in for as long as Quill runs: what the file
@@ -570,7 +595,6 @@ fn editor_running(env: &Env) -> ComposeEditor {
         ExternalEditor::Nano => ComposeEditor::Nano,
         ExternalEditor::Pico => ComposeEditor::Pico,
         ExternalEditor::Mg => ComposeEditor::Mg,
-        ExternalEditor::Script => ComposeEditor::Script,
     }
 }
 
@@ -759,81 +783,20 @@ fn accounts(read: &SettingsRead, can: Can) -> Vec<FormField> {
     }]
 }
 
-/// What there is to set up for the editor the settings name, where the
-/// host runs editors itself: a vimrc for the Vim that runs in its sandbox,
-/// the folder the user's own script goes in, and for the rest nothing.
-fn editor_setup(editor: ComposeEditor, env: &Env, can: Can) -> Vec<FormField> {
-    if !env.editor_pane {
-        return Vec::new();
-    }
-    let button = |id: &str, title: &str, help: &str| FormField::Button {
-        id: id.to_owned(),
-        label: String::new(),
-        title: title.to_owned(),
-        enabled: true,
-        help: Some(help.to_owned()),
-    };
-    match editor {
-        ComposeEditor::Vim if can.vimrc => vec![
-            button(
-                IMPORT_VIMRC,
-                "Import Another vimrc\u{2026}",
-                "Vim uses the copy of your vimrc that Quill keeps. A change to your own \
-                 file is not picked up until it is imported again.",
-            ),
-            button(
-                REMOVE_VIMRC,
-                "Remove Imported vimrc",
-                "Without one, Vim starts with its own defaults.",
-            ),
-        ],
-        ComposeEditor::Vim => vec![button(
-            IMPORT_VIMRC,
-            "Import vimrc\u{2026}",
-            "This Vim runs inside Quill\u{2019}s sandbox and cannot read your ~/.vimrc. \
-             Quill can keep a copy of it for Vim to use.",
-        )],
-        ComposeEditor::Script => vec![button(
-            SHOW_SCRIPTS,
-            "Show Editor Script Folder",
-            "Your own Vim is started by editor-command.sh in this folder, with your own \
-             vimrc and plugins. Nothing is imported for it.",
-        )],
-        ComposeEditor::Builtin | ComposeEditor::Nano | ComposeEditor::Pico | ComposeEditor::Mg => {
-            Vec::new()
-        }
-    }
-}
-
-/// What a button under the editor asks of the host, by the button's name.
-pub fn editor_setup_named(field: &str) -> Option<EditorSetupAction> {
-    match field {
-        IMPORT_VIMRC => Some(EditorSetupAction::ImportVimrc),
-        REMOVE_VIMRC => Some(EditorSetupAction::RemoveVimrc),
-        SHOW_SCRIPTS => Some(EditorSetupAction::ShowScripts),
-        _ => None,
-    }
-}
-
-fn composing(read: &SettingsRead, env: &Env, can: Can) -> Vec<FormField> {
+fn composing(read: &SettingsRead, env: &Env) -> Vec<FormField> {
     let settings = &read.settings;
     // What the file says is always among the choices, as with the theme.
-    let mut editors = editors_offered(env);
-    if !editors.contains(&settings.editor) {
-        editors.push(settings.editor);
-    }
+    let editors = editors_offered();
     let running = editor_running(env);
     let mut editor_help = format!(
-        "Vim, nano and Pico are the ones that come with macOS. Your own Vim is started \
-         by a script of yours. {NEXT_START}"
+        "An editor other than Quill\u{2019}s own is yours, with your own settings for \
+         it: Vim reads your vimrc. {NEXT_START}"
     );
     if running != settings.editor {
         editor_help.push_str(&format!(
             " Until then messages are written in {}.",
             match running {
                 ComposeEditor::Builtin => "Quill\u{2019}s own editor",
-                ComposeEditor::Script => "your own Vim",
-                ComposeEditor::Mg => "mg",
                 other => editor_title(other),
             }
         ));
@@ -848,8 +811,26 @@ fn composing(read: &SettingsRead, env: &Env, can: Can) -> Vec<FormField> {
             .collect(),
         Some(editor_help),
     )];
-    // Under the editor, what there is to set up for that one.
-    fields.extend(editor_setup(settings.editor, env, can));
+    // Which program that editor is, for one that is not Quill's own.
+    if let Some(program) = editor_program(settings.editor) {
+        // Quill's app is started by the Mac, not by a shell, and has the
+        // Mac's own PATH: the app looks in Homebrew's folders after it.
+        let looked = if env.editor_pane {
+            "in the Mac\u{2019}s own folders and then Homebrew\u{2019}s"
+        } else {
+            "on your PATH"
+        };
+        fields.push(FormField::Text {
+            id: Setting::EditorPath.key().to_owned(),
+            label: "Program:".to_owned(),
+            value: settings.editor_path.clone().unwrap_or_default(),
+            focus: false,
+            help: Some(format!(
+                "Left empty, Quill runs the {program} it finds {looked}. A whole path \
+                 runs that program instead, such as /opt/homebrew/bin/nvim. {NEXT_START}"
+            )),
+        });
+    }
     fields.extend([
         choice(
             Setting::Format,
@@ -976,7 +957,7 @@ pub fn describe(
             fields: match pane {
                 Pane::General => general(read, env),
                 Pane::Accounts => accounts(read, can),
-                Pane::Composing => composing(read, env, can),
+                Pane::Composing => composing(read, env),
                 Pane::Privacy => privacy(read),
                 Pane::Storage => storage(read, env),
             },
@@ -1023,7 +1004,6 @@ fn sentence(words: &str) -> String {
 pub fn change(
     described: &SettingsShow,
     read: &SettingsRead,
-    env: &Env,
     pane: &str,
     field: &str,
     value: &FormValue,
@@ -1064,7 +1044,7 @@ pub fn change(
                     .find(|preset| preset.as_str() == chosen)
                     .map(Change::Keymap)
                     .ok_or_else(not_one),
-                Setting::Editor => editors_offered(env)
+                Setting::Editor => editors_offered()
                     .into_iter()
                     .find(|editor| editor.as_str() == chosen)
                     .map(Change::Editor)
@@ -1091,6 +1071,22 @@ pub fn change(
                 _ => Err(not_one()),
             }
         }
+        (FormField::Text { .. }, FormValue::Text(typed)) => match setting {
+            Setting::EditorPath => {
+                let path = typed.trim();
+                if path.is_empty() {
+                    Ok(Change::EditorPath(None))
+                } else if names_a_program(path) {
+                    Ok(Change::EditorPath(Some(path.to_owned())))
+                } else {
+                    Err(format!(
+                        "{label} takes a whole path, such as /opt/homebrew/bin/nvim, or a \
+                         program\u{2019}s name."
+                    ))
+                }
+            }
+            _ => Err(format!("{label} is not typed.")),
+        },
         (FormField::Toggle { .. }, FormValue::Flag(on)) => match setting {
             Setting::Notifications => Ok(Change::Notifications(*on)),
             Setting::Threads => Ok(Change::Threads(*on)),
@@ -1156,12 +1152,16 @@ mod tests {
             assert_ne!(setting.pane(), Pane::Accounts);
         }
         assert_eq!(Setting::named("general", "editor"), None);
-        // The two that wait for the next start, and no others.
+        // The ones that wait for the next start, and no others: what a
+        // message is written in, and the room for downloaded mail.
         let waiting: Vec<Setting> = Setting::ALL
             .into_iter()
             .filter(|setting| !setting.at_once())
             .collect();
-        assert_eq!(waiting, [Setting::Editor, Setting::CacheGb]);
+        assert_eq!(
+            waiting,
+            [Setting::Editor, Setting::EditorPath, Setting::CacheGb]
+        );
     }
 
     #[test]
@@ -1227,9 +1227,21 @@ mod tests {
             Written::Word("mutt")
         );
         assert_eq!(
-            Change::Editor(ComposeEditor::Script).written(),
-            Written::Word("script")
+            Change::Editor(ComposeEditor::Mg).written(),
+            Written::Word("mg")
         );
+        // A program named is written; none named is the key taken out.
+        let named = Change::EditorPath(Some("/opt/homebrew/bin/nvim".to_owned()));
+        assert_eq!(named.written(), Written::Word("/opt/homebrew/bin/nvim"));
+        assert_eq!(named.setting(), Setting::EditorPath);
+        assert_eq!(Change::EditorPath(None).written(), Written::Gone);
+        assert!(!Setting::EditorPath.at_once());
+        for good in ["/opt/homebrew/bin/nvim", "~/bin/my vim", "nvim"] {
+            assert!(names_a_program(good), "{good}");
+        }
+        for bad in ["bin/vim", "./vim", "../vim"] {
+            assert!(!names_a_program(bad), "{bad}");
+        }
         assert_eq!(
             Change::RemoteImages(RemoteImages::Never).written(),
             Written::Word("never")
@@ -1254,6 +1266,7 @@ mod tests {
                 Setting::Threads => Change::Threads(true),
                 Setting::WebReading => Change::WebReading(true),
                 Setting::Editor => Change::Editor(ComposeEditor::Builtin),
+                Setting::EditorPath => Change::EditorPath(None),
                 Setting::Format => Change::Format(ComposeFormat::Plain),
                 Setting::ReplyPosition => Change::ReplyPosition(ReplyPosition::Below),
                 Setting::SpellCheck => Change::SpellCheck(true),

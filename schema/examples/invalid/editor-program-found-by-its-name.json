@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "method": "pane.editor",
+  "params": {
+    "dir": "/tmp/quill-edit-1",
+    "title": "x",
+    "editor": "vim",
+    "argv": ["vim", "/tmp/quill-edit-1/message.quill"]
+  }
+}

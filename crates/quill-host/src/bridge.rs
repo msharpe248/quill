@@ -98,10 +98,6 @@ pub enum CoreToShell {
     /// chooser. One that is imported arrives as `themes.imported`.
     #[serde(rename = "themes.pick")]
     ThemesPick(NoParams),
-    /// Something to do for the editor messages are written in, which
-    /// only the shell can do: asked for from the settings window.
-    #[serde(rename = "editor.setup")]
-    EditorSetup(EditorSetup),
     /// Every key Quill has, under headings, for the shell's window of
     /// them: at startup, and again whenever the keys change.
     #[serde(rename = "keys.list")]
@@ -168,10 +164,6 @@ pub enum ShellToCore {
     /// file, under this name.
     #[serde(rename = "themes.imported")]
     ThemesImported(ThemesImported),
-    /// Whether the shell holds a vimrc the user imported: once as it
-    /// starts, and whenever that changes.
-    #[serde(rename = "vimrc.changed")]
-    VimrcChanged(VimrcChanged),
     /// The app is quitting: flush and exit cleanly.
     #[serde(rename = "app.will_quit")]
     AppWillQuit(NoParams),
@@ -271,37 +263,6 @@ impl Appearance {
 pub struct AppearanceChanged {
     /// The Mac is in its dark appearance.
     pub dark: bool,
-}
-
-/// Whether the shell holds a vimrc the user imported, for the Vim that
-/// runs inside the sandbox. The file is the shell's alone: the core is told
-/// only that there is one, so that the settings window can offer to take
-/// it away.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct VimrcChanged {
-    pub imported: bool,
-}
-
-/// Something only the shell can do for the editor messages are written
-/// in. A word, never a path: what file and what folder are the shell's.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct EditorSetup {
-    pub action: EditorSetupAction,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EditorSetupAction {
-    /// Ask the user for a vimrc and keep a copy of it, for the Vim that
-    /// runs inside the sandbox. Answered by `vimrc.changed` if one is
-    /// taken.
-    ImportVimrc,
-    /// Take the copy away. Answered by `vimrc.changed`.
-    RemoveVimrc,
-    /// Show the folder the user's own editor script goes in.
-    ShowScripts,
 }
 
 /// Every key Quill has, as the shell's window of them shows it.
@@ -1303,69 +1264,87 @@ impl From<NotifyUsed> for NotifyUsedParams {
     }
 }
 
-/// A draft file for the shell to run an editor on, and the draft's own
-/// folder.
+/// An editor for the shell to run on a draft, in a terminal of its own:
+/// the whole command, and the draft's own folder.
+///
+/// The command is the core's to make, as it makes it for an editor that
+/// takes the terminal Quill is in: the user's own program, found by the
+/// core, with the arguments that kind of editor is given and the draft
+/// file last. The shell runs exactly that, in `dir`, in the environment
+/// the app has, with `QUILL_DRAFT_DIR` saying where `dir` is. It is an
+/// argv and never a line for a shell.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PaneEditor {
-    pub path: AbsolutePath,
     pub dir: AbsolutePath,
     pub title: String,
-    /// Which editor to run.
+    /// What kind of editor it is: how it is asked to save and leave.
     pub editor: EditorKind,
-    /// The line of the file its body starts on, counting from 1: where an
-    /// editor that has no plugin of Quill's is started.
-    pub line: LineNumber,
+    pub argv: EditorArgv,
 }
 
-/// The highest line a `pane.editor` may name.
-pub const MOST_LINES: u32 = 1_000_000;
+/// The most arguments an editor is started with, the program among them.
+pub const MOST_ARGUMENTS: usize = 32;
+/// The longest any one of them may be, in bytes.
+pub const LONGEST_ARGUMENT: usize = 4096;
 
-/// A line of a file, counting from 1, and no higher than [`MOST_LINES`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "u32", into = "u32")]
-pub struct LineNumber(u32);
+/// A program and its arguments. It cannot be built or decoded without a
+/// program named by an absolute path, with an argument that has a NUL in
+/// it, or with more or longer arguments than an editor is ever given.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "Vec<String>", into = "Vec<String>")]
+pub struct EditorArgv(Vec<String>);
 
-impl LineNumber {
-    /// The nearest line there can be to `line`.
-    pub fn nearest(line: u32) -> Self {
-        Self(line.clamp(1, MOST_LINES))
+impl EditorArgv {
+    pub fn new(argv: Vec<String>) -> Option<Self> {
+        let program = argv.first()?;
+        let fits = argv.len() <= MOST_ARGUMENTS
+            && argv
+                .iter()
+                .all(|argument| argument.len() <= LONGEST_ARGUMENT && !argument.contains('\0'));
+        (program.starts_with('/') && fits).then_some(Self(argv))
     }
 
-    pub fn get(self) -> u32 {
-        self.0
+    /// The program, by its absolute path.
+    pub fn program(&self) -> &str {
+        self.0.first().map_or("", String::as_str)
+    }
+
+    /// The program and then its arguments.
+    pub fn all(&self) -> &[String] {
+        &self.0
     }
 }
 
-impl TryFrom<u32> for LineNumber {
+impl TryFrom<Vec<String>> for EditorArgv {
     type Error = String;
 
-    fn try_from(line: u32) -> Result<Self, Self::Error> {
-        if (1..=MOST_LINES).contains(&line) {
-            Ok(Self(line))
-        } else {
-            Err(format!("a line is from 1 to {MOST_LINES}"))
-        }
+    fn try_from(argv: Vec<String>) -> Result<Self, Self::Error> {
+        Self::new(argv).ok_or_else(|| {
+            format!(
+                "an editor's command is a program by its absolute path and its arguments, \
+                 at most {MOST_ARGUMENTS} of at most {LONGEST_ARGUMENT} bytes"
+            )
+        })
     }
 }
 
-impl From<LineNumber> for u32 {
-    fn from(line: LineNumber) -> Self {
-        line.0
+impl From<EditorArgv> for Vec<String> {
+    fn from(argv: EditorArgv) -> Self {
+        argv.0
     }
 }
 
-/// Which editor the shell runs: one of those that come with macOS, or the
-/// user's own Vim by way of the script they keep in the app's scripts
-/// folder. It is one of these words: the shell is never given a path to a
-/// program.
+/// What kind of editor the shell is running, which is how it asks it to
+/// save and leave when its pane is closed: each in its own keys. On a Mac
+/// nano is Pico, and the two are one kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EditorKind {
     #[default]
     Vim,
     Nano,
-    Script,
+    Mg,
 }
 
 /// How the editor ended. `ran` is false when it could not be started.

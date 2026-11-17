@@ -42,8 +42,9 @@ public enum CoreToShell: Equatable, Sendable {
     /// Ask what a misspelt word might have been meant to be. Answered by
     /// `spellSuggested`.
     case spellSuggest(SpellSuggest)
-    /// Run Vim on a draft file, in a terminal pane of its own. Answered by `editorExited` when Vim ends, or at once if
-    /// it could not be started.
+    /// Run an editor on a draft, in a terminal of its own: the command is
+    /// the core's, whole. Answered by `editorExited` when the editor ends,
+    /// or at once if it could not be started.
     case paneEditor(PaneEditor)
     /// Show a form in a sheet on the window, in place of whatever form the
     /// sheet shows now. What the user does with it goes back as `formUsed`.
@@ -70,9 +71,6 @@ public enum CoreToShell: Equatable, Sendable {
     /// Ask the user to choose a theme to import, with the shell's own
     /// chooser. One that is imported is said with `themes.imported`.
     case themesPick
-    /// Something to do for the editor messages are written in, which only
-    /// the shell can do: asked for from the settings window.
-    case editorSetup(EditorSetup)
     /// Every key there is, under headings, for the window of them: at
     /// startup, and again whenever the keys change.
     case keysList(KeysList)
@@ -120,23 +118,8 @@ public enum ShellToCore: Equatable, Sendable {
     /// A theme file was put in the themes folder beside the settings file,
     /// under this name.
     case themesImported(ThemesImported)
-    /// Whether the shell holds a vimrc the user imported: once as it
-    /// starts, and whenever that changes.
-    case vimrcChanged(imported: Bool)
     /// The app is quitting: flush and exit cleanly.
     case appWillQuit
-}
-
-/// Something only the shell can do for the editor messages are written in.
-/// A word, never a path: which file and which folder are the shell's.
-public enum EditorSetup: String, Equatable, Sendable, Codable, CaseIterable {
-    /// Ask the user for a vimrc and keep a copy of it, for the Vim that
-    /// runs inside the sandbox.
-    case importVimrc = "import_vimrc"
-    /// Take the copy away.
-    case removeVimrc = "remove_vimrc"
-    /// Show the folder the user's own editor script goes in.
-    case showScripts = "show_scripts"
 }
 
 /// Every key Quill has, as the window of them shows it: the core's list,
@@ -876,47 +859,57 @@ public struct SpellSuggested: Equatable, Sendable, Codable {
     static let allowedKeys: Set<String> = ["id", "words"]
 }
 
-/// Which editor the shell is to run. The core says which of these; it never
-/// names a program by its path.
+/// What kind of editor the shell is running, which is how it asks it to
+/// save and leave when its pane is closed: each in its own keys.
 public enum EditorKind: String, Equatable, Sendable, Codable, CaseIterable {
-    /// The Vim that comes with macOS.
+    /// Vim, or anything that takes Vim's keys.
     case vim
-    /// The nano that comes with macOS, which is Pico.
+    /// nano, or Pico, which on a Mac is the same program.
     case nano
-    /// The user's own Vim, by way of the script they keep in the app's
-    /// scripts folder, which they have asked for in their config.
-    case script
+    /// mg, a small Emacs.
+    case mg
 }
 
-/// A draft file for an editor to edit, and the draft's own folder, where Vim
-/// and the core leave each other notes. The shell passes the folder to Vim
-/// in the environment and does nothing else with it.
+/// An editor to run on a draft: the whole command, and the draft's own
+/// folder, where the editor and the core leave each other notes.
+///
+/// The command is the core's to make: the user's own program, by its
+/// absolute path, with the arguments that kind of editor is given and the
+/// draft file last. The shell runs exactly that, as an argv and never
+/// through a shell, in `dir`, and says where `dir` is in the environment.
 public struct PaneEditor: Equatable, Sendable, Codable {
-    /// The draft file.
-    public let path: String
     /// The draft's own folder.
     public let dir: String
     public let title: String
     public let editor: EditorKind
-    /// The line of the file the message's body starts on, counting from 1:
-    /// where an editor that has no plugin of Quill's is started.
-    public let line: Int
+    /// The program, by its absolute path, and then its arguments.
+    public let argv: [String]
 
-    /// The lines a draft may be said to start its body on.
-    public static let lines = 1...1_000_000
+    /// The most arguments an editor is started with, the program among
+    /// them, and the longest any one may be, in bytes.
+    public static let mostArguments = 32
+    public static let longestArgument = 4096
 
-    /// `nil` unless both paths are absolute and the line is one there can
-    /// be.
-    public init?(path: String, dir: String, title: String, editor: EditorKind = .vim, line: Int = 1) {
-        guard path.hasPrefix("/"), dir.hasPrefix("/"), Self.lines.contains(line) else { return nil }
-        self.path = path
+    /// `nil` unless the folder is absolute and the command is a program by
+    /// its absolute path with arguments an editor might be given: no more
+    /// and no longer than the bounds above, and none with a NUL in it.
+    public init?(dir: String, title: String, editor: EditorKind = .vim, argv: [String]) {
+        guard dir.hasPrefix("/"), let program = argv.first, program.hasPrefix("/"),
+            argv.count <= Self.mostArguments,
+            argv.allSatisfy({ $0.utf8.count <= Self.longestArgument && !$0.utf8.contains(0) })
+        else { return nil }
         self.dir = dir
         self.title = title
         self.editor = editor
-        self.line = line
+        self.argv = argv
     }
 
-    static let allowedKeys: Set<String> = ["path", "dir", "title", "editor", "line"]
+    /// The program.
+    public var program: String { argv[0] }
+    /// What it is given after its own name.
+    public var arguments: [String] { Array(argv.dropFirst()) }
+
+    static let allowedKeys: Set<String> = ["dir", "title", "editor", "argv"]
 }
 
 /// How the editor ended.

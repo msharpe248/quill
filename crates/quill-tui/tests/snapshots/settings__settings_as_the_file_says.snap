@@ -25,10 +25,10 @@ expression: outline(&shown)
      help: An account is taken away by taking it out of the settings file. The copy of its mail kept on this Mac goes when Quill is next opened.
    more: Rules, saved searches and each account’s servers are set in the settings file. Hooks and templates are files beside it.
 == Composing (composing, square.and.pencil)
-   editor "Write in:": choice = script of builtin "Quill’s own editor" | vim "Vim" | nano "nano" | pico "Pico" | script "Your own Vim, by your script"
-     help: Vim, nano and Pico are the ones that come with macOS. Your own Vim is started by a script of yours. Takes effect when Quill is next opened. Until then messages are written in Quill’s own editor.
-   show_scripts "": button "Show Editor Script Folder"
-     help: Your own Vim is started by editor-command.sh in this folder, with your own vimrc and plugins. Nothing is imported for it.
+   editor "Write in:": choice = nano of builtin "Quill’s own editor" | vim "Vim" | nano "nano" | pico "Pico" | mg "mg"
+     help: An editor other than Quill’s own is yours, with your own settings for it: Vim reads your vimrc. Takes effect when Quill is next opened. Until then messages are written in Quill’s own editor.
+   editor_path "Program:": text = "/opt/homebrew/bin/nano"
+     help: Left empty, Quill runs the nano it finds in the Mac’s own folders and then Homebrew’s. A whole path runs that program instead, such as /opt/homebrew/bin/nvim. Takes effect when Quill is next opened.
    format "Format:": choice = plain of markdown "Markdown, sent as formatted text" | plain "Plain text"
    reply_position "Replies:": choice = below of above "Above the quoted message" | below "Below the quoted message"
    spell_check "Spelling:": toggle "Check spelling as you type" = false

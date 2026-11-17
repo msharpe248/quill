@@ -2,10 +2,18 @@
   "jsonrpc": "2.0",
   "method": "pane.editor",
   "params": {
-    "path": "/Users/robin/Library/Containers/dev.quill.Quill/Data/tmp/quill-edit-812/message.quill",
-    "dir": "/Users/robin/Library/Containers/dev.quill.Quill/Data/tmp/quill-edit-812",
+    "dir": "/Users/robin/Library/Caches/Quill/edit-812",
     "title": "Re: Q4 roadmap",
     "editor": "vim",
-    "line": 7
+    "argv": [
+      "/opt/homebrew/bin/vim",
+      "-N",
+      "--cmd",
+      "augroup QuillNoModelines | execute 'autocmd BufReadPre * setlocal nomodeline' | augroup END",
+      "-c",
+      "execute 'source' fnameescape($QUILL_DRAFT_DIR . '/quill.vim')",
+      "--",
+      "/Users/robin/Library/Caches/Quill/edit-812/message.quill"
+    ]
   }
 }

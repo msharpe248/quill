@@ -64,8 +64,8 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
         mouse: config.ui.mouse,
         file_panel: false,
         thumbnails: false,
-        // The usual place for what is downloaded. Inside the app's sandbox
-        // this is not the user's own folder, and the app asks with a panel.
+        // The usual place for what is downloaded. Quill's app asks with
+        // a panel instead.
         downloads: std::env::var_os("HOME")
             .filter(|home| !home.is_empty())
             .map(|home| std::path::Path::new(&home).join("Downloads")),
@@ -102,10 +102,9 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
         spell_check: false,
         // And only it has a sheet to show the add-an-account form in.
         sheets: false,
-        // And only it has a Vim of its own; anywhere else the user's is run.
+        // And only it has a terminal of its own to run an editor in;
+        // anywhere else the editor takes the one Quill is in.
         editor_pane: false,
-        // Asked for in the config, and meant only where there is a pane:
-        // a terminal runs the user's own Vim whatever this says.
         // With Quill's own editor as the usual one, the editor a message
         // can still be handed to is Vim.
         external: match config.compose.editor {
@@ -113,9 +112,14 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
             ComposeEditor::Nano => ExternalEditor::Nano,
             ComposeEditor::Pico => ExternalEditor::Pico,
             ComposeEditor::Mg => ExternalEditor::Mg,
-            ComposeEditor::Script => ExternalEditor::Script,
         },
-        vim_program: None,
+        // The program the settings name for it, if they name one. The
+        // caller has what the environment says for Vim otherwise.
+        editor_program: config
+            .compose
+            .editor_path
+            .as_deref()
+            .map(|path| editor_path(path, std::env::var_os("HOME").as_deref())),
         hooks,
         // And whether programs may be run at all: not in Quill's own app.
         hooks_enabled: false,
@@ -191,6 +195,18 @@ pub fn keys_listing(paths: &crate::paths::Paths) -> (String, Vec<String>) {
         key(quill_tui::command::CommandId::HelpKeys),
     ));
     (text, problems)
+}
+
+/// The program `editor_path` names: as written, but for one that starts
+/// at the home folder (`~/`), which is put in front of it when it is known.
+pub fn editor_path(path: &str, home: Option<&std::ffi::OsStr>) -> std::ffi::OsString {
+    match (
+        path.strip_prefix("~/"),
+        home.filter(|home| !home.is_empty()),
+    ) {
+        (Some(rest), Some(home)) => std::path::Path::new(home).join(rest).into_os_string(),
+        _ => path.into(),
+    }
 }
 
 /// Whether Quill is light or dark and the theme for each, as the config
@@ -803,7 +819,9 @@ mod tests {
             ("nano", ExternalEditor::Nano),
             ("pico", ExternalEditor::Pico),
             ("mg", ExternalEditor::Mg),
-            ("script", ExternalEditor::Script),
+            // What the app called the user's own Vim while it was
+            // sandboxed. It is Vim.
+            ("script", ExternalEditor::Vim),
         ] {
             write(
                 &dir,
@@ -815,19 +833,54 @@ mod tests {
             // Every message goes there as it opens.
             assert!(loaded.env.compose.vim, "{word}");
             assert_eq!(loaded.env.external, editor, "{word}");
+            assert_eq!(loaded.env.editor_program, None, "{word}");
         }
+        // The program it is may be named: a whole path, one from the home
+        // folder, or a name to look for.
+        let home = std::env::var_os("HOME").filter(|home| !home.is_empty());
+        for (written, program) in [
+            (
+                "/opt/homebrew/bin/nvim",
+                Some(std::ffi::OsString::from("/opt/homebrew/bin/nvim")),
+            ),
+            ("nvim", Some("nvim".into())),
+            (
+                "~/bin/vim",
+                home.map(|home| std::path::Path::new(&home).join("bin/vim").into_os_string()),
+            ),
+        ] {
+            write(
+                &dir,
+                "config.toml",
+                &format!("[compose]\neditor = \"vim\"\neditor_path = \"{written}\"\n"),
+            );
+            let loaded = load_from(&dir);
+            assert!(loaded.notices.is_empty(), "{written}: {:?}", loaded.notices);
+            if program.is_some() {
+                assert_eq!(loaded.env.editor_program, program, "{written}");
+            }
+        }
+        assert_eq!(
+            editor_path("~/bin/vim", Some(std::ffi::OsStr::new("/Users/robin"))),
+            std::ffi::OsString::from("/Users/robin/bin/vim")
+        );
+        assert_eq!(
+            editor_path("~/bin/vim", None),
+            std::ffi::OsString::from("~/bin/vim")
+        );
         write(&dir, "config.toml", "[compose]\neditor = \"builtin\"\n");
         let loaded = load_from(&dir);
         assert!(loaded.notices.is_empty(), "{:?}", loaded.notices);
         assert!(!loaded.env.compose.vim);
         assert_eq!(loaded.env.external, ExternalEditor::Vim);
-        // It is one of those words, never a program: a path is a mistake
-        // in the config, said as one, and not an editor to run. So are an
-        // editor macOS does not come with, and the settings this one
-        // replaced.
+        // `editor` is one of those words, never a program: a path there
+        // is a mistake in the config, said as one. So are an editor Quill
+        // does not know how to talk to, a path that is neither whole nor a
+        // name, and the settings this one replaced.
         for mistaken in [
             "editor = \"/opt/homebrew/bin/nvim\"",
             "editor = \"emacs\"",
+            "editor = \"vim\"\neditor_path = \"bin/vim\"",
             "editor = \"bundled\"",
             "vim = \"system\"",
             "vim = \"script\"",

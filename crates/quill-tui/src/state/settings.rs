@@ -55,7 +55,6 @@ impl State {
                     add: self.is_enabled(env, CommandId::AccountAdd),
                     sign_in: self.is_enabled(env, CommandId::AccountSignIn)
                         && self.sign_in.is_none(),
-                    vimrc: self.vimrc_imported,
                 },
                 window.refused.as_deref(),
             ),
@@ -92,14 +91,8 @@ impl State {
                 };
                 match used.did() {
                     SettingsDid::Set(value) => {
-                        match settings::change(
-                            &described,
-                            &read,
-                            env,
-                            used.pane(),
-                            used.field(),
-                            value,
-                        ) {
+                        match settings::change(&described, &read, used.pane(), used.field(), value)
+                        {
                             // Answered when the service has written it.
                             Ok(change) => {
                                 out.accounts.push(AccountRequest::Settings(Some(change)));
@@ -115,20 +108,6 @@ impl State {
                             && action == BUTTON_PRESS =>
                     {
                         out.host.push(HostRequest::PickTheme);
-                        self.settings_answered(None);
-                    }
-                    // The buttons under the editor: each is something only
-                    // the host can do, and only one that is on show is
-                    // passed on.
-                    SettingsDid::Action { action, row: None }
-                        if used.pane() == settings::Pane::Composing.id()
-                            && action == BUTTON_PRESS
-                            && described.field(used.pane(), used.field()).is_some()
-                            && settings::editor_setup_named(used.field()).is_some() =>
-                    {
-                        if let Some(setup) = settings::editor_setup_named(used.field()) {
-                            out.host.push(HostRequest::EditorSetup(setup));
-                        }
                         self.settings_answered(None);
                     }
                     SettingsDid::Action { action, row } => {

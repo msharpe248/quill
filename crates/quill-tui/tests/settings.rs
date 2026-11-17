@@ -114,6 +114,7 @@ impl File {
             Change::Threads(on) => settings.threads = on,
             Change::WebReading(on) => settings.web_reading = on,
             Change::Editor(editor) => settings.editor = editor,
+            Change::EditorPath(path) => settings.editor_path = path,
             Change::Format(format) => settings.format = format,
             Change::ReplyPosition(position) => settings.reply_position = position,
             Change::SpellCheck(on) => settings.spell_check = on,
@@ -327,6 +328,7 @@ fn outline(shown: &SettingsShow) -> String {
                 FormField::Button { title, enabled, .. } => {
                     format!("button \"{title}\"{}", if *enabled { "" } else { ", off" })
                 }
+                FormField::Text { value, .. } => format!("text = {value:?}"),
                 other => format!("{other:?}"),
             };
             lines.push(format!("   {} \"{}\": {holds}", field.id(), field.label()));
@@ -382,7 +384,8 @@ fn the_window_is_described_pane_by_pane_from_what_the_file_says() {
     // A file that says something of every setting.
     let mut window = Window::new(&format!(
         "[ui]\ntheme = \"light\"\nkeymap = \"mutt\"\nnotifications = false\nthreads = false\n\
-         web_reading = true\n\n[compose]\neditor = \"script\"\nformat = \"plain\"\n\
+         web_reading = true\n\n[compose]\neditor = \"nano\"\neditor_path = \"/opt/homebrew/bin/nano\"\n\
+         format = \"plain\"\n\
          reply_position = \"below\"\nspell_check = false\nundo_send_seconds = 30\n\n\
          [privacy]\nremote_images = \"never\"\n\n[storage]\ncache_gb = 0.5\n\n{CONFIG}"
     ));
@@ -448,7 +451,7 @@ fn a_change_goes_to_the_service_and_the_window_shows_what_the_file_then_says() {
         "undo_send_seconds",
         FormValue::Number(Number::new(-5.0).unwrap()),
     );
-    window.choose("composing", "editor", "mg");
+    window.choose("composing", "editor", "emacs");
     assert_eq!(window.harness.account_requests.len(), asked);
     assert!(window.shown().problem().is_some());
 }
@@ -748,12 +751,10 @@ fn the_button_that_imports_a_theme_has_the_host_show_its_chooser() {
 }
 
 #[test]
-fn under_the_editor_is_what_there_is_to_set_up_for_the_one_chosen() {
-    use quill_host::bridge::EditorSetupAction;
-
+fn under_the_editor_is_the_program_it_is_for_any_but_quills_own() {
     let mut window = Window::new(CONFIG);
     window.open();
-    let buttons = |window: &Window| -> Vec<(String, String)> {
+    let program = |window: &Window| -> Option<(usize, String, String)> {
         let shown = window.shown();
         let pane = shown
             .panes()
@@ -762,112 +763,97 @@ fn under_the_editor_is_what_there_is_to_set_up_for_the_one_chosen() {
             .unwrap();
         pane.fields
             .iter()
-            .filter_map(|field| match field {
-                FormField::Button { id, title, .. } => Some((id.clone(), title.clone())),
+            .enumerate()
+            .find_map(|(index, field)| match field {
+                FormField::Text {
+                    id, value, help, ..
+                } if id == "editor_path" => {
+                    Some((index, value.clone(), help.clone().unwrap_or_default()))
+                }
                 _ => None,
             })
-            .collect()
     };
-    let named = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
-        pairs
-            .iter()
-            .map(|(id, title)| ((*id).to_owned(), (*title).to_owned()))
-            .collect()
-    };
-    let press = |window: &mut Window, field: &str, action: &str, row: Option<&str>| {
-        let used = SettingsUsed::action("composing", field, action, row).unwrap();
-        window
-            .harness
-            .act(Action::Settings(SettingsAct::Used(used)));
-        window.serve();
-    };
-    let asked = |window: &Window| -> Vec<EditorSetupAction> {
-        window
-            .harness
-            .host_requests
-            .iter()
-            .filter_map(|request| match request {
-                HostRequest::EditorSetup(action) => Some(*action),
-                _ => None,
-            })
-            .collect()
-    };
-
-    // Quill's own editor needs nothing, and nothing is offered.
-    assert_eq!(buttons(&window), named(&[]));
-    press(&mut window, "import_vimrc", "press", None);
-    assert_eq!(asked(&window), []);
-
-    // The Mac's Vim runs in the sandbox, out of reach of the user's own
-    // vimrc: one can be taken in. The buttons are right under the editor.
-    window.choose("composing", "editor", "vim");
-    assert_eq!(
-        buttons(&window),
-        named(&[("import_vimrc", "Import vimrc\u{2026}")])
-    );
+    // Quill's own editor is no program, and nothing is asked. Nor is
+    // there anything to import or set up for any editor: each is the
+    // user's own, with their own settings for it.
+    assert_eq!(program(&window), None);
     let shown = window.shown();
-    let pane = shown
-        .panes()
-        .iter()
-        .find(|pane| pane.id == "composing")
-        .unwrap();
-    assert!(matches!(&pane.fields[0], FormField::Choice { id, .. } if id == "editor"));
-    assert!(matches!(&pane.fields[1], FormField::Button { id, .. } if id == "import_vimrc"));
-    let (requests, before) = (window.harness.account_requests.len(), window.answers());
-    press(&mut window, "import_vimrc", "press", None);
-    assert_eq!(asked(&window), [EditorSetupAction::ImportVimrc]);
-    // The host does it: the service is asked nothing, and the window is
-    // told the settings again, as for anything done in it.
-    assert_eq!(window.harness.account_requests.len(), requests);
-    assert_eq!(window.answers(), before + 1);
-    // There is none to take away yet, so that is not on offer.
-    press(&mut window, "remove_vimrc", "press", None);
-    assert_eq!(asked(&window), [EditorSetupAction::ImportVimrc]);
+    assert!(shown.panes().iter().all(|pane| {
+        pane.id == "general"
+            || pane
+                .fields
+                .iter()
+                .all(|field| !matches!(field, FormField::Button { .. }))
+    }));
+    window.set(
+        "composing",
+        "editor_path",
+        FormValue::Text("/opt/homebrew/bin/nvim".to_owned()),
+    );
+    assert_eq!(window.file.settings.editor_path, None);
 
-    // The host says it has one: it can be replaced, or taken away.
-    window.harness.act(Action::Vimrc(true));
-    assert_eq!(
-        buttons(&window),
-        named(&[
-            ("import_vimrc", "Import Another vimrc\u{2026}"),
-            ("remove_vimrc", "Remove Imported vimrc"),
-        ])
-    );
-    press(&mut window, "remove_vimrc", "press", None);
-    assert_eq!(
-        asked(&window),
-        [
-            EditorSetupAction::ImportVimrc,
-            EditorSetupAction::RemoveVimrc
-        ]
-    );
-    window.harness.act(Action::Vimrc(false));
-    assert_eq!(
-        buttons(&window),
-        named(&[("import_vimrc", "Import vimrc\u{2026}")])
-    );
-    window.harness.act(Action::Vimrc(true));
+    // Any other editor has it, right under the editor, saying which
+    // program is run when none is named and where the app looks for it.
+    for (editor, name) in [
+        ("vim", "vim"),
+        ("nano", "nano"),
+        ("pico", "pico"),
+        ("mg", "mg"),
+    ] {
+        window.choose("composing", "editor", editor);
+        let (index, value, help) = program(&window).unwrap();
+        assert_eq!((index, value.as_str()), (1, ""), "{editor}");
+        assert!(
+            help.contains(&format!("runs the {name} it finds")),
+            "{help}"
+        );
+        assert!(help.contains("Homebrew"), "{help}");
+        assert!(help.contains("next opened"), "{help}");
+    }
+    // In a terminal the PATH is the user's own. There is no window there,
+    // but what would be said is not about the app.
+    let mut terminal = Window::new(CONFIG);
+    terminal.harness.env.editor_pane = false;
+    terminal.open();
+    terminal.choose("composing", "editor", "vim");
+    assert!(program(&terminal).unwrap().2.contains("on your PATH"));
 
-    // The user's own Vim reads the user's own vimrc: nothing is imported
-    // for it, whatever the host holds. What it needs is its script.
-    window.choose("composing", "editor", "script");
-    assert_eq!(
-        buttons(&window),
-        named(&[("show_scripts", "Show Editor Script Folder")])
+    // A program named is kept as typed, less the spaces around it.
+    window.choose("composing", "editor", "vim");
+    window.set(
+        "composing",
+        "editor_path",
+        FormValue::Text(" /opt/homebrew/bin/nvim ".to_owned()),
     );
-    press(&mut window, "import_vimrc", "press", None);
-    press(&mut window, "remove_vimrc", "press", None);
-    press(&mut window, "show_scripts", "open", None);
-    press(&mut window, "show_scripts", "press", Some("row"));
-    assert_eq!(asked(&window).len(), 2);
-    press(&mut window, "show_scripts", "press", None);
-    assert_eq!(asked(&window).last(), Some(&EditorSetupAction::ShowScripts));
-
-    // nano has nothing of the kind.
-    window.choose("composing", "editor", "nano");
-    assert_eq!(buttons(&window), named(&[]));
-    press(&mut window, "show_scripts", "press", None);
-    assert_eq!(asked(&window).len(), 3);
+    assert_eq!(
+        window.file.settings.editor_path.as_deref(),
+        Some("/opt/homebrew/bin/nvim")
+    );
+    assert_eq!(program(&window).unwrap().1, "/opt/homebrew/bin/nvim");
+    // What is neither a whole path nor a name is refused, and said.
+    window.set(
+        "composing",
+        "editor_path",
+        FormValue::Text("bin/vim".to_owned()),
+    );
+    assert!(
+        window
+            .shown()
+            .problem()
+            .is_some_and(|said| said.contains("whole path")),
+        "{:?}",
+        window.shown().problem()
+    );
+    assert_eq!(
+        window.file.settings.editor_path.as_deref(),
+        Some("/opt/homebrew/bin/nvim")
+    );
+    // Emptied, none is named.
+    window.set("composing", "editor_path", FormValue::Text("  ".to_owned()));
+    assert_eq!(window.file.settings.editor_path, None);
+    // It is typed, and nothing else.
+    window.set("composing", "editor_path", FormValue::Flag(true));
+    assert_eq!(window.file.settings.editor_path, None);
 }
 
 #[test]

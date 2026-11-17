@@ -1,29 +1,30 @@
 #!/bin/bash
-# Builds Quill.app from the Swift shell and the Rust core, signed ad hoc with
-# the App Sandbox on. For development: a build for the App Store is an Xcode
-# archive signed with a real identity.
+# Builds Quill.app from the Swift shell and the Rust core, signed ad hoc
+# with the hardened runtime. For development, and for a build to hand out:
+# one to hand out is signed with a Developer ID and notarized afterwards.
 #
 #   app/build-app.sh            debug shell, release core
 #   app/build-app.sh release    release shell, release core
-#   SANDBOX=0 app/build-app.sh  sign without the sandbox, to tell a sandbox
-#                               denial from an ordinary bug
 #   QUILL_SIGN_IDENTITY="Name" app/build-app.sh
 #                               sign with that code-signing identity from
 #                               your Keychain instead of ad hoc
 #
+# The app is not sandboxed. It is given out by itself (a download, Homebrew)
+# and not through the App Store, and it runs the user's own editor on their
+# own settings, which a sandboxed app cannot. It keeps its settings and
+# mail where a terminal's Quill does: ~/Library/Application Support/Quill.
+#
 # Signed ad hoc, each build is a different program to macOS: the Keychain
 # asks again about every saved password after every build, because "Always
 # Allow" is granted to that one build. Signed with an identity of your own
-# (an Apple Development certificate, or a self-signed code-signing
-# certificate made in Keychain Access), every build is the same program to
-# the Keychain and it asks once. This script never makes an identity: that
-# is for whoever owns the Keychain.
+# (a Developer ID or Apple Development certificate, or a self-signed
+# code-signing certificate made in Keychain Access), every build is the same
+# program to the Keychain and it asks once. This script never makes an
+# identity: that is for whoever owns the Keychain.
 #
 # The bundle lands in target/app/Quill.app, or where QUILL_APP_OUT says: the
 # bundle of a Quill that is running must not be built over, so a build made
-# to check something while one is open goes somewhere else. There is no Vim
-# in it: mail is written in the Vim that comes with macOS, or in the user's
-# own by way of a script of theirs.
+# to check something while one is open goes somewhere else.
 set -euo pipefail
 
 configuration="${1:-debug}"
@@ -59,25 +60,12 @@ find "$products" -maxdepth 1 -name '*.bundle' -exec cp -R {} "$out/Contents/Reso
 # The app's icon, made from the pictures of it at each size.
 iconutil --convert icns --output "$out/Contents/Resources/Quill.icns" \
     "$root/app/Resources/icon/Quill.iconset"
-# Quill's side of writing a message in Vim.
-mkdir -p "$out/Contents/Resources/vim"
-cp "$root/app/Resources/vim/quill.vim" "$out/Contents/Resources/vim/quill.vim"
-# For a user who writes in their own Vim through a script of their own: the
-# helper that script is handed, and a script to start from.
-cp "$root/app/Resources/vim/on-terminal" "$out/Contents/Resources/vim/on-terminal"
-cp "$root/app/Resources/vim/editor-command.sh" "$out/Contents/Resources/vim/editor-command.sh"
-chmod 755 "$out/Contents/Resources/vim/on-terminal" "$out/Contents/Resources/vim/editor-command.sh"
 
 echo "==> sign"
-if [ "${SANDBOX:-1}" = "1" ]; then
-    codesign --force --sign "$identity" --options runtime \
-        --entitlements "$root/app/Support/Helper.entitlements" "$out/Contents/Helpers/quill"
-    codesign --force --sign "$identity" --options runtime \
-        --entitlements "$root/app/Support/Quill.entitlements" "$out"
-else
-    codesign --force --sign "$identity" "$out/Contents/Helpers/quill"
-    codesign --force --sign "$identity" "$out"
-fi
+# The hardened runtime, which a notarized build must have. No entitlements:
+# nothing here needs an exception to it.
+codesign --force --sign "$identity" --options runtime "$out/Contents/Helpers/quill"
+codesign --force --sign "$identity" --options runtime "$out"
 codesign --verify --strict "$out"
 
 echo "$out"

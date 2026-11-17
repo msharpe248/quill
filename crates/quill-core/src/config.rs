@@ -216,6 +216,13 @@ impl KeymapPreset {
 #[serde(default, deny_unknown_fields)]
 pub struct ComposeConfig {
     pub editor: ComposeEditor,
+    /// The program to run as that editor, where it is not the one of its
+    /// name found on the `PATH`: a whole path (`/opt/homebrew/bin/nvim`),
+    /// one from the home folder (`~/bin/vim`), or another name to look
+    /// for (`nvim`). It is run as the kind of editor `editor` says, so a
+    /// program named for `vim` is given Vim's arguments and Quill's
+    /// plugin. Means nothing with Quill's own editor.
+    pub editor_path: Option<String>,
     pub format: ComposeFormat,
     pub reply_position: ReplyPosition,
     pub spell_check: bool,
@@ -230,6 +237,7 @@ impl Default for ComposeConfig {
     fn default() -> Self {
         Self {
             editor: ComposeEditor::Builtin,
+            editor_path: None,
             format: ComposeFormat::Markdown,
             reply_position: ReplyPosition::Above,
             spell_check: true,
@@ -241,43 +249,31 @@ impl Default for ComposeConfig {
 
 /// What a message is written in.
 ///
-/// Quill's own editor, or one outside it. In a terminal an outside editor
-/// is the user's own, found on their `PATH`. Quill's app is sandboxed and
-/// has none inside it: there the editors are the ones that come with
-/// macOS, each named here by a word and never by a path, or the user's own
-/// by way of a script of theirs.
+/// Quill's own editor, or one outside it. An outside editor is the user's
+/// own, in a terminal and in Quill's app alike: the program of that name
+/// on the `PATH`, or the one `editor_path` names, with the user's own
+/// settings for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ComposeEditor {
     /// Quill's own.
     #[default]
     Builtin,
-    /// Vim: `/usr/bin/vim` in the app, `vim` in a terminal.
+    /// Vim. `script` is read as this too: it was how the app reached the
+    /// user's own Vim while the app was sandboxed, and a settings file
+    /// that still says it means the same thing now.
+    #[serde(alias = "script")]
     Vim,
     /// nano. On a Mac that is Pico under another name.
     Nano,
     /// Pico.
     Pico,
-    /// mg, a small Emacs. In a terminal only: the one that comes with
-    /// macOS does not survive being started inside the app's sandbox.
+    /// mg, a small Emacs.
     Mg,
-    /// The user's own Vim, with all of their own setup, by way of a
-    /// script they have put in the app's scripts folder
-    /// (`editor-command.sh`). macOS runs that script outside the app's
-    /// sandbox; it is the user's and not Quill's. In a terminal this is
-    /// the same as `vim`: there the user's own Vim needs no script.
-    Script,
 }
 
 impl ComposeEditor {
-    pub const ALL: [Self; 6] = [
-        Self::Builtin,
-        Self::Vim,
-        Self::Nano,
-        Self::Pico,
-        Self::Mg,
-        Self::Script,
-    ];
+    pub const ALL: [Self; 5] = [Self::Builtin, Self::Vim, Self::Nano, Self::Pico, Self::Mg];
 
     /// The word the config says it with.
     pub fn as_str(self) -> &'static str {
@@ -287,7 +283,6 @@ impl ComposeEditor {
             Self::Nano => "nano",
             Self::Pico => "pico",
             Self::Mg => "mg",
-            Self::Script => "script",
         }
     }
 }
@@ -613,6 +608,15 @@ impl Config {
                 "storage.cache_gb must be 0 (no limit) or more".to_owned(),
             ));
         }
+        if let Some(path) = &self.compose.editor_path {
+            let whole = path.starts_with('/') || path.starts_with("~/");
+            if path.trim().is_empty() || path.contains('\0') || (!whole && path.contains('/')) {
+                return Err(ConfigError::Invalid(format!(
+                    "compose.editor_path must be a whole path (\"/opt/homebrew/bin/nvim\", \
+                     \"~/bin/vim\") or a program's name (\"nvim\"), got {path:?}"
+                )));
+            }
+        }
         for (index, rule) in self.rules.iter().enumerate() {
             let named = rule
                 .name
@@ -689,9 +693,7 @@ font = "JetBrains Mono"
 font_size = 13
 
 [compose]
-editor = "builtin"        # or one that comes with macOS: "vim", "nano", "pico"
-                          # ("mg" too, in a terminal); or "script", your own Vim
-                          # through editor-command.sh
+editor = "builtin"        # or your own "vim", "nano", "pico" or "mg"
 format = "markdown"       # or "plain"
 reply_position = "above"  # or "below"
 spell_check = true
@@ -793,6 +795,14 @@ smtp = { host = "smtp.fastmail.com", port = 465, tls = "implicit" }
             let text = format!("[compose]\neditor = \"{}\"\n", editor.as_str());
             assert_eq!(Config::parse(&text).unwrap().compose.editor, editor);
         }
+        // What the sandboxed app called the user's own Vim is Vim.
+        assert_eq!(
+            Config::parse("[compose]\neditor = \"script\"\n")
+                .unwrap()
+                .compose
+                .editor,
+            ComposeEditor::Vim
+        );
         for format in ComposeFormat::ALL {
             let text = format!("[compose]\nformat = \"{}\"\n", format.as_str());
             assert_eq!(Config::parse(&text).unwrap().compose.format, format);
@@ -807,6 +817,23 @@ smtp = { host = "smtp.fastmail.com", port = 465, tls = "implicit" }
         for remote in RemoteImages::ALL {
             let text = format!("[privacy]\nremote_images = \"{}\"\n", remote.as_str());
             assert_eq!(Config::parse(&text).unwrap().privacy.remote_images, remote);
+        }
+    }
+
+    #[test]
+    fn an_editor_may_be_named_by_a_whole_path_or_by_a_name_and_nothing_between() {
+        let path = |text: &str| {
+            Config::parse(&format!(
+                "[compose]\neditor = \"vim\"\neditor_path = {text:?}\n"
+            ))
+            .map(|config| config.compose.editor_path)
+        };
+        assert_eq!(Config::parse("").unwrap().compose.editor_path, None);
+        for good in ["/opt/homebrew/bin/nvim", "~/bin/my vim", "nvim"] {
+            assert_eq!(path(good).unwrap().as_deref(), Some(good));
+        }
+        for bad in ["", "  ", "bin/vim", "./vim", "../vim"] {
+            assert!(path(bad).is_err(), "{bad:?}");
         }
     }
 

@@ -153,12 +153,29 @@ pub fn set(text: &str, change: &Change) -> Result<String, String> {
         _ => setting.key(),
     };
     let written = match change.written() {
+        Written::Gone => return remove_value(text, setting.section(), key),
         Written::Word(word) => Value::from(word),
         Written::Flag(on) => Value::from(on),
         Written::Whole(number) => Value::from(number),
         Written::Decimal(number) => Value::from(number),
     };
     set_value(text, setting.section(), key, written)
+}
+
+/// `text` without `key` in `section`: the setting is as it is when the
+/// file does not say. A file that never said is left exactly as it is.
+fn remove_value(text: &str, section: &str, key: &str) -> Result<String, String> {
+    let mut document: DocumentMut = text
+        .parse()
+        .map_err(|err| format!("config.toml cannot be read: {err}"))?;
+    let removed = document
+        .get_mut(section)
+        .and_then(Item::as_table_like_mut)
+        .and_then(|table| table.remove(key));
+    if removed.is_none() {
+        return Ok(text.to_owned());
+    }
+    checked(document.to_string())
 }
 
 /// `text` with `key` in `section` set to `new`.
@@ -516,7 +533,11 @@ mod tests {
         );
         for (change, line) in [
             (Change::Editor(ComposeEditor::Nano), "editor = \"nano\""),
-            (Change::Editor(ComposeEditor::Script), "editor = \"script\""),
+            (Change::Editor(ComposeEditor::Mg), "editor = \"mg\""),
+            (
+                Change::EditorPath(Some("/opt/homebrew/bin/nvim".to_owned())),
+                "editor_path = \"/opt/homebrew/bin/nvim\"",
+            ),
             (Change::Format(ComposeFormat::Plain), "format = \"plain\""),
             (
                 Change::ReplyPosition(ReplyPosition::Below),

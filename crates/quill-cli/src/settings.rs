@@ -116,7 +116,7 @@ mod tests {
     use std::fs;
 
     use jiff::tz::TimeZone;
-    use quill_core::config::{Appearance, ComposeEditor, KeymapPreset, RemoteImages};
+    use quill_core::config::{Appearance, KeymapPreset, RemoteImages};
     use quill_host::bridge::{FormField, FormValue, Number, SettingsShow, SettingsUsed};
     use quill_tui::app::AccountsLink;
     use quill_tui::command::CommandId;
@@ -756,13 +756,12 @@ mod tests {
         assert!(app.text().contains("cache_gb = 5\n"));
 
         // Started with another editor, that is the one that is running.
-        let mut app = App::over(Some("[compose]\neditor = \"script\"\n"));
+        let mut app = App::over(Some("[compose]\neditor = \"nano\"\n"));
         app.open();
         app.choose("composing", "editor", "vim");
-        assert_eq!(app.env.external, ExternalEditor::Script);
+        assert_eq!(app.env.external, ExternalEditor::Nano);
         assert!(
-            help(&app, "composing", "editor")
-                .ends_with("Until then messages are written in your own Vim.")
+            help(&app, "composing", "editor").ends_with("Until then messages are written in nano.")
         );
     }
 
@@ -797,8 +796,15 @@ mod tests {
                 "remote_images",
                 FormValue::Text("allowlist".to_owned()),
             ),
-            // mg does not run in the app, and is not to be chosen in it.
-            ("composing", "editor", FormValue::Text("mg".to_owned())),
+            // What the app once called the user's own Vim is read from a
+            // file as Vim, and is not a word to choose.
+            ("composing", "editor", FormValue::Text("script".to_owned())),
+            // Nor is a program anything but a whole path or a name.
+            (
+                "composing",
+                "editor_path",
+                FormValue::Text("bin/vim".to_owned()),
+            ),
             // The wrong kind of thing altogether.
             (
                 "general",
@@ -837,7 +843,7 @@ mod tests {
     }
 
     #[test]
-    fn mg_is_not_offered_in_the_app_and_is_still_shown_when_the_file_says_it() {
+    fn the_editors_are_the_same_in_the_app_as_in_a_terminal_and_the_program_may_be_named() {
         let options = |app: &App| match app.field("composing", "editor") {
             FormField::Choice { options, .. } => options
                 .into_iter()
@@ -845,30 +851,68 @@ mod tests {
                 .collect::<Vec<_>>(),
             other => panic!("{other:?}"),
         };
+        let program = |app: &App| match app.shown().field("composing", "editor_path") {
+            Some(FormField::Text { value, .. }) => Some(value.clone()),
+            Some(other) => panic!("{other:?}"),
+            None => None,
+        };
         let mut app = App::over(Some(WRITTEN));
         app.open();
-        assert_eq!(options(&app), ["builtin", "vim", "nano", "pico", "script"]);
+        assert_eq!(options(&app), ["builtin", "vim", "nano", "pico", "mg"]);
+        // Quill's own editor is no program to name.
+        assert_eq!(program(&app), None);
 
-        // A file that says mg, as it may for Quill in a terminal: the
-        // window shows what the file says, and offers no way back to it.
-        let mut app = App::over(Some("[compose]\neditor = \"mg\"\n"));
+        // What the app called the user's own Vim while it was sandboxed is
+        // Vim, and is shown as Vim.
+        let mut app = App::over(Some("[compose]\neditor = \"script\"\n"));
         app.open();
-        assert_eq!(app.chosen("composing", "editor"), "mg");
-        assert_eq!(
-            options(&app),
-            ["builtin", "vim", "nano", "pico", "script", "mg"]
-        );
-        app.choose("composing", "editor", "pico");
-        assert_eq!(options(&app), ["builtin", "vim", "nano", "pico", "script"]);
-        assert_eq!(app.text(), "[compose]\neditor = \"pico\"\n");
+        assert_eq!(app.chosen("composing", "editor"), "vim");
+        assert_eq!(options(&app), ["builtin", "vim", "nano", "pico", "mg"]);
         app.choose("composing", "editor", "mg");
-        assert_eq!(app.text(), "[compose]\neditor = \"pico\"\n");
+        assert_eq!(app.text(), "[compose]\neditor = \"mg\"\n");
 
-        // In a terminal it is one of the editors, though there is no
-        // window there to offer it in.
-        let mut env = App::over(None).env;
-        crate::suit_host(&mut env, false, None);
-        assert!(quill_tui::settings::editors_offered(&env).contains(&ComposeEditor::Mg));
+        // The program an editor is can be named, right under the editor:
+        // written as typed, and taken out again when the field is emptied.
+        app.choose("composing", "editor", "vim");
+        assert_eq!(program(&app).as_deref(), Some(""));
+        app.set(
+            "composing",
+            "editor_path",
+            FormValue::Text("  /opt/homebrew/bin/nvim ".to_owned()),
+        );
+        assert_eq!(
+            app.text(),
+            "[compose]\neditor = \"vim\"\neditor_path = \"/opt/homebrew/bin/nvim\"\n"
+        );
+        assert_eq!(program(&app).as_deref(), Some("/opt/homebrew/bin/nvim"));
+        // Neither a whole path nor a name: refused, and the file is as it was.
+        app.set(
+            "composing",
+            "editor_path",
+            FormValue::Text("bin/vim".to_owned()),
+        );
+        assert!(
+            app.shown()
+                .problem()
+                .is_some_and(|said| said.contains("whole path"))
+        );
+        assert_eq!(program(&app).as_deref(), Some("/opt/homebrew/bin/nvim"));
+        app.set(
+            "composing",
+            "editor_path",
+            FormValue::Text("nvim".to_owned()),
+        );
+        assert_eq!(program(&app).as_deref(), Some("nvim"));
+        app.set("composing", "editor_path", FormValue::Text(String::new()));
+        assert_eq!(app.text(), "[compose]\neditor = \"vim\"\n");
+        assert_eq!(program(&app).as_deref(), Some(""));
+        // Emptied when it was empty, nothing is written.
+        app.set(
+            "composing",
+            "editor_path",
+            FormValue::Text("   ".to_owned()),
+        );
+        assert_eq!(app.text(), "[compose]\neditor = \"vim\"\n");
     }
 
     #[test]

@@ -119,12 +119,7 @@ final class GhosttySurface: TerminalSurface {
             Task { @MainActor in self?.onExit?(exit) }
         }
         do {
-            if command.userScript {
-                link.process = try PTYUserScript(
-                    command: command, size: viewport, onOutput: passOutput, onExit: passExit)
-            } else {
-                link.process = try PTYProcess(command: command, size: viewport, onOutput: passOutput, onExit: passExit)
-            }
+            link.process = try PTYProcess(command: command, size: viewport, onOutput: passOutput, onExit: passExit)
             // A resize may have landed between reading the viewport and now.
             if let latest = link.viewport, latest != viewport {
                 link.process?.resize(latest)

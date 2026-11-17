@@ -38,8 +38,7 @@ const BODY_ONLY_FILE: &str = "body-only";
 /// What every draft's folder is called, before its number.
 const FOLDER_PREFIX: &str = "edit-";
 
-/// The plugin, as it is in the app. A Vim of the user's own is given a
-/// copy.
+/// Quill's plugin for Vim. A copy goes beside every draft a Vim is given.
 const PLUGIN: &str = include_str!("../../../app/Resources/vim/quill.vim");
 
 /// The most people written out for Vim to complete addresses from.
@@ -322,7 +321,7 @@ fn read_limited(path: &Path, most: u64) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-/// The program a terminal runs when none is named.
+/// The program run as Vim when none is named.
 pub const PROGRAM: &str = "vim";
 
 /// What Vim is told before it reads the user's vimrc: mail quotes other
@@ -353,16 +352,13 @@ pub enum ExternalEditor {
     Nano,
     Pico,
     Mg,
-    /// The user's own Vim. Quill's app reaches it through a script of
-    /// theirs; in a terminal it is simply their Vim.
-    Script,
 }
 
 impl ExternalEditor {
     /// What it is called, to the user.
     pub fn name(self) -> &'static str {
         match self {
-            Self::Vim | Self::Script => "Vim",
+            Self::Vim => "Vim",
             Self::Nano => "nano",
             Self::Pico => "Pico",
             Self::Mg => "mg",
@@ -372,7 +368,7 @@ impl ExternalEditor {
     /// What closing it from Quill is called, in the bottom bar.
     pub fn close_hint(self) -> &'static str {
         match self {
-            Self::Vim | Self::Script => "close Vim",
+            Self::Vim => "close Vim",
             Self::Nano => "close nano",
             Self::Pico => "close Pico",
             Self::Mg => "close mg",
@@ -382,37 +378,36 @@ impl ExternalEditor {
     /// Whether it is a Vim, with Quill's plugin loaded: `:QuillSend` and
     /// the rest, and Send and Save reaching it from Quill.
     pub fn is_vim(self) -> bool {
-        matches!(self, Self::Vim | Self::Script)
+        matches!(self, Self::Vim)
     }
 
-    /// The program a terminal runs, by the name it has on a `PATH`.
+    /// The program that is run, by the name it has on a `PATH`.
     pub fn program(self) -> &'static str {
         match self {
-            Self::Vim | Self::Script => PROGRAM,
+            Self::Vim => PROGRAM,
             Self::Nano => "nano",
             Self::Pico => "pico",
             Self::Mg => "mg",
         }
     }
 
-    /// Which of the editors Quill's app can run this is, if it is one.
-    /// On a Mac nano is Pico, so the app has one word for both. mg is not
-    /// one: the mg that comes with macOS crashes as it starts inside the
-    /// app's sandbox, so the app is never asked for it.
-    pub fn in_the_app(self) -> Option<quill_host::bridge::EditorKind> {
+    /// What kind of editor Quill's app is told it is running, which is
+    /// how the app asks it to save and leave. On a Mac nano is Pico, so
+    /// the app has one word for both.
+    pub fn kind(self) -> quill_host::bridge::EditorKind {
         use quill_host::bridge::EditorKind;
         match self {
-            Self::Vim => Some(EditorKind::Vim),
-            Self::Nano | Self::Pico => Some(EditorKind::Nano),
-            Self::Mg => None,
-            Self::Script => Some(EditorKind::Script),
+            Self::Vim => EditorKind::Vim,
+            Self::Nano | Self::Pico => EditorKind::Nano,
+            Self::Mg => EditorKind::Mg,
         }
     }
 }
 
-/// How a terminal's editor is started on a draft: the user's own, with
-/// their own settings and environment, in the draft's folder. An argv,
-/// never a line for a shell.
+/// How an editor is started on a draft: the user's own, with their own
+/// settings and environment, in the draft's folder. An argv, never a line
+/// for a shell. In a terminal Quill runs it; in Quill's app the app does,
+/// in a terminal of its own, given this same command ([`argv`]).
 pub fn command(
     editor: ExternalEditor,
     program: &Path,
@@ -422,7 +417,7 @@ pub fn command(
 ) -> std::process::Command {
     let mut command = std::process::Command::new(program);
     match editor {
-        ExternalEditor::Vim | ExternalEditor::Script => {
+        ExternalEditor::Vim => {
             command
                 .arg("-N")
                 .arg("--cmd")
@@ -448,6 +443,15 @@ pub fn command(
     command
 }
 
+/// A command as a program and its arguments, for a host that runs it
+/// itself. `None` when any of it is not text: the bridge carries text.
+pub fn argv(command: &std::process::Command) -> Option<Vec<String>> {
+    std::iter::once(command.get_program())
+        .chain(command.get_args())
+        .map(|part| part.to_str().map(str::to_owned))
+        .collect()
+}
+
 /// Where the program called `name` is: the name itself when it is a path,
 /// otherwise the first folder of `search` (a `PATH`) that has it. Looked
 /// for before the terminal is given up, so that having no Vim costs
@@ -470,11 +474,11 @@ pub fn find_program(name: &OsStr, search: Option<&OsStr>) -> Option<PathBuf> {
         .find(|candidate| runnable(candidate))
 }
 
-/// The program a terminal runs as `editor`: for Vim the one named
-/// (`QUILL_VIM`) or `vim`; for the others, the name they go by.
+/// The program run as `editor`: the one named (`editor_path` in the
+/// settings, or `QUILL_VIM` for Vim), and otherwise the name the editor
+/// goes by, to be looked for on the `PATH`.
 pub fn program_name(editor: ExternalEditor, named: Option<&OsString>) -> &OsStr {
     named
-        .filter(|_| editor.is_vim())
         .map(OsString::as_os_str)
         .filter(|name| !name.is_empty())
         .unwrap_or(OsStr::new(editor.program()))
@@ -885,8 +889,30 @@ mod tests {
             "vim"
         );
         assert_eq!(
-            program_name(ExternalEditor::Script, Some(&OsString::from("/opt/nvim"))),
+            program_name(ExternalEditor::Vim, Some(&OsString::from("/opt/nvim"))),
             "/opt/nvim"
+        );
+        // Any editor may be named, not only Vim.
+        assert_eq!(program_name(ExternalEditor::Nano, None), "nano");
+        assert_eq!(
+            program_name(ExternalEditor::Mg, Some(&OsString::from("/opt/bin/mg"))),
+            "/opt/bin/mg"
+        );
+        // And the command it is started with is one a host can be handed.
+        let started = argv(&command(
+            ExternalEditor::Nano,
+            Path::new("/usr/bin/nano"),
+            Path::new("/tmp/edit-1/message.quill"),
+            Path::new("/tmp/edit-1"),
+            4,
+        ));
+        assert_eq!(
+            started,
+            Some(
+                ["/usr/bin/nano", "-t", "+4", "/tmp/edit-1/message.quill"]
+                    .map(str::to_owned)
+                    .to_vec()
+            )
         );
     }
 

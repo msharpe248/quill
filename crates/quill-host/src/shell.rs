@@ -55,23 +55,21 @@ impl Host for ShellHost {
 
     fn edit_draft(
         &self,
-        path: &Path,
         dir: &Path,
         title: &str,
         editor: bridge::EditorKind,
-        body_line: u32,
+        argv: Vec<String>,
     ) -> bool {
         match (
-            bridge::AbsolutePath::new(path),
             bridge::AbsolutePath::new(dir),
+            bridge::EditorArgv::new(argv),
         ) {
-            (Some(path), Some(dir)) => {
+            (Some(dir), Some(argv)) => {
                 self.send(CoreToShell::PaneEditor(bridge::PaneEditor {
-                    path,
                     dir,
                     title: title.to_owned(),
                     editor,
-                    line: bridge::LineNumber::nearest(body_line),
+                    argv,
                 }));
                 true
             }
@@ -185,9 +183,6 @@ fn read_loop(stream: UnixStream, events: UnboundedSender<HostEvent>) {
             Ok(ShellToCore::ThemesImported(imported)) => {
                 HostEvent::ThemeImported(imported.name().to_owned())
             }
-            Ok(ShellToCore::VimrcChanged(changed)) => HostEvent::Vimrc {
-                imported: changed.imported,
-            },
             Ok(ShellToCore::AppWillQuit(_)) => HostEvent::WillQuit,
             Err(err) => HostEvent::Problem(unreadable(&line, &err)),
         };

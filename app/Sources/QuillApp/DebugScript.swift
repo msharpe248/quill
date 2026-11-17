@@ -32,18 +32,13 @@ import WebKit
 /// - `drop:PATH,PATH`  hand files over as if dropped on the window
 /// - `saveto:PATH`    where the save panel answers when the core next asks
 ///   to save a file; without it the answer is that the user cancelled. No
-///   panel is ever shown to a script, so inside the sandbox the place must
-///   be in the app's container
+///   panel is ever shown to a script
 /// - `openurl:URL`    hand an address over as the Mac does when a `mailto:`
 ///   link is clicked in another application
 /// - `notifyclick:ID` click the notification of this id, as the Mac reports
 ///   it
 /// - `notifyaction:NAME,ID` click the button of this name on the notification
 ///   of this id
-/// - `importvimrc:PATH` import this file as the user's vimrc, as if it had
-///   been chosen in the panel; inside the sandbox it must be in the app's
-///   container. Neither the alert nor the panel is ever shown to a script:
-///   the settings window's button is answered as if the user had cancelled
 /// - `keys:close`     close the window of keys, which `menu:help.keys`
 ///   brings up; `keysearch:TEXT` types into its search field. Its picture
 ///   is written with `.keys.png` after the dump's name
@@ -93,8 +88,7 @@ import WebKit
 ///   it does
 /// - `themefile:PATH` what the open panel answers when Other is next pressed
 ///   in the chooser; without it the answer is that the user cancelled. No
-///   panel is ever shown to a script, so inside the sandbox the file must be
-///   in the app's container
+///   panel is ever shown to a script
 /// - `importtheme:PATH` import this theme file, as if it had been chosen
 /// - `probefolder:PATH` note whether the app can list the folder at this path,
 ///   and how many things are in it: for finding out what the App Sandbox lets
@@ -151,17 +145,11 @@ import WebKit
 /// scratch config folder's `themes` folder when the run has one, and only
 /// otherwise into the user's own.
 ///
-/// The copy of the vimrc is kept in the scratch config folder when the run
-/// has one (`--core-env QUILL_CONFIG_DIR=...`), in its `vim` folder, and
-/// only otherwise in the user's own.
-///
-/// The editor is the real one, the Vim that comes with macOS running inside
-/// the sandbox in a terminal laid over the core's, and it reaches nothing
-/// outside the window. One case
-/// does reach outside: a config
-/// that says `editor = "script"` has the user's own `editor-command.sh` run,
-/// outside the sandbox, as it would be for them. A scripted run only does
-/// that when the config it is pointed at asks for it.
+/// The editor is the real one: the user's own, as their settings name it
+/// or as it is found on the `PATH`, in a terminal laid over the core's, with
+/// the user's own settings for it. A check that must not read or write
+/// those gives the run a home folder of its own, which the editor is given
+/// too: `--core-env HOME=...`.
 ///
 /// No notification is ever shown to a script, and the user is never asked
 /// whether Quill may show them: what the core asked for is written to the
@@ -211,13 +199,6 @@ enum DebugScript {
         }
         // Nor show a notification, nor ask the user whether Quill may.
         controller.notifier = notifier
-        // Nor explain what importing a vimrc means and wait for a file to
-        // be chosen: the user is taken to have cancelled. `importvimrc:`
-        // is how a script imports one.
-        controller.vimrcPicker = { _, done in
-            vimrcPanelsAsked += 1
-            done(nil)
-        }
         // Nor wait on a panel for a theme file: the file named by the last
         // `themefile:` step is what the user is taken to have chosen, once.
         controller.themeFilePicker = { _, done in
@@ -350,9 +331,6 @@ enum DebugScript {
             // The name first: an id may have a comma in it.
             let (name, id) = split(argument, at: ",")
             controller.notificationUsed(id: id, actionIdentifier: name)
-            try? await Task.sleep(for: .milliseconds(300))
-        case "importvimrc":
-            controller.importVimrc(from: URL(fileURLWithPath: argument))
             try? await Task.sleep(for: .milliseconds(300))
         case "keys":
             // `keys:close` closes the window of keys, as its close button
@@ -544,7 +522,6 @@ enum DebugScript {
     private static var revealed: [String] = []
     private static var saveDestination: URL?
     private static var savePanelsAsked: [String] = []
-    private static var vimrcPanelsAsked = 0
     private static var themeFile: URL?
     private static var themePanelsAsked = 0
     private static let notifier = RecordingNotifier()
@@ -739,11 +716,6 @@ enum DebugScript {
         // editor place: column 70 row 7, 76 by 30, 0 covered; at 595.0,122.5 646.0 by 525.0 pt; 76 columns,
         // 30 rows; keys said for the editor, with the editor
         lines.append("editor place: \(controller.editorPlaceSummary)")
-        // vimrc: none | imported, 1234 bytes
-        // vimrc imports: /path (imported, 1234 bytes); /path (refused: the file is larger than 1 MB); removed
-        lines.append("vimrc: \(controller.vimrc.size.map { "imported, \($0) bytes" } ?? "none")")
-        lines.append("vimrc imports: \(controller.vimrcResults.joined(separator: "; "))")
-        lines.append("vimrc panels asked for: \(vimrcPanelsAsked)")
         // look: setting system, Mac pretended light, app light, core told light
         lines.append("look: \(controller.lookSummary)")
         // theme chooser: closed | up, with what is typed, how many it lists,

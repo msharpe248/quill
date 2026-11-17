@@ -15,15 +15,15 @@ Every milestone in the spec, M0 to M10, is built. M0 to M4 and POP3 have passed 
 | M5 | Signing in with Microsoft or Google; Microsoft Graph | Built. Tested against stand-in servers only |
 | M6 | Search, the palette, the mouse, push, conversations, notifications, mail links, spell check | Built. Notifications and being the default mail program are untried |
 | M8 | Snooze, send later, templates, saved searches, unsubscribe, invitations, rules, commands from a shell, hooks | Built. Unsubscribing and invitation replies have met no real server |
-| M9 | Writing mail in Vim or another editor | Works in a terminal with your own editor, and in the app with the Vim or nano that come with macOS or, through a script, with your own Vim. No editor is shipped inside the app |
+| M9 | Writing mail in Vim or another editor | Works with your own editor and your own settings for it, in a terminal and in the app. No editor is shipped inside the app |
 | M10 | Exchange on your own servers (EWS) | Built. Tested against a stand-in only |
 
 What needs a person, in the order it is worth doing:
 
 1. **Sign in to a Microsoft account.** Add it from the form and Microsoft's sign-in page opens: Quill is registered with Microsoft and needs nothing from you but the sign-in. Nothing here has yet met a real Microsoft 365 or Outlook.com mailbox. Gmail by sign-in still needs an application registered with Google ([docs/oauth.md](docs/oauth.md)); Gmail with an app password does not.
-2. **Choose an editor**, if you would sooner write mail outside Quill's own: `editor = "vim"`, `"nano"` or `"script"` under `[compose]`. The last is your own Vim, with all of your setup, through `editor-command.sh`.
+2. **Choose an editor**, if you would sooner write mail outside Quill's own: `editor = "vim"`, `"nano"`, `"pico"` or `"mg"` under `[compose]`, or Settings > Composing in the app. It is your own, with your own settings; `editor_path` names the program if it is not the one of that name on the `PATH`.
 3. **Allow notifications** when the app first asks, and make Quill the default mail program in Mail's settings if you want `mailto:` links to come here.
-4. **An Apple Developer account**, for signing and App Store validation. Deferred from M1, and the last thing outstanding.
+4. **A licence, and somewhere to publish.** Quill is to be given out as source and as a download (GitHub, Homebrew), not through the App Store. A Developer ID to sign and notarize the download with is what makes it open on someone else's Mac without a warning.
 
 [DECISIONS.md](DECISIONS.md) says under each milestone exactly what was verified, what was not, and what was left unbuilt.
 
@@ -46,15 +46,15 @@ app/build-app.sh
 open target/app/Quill.app
 ```
 
-The script builds the Rust core and the Swift shell, assembles `target/app/Quill.app`, and signs it ad hoc with the App Sandbox on. The app opens your own mail, and the form for adding an account when there is none; `Quill.app/Contents/MacOS/Quill --demo` opens the demo mailbox instead. The app keeps its config and mail in its own container, apart from those of `quill` run in a terminal.
+The script builds the Rust core and the Swift shell, assembles `target/app/Quill.app`, and signs it ad hoc with the hardened runtime. The app opens your own mail, and the form for adding an account when there is none; `Quill.app/Contents/MacOS/Quill --demo` opens the demo mailbox instead.
+
+The app is not sandboxed: it runs your own editor on your own settings, which a sandboxed app cannot. It keeps its settings and mail in `~/Library/Application Support/Quill`, the same place as `quill` run in a terminal, so the two are one mailbox. Only one of them can have it open at a time: the second says that Quill is already open and stops, since two would fetch and send the same mail twice. (The commands that do one thing and exit, such as `quill keys`, are not held back.)
 
 Settings… in the Quill menu (`cmd-,`) opens a settings window for the settings changed most; see "The Settings window". The app is light, dark or as the Mac is, with a theme for each, and Import Theme… in the same menu brings in any theme made for Ghostty; see "Themes".
 
 Around the terminal the app adds a menu bar and toolbar built from the core's commands, the mailbox name and unread count in the title bar, the unread count on the Dock icon, and a second pane beside the terminal for looking at attachments and playing sound and video. `esc` closes the pane, and `cmd-]` moves focus between the panes.
 
 `w` (View > Web Reading Pane, or its toolbar button) turns that second pane into the place mail is read: a web view that shows the message under the list's cursor, as a mail program's reading pane does, with the accounts and the list beside it. See "Reading in a web pane".
-
-`SANDBOX=0 app/build-app.sh` signs without the sandbox, to tell a sandbox denial from an ordinary bug.
 
 ## Adding an account
 
@@ -179,7 +179,7 @@ quill account password "Old Mail"
 
 Whatever it says, nothing is deleted from the server until the whole message is safely here, and a message another program deletes from the server stays in Quill. Deleting a message for good in Quill deletes the server's copy too.
 
-With anything but `"never"`, the mail on this Mac is the only copy. Back it up: it is in `~/Library/Application Support/Quill/data` (or the app's container, for the app).
+With anything but `"never"`, the mail on this Mac is the only copy. Back it up: it is in `~/Library/Application Support/Quill/data`.
 
 `tls` is as for IMAP: `"implicit"` (port 995), `"starttls"` (port 110) or `"none"`.
 
@@ -471,15 +471,28 @@ A message can be written in Vim instead of the editor above. `ctrl-v` (or `cmd-s
 editor = "vim"
 ```
 
-| `editor` | In Quill's app | In a terminal |
-|---|---|---|
-| `builtin` (the default) | Quill's own editor; `ctrl-v` hands a message to Vim | The same |
-| `vim` | The Vim that comes with macOS, `/usr/bin/vim` | Your own `vim` |
-| `nano` or `pico` | The nano that comes with macOS, which is Pico | Your own `nano` or `pico` |
-| `mg` | Not available: it crashes as it starts inside the app's sandbox | Your own `mg` |
-| `script` | Your own Vim, through `editor-command.sh` (below) | Your own `vim` |
+| `editor` | Runs |
+|---|---|
+| `builtin` (the default) | Quill's own editor; `ctrl-v` hands a message to Vim |
+| `vim` | Your own `vim` |
+| `nano` or `pico` | Your own `nano` or `pico`. On a Mac the two are one program |
+| `mg` | Your own `mg` |
 
-It is one of these words and never the path of a program. Vim has Quill's commands in it, described next. nano, Pico and mg have none: write the message, save it and leave (`ctrl-x` in nano and Pico, which Quill starts so that leaving saves; `ctrl-x ctrl-s` then `ctrl-x ctrl-c` in mg), and it comes back to Quill's own editor, to send from there.
+It is your own editor, in a terminal and in the app alike, started in your own environment: Vim reads your `~/.vimrc` and loads your plugins, and nothing is imported or copied.
+
+`editor` is one of these words, which says how Quill talks to the editor, and never the path of a program. Which program is run is the one of that name on the `PATH`, unless you name another:
+
+```toml
+[compose]
+editor = "vim"
+editor_path = "/opt/homebrew/bin/nvim"   # or "~/bin/vim", or a name such as "nvim"
+```
+
+`editor_path` is a whole path, a path from your home folder, or a name to look for on the `PATH`. The program is run as the kind of editor `editor` says, so one named for `vim` must take Vim's arguments and Vim's commands. In the app it is the Program field under the editor in Settings > Composing. `QUILL_VIM` in the environment names a Vim too, where the settings name none.
+
+**The `PATH` in the app.** An app opened from the Dock or the Finder is not started by your shell, so it has the Mac's own `PATH` (`/usr/bin:/bin:/usr/sbin:/sbin`) and not the one your shell sets up. Quill puts Homebrew's folders after it (`/opt/homebrew/bin`, `/usr/local/bin`). So in the app `vim` is the Mac's own `/usr/bin/vim` unless you say otherwise, and `nvim` is found if Homebrew installed it; for a Vim of your own that is not the first one found, give its path. Programs your editor runs itself (a plugin that calls `rg`, say) are found the same way.
+
+Vim has Quill's commands in it, described next. nano, Pico and mg have none: write the message, save it and leave (`ctrl-x` in nano and Pico, which Quill starts so that leaving saves; `ctrl-x ctrl-s` then `ctrl-x ctrl-c` in mg), and it comes back to Quill's own editor, to send from there.
 
 How much of the message the editor is given depends on where Quill is running. **In the app** it is given the text alone, and runs in the text's place in the message's pane, under the fields: see "In the app" below. **In a terminal** it has the whole terminal and the whole message, as a file: the header fields, an empty line, then the body.
 
@@ -508,7 +521,7 @@ In a terminal, change any of it. `From` is there to be read: which account sends
 
 What comes back is checked as if it had been written in Quill. A send that raises a question (no subject, say) leaves the message open with the question; a file that cannot be attached leaves it open saying why, and it is not sent or put away without the file. The message is saved as a draft before Vim starts, so nothing written so far depends on Vim.
 
-**In a terminal** Quill runs your own Vim, the `vim` on your `PATH`, with your own vimrc, in the terminal Quill is in, and takes the terminal back when Vim quits. Mail goes on being fetched and sent meanwhile. `QUILL_VIM` names another program to run in its place; it is started the same way. With no Vim to run, the message stays in Quill's editor and says so. Modelines are switched off for the draft, so a line of quoted mail cannot set options in your Vim.
+**In a terminal** the editor runs in the terminal Quill is in, and Quill takes the terminal back when it quits. Mail goes on being fetched and sent meanwhile. With no such program to run, the message stays in Quill's editor and says which program was looked for. Modelines are switched off for the draft, in a terminal and in the app, so a line of quoted mail cannot set options in your Vim.
 
 **In the app** the editor runs inside the message's pane. The fields (From, To, Cc, Subject, the files attached) stay where they are, still Quill's, with addresses offered as you type; the editor has the place of the text under them and is given the text alone, on the background and with the text colour of Quill's theme. It is running as the message opens. A new message starts with the cursor in To; a reply starts in the editor. With the web reading pane on, the message you are answering stays on show beside it.
 
@@ -526,25 +539,7 @@ What the editor's keys do is said above it for the first message you write this 
 
 What the editor writes is the text and only the text: a line that looks like `To:` or `Attach:` is a line of the message. Send Later and templates wait until the text is back in Quill's editor.
 
-The app has no editor of this kind inside it; it runs one that comes with macOS, inside its own sandbox, or your own Vim by a script:
-
-- `editor = "vim"` or `"nano"`: the one that comes with macOS. Nothing to build or install, and nothing of your own setup either.
-- `editor = "script"`: your own Vim, the one you use in a terminal, with your vimrc and your plugins. The app is sandboxed and cannot start it, so macOS does, by running a script of yours. See below.
-
-Send and Save in the menus and toolbar reach Vim: it does as it would for `:QuillSend` or `:QuillPostpone`. They do not reach nano, which has to hand the text back first. `esc` in the fields asks the editor to save and close, in its own keys, and the text comes back into Quill's own editor.
-
-**Your own Vim, through `editor-command.sh`.** macOS gives every sandboxed app one folder of scripts that it will run for the app outside the sandbox: `~/Library/Application Scripts/dev.quill.Quill/`. Only you can put a script there; the app can read the folder and cannot write to it. Quill runs the one called `editor-command.sh`. To set it up:
-
-```sh
-mkdir -p ~/Library/Application\ Scripts/dev.quill.Quill
-cp app/Resources/vim/editor-command.sh ~/Library/Application\ Scripts/dev.quill.Quill/
-```
-
-With "Your own Vim, by your script" chosen in Settings > Composing, the "Show Editor Script Folder" button under it opens the folder, and a copy of the script to start from is inside the app at `Contents/Resources/vim/editor-command.sh`. As it comes, the script runs Homebrew's Vim if there is one and the Mac's own otherwise; change one line for another. It is given the arguments Vim is to be started with, which switch modelines off for the draft and load Quill's commands, and a small helper that makes Quill's pane a proper terminal for Vim, so that it follows the pane's size and the programs it runs can use the terminal too.
-
-That Vim is not in the sandbox. It is as it is in your terminal: it reads `~/.vimrc`, loads your plugins, and can run other programs. Quill's own guards still apply to the message: modelines stay off for the draft, and what comes back is checked as if it had been written in Quill.
-
-**The Mac's own Vim, inside the sandbox** (`editor = "vim"`), does not read `~/.vimrc` or `~/.vim`: the sandbox keeps both out of reach, and Quill starts it with its own settings. Nothing of your own setup is used unless you bring it in: with Vim chosen in Settings > Composing, "Import vimrc…" under it copies one file, and once there is a copy the same place offers to replace it or take it away. (The buttons under the editor go by the editor chosen: your own Vim by your script reads your own vimrc and has the script folder there instead, and nano and Quill's own editor have nothing.) Settings and plugins that run other programs or read files elsewhere do not work there.
+Send and Save in the menus and toolbar reach Vim: it does as it would for `:QuillSend` or `:QuillPostpone`. They do not reach nano, Pico or mg, which have to hand the text back first. `esc` in the fields asks the editor to save and close, in its own keys, and the text comes back into Quill's own editor.
 
 ## Rules for arriving mail
 
@@ -597,7 +592,7 @@ input = "text"      # "raw" by default
 
 `hooks.toml` is read once, when Quill starts. It may list up to 50 hooks. A file with a mistake in it (a program not given by its full path, say), or one over 64 KiB, loads no hooks at all, and a notice says why.
 
-Hooks work in a terminal only. The app is sandboxed and never starts a program outside its own bundle, so there the command is switched off and the list does not open.
+Hooks work in a terminal only. In the app the command is switched off and the list does not open: running your programs from the app has not been tried yet.
 
 ## From a shell
 
@@ -656,7 +651,8 @@ In the app, Settings… in the Quill menu (`cmd-,`) opens a settings window. It 
 | | List the messages of a conversation together | `threads` under `[ui]` | At once |
 | | Read mail in a web pane beside the list | `web_reading` under `[ui]` | At once |
 | Accounts | The accounts in the file, with Add an Account… and Sign In… | `[[account]]` | At once |
-| Composing | Write in: Quill's own editor, Vim, nano, Pico, or your own Vim by your script | `editor` under `[compose]` | When Quill is next opened |
+| Composing | Write in: Quill's own editor, Vim, nano, Pico or mg | `editor` under `[compose]` | When Quill is next opened |
+| | Program: the program to run as that editor, where it is not the one found by its name. Shown for any editor but Quill's own; emptied, the line is taken out of the file | `editor_path` under `[compose]` | When Quill is next opened |
 | | Format: Markdown or plain text | `format` under `[compose]` | At once |
 | | Replies above or below the quoted message | `reply_position` under `[compose]` | At once |
 | | Check spelling as you type | `spell_check` under `[compose]` | At once |
@@ -765,7 +761,7 @@ In the app all of this is in Settings, General: Appearance, Light theme, Dark th
 
 **Importing a theme made for Ghostty.** In the app, Import Theme… (in Settings, General, and in the Quill menu) opens a chooser with every theme of a Ghostty installed on this Mac: type to search by name, show only the dark ones or the light ones, and each row has a patch of the theme's colours. Import copies the theme into your `themes` folder and makes it the theme in force: the one theme, if your settings have one for both appearances, and otherwise the theme of the appearance Quill has at that moment. Other… imports a theme file from anywhere.
 
-Ghostty's themes are looked for in `/Applications/Ghostty.app`, then in `~/Applications/Ghostty.app`, then in `~/.config/ghostty/themes`, where Ghostty keeps themes of your own. The app is sandboxed: it can read the first, and may not read your home folder, so for a theme kept there use Other…, which opens on that folder.
+Ghostty's themes are looked for in `/Applications/Ghostty.app`, then in `~/Applications/Ghostty.app`, then in `~/.config/ghostty/themes`, where Ghostty keeps themes of your own. Other… imports one kept anywhere else, and opens on the last of those folders.
 
 From a shell, for Quill in a terminal:
 
@@ -808,7 +804,7 @@ The IMAP backend's tests run against a real server: install Dovecot (`brew insta
 
 The shell and the core talk over a bridge defined in `schema/bridge.json`. The example messages in `schema/examples` are tested from both sides; change the schema, both sets of types and the examples together.
 
-The app can be driven without a person, for checks that need the real window: `Quill --script "wait:2;menu:message.toggle_star;press:cmd-j" --dump-screen out.txt` performs the steps, then writes the terminal's text, the shell's state and a picture of the window (`out.txt.png`). Inside the sandbox the file must be in the app's container. `app/Sources/QuillApp/DebugScript.swift` lists the steps. A sheet on the window is in the dump too, whichever question it is asking (its step, what it says, and each field with what it holds; a password, and a code to sign in with, as `<secret>`), is drawn into the picture where it lies and saved by itself as `out.txt.sheet.png`; `sheetset:FIELD=VALUE` and `sheetpress:BUTTON` work it. `snap:NAME` writes the dump as it stands in the middle of a script (`out.txt.NAME`, and its picture), so one launch can check several states; the dump says whether the web reading pane is on and what it shows, and gives the widths to check its place by: the terminal's columns, the columns the window has room for, where the core says the pane goes, where the divider was left, and the width of each pane drawn in the terminal. `divider:COLUMNS` drags the divider and `divider:reset` double-clicks it. `notice:COMMAND` clicks a button of the bar above the page in the reading pane, by its command. `clicktext:TEXT` clicks the terminal where that text first is on its screen (`clicktext:2,TEXT` for the second place). `clickeditor:` clicks the editor that has the text of the message being written, `typeeditor:TEXT` types into it, and the dump says where the core put it, the cells it came to and which terminal has the keys. A scripted run starts at the same window size every time and keeps a dragged divider for the run only; it neither reads nor writes your saved window or divider. The settings window is worked with `settings:open`, `settingspane:PANE`, `settingsset:PANE.FIELD=VALUE`, `settingsstep:PANE.FIELD=up`, `settingspick:PANE.FIELD=TITLE`, `settingspress:PANE.FIELD.ACTION`, `settingskey:KEY` and `settings:close`; the dump says what it shows and what the core was told, its picture is `out.txt.settings.png`, and the pane it was last on is kept for the run only. The window of keys comes up with `menu:help.keys`; `keysearch:TEXT` types in its search field and `keys:close` closes it, the dump has every row it shows, and its picture is `out.txt.keys.png`.
+The app can be driven without a person, for checks that need the real window: `Quill --script "wait:2;menu:message.toggle_star;press:cmd-j" --dump-screen out.txt` performs the steps, then writes the terminal's text, the shell's state and a picture of the window (`out.txt.png`). A run like this opens your own mailbox unless it is told otherwise: give it `--demo`, or scratch folders with `--core-env QUILL_CONFIG_DIR=...` and `--core-env QUILL_DATA_DIR=...`, and a home folder of its own (`--core-env HOME=...`, and `HOME` set for the app itself) if it is not to run your editor on your own settings. `app/Sources/QuillApp/DebugScript.swift` lists the steps. A sheet on the window is in the dump too, whichever question it is asking (its step, what it says, and each field with what it holds; a password, and a code to sign in with, as `<secret>`), is drawn into the picture where it lies and saved by itself as `out.txt.sheet.png`; `sheetset:FIELD=VALUE` and `sheetpress:BUTTON` work it. `snap:NAME` writes the dump as it stands in the middle of a script (`out.txt.NAME`, and its picture), so one launch can check several states; the dump says whether the web reading pane is on and what it shows, and gives the widths to check its place by: the terminal's columns, the columns the window has room for, where the core says the pane goes, where the divider was left, and the width of each pane drawn in the terminal. `divider:COLUMNS` drags the divider and `divider:reset` double-clicks it. `notice:COMMAND` clicks a button of the bar above the page in the reading pane, by its command. `clicktext:TEXT` clicks the terminal where that text first is on its screen (`clicktext:2,TEXT` for the second place). `clickeditor:` clicks the editor that has the text of the message being written, `typeeditor:TEXT` types into it, and the dump says where the core put it, the cells it came to and which terminal has the keys. A scripted run starts at the same window size every time and keeps a dragged divider for the run only; it neither reads nor writes your saved window or divider. The settings window is worked with `settings:open`, `settingspane:PANE`, `settingsset:PANE.FIELD=VALUE`, `settingsstep:PANE.FIELD=up`, `settingspick:PANE.FIELD=TITLE`, `settingspress:PANE.FIELD.ACTION`, `settingskey:KEY` and `settings:close`; the dump says what it shows and what the core was told, its picture is `out.txt.settings.png`, and the pane it was last on is kept for the run only. The window of keys comes up with `menu:help.keys`; `keysearch:TEXT` types in its search field and `keys:close` closes it, the dump has every row it shows, and its picture is `out.txt.keys.png`.
 
 The UI is covered by snapshot tests of whole screens at 80x24 and 200x60 (`crates/quill-tui/tests/snapshots.rs`). When a change to the UI is intended, regenerate them with `INSTA_UPDATE=always cargo test -p quill-tui` or review them with `cargo insta review`, and read the diff before committing.
 

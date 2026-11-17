@@ -179,11 +179,40 @@ struct Io<'a> {
     /// Pictures the host has been asked to make, by the id asked under,
     /// and where each will be written.
     thumbnails: std::collections::HashMap<u64, PathBuf>,
-    /// A draft file, and its folder, that Vim is to be run on in this
-    /// terminal. The loop does it, since it owns the terminal.
-    editor_wanted: Option<(PathBuf, PathBuf, vim::ExternalEditor, u32)>,
+    /// A draft that an editor is to be run on. The loop does it: it
+    /// finds the program, and in a terminal it owns the terminal.
+    editor_wanted: Option<EditorWanted>,
     /// Set as the UI closes, for work started here that must end with it.
     closing: Arc<AtomicBool>,
+}
+
+/// A draft file in its own folder, and the editor to run on it.
+struct EditorWanted {
+    path: PathBuf,
+    dir: PathBuf,
+    /// What the message is called, for a host that shows the editor.
+    title: String,
+    editor: vim::ExternalEditor,
+    /// The line of the file the body starts on, counting from 1.
+    body_line: u32,
+}
+
+/// The command an editor is started with on a draft: the user's own
+/// program, found by the name the settings or the environment give it or
+/// by the editor's own name on the `PATH`. `None` when there is no such
+/// program, which costs nothing but a line saying so.
+fn editor_command(env: &Env, wanted: &EditorWanted) -> Option<std::process::Command> {
+    let program = vim::find_program(
+        vim::program_name(wanted.editor, env.editor_program.as_ref()),
+        std::env::var_os("PATH").as_deref(),
+    )?;
+    Some(vim::command(
+        wanted.editor,
+        &program,
+        &wanted.path,
+        &wanted.dir,
+        wanted.body_line,
+    ))
 }
 
 /// What the host is to be told about its sheet.
@@ -347,7 +376,6 @@ impl Io<'_> {
                 HostRequest::OpenUrl(url) => self.host.open_url(&url),
                 HostRequest::PickFiles => self.host.pick_files(),
                 HostRequest::PickTheme => self.host.pick_theme(),
-                HostRequest::EditorSetup(action) => self.host.editor_setup(action),
                 HostRequest::ShowKeys => self.host.show_keys(),
                 HostRequest::Preview { files, index } => {
                     let files: Vec<(&std::path::Path, &str)> = files
@@ -430,36 +458,22 @@ impl Io<'_> {
                         });
                     }
                 }
-                // Quill's own app runs Vim itself, in a pane, and answers
-                // when it has gone. The app is sandboxed: when it
-                // will not, nothing here runs a Vim in its place.
+                // The loop starts it: it knows which program the editor
+                // is, and in a terminal it owns the terminal.
                 HostRequest::EditDraft {
                     path,
                     dir,
                     title,
                     editor,
                     body_line,
-                } if self.host.is_shell() => {
-                    // An editor the app cannot run is not asked for.
-                    let taken = editor.in_the_app().is_some_and(|kind| {
-                        self.host.edit_draft(&path, &dir, &title, kind, body_line)
-                    });
-                    if !taken {
-                        let _ = self.injected.send(Action::EditorExited {
-                            ran: false,
-                            status: 0,
-                        });
-                    }
-                }
-                // In a terminal, the user's own editor takes the terminal.
-                HostRequest::EditDraft {
-                    path,
-                    dir,
-                    editor,
-                    body_line,
-                    ..
                 } => {
-                    self.editor_wanted = Some((path, dir, editor, body_line));
+                    self.editor_wanted = Some(EditorWanted {
+                        path,
+                        dir,
+                        title,
+                        editor,
+                        body_line,
+                    });
                 }
                 HostRequest::ClosePane => self.host.close_pane(),
                 HostRequest::RunHook(run) => self.run_hook(*run),
@@ -937,7 +951,6 @@ async fn event_loop(
                 HostEvent::SettingsUsed(used) => Some(Action::Settings(SettingsAct::Used(used))),
                 HostEvent::SystemAppearance { dark } => Some(Action::SystemAppearance { dark }),
                 HostEvent::ThemeImported(name) => Some(Action::ThemeImported(name)),
-                HostEvent::Vimrc { imported } => Some(Action::Vimrc(imported)),
                 HostEvent::Thumbnail { id, ok } => {
                     io.thumbnail_made(id, ok);
                     None
@@ -995,12 +1008,30 @@ async fn event_loop(
                 width_due = Some(tokio::time::Instant::now() + WIDTH_WAIT);
             }
         }
-        if let Some((path, dir, editor, body_line)) = io.editor_wanted.take() {
-            let draft = (editor, path.as_path(), dir.as_path(), body_line);
-            match run_editor(terminal, env, io, &mut input, draft)? {
-                Some(wait) => away = Some(wait),
+        if let Some(wanted) = io.editor_wanted.take() {
+            let command = editor_command(env, &wanted);
+            let started = if io.host.is_shell() {
+                // The app runs it, in a terminal of its own over the
+                // text's place: the same command, handed over whole.
+                command.as_ref().and_then(vim::argv).is_some_and(|argv| {
+                    io.host
+                        .edit_draft(&wanted.dir, &wanted.title, wanted.editor.kind(), argv)
+                })
+            } else {
+                match command {
+                    Some(command) => match run_editor(terminal, env, io, &mut input, command)? {
+                        Some(wait) => {
+                            away = Some(wait);
+                            true
+                        }
+                        None => false,
+                    },
+                    None => false,
+                }
+            };
+            if !started {
                 // Nothing ran, and the terminal was never given up.
-                None => {
+                {
                     let effects = state.update(
                         env,
                         Action::EditorExited {
@@ -1058,16 +1089,8 @@ fn run_editor(
     env: &Env,
     io: &mut Io<'_>,
     input: &mut Option<EventStream>,
-    (editor, path, dir, body_line): (vim::ExternalEditor, &std::path::Path, &std::path::Path, u32),
+    mut command: std::process::Command,
 ) -> io::Result<Option<EditorWait>> {
-    // Looked for before anything is given up, so that having no Vim
-    // costs nothing but a line saying so.
-    let Some(program) = vim::find_program(
-        vim::program_name(editor, env.vim_program.as_ref()),
-        std::env::var_os("PATH").as_deref(),
-    ) else {
-        return Ok(None);
-    };
     // Stop reading the keyboard: what is typed from here on is Vim's.
     // Dropping the stream stops its reader; looking once more makes sure
     // it has let go, and anything already typed is not kept for later.
@@ -1080,7 +1103,7 @@ fn run_editor(
     let _ = io.images.sync(Vec::new(), io.images.size);
     let _ = terminal.show_cursor();
     terminal::leave();
-    match vim::command(editor, &program, path, dir, body_line).spawn() {
+    match command.spawn() {
         Ok(mut child) => Ok(Some(tokio::task::spawn_blocking(move || child.wait()))),
         Err(_) => {
             // It was there and would not start. Take the terminal back.
@@ -1198,7 +1221,7 @@ mod tests {
             sheets: false,
             editor_pane: false,
             external: vim::ExternalEditor::Vim,
-            vim_program: None,
+            editor_program: None,
             hooks: Vec::new(),
             hooks_enabled: false,
             web_pane: false,

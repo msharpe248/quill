@@ -74,9 +74,6 @@ pub enum HostEvent {
     /// The host has put a theme file of this name in the `themes` folder
     /// beside the settings file.
     ThemeImported(String),
-    /// Whether the host holds a vimrc the user imported, for the Vim it
-    /// runs: said as it starts, and whenever that changes.
-    Vimrc { imported: bool },
     /// The app is quitting: flush and exit cleanly.
     WillQuit,
     /// The shell has gone. There is nothing left to draw for.
@@ -178,22 +175,21 @@ pub trait Host: Send + Sync {
         false
     }
 
-    /// Runs an editor on a draft file, in a pane of its own, if this host
-    /// has one. `dir` is the draft's folder, where the editor and the core
-    /// leave each other notes. Returns whether the host took it on: when
-    /// not, the caller runs an editor itself. `editor` says which, of
-    /// those the host can run, and `body_line` the line of the file its
-    /// body starts on, for an editor that is to start there. The answer is
-    /// [`HostEvent::EditorExited`].
+    /// Runs an editor on a draft, in a terminal of the host's own, if it
+    /// has one. `argv` is the whole command, the program by its absolute
+    /// path first; `dir` is the draft's folder, where the editor and the
+    /// core leave each other notes; `editor` says what kind it is, which
+    /// is how the host asks it to leave. Returns whether the host took it
+    /// on: when not, the caller says the editor did not run. The answer
+    /// is [`HostEvent::EditorExited`].
     fn edit_draft(
         &self,
-        path: &Path,
         dir: &Path,
         title: &str,
         editor: bridge::EditorKind,
-        body_line: u32,
+        argv: Vec<String>,
     ) -> bool {
-        let _ = (path, dir, title, editor, body_line);
+        let _ = (dir, title, editor, argv);
         false
     }
 
@@ -283,13 +279,6 @@ pub trait Host: Send + Sync {
     /// [`HostEvent::ThemeImported`]. Only a shell has a chooser.
     fn pick_theme(&self) {
         self.send(CoreToShell::ThemesPick(NoParams {}));
-    }
-
-    /// Asks the host to do something for the editor messages are written
-    /// in that only it can: take in a vimrc, take it away, show where the
-    /// user's own script goes. Only a shell runs editors of its own.
-    fn editor_setup(&self, action: bridge::EditorSetupAction) {
-        self.send(CoreToShell::EditorSetup(bridge::EditorSetup { action }));
     }
 
     /// Tells the host every key there is, for its window of them: at

@@ -16,9 +16,9 @@ enum MainMenu {
         app.addItem(.separator())
         append(commands.makeMenuItems(for: .app), to: app, thenSeparator: true)
         // Settings, on cmd-comma, is a window, as on any Mac. The config
-        // behind it is a file in the app's container, which is not a place
-        // anyone finds by looking: the item after it gets to that, for
-        // what the window does not have.
+        // behind it is a file in the Library, which is not a place anyone
+        // finds by looking: the item after it gets to that, for what the
+        // window does not have.
         let settings = app.addItem(
             withTitle: "Settings\u{2026}", action: #selector(MainWindowController.showSettings(_:)),
             keyEquivalent: ",")
@@ -27,10 +27,7 @@ enum MainMenu {
             withTitle: "Reveal Settings File in Finder", action: #selector(MainWindowController.revealConfig(_:)),
             keyEquivalent: "")
         revealConfig.target = panes
-        // A theme made for Ghostty is chosen and copied in by the shell:
-        // the core cannot be shown a file the user chose. What there is to
-        // set up for an editor (a vimrc, the folder of the user's own
-        // script) is in the settings window, under the editor chosen.
+        // A theme made for Ghostty is chosen and copied in by the shell.
         let importTheme = app.addItem(
             withTitle: "Import Theme\u{2026}", action: #selector(MainWindowController.importTheme(_:)),
             keyEquivalent: "")

@@ -2,10 +2,9 @@
   "jsonrpc": "2.0",
   "method": "pane.editor",
   "params": {
-    "path": "/tmp/quill-edit-1/message.quill",
     "dir": "/tmp/quill-edit-1",
     "title": "x",
-    "editor": "bundled",
-    "line": 7
+    "editor": "emacs",
+    "argv": ["/usr/bin/vim", "/tmp/quill-edit-1/message.quill"]
   }
 }

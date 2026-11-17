@@ -128,13 +128,19 @@ struct EditorSlotTests {
 
 struct PoliteStopTests {
     @Test func vimIsAskedAsSomeoneAtTheKeyboardWould() {
-        // The Mac's own and the user's own are asked alike.
-        for vim in [EditorKind.vim, .script] {
-            // esc on its own first.
-            #expect(Array(PoliteStop.leaveMode(for: vim).utf8) == [0x1B])
-            // Then ctrl-\ ctrl-n, :wqa and return.
-            #expect(Array(PoliteStop.saveAndQuit(for: vim).utf8) == [0x1C, 0x0E] + Array(":wqa".utf8) + [0x0D])
-        }
+        // esc on its own first.
+        #expect(Array(PoliteStop.leaveMode(for: .vim).utf8) == [0x1B])
+        // Then ctrl-\ ctrl-n, :wqa and return.
+        #expect(Array(PoliteStop.saveAndQuit(for: .vim).utf8) == [0x1C, 0x0E] + Array(":wqa".utf8) + [0x0D])
+    }
+
+    @Test func mgIsAskedInItsOwnKeys() {
+        // ctrl-g, which gives up whatever it was asking.
+        #expect(Array(PoliteStop.leaveMode(for: .mg).utf8) == [0x07])
+        // Then ctrl-x ctrl-c to leave, and yes to saving and to the
+        // newline it asks about: seen to leave a draft saved, whichever
+        // of the two it asks.
+        #expect(Array(PoliteStop.saveAndQuit(for: .mg).utf8) == [0x18, 0x03] + Array("yy".utf8))
     }
 
     @Test func nanoIsAskedInItsOwnKeys() {
@@ -142,7 +148,6 @@ struct PoliteStopTests {
         #expect(Array(PoliteStop.leaveMode(for: .nano).utf8) == [0x03])
         // Then ctrl-x: in its tool mode, leaving saves without asking.
         #expect(Array(PoliteStop.saveAndQuit(for: .nano).utf8) == [0x18])
-        #expect(EditorLaunch.picoToolMode == "-t")
         // Nothing of Vim's is typed into a message being written in nano.
         #expect(!PoliteStop.saveAndQuit(for: .nano).contains(":wqa"))
     }

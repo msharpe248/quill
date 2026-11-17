@@ -330,11 +330,10 @@ private struct SpellSuggestedParams: Codable {
 }
 
 private struct PaneEditorParams: Codable {
-    var path: String
     var dir: String
     var title: String
     var editor: String
-    var line: Int
+    var argv: [String]
 }
 
 private struct EditorExitedParams: Codable {
@@ -344,14 +343,6 @@ private struct EditorExitedParams: Codable {
 
 private struct AppearanceChangedParams: Codable {
     var dark: Bool
-}
-
-private struct VimrcChangedParams: Codable {
-    var imported: Bool
-}
-
-private struct EditorSetupParams: Codable {
-    var action: String
 }
 
 /// `themes.imported` as it is on the wire, before its name is checked.
@@ -968,16 +959,14 @@ public extension CoreToShell {
         case "pane.editor":
             let params = try envelope.decode(PaneEditorParams.self, allowing: PaneEditor.allowedKeys)
             guard let kind = EditorKind(rawValue: params.editor) else {
-                throw BridgeError.malformed("pane.editor: editor is vim, nano or script, never a program")
-            }
-            guard PaneEditor.lines.contains(params.line) else {
-                throw BridgeError.malformed("pane.editor: line is from 1 to 1000000")
+                throw BridgeError.malformed("pane.editor: editor is vim, nano or mg, never a program")
             }
             guard
                 let request = PaneEditor(
-                    path: params.path, dir: params.dir, title: params.title, editor: kind, line: params.line)
+                    dir: params.dir, title: params.title, editor: kind, argv: params.argv)
             else {
-                throw BridgeError.malformed("pane.editor: the path and the dir must be absolute")
+                throw BridgeError.malformed(
+                    "pane.editor: the dir must be absolute and the argv a program by its absolute path")
             }
             self = .paneEditor(request)
         case "form.show":
@@ -1022,12 +1011,6 @@ public extension CoreToShell {
         case "themes.pick":
             try envelope.requireOnly([])
             self = .themesPick
-        case "editor.setup":
-            let params = try envelope.decode(EditorSetupParams.self, allowing: ["action"])
-            guard let setup = EditorSetup(rawValue: params.action) else {
-                throw BridgeError.malformed("editor.setup: action is import_vimrc, remove_vimrc or show_scripts")
-            }
-            self = .editorSetup(setup)
         case "keys.list":
             let list = try envelope.decode(KeysList.self, allowing: KeysList.allowedKeys)
             // The fields of each section and each line are checked as
@@ -1102,8 +1085,6 @@ public extension CoreToShell {
             encodeLine(method: "settings.show", params: settings.json)
         case .themesPick:
             encodeLine(method: "themes.pick", params: NoParams())
-        case let .editorSetup(setup):
-            encodeLine(method: "editor.setup", params: EditorSetupParams(action: setup.rawValue))
         case let .keysList(list):
             encodeLine(method: "keys.list", params: list)
         case .keysShow:
@@ -1212,9 +1193,6 @@ public extension ShellToCore {
                 throw BridgeError.malformed("themes.imported: not a name a theme can have")
             }
             self = .themesImported(imported)
-        case "vimrc.changed":
-            let params = try envelope.decode(VimrcChangedParams.self, allowing: ["imported"])
-            self = .vimrcChanged(imported: params.imported)
         case "app.will_quit":
             try envelope.requireOnly([])
             self = .appWillQuit
@@ -1259,8 +1237,6 @@ public extension ShellToCore {
             encodeLine(method: "appearance.changed", params: AppearanceChangedParams(dark: dark))
         case let .themesImported(imported):
             encodeLine(method: "themes.imported", params: imported)
-        case let .vimrcChanged(imported):
-            encodeLine(method: "vimrc.changed", params: VimrcChangedParams(imported: imported))
         case .appWillQuit:
             encodeLine(method: "app.will_quit", params: NoParams())
         }

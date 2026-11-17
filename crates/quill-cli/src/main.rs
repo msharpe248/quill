@@ -217,9 +217,56 @@ struct TuiArgs {
     dirs: Dirs,
 }
 
+/// What Quill exits with when the mailbox it was to open is open already.
+/// Quill's app goes by it to say so in words of its own: keep it the same
+/// as `CoreLocator.alreadyOpenStatus` there.
+const ALREADY_OPEN_STATUS: u8 = 75;
+
+/// The mailbox is open in another Quill: its app, or another terminal.
+#[derive(Debug)]
+struct AlreadyOpen;
+
+impl std::fmt::Display for AlreadyOpen {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            "Quill is already open on this mailbox, in its app or in another terminal. \
+             Two at once would fetch and send the same mail twice: close that one first",
+        )
+    }
+}
+
+impl std::error::Error for AlreadyOpen {}
+
+/// Takes the mailbox in `data_dir` for this run, or says another Quill
+/// has it. The app and a terminal's Quill keep their mail in the same
+/// place, and each has an engine that fetches and sends: two of them on
+/// one mailbox would do everything twice. Held for as long as what is
+/// returned is kept; the system lets go of it when Quill ends, however it
+/// ends. The commands that do one thing and exit do not take it.
+fn hold_mailbox(data_dir: &std::path::Path) -> anyhow::Result<std::fs::File> {
+    let path = data_dir.join("open.lock");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .with_context(|| format!("cannot open {}", path.display()))?;
+    match file.try_lock() {
+        Ok(()) => Ok(file),
+        Err(std::fs::TryLockError::WouldBlock) => Err(AlreadyOpen.into()),
+        Err(std::fs::TryLockError::Error(err)) => {
+            Err(err).with_context(|| format!("cannot lock {}", path.display()))
+        }
+    }
+}
+
 fn main() -> ExitCode {
     match run(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
+        Err(err) if err.downcast_ref::<AlreadyOpen>().is_some() => {
+            eprintln!("quill: {err}.");
+            ExitCode::from(ALREADY_OPEN_STATUS)
+        }
         Err(err) => {
             eprintln!("quill: {err:#}");
             ExitCode::FAILURE
@@ -377,6 +424,8 @@ async fn tui(args: TuiArgs) -> anyhow::Result<()> {
     let loaded = setup::load(&paths, mode, TimeZone::system());
     let mut notices = loaded.notices;
 
+    // The real mailbox is this run's alone for as long as this is held.
+    let mut mailbox_held = None;
     let (store, sync, accounts) = if args.demo {
         let mut store = Store::open_in_memory().context("cannot create the demo mailbox")?;
         demo::seed(&mut store, app::now())
@@ -392,6 +441,7 @@ async fn tui(args: TuiArgs) -> anyhow::Result<()> {
     } else {
         create_private_dir(&paths.data_dir)
             .with_context(|| format!("cannot create {}", paths.data_dir.display()))?;
+        mailbox_held = Some(hold_mailbox(&paths.data_dir)?);
         let database = paths.database();
         let open = || {
             Store::open(&database).with_context(|| format!("cannot open {}", database.display()))
@@ -461,9 +511,11 @@ async fn tui(args: TuiArgs) -> anyhow::Result<()> {
             system_appearance(std::env::var("QUILL_SYSTEM_APPEARANCE").ok().as_deref());
         env.restyle();
     }
-    app::run(store, env, notices, attached, sync, accounts)
+    let ended = app::run(store, env, notices, attached, sync, accounts)
         .await
-        .context("the terminal UI stopped")
+        .context("the terminal UI stopped");
+    drop(mailbox_held);
+    ended
 }
 
 /// Sets what depends on where Quill is running: inside its own app
@@ -481,13 +533,16 @@ fn suit_host(env: &mut quill_tui::state::Env, shell: bool, vim: Option<std::ffi:
     // the questions Quill asks (a sign-in, a certificate, a time,
     // unsubscribing), which a terminal has drawn over its panes.
     env.sheets = shell;
-    // And a Vim of its own, in a pane. In a terminal the user's own Vim
-    // is run there: `vim`, or the program QUILL_VIM names. The app never
-    // runs that one, whatever its environment says.
+    // And a terminal of its own to run an editor in, over the text's
+    // place. Either way the editor is the user's own: the program the
+    // settings name, or for Vim the one QUILL_VIM names, or the one of
+    // the editor's name on the PATH.
     env.editor_pane = shell;
-    env.vim_program = vim.filter(|name| !shell && !name.is_empty());
-    // The app is sandboxed and starts no program outside its bundle, so
-    // hooks run only in a terminal.
+    if env.editor_program.is_none() && env.external.is_vim() {
+        env.editor_program = vim.filter(|name| !name.is_empty());
+    }
+    // Hooks run only in a terminal: running the user's programs from the
+    // app has not been tried yet.
     env.hooks_enabled = !shell;
     // And a web view pane that can stand in the reader's place. A
     // terminal has none, whatever the config says about reading in one.
@@ -714,14 +769,15 @@ mod tests {
         };
         let load = || setup::load(&paths, ColorMode::None, TimeZone::UTC).env;
 
-        // In Quill's own app: its panels and its Vim, and no hooks.
+        // In Quill's own app: its panels and a terminal for the editor,
+        // and no hooks. The editor is the user's own there too.
         let mut env = load();
         suit_host(&mut env, true, Some("/opt/homebrew/bin/nvim".into()));
         assert!(env.cmd_keys && env.file_panel && env.thumbnails && env.spell_check);
         assert!(env.editor_pane && env.sheets);
         assert!(!env.hooks_enabled);
         assert!(env.web_pane);
-        assert_eq!(env.vim_program, None);
+        assert_eq!(env.editor_program, Some("/opt/homebrew/bin/nvim".into()));
 
         // In a terminal: the user's own Vim, and their hooks.
         let mut env = load();
@@ -730,11 +786,41 @@ mod tests {
         assert!(!env.editor_pane && !env.sheets);
         assert!(env.hooks_enabled);
         assert!(!env.web_pane);
-        assert_eq!(env.vim_program, Some("/opt/homebrew/bin/nvim".into()));
+        assert_eq!(env.editor_program, Some("/opt/homebrew/bin/nvim".into()));
+        let mut env = load();
         suit_host(&mut env, false, Some("".into()));
-        assert_eq!(env.vim_program, None);
+        assert_eq!(env.editor_program, None);
         suit_host(&mut env, false, None);
-        assert_eq!(env.vim_program, None);
+        assert_eq!(env.editor_program, None);
+        // What the settings name comes first, and QUILL_VIM is Vim's
+        // alone: it names no other editor.
+        let mut env = load();
+        env.editor_program = Some("/usr/local/bin/vim".into());
+        suit_host(&mut env, false, Some("/opt/homebrew/bin/nvim".into()));
+        assert_eq!(env.editor_program, Some("/usr/local/bin/vim".into()));
+        let mut env = load();
+        env.external = quill_tui::vim::ExternalEditor::Nano;
+        suit_host(&mut env, false, Some("/opt/homebrew/bin/nvim".into()));
+        assert_eq!(env.editor_program, None);
+    }
+
+    #[test]
+    fn a_mailbox_is_one_quills_at_a_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let held = hold_mailbox(dir.path()).unwrap();
+        // A second Quill is told so, in words, and by a status of its own.
+        let refused = hold_mailbox(dir.path()).unwrap_err();
+        assert!(refused.downcast_ref::<AlreadyOpen>().is_some());
+        assert!(refused.to_string().contains("already open"));
+        // Another mailbox is another matter.
+        let other = tempfile::tempdir().unwrap();
+        assert!(hold_mailbox(other.path()).is_ok());
+        // And when the first has gone, the mailbox is free again.
+        drop(held);
+        assert!(hold_mailbox(dir.path()).is_ok());
+        // A folder that is not there is a mistake of another kind.
+        let missing = hold_mailbox(&dir.path().join("nowhere")).unwrap_err();
+        assert!(missing.downcast_ref::<AlreadyOpen>().is_none());
     }
 
     #[test]
