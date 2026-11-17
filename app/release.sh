@@ -10,9 +10,11 @@
 #
 # What comes out is target/dist/Quill-VERSION-ARCH.dmg and the same name
 # with .zip, with the version from app/Support/Info.plist and the kind of
-# Mac it was built on. The disk image has Quill and a link to the
-# Applications folder beside it, and nothing else: no picture behind them
-# and no arranging of the window, which would need the Finder to be driven.
+# Mac it was built on. The disk image opens as a window with a picture
+# behind it (app/dmg/background.png and its @2x), Quill on the left and a
+# link to the Applications folder on the right to drag it onto. The window
+# is laid out by app/dmg/layout.py, which writes the file the Finder keeps
+# such things in: the Finder is not driven, and nothing is shown.
 #
 # A build to give out is one that signs in to Google as Quill, so this
 # stops if app/build-app.sh would have no client to build with (see there).
@@ -54,17 +56,51 @@ pack() {
 }
 
 # The disk image: the app and, beside it, a link to Applications to drag it
-# onto. Made from a folder of just those two.
+# onto, with the picture behind them in a folder the Finder does not show.
+#
+# It is made in two steps, because the window's layout names the picture
+# by where it is on the volume: first an image that can be written to,
+# mounted where the Finder does not look (not under /Volumes, so another
+# Quill image that is open is not in the way), and laid out there; then
+# the compressed, read-only image that is given out, made from that one.
+mounted=""
 image() {
-    local stage
+    local stage raw megabytes
     stage="$(mktemp -d "$dist/image.XXXXXX")"
+    raw="$dist/image.writable.dmg"
     /usr/bin/ditto "$app" "$stage/Quill.app"
     ln -s /Applications "$stage/Applications"
-    rm -f "$dmg"
+    mkdir "$stage/.background"
+    # One picture for both kinds of screen.
+    /usr/bin/tiffutil -cathidpicheck "$root/app/dmg/background.png" \
+        "$root/app/dmg/background@2x.png" -out "$stage/.background/background.tiff" >/dev/null
+    megabytes=$(( $(/usr/bin/du -sm "$stage" | cut -f1) + 20 ))
+    rm -f "$raw" "$dmg"
     /usr/bin/hdiutil create -volname "Quill" -srcfolder "$stage" -fs HFS+ \
-        -format UDZO -ov "$dmg" >/dev/null
+        -format UDRW -size "${megabytes}m" -ov "$raw" >/dev/null
     rm -rf "${stage:?}"
+
+    mounted="$(mktemp -d "$dist/volume.XXXXXX")"
+    /usr/bin/hdiutil attach "$raw" -readwrite -noverify -noautoopen -nobrowse \
+        -mountpoint "$mounted" >/dev/null
+    /usr/bin/python3 -I "$root/app/dmg/layout.py" "$mounted"
+    # What macOS leaves on a volume it has had open for writing.
+    rm -rf "$mounted/.fseventsd" "$mounted/.Trashes"
+    /usr/bin/hdiutil detach "$mounted" >/dev/null
+    rmdir "$mounted"
+    mounted=""
+
+    /usr/bin/hdiutil convert "$raw" -format UDZO -imagekey zlib-level=9 -ov -o "$dmg" >/dev/null
+    rm -f "$raw"
 }
+
+# A build that stops half way does not leave the image mounted.
+unmount() {
+    if [ -n "$mounted" ]; then
+        /usr/bin/hdiutil detach "$mounted" -force >/dev/null 2>&1 || true
+    fi
+}
+trap unmount EXIT
 
 echo "==> pack"
 pack
