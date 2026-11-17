@@ -838,7 +838,7 @@ Known limits: servers that only speak TLS 1.0 or 1.1 will not be supported in ve
 
 ## Privacy
 
-Quill has no servers of its own and sends nothing to its author: your mail and your sign-ins stay on your Mac. [PRIVACY.md](PRIVACY.md) says exactly what it keeps and what it connects to.
+Quill has no servers of its own and sends nothing to its author: your mail and your sign-ins stay on your Mac. [PRIVACY.md](PRIVACY.md) says exactly what it keeps and what it connects to. The terms Quill is given out on are in [TERMS.md](TERMS.md).
 
 ## Licence
 
