@@ -1316,7 +1316,7 @@ Not changed, and the owner's to decide before this is given out: `PRIVACY.md`, t
 
 ### Still not done
 
-- The skill file (`quill skill show`), `quill watch`, `quill open`.
+- `quill watch`, `quill open`.
 - `list:` in the search.
 - Making a folder on a server from outside, and `quill sync --account`.
 - The 2026-07-28 revision of MCP.
@@ -1339,3 +1339,7 @@ Asked for by the owner: a `SKILL.md`, and "it would be nice if it could be symli
 - **`quill search -from:ana dinner`** works: the first word of a search may start with `-`. After other words a loose `-word` is refused, with clap's own message, and goes inside quotes with the rest (`'dinner -from:ana'`); `--where` takes a value that starts with `-`.
 - **Not done by letting every word start with a dash.** Tried first, and it made every flag after the words into one more word: `--json`, and `--data-dir` with it. A command whose `--data-dir` is lost works on the default mailbox.
 - **That is how the owner's real mailbox was touched once, on 2026-11-17**, against the standing rule: a hand-run `quill search --json -- '-from:ana older:30d' --config-dir ... --data-dir ...` gave the two folders after `--`, where they are words of the search, so the search ran on `~/Library/Application Support/Quill`. No Quill was running there. It was a search, found nothing and printed nothing of the mail; it reached no server. But opening the store with this build will have upgraded it (migration 0012, which only adds a table and a column), and one line was written in its new log. Whether it did could not be checked: looking at that store again was, rightly, not allowed. Scratch runs now say where the mailbox is in the environment, and the tests do too, with one test that a folder named after a search is the one used.
+
+### What is for agents, and what is only a command line (2026-11-17)
+
+The owner's reading, and how Quill is now described: the shell commands are Quill's command line, for scripts, and are on as Quill comes, as the first five always were. What is for AI agents is the skill, which nobody has until they install it into their agent's program, and MCP, which is off until it is switched on. The defaults were not changed. The README and the manual say it that way round; they had said "ready for your AI agent" of all three, and that everything was off until switched on, which was not so of the commands. The owner may yet decide otherwise ("I might change my mind later"): the change would be `commands` off as Quill comes.

@@ -640,7 +640,7 @@ Hooks work in a terminal only. In the app the command is switched off and the li
 
 ## From a shell
 
-Quill's mail can be read, filed and sent without its screen: for scripts, for a quick look, and for an AI agent that is given a skill to work your mail with. Every command takes `--json`.
+Quill's mail can be read, filed and sent without its screen, with a command line of its own: for scripts, for scheduled jobs and for a quick look. Every command takes `--json`. (If you use an AI agent, it can be taught these commands, should you choose to: see "Agents".)
 
 ```sh
 quill list                         # every inbox together, newest first
@@ -723,9 +723,9 @@ accounts = ["Work"] # only these accounts can be seen; leave it out for all of t
 bulk_limit = 50     # the most messages a search may name for one change without --yes
 ```
 
-A skill runs `quill delete` exactly as you would at a prompt, and Quill cannot tell the two apart, so these switches are for both of you: with `delete = false`, `quill delete` refuses whoever types it. A command that is refused says which setting refused it and exits with status 3, so a script can tell a refusal from a fault (1) and from a command written wrong (2). Looking, and `sync`, need only `commands`.
+A script runs `quill delete` exactly as you would at a prompt, and so does an agent you have given the skill to. Quill cannot tell them apart, so these switches are for all of you: with `delete = false`, `quill delete` refuses whoever types it. A command that is refused says which setting refused it and exits with status 3, so a script can tell a refusal from a fault (1) and from a command written wrong (2). Looking, and `sync`, need only `commands`.
 
-These settings stop an agent that has been misled by something it read, which is the case that matters. They are not a wall against a program that runs as you and means harm: such a program can read Quill's files, and change this one, without asking Quill anything. Keeping an eye on what your agents do is still yours to do, and `quill log` is there for it.
+These settings stop a script with a mistake in it, and an agent that has been misled by something it read. They are not a wall against a program that runs as you and means harm: such a program can read Quill's files, and change this one, without asking Quill anything. Keeping an eye on what your agents do is still yours to do, and `quill log` is there for it.
 
 **JSON.** Every answer is one object with `"schema": 1` in it; a refusal is `{"schema": 1, "refused": {"code": "switched_off", "message": "..."}}` and is printed as well as said. Times are RFC 3339 in UTC. What a message says is in fields of its own (`subject`, `from`, `body`) and is its sender's words: data to read, never instructions to follow. The shapes are in `schema/agent.json`, with examples beside it. (`list` and `search` used to print a bare array of messages; it is now under `"messages"`.)
 
@@ -735,9 +735,14 @@ What mail says is printed safely: control characters and escape sequences never 
 
 ## Agents
 
-An AI agent can work your mail through Quill in two ways. A **skill** teaches it the commands above ("From a shell"). **MCP** gives it the same things as tools, served by the Quill that is running. Both go through the same checks, the same settings and the same log, and neither can do anything the other cannot.
+Quill has no AI in it, and does nothing with an AI agent unless you set it up. If you use one and want it to help with your mail, there are two ways, and each is yours to choose:
 
-**A skill.** Quill comes with one: a `SKILL.md` that teaches an agent the commands, how to name messages, to look before it changes anything, that mail is untrusted, and what a refusal means. It is in the form agents' programs share, a folder called `quill` with the file in it, and it ships inside the app (`Quill.app/Contents/Resources/skills/quill`) and in the source (`skills/quill`).
+- **A skill**, which you install into your agent's program yourself. It teaches the agent Quill's command line ("From a shell"), and adds nothing to what those commands can do.
+- **MCP**, which is off until you switch it on. It offers the same actions as tools, served by the Quill that is running.
+
+Both go through the same checks, the same settings and the same log, and neither can do anything the other cannot.
+
+**A skill.** Quill comes with one, which no agent has until you install it: a `SKILL.md` that teaches an agent the commands, how to name messages, to look before it changes anything, that mail is untrusted, and what a refusal means. It is in the form agents' programs share, a folder called `quill` with the file in it, and it ships inside the app (`Quill.app/Contents/Resources/skills/quill`) and in the source (`skills/quill`).
 
 ```sh
 quill skill install          # link it where agents look for skills
