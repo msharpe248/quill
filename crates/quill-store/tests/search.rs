@@ -413,6 +413,68 @@ fn nothing_typed_is_read_as_anything_but_words() {
 }
 
 #[test]
+fn a_dash_leaves_mail_out() {
+    let store = store();
+    assert_eq!(
+        find(&store, "roadmap -from:ana "),
+        ["Re: Q4 roadmap", "Trail run Saturday"]
+    );
+    assert_eq!(find(&store, "roadmap -thursday -water "), ["Q4 roadmap"]);
+    assert_eq!(
+        find(&store, "roadmap -in:work/sent "),
+        ["Q4 roadmap", "Trail run Saturday"]
+    );
+    assert_eq!(
+        find(&store, "roadmap -account:work "),
+        ["Trail run Saturday"]
+    );
+    assert_eq!(find(&store, "from:ana -has:attachment "), ["Holiday rota"]);
+    assert_eq!(find(&store, "from:ana -is:read "), ["Q4 roadmap"]);
+    // Nothing but what to leave out: all the rest of the mail.
+    assert_eq!(
+        find(&store, "-from:ana -from:sam -from:robin "),
+        ["Rechnung für Oktober"]
+    );
+    // Dashes alone are punctuation, and find nothing.
+    assert!(find(&store, "-- ").is_empty());
+}
+
+#[test]
+fn accounts_ages_sizes_conversations_and_message_ids_are_filters() {
+    let store = store();
+    assert_eq!(find(&store, "account:personal "), ["Trail run Saturday"]);
+    assert_eq!(find(&store, "roadmap account:work ").len(), 2);
+    // Unlike `in:`, an account is never taken for a folder.
+    assert!(find(&store, "account:inbox ").is_empty());
+    // Every message is 100 bytes, and all are newer than a hundred years.
+    assert_eq!(find(&store, "larger:99 ").len(), 6);
+    assert!(find(&store, "larger:100 ").is_empty());
+    assert_eq!(find(&store, "smaller:1k from:sam ").len(), 2);
+    assert_eq!(find(&store, "newer:36500d ").len(), 6);
+    assert!(find(&store, "older:36500d ").is_empty());
+    assert_eq!(
+        find(&store, "msgid:<run@example.com> "),
+        ["Trail run Saturday"]
+    );
+    assert_eq!(
+        find(&store, "msgid:run@example.com "),
+        ["Trail run Saturday"]
+    );
+    assert!(find(&store, "msgid:nobody@example.com ").is_empty());
+    // A message in no conversation is a conversation of one.
+    let run = store
+        .search(&parse("msgid:run@example.com ", |_, _, _| None), 1)
+        .unwrap()[0]
+        .id
+        .0;
+    assert_eq!(
+        find(&store, &format!("thread:{run} ")),
+        ["Trail run Saturday"]
+    );
+    assert!(find(&store, "thread:999999 ").is_empty());
+}
+
+#[test]
 fn the_limit_keeps_the_newest() {
     let store = store();
     let day = |_: i32, _: u32, _: u32| None;

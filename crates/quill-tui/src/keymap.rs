@@ -350,6 +350,9 @@ const VIM: PresetTable = &[
     (CommandId::AccountSignIn, &["S"]),
     (CommandId::AccountRemove, &["D"]),
     (CommandId::AccountEdit, &["E"]),
+    // Two keys, so that it is never pressed by accident: it switches
+    // settings off.
+    (CommandId::AgentsStop, &["Z a"]),
     (CommandId::MessageCopy, &["C"]),
     (CommandId::MessagePutBack, &["P"]),
     (CommandId::FolderCreate, &["+"]),
@@ -432,6 +435,9 @@ const MUTT: PresetTable = &[
     (CommandId::AccountSignIn, &["S"]),
     (CommandId::AccountRemove, &["D"]),
     (CommandId::AccountEdit, &["E"]),
+    // Two keys, so that it is never pressed by accident: it switches
+    // settings off.
+    (CommandId::AgentsStop, &["Z a"]),
     (CommandId::MessageCopy, &["C"]),
     (CommandId::MessagePutBack, &["P"]),
     (CommandId::FolderCreate, &["+"]),

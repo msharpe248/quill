@@ -2,6 +2,7 @@
 //!
 //! All calls block on disk. Run them on the store worker, never on the UI task.
 
+mod agents;
 mod blobs;
 mod contacts;
 pub mod draft_file;
@@ -12,6 +13,7 @@ mod queue;
 mod search;
 mod threads;
 
+pub use agents::{AgentEntry, NewAgentEntry};
 pub use blobs::BlobStore;
 pub use contacts::Contact;
 pub use drafts::{DraftAttachment, DraftContent, DraftId, DraftRow, DraftState, Outgoing};

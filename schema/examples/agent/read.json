@@ -1,0 +1,42 @@
+{
+  "answer": {
+    "account": "Personal",
+    "answered": false,
+    "attachments": false,
+    "body": "Your mother wants to know whether you are coming on Sunday a",
+    "body_chars": 149,
+    "cc": [],
+    "date": "2026-11-14T08:35:00Z",
+    "downloaded": true,
+    "folder": "Inbox",
+    "from": [
+      {
+        "address": "peter.vale@example.com",
+        "name": "Peter Vale"
+      }
+    ],
+    "from_char": 0,
+    "id": 17,
+    "message_id": "<personal.inbox-1@example.com>",
+    "next_from_char": 60,
+    "on_this_mac": false,
+    "remaining_chars": 89,
+    "schema": 1,
+    "snoozed_until": null,
+    "starred": false,
+    "subject": "Sunday dinner",
+    "thread": 17,
+    "to": [
+      {
+        "address": "robin.vale@example.com",
+        "name": "Robin Vale"
+      }
+    ],
+    "unread": true
+  },
+  "arguments": {
+    "id": 17,
+    "max_chars": 60
+  },
+  "tool": "read"
+}

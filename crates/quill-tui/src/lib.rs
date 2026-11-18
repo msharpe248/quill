@@ -9,6 +9,7 @@
 //! This crate reads nothing from disk itself. The binary loads the config,
 //! theme and key files and hands their contents in.
 
+pub mod agent;
 pub mod app;
 pub mod command;
 pub mod compose;

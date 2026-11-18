@@ -217,7 +217,27 @@ pub enum DataRequest {
         message: LocalMessageId,
         hook: Box<Hook>,
     },
+    /// The last changes made from outside Quill's window, for the
+    /// settings window to show.
+    AgentLog,
+    /// The user stopped the agents: mail they sent that has not gone is
+    /// taken back to Drafts.
+    AgentsStop,
+    /// Something asked from outside Quill's window: by a command for a
+    /// shell, or by an agent over MCP. Done here so that there is one
+    /// writer, and answered with [`DataEvent::AgentDone`] under the same
+    /// `ticket`, after whatever the UI is to hear of it.
+    Agent {
+        ticket: u64,
+        caller: Box<crate::agent::Caller>,
+        call: Box<crate::agent::Call>,
+        settings: Box<crate::agent::Settings>,
+    },
 }
+
+/// How many of the last changes made from outside the window the
+/// settings window shows.
+const RECENT_CHANGES: usize = 8;
 
 /// The most messages a search shows. Past this the thing to do is to say
 /// more of what is wanted.
@@ -353,6 +373,15 @@ pub enum DataEvent {
         text: String,
         undoable: bool,
     },
+    /// The answer to [`DataRequest::AgentLog`], newest first.
+    AgentLog(Vec<quill_store::AgentEntry>),
+    /// What came of a [`DataRequest::Agent`].
+    AgentDone {
+        ticket: u64,
+        result: Box<Result<crate::agent::Answer, crate::agent::Refusal>>,
+        /// What the user is to be told of it, when the mail was changed.
+        notice: Option<crate::agent::Notice>,
+    },
     Error(String),
 }
 
@@ -460,6 +489,19 @@ fn run(
                     match (draft.state, &draft.error) {
                         (DraftState::Failed, Some(error)) => {
                             text.push_str(&format!("Not sent: {error}\n\n"));
+                        }
+                        // Sent from outside the window, and not to go
+                        // until the user says so.
+                        (DraftState::Held, _) => {
+                            let who = draft
+                                .agent
+                                .as_deref()
+                                .map(crate::text::sanitize_line)
+                                .unwrap_or_else(|| "an agent".to_owned());
+                            text.push_str(&format!(
+                                "Waiting for your OK. Written by {who}. Send it from here to let \
+                                 it go, or delete it.\n\n"
+                            ));
                         }
                         (DraftState::Outbox, Some(error)) => {
                             text.push_str(&format!("Will be tried again. Last time: {error}\n\n"));
@@ -748,6 +790,29 @@ fn run(
             Err(why) => vec![flash(&why)],
         },
         DataRequest::Settle => vec![DataEvent::Settled],
+        DataRequest::AgentLog => vec![DataEvent::AgentLog(store.agent_log(RECENT_CHANGES, false)?)],
+        DataRequest::AgentsStop => crate::agent::stop(store, now())?,
+        DataRequest::Agent {
+            ticket,
+            caller,
+            call,
+            settings,
+        } => {
+            // A file an agent asks for goes in a folder of this run's
+            // own, beside the ones written for viewing.
+            let mut settings = *settings;
+            if settings.files.is_none() {
+                settings.files = files.view_dir.as_ref().map(|dir| dir.join("agents"));
+            }
+            let outcome = crate::agent::perform(store, &settings, &caller, &call, now());
+            let mut events = outcome.events;
+            events.push(DataEvent::AgentDone {
+                ticket,
+                result: Box::new(outcome.result),
+                notice: outcome.notice,
+            });
+            events
+        }
         DataRequest::ReadForHook { message, hook } => read_for_hook(store, message, &hook)?,
         DataRequest::Undo => {
             let at = now();
@@ -826,7 +891,7 @@ fn set_flags(
 pub const UNDO_SECONDS: i64 = 10;
 
 /// The folder of the message's account that has `role`, if it has one.
-fn folder_with_role(
+pub(crate) fn folder_with_role(
     store: &Store,
     id: LocalMessageId,
     role: FolderRole,
@@ -842,7 +907,7 @@ fn folder_with_role(
 }
 
 /// What deleting a message comes to.
-enum Deletion {
+pub(crate) enum Deletion {
     /// Into its account's trash folder, from the folder it is in.
     ToTrash {
         from: LocalFolderId,
@@ -855,7 +920,7 @@ enum Deletion {
     FromThisMac,
 }
 
-fn deletion(store: &Store, id: LocalMessageId) -> quill_store::Result<Deletion> {
+pub(crate) fn deletion(store: &Store, id: LocalMessageId) -> quill_store::Result<Deletion> {
     let Some(location) = store.message_location(id)? else {
         return Ok(Deletion::ForGood);
     };

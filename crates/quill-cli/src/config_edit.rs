@@ -296,6 +296,14 @@ pub fn set_web_reading(text: &str, on: bool) -> Result<String, String> {
     set_value(text, "ui", "web_reading", Value::from(on))
 }
 
+/// `text` with both ways in for agents switched off: `commands` and `mcp`
+/// under `[agent]`. Written when the user stops the agents, so that
+/// nothing comes in again until they say so, with Quill running or not.
+pub fn stop_agents(text: &str) -> Result<String, String> {
+    let text = set_value(text, "agent", "commands", Value::from(false))?;
+    set_value(&text, "agent", "mcp", Value::from(false))
+}
+
 /// `text` with `sidebar` under `[ui]` set: whether the accounts pane is
 /// on show. Written when the user hides it or puts it back, like
 /// [`set_web_reading`].

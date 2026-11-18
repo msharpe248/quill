@@ -123,6 +123,15 @@ impl File {
             Change::UndoSendSeconds(seconds) => settings.undo_send_seconds = seconds,
             Change::RemoteImages(remote) => settings.remote_images = remote,
             Change::CacheGb(gigabytes) => settings.cache_gb = gigabytes,
+            Change::AgentCommands(on) => settings.agent.commands = on,
+            Change::AgentMcp(on) => settings.agent.mcp = on,
+            Change::AgentOrganize(on) => settings.agent.organize = on,
+            Change::AgentDelete(on) => settings.agent.delete = on,
+            Change::AgentDraft(on) => settings.agent.draft = on,
+            Change::AgentSend(on) => settings.agent.send = on,
+            Change::AgentSendGap(seconds) => settings.agent.send_gap = seconds,
+            Change::AgentHoldSends(on) => settings.agent.hold_sends = on,
+            Change::AgentNotify(notify) => settings.agent.notify = notify,
         }
         Ok(())
     }
@@ -155,6 +164,12 @@ fn serve(harness: &mut Harness, file: &mut File, answered: &mut usize) {
             // from then on.
             AccountRequest::Remember(Preference::WebReading(on)) => {
                 file.settings.web_reading = on;
+                harness.act(Action::Account(AccountEvent::Remembered(Ok(()))));
+            }
+            // And that the agents were stopped.
+            AccountRequest::Remember(Preference::AgentsOff) => {
+                file.settings.agent.commands = false;
+                file.settings.agent.mcp = false;
                 harness.act(Action::Account(AccountEvent::Remembered(Ok(()))));
             }
             _ => {}
@@ -360,7 +375,7 @@ fn nothing_is_shown_until_the_window_is_opened_and_the_file_has_been_read() {
     );
     assert!(shown(&window).is_none());
     window.serve();
-    assert_eq!(window.shown().panes().len(), 7);
+    assert_eq!(window.shown().panes().len(), 8);
     // It is no question drawn over the panes: the terminal is as it was,
     // and the keys are still the list's.
     assert_eq!(window.harness.state.context(), Context::List);
@@ -1287,7 +1302,7 @@ fn a_file_with_a_mistake_in_it_shows_no_settings_and_changes_nothing() {
     // Put right, and the window come back to.
     window.file.mistake = None;
     window.open();
-    assert_eq!(window.shown().panes().len(), 7);
+    assert_eq!(window.shown().panes().len(), 8);
     assert_eq!(window.shown().problem(), None);
 }
 
@@ -1345,4 +1360,245 @@ fn a_file_that_says_what_the_window_does_not_offer_is_shown_as_it_is() {
     }
     assert_eq!(window.harness.env.styles.theme_name(), "dark");
     assert_eq!(KeymapPreset::ALL.len(), 2);
+}
+
+fn flag(window: &Window, field: &str) -> bool {
+    match window.field("agents", field) {
+        FormField::Toggle { value, .. } => value,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn the_agents_pane_has_the_ways_in_what_they_may_do_and_how_sending_goes() {
+    let mut window = Window::new(CONFIG);
+    window.open();
+    // As Quill comes: shell commands on, MCP off, sending off.
+    assert!(flag(&window, "commands"));
+    assert!(!flag(&window, "mcp"));
+    assert!(flag(&window, "organize") && flag(&window, "delete") && flag(&window, "draft"));
+    assert!(!flag(&window, "send"));
+    // The command an agent's program is given is said beside MCP.
+    match window.field("agents", "mcp") {
+        FormField::Toggle { help, .. } => assert!(help.unwrap().ends_with("quill mcp")),
+        other => panic!("{other:?}"),
+    }
+    // How sending goes is decided when it is switched on, and is not in
+    // the way before.
+    assert!(window.shown().field("agents", "send_gap").is_none());
+    assert!(window.shown().field("agents", "hold_sends").is_none());
+
+    window.set("agents", "send", FormValue::Flag(true));
+    assert!(window.harness.env.agent.send, "it holds at once");
+    match window.field("agents", "send_gap") {
+        FormField::Number {
+            value, min, max, ..
+        } => {
+            assert_eq!(value, Number::from(30));
+            assert_eq!(min, Number::from(0));
+            assert_eq!(max, Some(Number::from(86_400)));
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(!flag(&window, "hold_sends"));
+
+    window.set("agents", "send_gap", FormValue::Number(Number::from(90)));
+    assert_eq!(window.harness.env.agent.send_gap, 90);
+    window.set("agents", "send_gap", FormValue::Number(Number::from(0)));
+    assert_eq!(window.harness.env.agent.send_gap, 0);
+    // More than a day is not a wait.
+    window.set(
+        "agents",
+        "send_gap",
+        FormValue::Number(Number::from(100_000)),
+    );
+    assert!(window.shown().problem().is_some());
+    assert_eq!(window.harness.env.agent.send_gap, 0);
+
+    window.set("agents", "hold_sends", FormValue::Flag(true));
+    assert!(window.harness.env.agent.hold_sends);
+    window.choose("agents", "notify", "sends");
+    assert_eq!(
+        window.harness.env.agent.notify,
+        quill_core::config::AgentNotify::Sends
+    );
+    window.choose("agents", "notify", "loudly");
+    assert!(window.shown().problem().is_some());
+    window.set("agents", "mcp", FormValue::Flag(true));
+    assert!(window.harness.env.agent.mcp);
+    window.set("agents", "delete", FormValue::Flag(false));
+    assert!(!window.harness.env.agent.delete);
+    // And each is what the file is asked to say.
+    assert!(window.file.settings.agent.mcp && !window.file.settings.agent.delete);
+    assert!(window.file.settings.agent.send && window.file.settings.agent.hold_sends);
+}
+
+#[test]
+fn stop_agents_switches_both_ways_in_off_at_once_and_in_the_file() {
+    let mut window = Window::new(CONFIG);
+    window.open();
+    window.set("agents", "mcp", FormValue::Flag(true));
+    let stop = |window: &Window| match window.field("agents", "recent") {
+        FormField::List { actions, .. } => {
+            actions
+                .into_iter()
+                .find(|action| action.id == "stop")
+                .unwrap()
+                .enabled
+        }
+        other => panic!("{other:?}"),
+    };
+    assert!(stop(&window));
+
+    let used = SettingsUsed::action("agents", "recent", "stop", None).unwrap();
+    window
+        .harness
+        .act(Action::Settings(SettingsAct::Used(used)));
+    // From this moment, before the file has been written.
+    assert!(!window.harness.env.agent.commands && !window.harness.env.agent.mcp);
+    assert_eq!(window.harness.hung_up, 1);
+    assert!(
+        window
+            .harness
+            .account_requests
+            .contains(&AccountRequest::Remember(Preference::AgentsOff))
+    );
+    window.serve();
+    assert!(!flag(&window, "commands") && !flag(&window, "mcp"));
+    assert!(!stop(&window));
+    assert!(window.harness.screen().contains("Agents are stopped"));
+    // Stopped once: the command has nothing left to do.
+    assert!(
+        !window
+            .harness
+            .state
+            .is_enabled(&window.harness.env, CommandId::AgentsStop)
+    );
+    // They are let back in here, and nowhere else.
+    window.set("agents", "commands", FormValue::Flag(true));
+    assert!(window.harness.env.agent.commands);
+    assert!(stop(&window));
+}
+
+#[test]
+fn the_last_things_agents_changed_are_listed_in_the_pane() {
+    let mut window = Window::new(CONFIG);
+    let settings = quill_tui::agent::Settings::new(
+        window.harness.env.agent.clone(),
+        window.harness.env.tz.clone(),
+    );
+    let call = quill_tui::agent::Call::Archive {
+        which: quill_tui::agent::Which {
+            query: Some("from:peter dinner".to_owned()),
+            ..Default::default()
+        },
+    };
+    let outcome = quill_tui::agent::perform(
+        &mut window.harness.store,
+        &settings,
+        &quill_tui::agent::Caller::shell(),
+        &call,
+        1_794_648_600,
+    );
+    assert!(outcome.result.is_ok());
+    window.open();
+    match window.field("agents", "recent") {
+        FormField::List { rows, .. } => {
+            assert_eq!(rows.len(), 1);
+            assert_eq!(
+                rows[0].title,
+                "archived 1 message (where from:peter dinner)"
+            );
+            assert!(
+                rows[0]
+                    .detail
+                    .as_deref()
+                    .unwrap()
+                    .starts_with("A shell command, ")
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+fn notifications(harness: &mut Harness) -> Vec<(String, String, String)> {
+    std::mem::take(&mut harness.host_requests)
+        .into_iter()
+        .filter_map(|request| match request {
+            HostRequest::Notify {
+                id, title, body, ..
+            } => Some((id, title, body)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn the_user_is_told_what_agents_do_as_far_as_they_asked_and_always_of_a_connection() {
+    use quill_core::config::AgentNotify;
+    use quill_tui::agent::Notice as Told;
+    let mut harness = Harness::in_the_app(200, 60, false);
+    let changed = || Told {
+        text: "Claude Code: archived 12 messages.".to_owned(),
+        send: false,
+    };
+    let sent = || Told {
+        text: "Claude Code: sent a message to ana.ruiz@example.com.".to_owned(),
+        send: true,
+    };
+    harness.host_requests.clear();
+
+    // Every change, as Quill comes: gathered under one name, so that
+    // forty changes are one notification and not forty.
+    harness.act(Action::AgentNotice(changed()));
+    harness.act(Action::AgentNotice(changed()));
+    let told = notifications(&mut harness);
+    assert_eq!(told.len(), 2);
+    assert_eq!(told[0].0, told[1].0);
+    assert_eq!(told[0].1, "An agent changed your mail");
+    assert_eq!(told[0].2, "Claude Code: archived 12 messages.");
+    // A message sent is always said by itself.
+    harness.act(Action::AgentNotice(sent()));
+    harness.act(Action::AgentNotice(sent()));
+    let told = notifications(&mut harness);
+    assert_eq!(told.len(), 2);
+    assert_ne!(told[0].0, told[1].0);
+    assert_eq!(told[0].1, "An agent sent mail");
+
+    harness.env.agent.notify = AgentNotify::Sends;
+    harness.act(Action::AgentNotice(changed()));
+    assert!(notifications(&mut harness).is_empty());
+    harness.act(Action::AgentNotice(sent()));
+    assert_eq!(notifications(&mut harness).len(), 1);
+
+    harness.env.agent.notify = AgentNotify::None;
+    harness.act(Action::AgentNotice(sent()));
+    assert!(notifications(&mut harness).is_empty());
+
+    // A connection is said whatever the setting, and in the window too.
+    harness.env.agent.mcp = true;
+    harness.act(Action::AgentConnected("Claude Code".to_owned()));
+    let told = notifications(&mut harness);
+    assert_eq!(told.len(), 1);
+    assert_eq!(told[0].1, "An agent connected");
+    assert_eq!(told[0].2, "Claude Code connected to Quill over MCP.");
+    assert!(
+        harness
+            .screen()
+            .contains("Claude Code connected to Quill over MCP.")
+    );
+    // With MCP off, that it tried is said.
+    harness.env.agent.mcp = false;
+    harness.act(Action::AgentConnected("Claude Code".to_owned()));
+    let told = notifications(&mut harness);
+    assert!(told[0].2.contains("tried to connect"), "{}", told[0].2);
+
+    // The button on a notification stops them.
+    harness.env.agent.mcp = true;
+    harness.act(Action::Notification {
+        id: "agent.changes".to_owned(),
+        action: Some("stop".to_owned()),
+    });
+    assert!(!harness.env.agent.mcp && !harness.env.agent.commands);
+    assert_eq!(harness.hung_up, 1);
 }

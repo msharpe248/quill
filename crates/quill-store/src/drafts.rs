@@ -52,6 +52,9 @@ pub enum DraftState {
     Sending,
     /// A server refused it. It is kept, with the reason, to correct.
     Failed,
+    /// Sent from outside Quill's window, and waiting in the outbox for
+    /// the user to let it go. It is never sent until they do.
+    Held,
 }
 
 impl DraftState {
@@ -60,6 +63,7 @@ impl DraftState {
             "outbox" => Self::Outbox,
             "sending" => Self::Sending,
             "failed" => Self::Failed,
+            "held" => Self::Held,
             _ => Self::Draft,
         }
     }
@@ -76,6 +80,9 @@ pub struct DraftRow {
     /// Why the last attempt to send it failed.
     pub error: Option<String>,
     pub updated: i64,
+    /// Who sent it, when it was sent from outside Quill's window: the
+    /// name they gave.
+    pub agent: Option<String>,
 }
 
 impl DraftId {
@@ -159,7 +166,7 @@ struct StoredEnvelope {
     to: Vec<String>,
 }
 
-const COLUMNS: &str = "id, account_id, state, content, send_after, error, updated";
+const COLUMNS: &str = "id, account_id, state, content, send_after, error, updated, agent";
 
 fn draft_row(row: &Row<'_>) -> rusqlite::Result<DraftRow> {
     let state: String = row.get(2)?;
@@ -174,6 +181,7 @@ fn draft_row(row: &Row<'_>) -> rusqlite::Result<DraftRow> {
         send_after: row.get(4)?,
         error: row.get(5)?,
         updated: row.get(6)?,
+        agent: row.get(7)?,
     })
 }
 
@@ -290,10 +298,65 @@ impl Store {
         let changed = self.conn.execute(
             "UPDATE drafts SET state = 'draft', raw_hash = NULL, envelope = NULL,
                  send_after = NULL, updated = ?2
-             WHERE id = ?1 AND state = 'outbox'",
+             WHERE id = ?1 AND state IN ('outbox', 'held')",
             params![id.0, now],
         )?;
         Ok(changed > 0)
+    }
+
+    /// Notes that a message was written or sent from outside Quill's
+    /// window, and by whom.
+    pub fn mark_agent_mail(&mut self, id: DraftId, agent: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE drafts SET agent = ?2 WHERE id = ?1",
+            params![id.0, agent],
+        )?;
+        Ok(())
+    }
+
+    /// Says when a message that is in the outbox is to go. Returns whether
+    /// it was there.
+    pub fn set_send_time(&mut self, id: DraftId, send_after: i64) -> Result<bool> {
+        let changed = self.conn.execute(
+            "UPDATE drafts SET send_after = ?2 WHERE id = ?1 AND state = 'outbox'",
+            params![id.0, send_after],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Holds a message that is in the outbox: it waits there and is not
+    /// sent until the user lets it go ([`Store::send_now`]). Returns
+    /// whether it was there to hold.
+    pub fn hold_send(&mut self, id: DraftId) -> Result<bool> {
+        let changed = self.conn.execute(
+            "UPDATE drafts SET state = 'held' WHERE id = ?1 AND state = 'outbox'",
+            [id.0],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// How many messages sent from outside Quill's window are waiting for
+    /// their turn to go.
+    pub fn agent_mail_waiting(&self, now: i64) -> Result<usize> {
+        let count: i64 = self.conn.query_row(
+            "SELECT count(*) FROM drafts
+              WHERE agent IS NOT NULL AND state = 'outbox' AND send_after > ?1",
+            [now],
+            |row| row.get(0),
+        )?;
+        Ok(usize::try_from(count).unwrap_or(0))
+    }
+
+    /// Takes back every message sent from outside Quill's window that has
+    /// not gone: waiting for its turn, or held. They are drafts again.
+    /// Returns how many there were.
+    pub fn unsend_agent_mail(&mut self, now: i64) -> Result<usize> {
+        Ok(self.conn.execute(
+            "UPDATE drafts SET state = 'draft', raw_hash = NULL, envelope = NULL,
+                 send_after = NULL, updated = ?1
+             WHERE agent IS NOT NULL AND state IN ('outbox', 'held')",
+            [now],
+        )?)
     }
 
     /// The newest message that is still waiting in the outbox at `now` and
@@ -330,7 +393,7 @@ impl Store {
     pub fn send_now(&mut self, id: DraftId, now: i64) -> Result<bool> {
         let changed = self.conn.execute(
             "UPDATE drafts SET state = 'outbox', send_after = ?2, error = NULL
-             WHERE id = ?1 AND state IN ('outbox', 'failed')
+             WHERE id = ?1 AND state IN ('outbox', 'failed', 'held')
                AND raw_hash IS NOT NULL AND envelope IS NOT NULL",
             params![id.0, now],
         )?;

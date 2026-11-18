@@ -20,13 +20,15 @@
 use std::hash::{Hash, Hasher};
 
 use quill_core::config::{
-    AccountType, Appearance, ComposeEditor, ComposeFormat, Config, KeymapPreset, RemoteImages,
-    ReplyPosition,
+    AccountType, AgentConfig, AgentNotify, Appearance, ComposeEditor, ComposeFormat, Config,
+    KeymapPreset, RemoteImages, ReplyPosition, SEND_GAP_LONGEST,
 };
 use quill_host::bridge::{
     FormAction, FormField, FormOption, FormRow, FormValue, MAX_FONT_NAME, MAX_FORM_ROWS, Number,
     SettingsPane, SettingsShow, SettingsShowParams, valid_form_id,
 };
+
+use quill_store::AgentEntry;
 
 use crate::keymap::{KeySeq, Keymap};
 use crate::state::Env;
@@ -62,6 +64,8 @@ pub struct Settings {
     pub undo_send_seconds: u32,
     pub remote_images: RemoteImages,
     pub cache_gb: Number,
+    /// What may be done to the mail from outside Quill's window.
+    pub agent: AgentConfig,
 }
 
 impl Settings {
@@ -85,6 +89,7 @@ impl Settings {
             remote_images: config.privacy.remote_images,
             // A config that was read has a number here.
             cache_gb: Number::new(config.storage.cache_gb).unwrap_or(Number::from(0)),
+            agent: config.agent.clone(),
         }
     }
 }
@@ -123,10 +128,19 @@ pub enum Setting {
     UndoSendSeconds,
     RemoteImages,
     CacheGb,
+    AgentCommands,
+    AgentMcp,
+    AgentOrganize,
+    AgentDelete,
+    AgentDraft,
+    AgentSend,
+    AgentSendGap,
+    AgentHoldSends,
+    AgentNotify,
 }
 
 impl Setting {
-    pub const ALL: [Setting; 17] = [
+    pub const ALL: [Setting; 26] = [
         Setting::Appearance,
         Setting::ThemeLight,
         Setting::ThemeDark,
@@ -144,6 +158,15 @@ impl Setting {
         Setting::UndoSendSeconds,
         Setting::RemoteImages,
         Setting::CacheGb,
+        Setting::AgentCommands,
+        Setting::AgentMcp,
+        Setting::AgentOrganize,
+        Setting::AgentDelete,
+        Setting::AgentDraft,
+        Setting::AgentSend,
+        Setting::AgentSendGap,
+        Setting::AgentHoldSends,
+        Setting::AgentNotify,
     ];
 
     /// The key the file has it under, in its section. It is also the
@@ -167,6 +190,15 @@ impl Setting {
             Setting::UndoSendSeconds => "undo_send_seconds",
             Setting::RemoteImages => "remote_images",
             Setting::CacheGb => "cache_gb",
+            Setting::AgentCommands => "commands",
+            Setting::AgentMcp => "mcp",
+            Setting::AgentOrganize => "organize",
+            Setting::AgentDelete => "delete",
+            Setting::AgentDraft => "draft",
+            Setting::AgentSend => "send",
+            Setting::AgentSendGap => "send_gap",
+            Setting::AgentHoldSends => "hold_sends",
+            Setting::AgentNotify => "notify",
         }
     }
 
@@ -190,6 +222,15 @@ impl Setting {
             | Setting::UndoSendSeconds => "compose",
             Setting::RemoteImages => "privacy",
             Setting::CacheGb => "storage",
+            Setting::AgentCommands
+            | Setting::AgentMcp
+            | Setting::AgentOrganize
+            | Setting::AgentDelete
+            | Setting::AgentDraft
+            | Setting::AgentSend
+            | Setting::AgentSendGap
+            | Setting::AgentHoldSends
+            | Setting::AgentNotify => "agent",
         }
     }
 
@@ -212,6 +253,15 @@ impl Setting {
             | Setting::UndoSendSeconds => Pane::Composing,
             Setting::RemoteImages => Pane::Privacy,
             Setting::CacheGb => Pane::Storage,
+            Setting::AgentCommands
+            | Setting::AgentMcp
+            | Setting::AgentOrganize
+            | Setting::AgentDelete
+            | Setting::AgentDraft
+            | Setting::AgentSend
+            | Setting::AgentSendGap
+            | Setting::AgentHoldSends
+            | Setting::AgentNotify => Pane::Agents,
         }
     }
 
@@ -246,17 +296,19 @@ pub enum Pane {
     Composing,
     Keys,
     Privacy,
+    Agents,
     Storage,
 }
 
 impl Pane {
-    pub const ALL: [Pane; 7] = [
+    pub const ALL: [Pane; 8] = [
         Pane::General,
         Pane::Appearance,
         Pane::Accounts,
         Pane::Composing,
         Pane::Keys,
         Pane::Privacy,
+        Pane::Agents,
         Pane::Storage,
     ];
 
@@ -269,6 +321,7 @@ impl Pane {
             Pane::Composing => "composing",
             Pane::Keys => "keys",
             Pane::Privacy => "privacy",
+            Pane::Agents => "agents",
             Pane::Storage => "storage",
         }
     }
@@ -281,6 +334,7 @@ impl Pane {
             Pane::Composing => "Composing",
             Pane::Keys => "Keys",
             Pane::Privacy => "Privacy",
+            Pane::Agents => "Agents",
             Pane::Storage => "Storage",
         }
     }
@@ -294,6 +348,7 @@ impl Pane {
             Pane::Composing => "square.and.pencil",
             Pane::Keys => "keyboard",
             Pane::Privacy => "hand.raised",
+            Pane::Agents => "sparkles",
             Pane::Storage => "internaldrive",
         }
     }
@@ -335,6 +390,17 @@ pub enum Change {
     UndoSendSeconds(u32),
     RemoteImages(RemoteImages),
     CacheGb(Number),
+    /// The commands for a shell that touch mail.
+    AgentCommands(bool),
+    AgentMcp(bool),
+    AgentOrganize(bool),
+    AgentDelete(bool),
+    AgentDraft(bool),
+    AgentSend(bool),
+    /// Seconds from one message agents send to the next.
+    AgentSendGap(u32),
+    AgentHoldSends(bool),
+    AgentNotify(AgentNotify),
 }
 
 /// A setting's value as the file has it.
@@ -368,6 +434,15 @@ impl Change {
             Change::UndoSendSeconds(_) => Setting::UndoSendSeconds,
             Change::RemoteImages(_) => Setting::RemoteImages,
             Change::CacheGb(_) => Setting::CacheGb,
+            Change::AgentCommands(_) => Setting::AgentCommands,
+            Change::AgentMcp(_) => Setting::AgentMcp,
+            Change::AgentOrganize(_) => Setting::AgentOrganize,
+            Change::AgentDelete(_) => Setting::AgentDelete,
+            Change::AgentDraft(_) => Setting::AgentDraft,
+            Change::AgentSend(_) => Setting::AgentSend,
+            Change::AgentSendGap(_) => Setting::AgentSendGap,
+            Change::AgentHoldSends(_) => Setting::AgentHoldSends,
+            Change::AgentNotify(_) => Setting::AgentNotify,
         }
     }
 
@@ -387,11 +462,21 @@ impl Change {
             Change::Format(format) => Written::Word(format.as_str()),
             Change::ReplyPosition(position) => Written::Word(position.as_str()),
             Change::RemoteImages(remote) => Written::Word(remote.as_str()),
+            Change::AgentNotify(notify) => Written::Word(notify.as_str()),
             Change::Notifications(on)
             | Change::Threads(on)
             | Change::WebReading(on)
-            | Change::SpellCheck(on) => Written::Flag(*on),
-            Change::UndoSendSeconds(seconds) => Written::Whole(i64::from(*seconds)),
+            | Change::SpellCheck(on)
+            | Change::AgentCommands(on)
+            | Change::AgentMcp(on)
+            | Change::AgentOrganize(on)
+            | Change::AgentDelete(on)
+            | Change::AgentDraft(on)
+            | Change::AgentSend(on)
+            | Change::AgentHoldSends(on) => Written::Flag(*on),
+            Change::UndoSendSeconds(seconds) | Change::AgentSendGap(seconds) => {
+                Written::Whole(i64::from(*seconds))
+            }
             Change::CacheGb(number) | Change::FontSize(number) => match number.whole() {
                 Some(whole) => Written::Whole(whole),
                 None => Written::Decimal(number.get()),
@@ -488,6 +573,7 @@ pub struct Applied {
     pub undo_send_seconds: u32,
     pub spell_check: bool,
     pub remote_never: bool,
+    pub agent: AgentConfig,
 }
 
 impl Applied {
@@ -508,6 +594,7 @@ impl Applied {
             undo_send_seconds: settings.undo_send_seconds,
             spell_check: settings.spell_check,
             remote_never: settings.remote_images == RemoteImages::Never,
+            agent: settings.agent.clone(),
         }
     }
 
@@ -534,6 +621,7 @@ impl Applied {
         env.compose.undo_send_seconds = self.undo_send_seconds;
         env.compose.spell_check = self.spell_check;
         env.remote_never = self.remote_never;
+        env.agent = self.agent;
         keys_changed
     }
 }
@@ -1297,6 +1385,164 @@ fn storage(read: &SettingsRead, env: &Env) -> Vec<FormField> {
     }]
 }
 
+/// The list of what agents changed last, in its pane, and what can be
+/// done from it.
+pub const AGENT_LOG: &str = "recent";
+/// Stop every agent at once.
+pub const STOP_AGENTS: &str = "stop";
+/// Copy the command that adds Quill to an agent's program.
+pub const COPY_MCP: &str = "copy_mcp";
+
+/// The command an agent's program is given to reach Quill over MCP: this
+/// Quill's own program, by its whole path, and `mcp`.
+pub fn mcp_command(env: &Env) -> String {
+    let program = env
+        .program
+        .as_deref()
+        .and_then(std::path::Path::to_str)
+        .unwrap_or("quill");
+    // A path with a space in it is quoted, as a shell wants it.
+    if program.contains(' ') {
+        format!("\"{program}\" mcp")
+    } else {
+        format!("{program} mcp")
+    }
+}
+
+/// What programs outside Quill's window may do with the mail: the two
+/// ways in, what may be done through them, how sending goes, and what
+/// was done last.
+fn agents(read: &SettingsRead, env: &Env, recent: &[AgentEntry]) -> Vec<FormField> {
+    let agent = &read.settings.agent;
+    let mut fields = vec![
+        toggle(
+            Setting::AgentCommands,
+            "Shell commands:",
+            "Let quill\u{2019}s commands work on the mail",
+            agent.commands,
+        ),
+        FormField::Toggle {
+            id: Setting::AgentMcp.key().to_owned(),
+            label: "MCP:".to_owned(),
+            title: "Serve agents over MCP while Quill is running".to_owned(),
+            value: agent.mcp,
+            help: Some(format!(
+                "An agent\u{2019}s program is given this command to reach Quill: {}",
+                mcp_command(env)
+            )),
+        },
+        toggle(
+            Setting::AgentOrganize,
+            "They may:",
+            "Organize mail: mark, move, archive, snooze",
+            agent.organize,
+        ),
+        toggle(
+            Setting::AgentDelete,
+            "",
+            "Delete mail: to the trash, never for good",
+            agent.delete,
+        ),
+        toggle(Setting::AgentDraft, "", "Write drafts", agent.draft),
+        toggle(Setting::AgentSend, "", "Send mail", agent.send),
+    ];
+    // How sending goes is decided when it is switched on, and is not in
+    // the way before.
+    if agent.send {
+        fields.push(FormField::Number {
+            id: Setting::AgentSendGap.key().to_owned(),
+            label: "Wait:".to_owned(),
+            value: Number::from(agent.send_gap),
+            min: Number::from(0),
+            max: Some(Number::from(SEND_GAP_LONGEST)),
+            step: Number::from(5),
+            decimals: 0,
+            unit: Some("seconds between messages".to_owned()),
+            help: Some(
+                "What they send goes one message at a time, each this long after the one \
+                 before. A message that has to wait is in the Outbox, where it can be taken \
+                 back. 0 is no wait."
+                    .to_owned(),
+            ),
+        });
+        fields.push(FormField::Toggle {
+            id: Setting::AgentHoldSends.key().to_owned(),
+            label: String::new(),
+            title: "Hold what they send for my OK".to_owned(),
+            value: agent.hold_sends,
+            help: Some(
+                "Held mail waits in the Outbox and does not go until you send it from there."
+                    .to_owned(),
+            ),
+        });
+    }
+    fields.push(choice(
+        Setting::AgentNotify,
+        "Tell me:",
+        agent.notify.as_str(),
+        vec![
+            option(
+                AgentNotify::Changes.as_str(),
+                "When they change or send mail",
+            ),
+            option(AgentNotify::Sends.as_str(), "When they send mail"),
+            option(AgentNotify::None.as_str(), "Nothing of what they do"),
+        ],
+        Some(
+            "An agent connecting over MCP is always said. What they do is always said in \
+             Quill\u{2019}s window, and kept in the log."
+                .to_owned(),
+        ),
+    ));
+    fields.push(FormField::List {
+        id: AGENT_LOG.to_owned(),
+        label: "Lately:".to_owned(),
+        rows: recent
+            .iter()
+            .map(|entry| FormRow {
+                id: format!("entry_{}", entry.id),
+                title: text::sanitize_line(&entry.summary),
+                detail: Some(format!(
+                    "{}, {}{}",
+                    text::sanitize_line(&entry.agent),
+                    text::long_date(entry.at, &env.tz),
+                    if entry.undone.is_some() {
+                        ". Taken back."
+                    } else {
+                        ""
+                    }
+                )),
+                actions: Vec::new(),
+            })
+            .collect(),
+        actions: vec![
+            FormAction {
+                id: COPY_MCP.to_owned(),
+                title: "Copy MCP Command".to_owned(),
+                row: false,
+                enabled: true,
+            },
+            FormAction {
+                id: STOP_AGENTS.to_owned(),
+                title: "Stop Agents".to_owned(),
+                row: false,
+                enabled: agent.commands || agent.mcp,
+            },
+        ],
+        searchable: false,
+        empty: Some("Nothing has been changed from outside Quill\u{2019}s window.".to_owned()),
+        help: Some(
+            "What commands and agents changed last; quill log in a shell has all of it, and \
+             quill undo takes a change back. Stop Agents switches both ways in off at once \
+             and takes back their mail that has not gone. These settings stop an agent \
+             that has been misled. They are not a wall against a program that runs as you \
+             and means harm: keeping an eye on your agents is still yours to do."
+                .to_owned(),
+        ),
+    });
+    fields
+}
+
 /// How many places after the point the room for downloaded mail is shown
 /// and taken with.
 const CACHE_DECIMALS: u8 = 2;
@@ -1307,6 +1553,7 @@ pub fn describe(
     read: &SettingsRead,
     env: &Env,
     can: Can,
+    recent: &[AgentEntry],
     problem: Option<&str>,
 ) -> Option<SettingsShow> {
     let panes = Pane::ALL
@@ -1338,6 +1585,7 @@ pub fn describe(
                 Pane::Composing => composing(read, env),
                 Pane::Keys => keys(read, env),
                 Pane::Privacy => privacy(read),
+                Pane::Agents => agents(read, env, recent),
                 Pane::Storage => storage(read, env),
             },
             more: Some(MORE.to_owned()),
@@ -1447,6 +1695,11 @@ pub fn change(
                     .find(|remote| remote.as_str() == chosen)
                     .map(Change::RemoteImages)
                     .ok_or_else(not_one),
+                Setting::AgentNotify => AgentNotify::ALL
+                    .into_iter()
+                    .find(|notify| notify.as_str() == chosen)
+                    .map(Change::AgentNotify)
+                    .ok_or_else(not_one),
                 _ => Err(not_one()),
             }
         }
@@ -1477,6 +1730,13 @@ pub fn change(
             }
         }
         (FormField::Toggle { .. }, FormValue::Flag(on)) => match setting {
+            Setting::AgentCommands => Ok(Change::AgentCommands(*on)),
+            Setting::AgentMcp => Ok(Change::AgentMcp(*on)),
+            Setting::AgentOrganize => Ok(Change::AgentOrganize(*on)),
+            Setting::AgentDelete => Ok(Change::AgentDelete(*on)),
+            Setting::AgentDraft => Ok(Change::AgentDraft(*on)),
+            Setting::AgentSend => Ok(Change::AgentSend(*on)),
+            Setting::AgentHoldSends => Ok(Change::AgentHoldSends(*on)),
             Setting::Notifications => Ok(Change::Notifications(*on)),
             Setting::Threads => Ok(Change::Threads(*on)),
             Setting::WebReading => Ok(Change::WebReading(*on)),
@@ -1507,6 +1767,11 @@ pub fn change(
                     .whole()
                     .and_then(|seconds| u32::try_from(seconds).ok())
                     .map(Change::UndoSendSeconds)
+                    .ok_or_else(|| format!("{label} is a whole number of seconds.")),
+                Setting::AgentSendGap => number
+                    .whole()
+                    .and_then(|seconds| u32::try_from(seconds).ok())
+                    .map(Change::AgentSendGap)
                     .ok_or_else(|| format!("{label} is a whole number of seconds.")),
                 Setting::CacheGb => Ok(Change::CacheGb(number)),
                 Setting::FontSize => Ok(Change::FontSize(number)),
@@ -1682,6 +1947,15 @@ mod tests {
                 Setting::UndoSendSeconds => Change::UndoSendSeconds(1),
                 Setting::RemoteImages => Change::RemoteImages(RemoteImages::Ask),
                 Setting::CacheGb => Change::CacheGb(Number::from(1)),
+                Setting::AgentCommands => Change::AgentCommands(false),
+                Setting::AgentMcp => Change::AgentMcp(true),
+                Setting::AgentOrganize => Change::AgentOrganize(false),
+                Setting::AgentDelete => Change::AgentDelete(false),
+                Setting::AgentDraft => Change::AgentDraft(false),
+                Setting::AgentSend => Change::AgentSend(true),
+                Setting::AgentSendGap => Change::AgentSendGap(60),
+                Setting::AgentHoldSends => Change::AgentHoldSends(true),
+                Setting::AgentNotify => Change::AgentNotify(AgentNotify::Sends),
             };
             assert_eq!(change.setting(), setting);
         }

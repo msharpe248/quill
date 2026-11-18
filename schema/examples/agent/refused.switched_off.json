@@ -1,0 +1,15 @@
+{
+  "answer": {
+    "refused": {
+      "code": "switched_off",
+      "message": "Deleting mail is switched off in Quill's settings (Agents)."
+    },
+    "schema": 1
+  },
+  "arguments": {
+    "ids": [
+      17
+    ]
+  },
+  "tool": "delete"
+}

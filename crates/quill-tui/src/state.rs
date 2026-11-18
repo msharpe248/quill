@@ -58,6 +58,8 @@ pub use mouse::{Mouse, MouseKind, Resizing};
 /// What a notification about one message is called: this and the message's
 /// id in the store.
 const MESSAGE_NOTIFICATION: &str = "message:";
+/// What the name of every notification about agents starts with.
+const AGENT_NOTIFICATION: &str = "agent.";
 /// What the notification about several messages at once is called.
 const SEVERAL_NOTIFICATION: &str = "arrived";
 /// More new messages than this at once are announced together.
@@ -82,9 +84,16 @@ pub struct Env {
     pub tz: TimeZone,
     /// The reader's share of the space right of the sidebar, from the config.
     pub reader_width: f32,
+    /// This Quill's own program, by its whole path, for saying what an
+    /// agent's program is to be given to reach it. `None` when it is not
+    /// known.
+    pub program: Option<std::path::PathBuf>,
     /// The accounts pane's columns, from the config: `sidebar_width`
     /// under `[ui]`. `None`: by the window's width.
     pub sidebar_width: Option<u16>,
+    /// What may be done to the mail from outside Quill's window, from the
+    /// config: `[agent]`.
+    pub agent: quill_core::config::AgentConfig,
     /// The terminal draws images (the Kitty graphics protocol).
     pub images: bool,
     /// Accounts can be added and their certificates accepted from here.
@@ -252,6 +261,10 @@ pub enum Action {
     /// The wall clock, in seconds since the Unix epoch.
     ClockTick(i64),
     Notify(Notice),
+    /// Something was changed, or sent, from outside the window.
+    AgentNotice(crate::agent::Notice),
+    /// An agent's program connected over MCP, under this name.
+    AgentConnected(String),
     /// News from the sync engine.
     Sync(SyncEvent),
     /// An answer from the accounts service.
@@ -364,6 +377,9 @@ pub struct Effects {
     /// that is over, for the run loop to put into [`Env`] likewise
     /// ([`Look::trying`]).
     pub trying: Option<Option<Theme>>,
+    /// Agents are stopped: the run loop switches both ways in off in
+    /// [`Env`] and hangs up on whoever is connected.
+    pub agents_stopped: bool,
 }
 
 impl Effects {
@@ -375,6 +391,7 @@ impl Effects {
             && self.settings.is_none()
             && self.system_dark.is_none()
             && self.trying.is_none()
+            && !self.agents_stopped
     }
 }
 
@@ -1412,6 +1429,12 @@ pub struct State {
     /// The accounts with a sync pass in progress.
     pub syncing: BTreeSet<LocalAccountId>,
     pub should_quit: bool,
+    /// The last changes made from outside the window, newest first, as
+    /// the settings window shows them.
+    pub agent_recent: Vec<quill_store::AgentEntry>,
+    /// How many notifications about agents have been posted, to give
+    /// each one about a message sent, or a connection, a name of its own.
+    agent_notes: u64,
     /// The screen no longer matches the state and needs a redraw.
     pub dirty: bool,
 }
@@ -1484,6 +1507,8 @@ impl State {
             now,
             syncing: BTreeSet::new(),
             should_quit: false,
+            agent_recent: Vec::new(),
+            agent_notes: 0,
             dirty: true,
         }
     }
@@ -1670,6 +1695,8 @@ impl State {
                 }
             }
             Action::Notify(notice) => self.notices.push_back(notice),
+            Action::AgentNotice(notice) => self.on_agent_notice(env, &notice, &mut out),
+            Action::AgentConnected(name) => self.on_agent_connected(env, &name, &mut out),
             Action::Sync(event) => self.on_sync(env, event, &mut out),
             Action::Account(event) => self.on_account(env, event, &mut out),
             Action::Settings(act) => self.on_settings(env, act, &mut out),
@@ -2422,6 +2449,7 @@ impl State {
             // else it is quitting.
             CommandId::WindowClose if env.window => out.host.push(HostRequest::CloseWindow),
             CommandId::WindowClose | CommandId::AppQuit => self.should_quit = true,
+            CommandId::AgentsStop => self.stop_agents(env, out),
             CommandId::FocusSidebar => self.set_focus(Pane::Sidebar),
             CommandId::FocusList => self.set_focus(Pane::List),
             CommandId::FocusReader => self.set_focus(Pane::Reader),
@@ -2591,6 +2619,7 @@ impl State {
                 .folders
                 .as_ref()
                 .is_some_and(|picker| !self.folder_choices(picker).is_empty()),
+            CommandId::AgentsStop => env.agent.commands || env.agent.mcp,
             CommandId::MessageDelete => self.target_row().is_some(),
             CommandId::SelectToggle | CommandId::SelectRange | CommandId::SelectAll => {
                 !self.list.rows.is_empty()
@@ -4571,12 +4600,110 @@ impl State {
 
     /// Does what a notification was clicked for: goes to its message, or
     /// archives it, marks it read or starts a reply.
+    /// Something was changed or sent from outside the window. It is said
+    /// in the bottom bar already; here the user is told as a notification,
+    /// as far as they asked to be, and the settings window's list of what
+    /// was done last is asked for again.
+    fn on_agent_notice(&mut self, env: &Env, notice: &crate::agent::Notice, out: &mut Effects) {
+        use quill_core::config::AgentNotify;
+        if self.settings.is_some() {
+            out.data.push(DataRequest::AgentLog);
+        }
+        let wanted = match env.agent.notify {
+            AgentNotify::Changes => true,
+            AgentNotify::Sends => notice.send,
+            AgentNotify::None => false,
+        };
+        if !wanted {
+            return;
+        }
+        // Changes are gathered: each one takes the place of the one
+        // before, so that forty moves are one notification. A message
+        // sent is always said by itself.
+        let id = if notice.send {
+            self.agent_notes += 1;
+            format!("{AGENT_NOTIFICATION}send.{}", self.agent_notes)
+        } else {
+            format!("{AGENT_NOTIFICATION}changes")
+        };
+        out.host.push(HostRequest::Notify {
+            id,
+            title: if notice.send {
+                "An agent sent mail".to_owned()
+            } else {
+                "An agent changed your mail".to_owned()
+            },
+            subtitle: None,
+            body: notice.text.clone(),
+            actions: vec![("stop", "Stop Agents", false)],
+        });
+    }
+
+    /// An agent's program connected over MCP. Always said, whatever the
+    /// settings: it is how the user learns that something has come in.
+    fn on_agent_connected(&mut self, env: &Env, name: &str, out: &mut Effects) {
+        let said = if env.agent.mcp {
+            format!("{name} connected to Quill over MCP.")
+        } else {
+            format!("{name} tried to connect over MCP, which is switched off in Settings, Agents.")
+        };
+        self.agent_notes += 1;
+        out.host.push(HostRequest::Notify {
+            id: format!("{AGENT_NOTIFICATION}connect.{}", self.agent_notes),
+            title: "An agent connected".to_owned(),
+            subtitle: None,
+            body: said.clone(),
+            actions: if env.agent.mcp {
+                vec![("stop", "Stop Agents", false)]
+            } else {
+                Vec::new()
+            },
+        });
+        self.notices.push_back(Notice::info(said));
+    }
+
+    /// Stops everything that works the mail from outside the window: both
+    /// ways in are switched off, here at once and in the settings file,
+    /// whoever is connected is hung up on, and mail they sent that has
+    /// not gone is taken back to Drafts. What was done before is not
+    /// undone: the log has it, and `quill undo` takes a change back.
+    fn stop_agents(&mut self, env: &Env, out: &mut Effects) {
+        if !(env.agent.commands || env.agent.mcp) {
+            self.notices
+                .push_back(Notice::info("Agents are stopped already."));
+            return;
+        }
+        out.agents_stopped = true;
+        out.accounts
+            .push(AccountRequest::Remember(Preference::AgentsOff));
+        out.data.push(DataRequest::AgentsStop);
+        // The settings window shows the switches as they are now.
+        if self.settings.is_some() {
+            out.accounts.push(AccountRequest::Settings(None));
+        }
+        self.notices.push_back(Notice::info(
+            "Agents are stopped: shell commands and MCP are switched off. Switch them on again \
+             in Settings, Agents.",
+        ));
+    }
+
     fn on_notification(&mut self, env: &Env, id: &str, action: Option<&str>, out: &mut Effects) {
         let Some(message) = id
             .strip_prefix(MESSAGE_NOTIFICATION)
             .and_then(|number| number.parse().ok())
             .map(LocalMessageId)
         else {
+            // One about agents: its button stops them, and a click on it
+            // is a wish to see what they did.
+            if id.starts_with(AGENT_NOTIFICATION) {
+                match action {
+                    Some("stop") => self.run(env, CommandId::AgentsStop, out),
+                    _ => self.notices.push_back(Notice::info(
+                        "What agents did is in Settings, Agents, and all of it in `quill log`.",
+                    )),
+                }
+                return;
+            }
             // The one about several messages: the inbox is where they are.
             if id == SEVERAL_NOTIFICATION && action.is_none() && self.compose.is_none() {
                 self.show_mailbox(Mailbox::Unified, out);
@@ -5423,6 +5550,16 @@ impl State {
 
     fn on_data(&mut self, env: &Env, event: DataEvent, out: &mut Effects) {
         match event {
+            // The answer to a request from outside the window is the run
+            // loop's to give: it never comes this far.
+            DataEvent::AgentDone { .. } => {}
+            DataEvent::AgentLog(entries) => {
+                if self.agent_recent != entries {
+                    self.agent_recent = entries;
+                    // The settings window shows them, if it is open.
+                    self.settings_answered(None);
+                }
+            }
             DataEvent::SidebarLoaded {
                 accounts,
                 folders,

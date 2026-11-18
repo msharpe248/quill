@@ -328,6 +328,9 @@ pub enum Preference {
     /// `editor_tips` under `[compose]`: whether what an editor's keys do
     /// is said above it.
     EditorTips(bool),
+    /// `commands` and `mcp` under `[agent]`, both off: the user stopped
+    /// the agents.
+    AgentsOff,
 }
 
 /// What goes with an account that is removed, beyond the copy of its mail:

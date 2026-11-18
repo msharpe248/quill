@@ -176,6 +176,7 @@ fn remember(config_file: &Path, preference: Preference) -> Result<(), String> {
         Preference::SidebarWidth(columns) => config_edit::set_sidebar_width(&before, columns)?,
         Preference::ReaderWidth(share) => config_edit::set_reader_width(&before, share)?,
         Preference::EditorTips(on) => config_edit::set_editor_tips(&before, on)?,
+        Preference::AgentsOff => config_edit::stop_agents(&before)?,
     };
     if after == before {
         return Ok(());

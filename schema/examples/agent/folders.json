@@ -1,0 +1,51 @@
+{
+  "answer": {
+    "folders": [
+      {
+        "account": "Personal",
+        "messages": 6,
+        "name": "Inbox",
+        "on_this_mac": false,
+        "role": "inbox",
+        "unread": 4
+      },
+      {
+        "account": "Personal",
+        "messages": 0,
+        "name": "Drafts",
+        "on_this_mac": false,
+        "role": "drafts",
+        "unread": 0
+      },
+      {
+        "account": "Personal",
+        "messages": 1,
+        "name": "Sent",
+        "on_this_mac": false,
+        "role": "sent",
+        "unread": 0
+      },
+      {
+        "account": "Personal",
+        "messages": 1,
+        "name": "Archive",
+        "on_this_mac": false,
+        "role": "archive",
+        "unread": 0
+      },
+      {
+        "account": "Personal",
+        "messages": 0,
+        "name": "Trash",
+        "on_this_mac": false,
+        "role": "trash",
+        "unread": 0
+      }
+    ],
+    "schema": 1
+  },
+  "arguments": {
+    "account": "Personal"
+  },
+  "tool": "folders"
+}

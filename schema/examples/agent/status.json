@@ -1,0 +1,25 @@
+{
+  "answer": {
+    "accounts": [
+      {
+        "name": "Work",
+        "unread": 8
+      },
+      {
+        "name": "Personal",
+        "unread": 4
+      }
+    ],
+    "drafts": 0,
+    "outbox": {
+      "held": 0,
+      "refused": 0,
+      "waiting": 0
+    },
+    "queued_changes": 0,
+    "schema": 1,
+    "snoozed": 0
+  },
+  "arguments": {},
+  "tool": "status"
+}

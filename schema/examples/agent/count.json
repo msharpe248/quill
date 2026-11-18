@@ -1,0 +1,10 @@
+{
+  "answer": {
+    "count": 12,
+    "schema": 1
+  },
+  "arguments": {
+    "query": "is:unread"
+  },
+  "tool": "count"
+}

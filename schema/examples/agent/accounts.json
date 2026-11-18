@@ -1,0 +1,19 @@
+{
+  "answer": {
+    "accounts": [
+      {
+        "address": "robin@example.com",
+        "kind": "demo",
+        "name": "Work"
+      },
+      {
+        "address": "robin.vale@example.com",
+        "kind": "demo",
+        "name": "Personal"
+      }
+    ],
+    "schema": 1
+  },
+  "arguments": {},
+  "tool": "accounts"
+}

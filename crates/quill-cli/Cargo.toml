@@ -34,9 +34,11 @@ clap.workspace = true
 hickory-resolver.workspace = true
 jiff.workspace = true
 reqwest.workspace = true
-rustix.workspace = true
+# `process`, to ask who this user is, for the door only they may use.
+rustix = { workspace = true, features = ["process"] }
+serde.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "sync", "time", "net", "io-util", "macros"] }
 toml_edit.workspace = true
 
 [dev-dependencies]

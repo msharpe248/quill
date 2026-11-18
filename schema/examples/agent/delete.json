@@ -1,0 +1,50 @@
+{
+  "answer": {
+    "action": "delete",
+    "changed": 1,
+    "dry_run": false,
+    "ids": [
+      17
+    ],
+    "log": 8,
+    "messages": [
+      {
+        "account": "Personal",
+        "answered": false,
+        "attachments": false,
+        "cc": [],
+        "date": "2026-11-14T08:35:00Z",
+        "folder": "Trash",
+        "from": [
+          {
+            "address": "peter.vale@example.com",
+            "name": "Peter Vale"
+          }
+        ],
+        "id": 17,
+        "message_id": "<personal.inbox-1@example.com>",
+        "on_this_mac": false,
+        "snoozed_until": null,
+        "starred": false,
+        "subject": "Sunday dinner",
+        "thread": 17,
+        "to": [
+          {
+            "address": "robin.vale@example.com",
+            "name": "Robin Vale"
+          }
+        ],
+        "unread": true
+      }
+    ],
+    "missing": [],
+    "schema": 1,
+    "skipped": []
+  },
+  "arguments": {
+    "ids": [
+      17
+    ]
+  },
+  "tool": "delete"
+}

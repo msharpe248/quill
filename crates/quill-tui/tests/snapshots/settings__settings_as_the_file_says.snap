@@ -125,6 +125,7 @@ expression: outline(&shown)
      row "Sign in to an account": S [change]
      row "Edit this account…": E [change]
      row "Remove this account…": D [change]
+     row "Stop Agents": Z a [change]
      row "Help for this context": ? [change]
      row "Keyboard shortcuts": K, f1 [change]
      action change "Change…", of a row
@@ -136,6 +137,22 @@ expression: outline(&shown)
 == Privacy (privacy, hand.raised)
    remote_images "Remote pictures:": choice = never of ask "Ask for each message" | never "Never load them"
      help: Pictures and other content a message would fetch from the internet. Asked for, nothing is fetched until you say so for a message or for its sender.
+   more: Rules and saved searches are set in the settings file. Hooks and templates are files beside it.
+== Agents (agents, sparkles)
+   commands "Shell commands:": toggle "Let quill’s commands work on the mail" = true
+   mcp "MCP:": toggle "Serve agents over MCP while Quill is running" = false
+     help: An agent’s program is given this command to reach Quill: quill mcp
+   organize "They may:": toggle "Organize mail: mark, move, archive, snooze" = true
+   delete "": toggle "Delete mail: to the trash, never for good" = true
+   draft "": toggle "Write drafts" = true
+   send "": toggle "Send mail" = false
+   notify "Tell me:": choice = changes of changes "When they change or send mail" | sends "When they send mail" | none "Nothing of what they do"
+     help: An agent connecting over MCP is always said. What they do is always said in Quill’s window, and kept in the log.
+   recent "Lately:": list
+     action copy_mcp "Copy MCP Command"
+     action stop "Stop Agents"
+     empty: Nothing has been changed from outside Quill’s window.
+     help: What commands and agents changed last; quill log in a shell has all of it, and quill undo takes a change back. Stop Agents switches both ways in off at once and takes back their mail that has not gone. These settings stop an agent that has been misled. They are not a wall against a program that runs as you and means harm: keeping an eye on your agents is still yours to do.
    more: Rules and saved searches are set in the settings file. Hooks and templates are files beside it.
 == Storage (storage, internaldrive)
    cache_gb "Keep up to:": number = 0.5 from 0 to any by 1, 2 places, GB of downloaded mail

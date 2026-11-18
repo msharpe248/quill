@@ -44,9 +44,9 @@ expression: harness.screen()
 ┃                          ┃│                                       ┃   S                              Sign in to an account       ┃                                                                   │
 ┃                          ┃│                                       ┃   E                              Edit this account…          ┃                                                                   │
 ┃                          ┃│                                       ┃   D                              Remove this account…        ┃                                                                   │
+┃                          ┃│                                       ┃   Z a                            Stop Agents                 ┃                                                                   │
 ┃                          ┃│                                       ┃   ?                              Help for this context       ┃                                                                   │
 ┃                          ┃│                                       ┃   K, f1                          Keyboard shortcuts          ┃                                                                   │
-┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │

@@ -35,6 +35,9 @@ pub struct Harness {
     pub account_requests: Vec<quill_tui::setup::AccountRequest>,
     /// How many times settings that came to hold changed the keys.
     pub keys_announced: usize,
+    /// How many times whoever is connected from outside the window would
+    /// have been hung up on.
+    pub hung_up: usize,
     /// Folders the store worker may write files in: one for viewing, one
     /// standing in for Downloads. Both go when the harness does.
     pub files: Files,
@@ -191,7 +194,9 @@ impl Harness {
             look: quill_tui::theme::Look::one(Theme::builtin("dark").unwrap()),
             tz: TimeZone::UTC,
             reader_width: 0.5,
+            program: None,
             sidebar_width: None,
+            agent: quill_core::config::AgentConfig::default(),
             images: false,
             accounts,
             // As in Quill's own window.
@@ -240,6 +245,7 @@ impl Harness {
             sync_requests: Vec::new(),
             account_requests: Vec::new(),
             keys_announced: 0,
+            hung_up: 0,
             files: Files {
                 view_dir: Some(scratch.path().join("view")),
                 downloads: Some(scratch.path().join("Downloads")),
@@ -280,6 +286,13 @@ impl Harness {
         if let Some(trying) = effects.trying.take() {
             self.env.look.trying = trying;
             self.env.restyle();
+        }
+        // And the agents stopped: both ways in are off from now, and
+        // whoever is connected would be hung up on.
+        if std::mem::take(&mut effects.agents_stopped) {
+            self.env.agent.commands = false;
+            self.env.agent.mcp = false;
+            self.hung_up += 1;
         }
     }
 

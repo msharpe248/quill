@@ -66,8 +66,19 @@ impl Store {
             None if has_terms(query) => return Ok(Vec::new()),
             None => {}
         }
+        // What must not be found: one look in the index for any of the
+        // words left out, and the messages it finds are left out.
+        if let Some(expression) = unwanted_expression(query) {
+            let place = bind(Value::Text(expression), &mut values);
+            conditions.push(format!(
+                "m.id NOT IN (SELECT rowid FROM message_search WHERE message_search MATCH {place})"
+            ));
+        }
         if query.has_attachment {
             conditions.push("m.has_attachments = 1".to_owned());
+        }
+        if query.not.has_attachment {
+            conditions.push("m.has_attachments = 0".to_owned());
         }
         for (column, wanted) in [
             // Unread is the absence of the seen flag.
@@ -87,23 +98,72 @@ impl Store {
             let place = bind(Value::Integer(before), &mut values);
             conditions.push(format!("m.date < {place}"));
         }
-        if let Some(place) = &query.within {
-            // A folder is named by its name or by what it is for: `in:sent`
-            // finds the Sent folder whatever the server calls it.
-            let lower = |text: &str| Value::Text(text.trim().to_lowercase());
+        // Ages are counted from the moment the search is run.
+        const NOW: &str = "CAST(strftime('%s', 'now') AS INTEGER)";
+        if let Some(older) = query.older {
+            let place = bind(Value::Integer(older), &mut values);
+            conditions.push(format!("m.date < {NOW} - {place}"));
+        }
+        if let Some(newer) = query.newer {
+            let place = bind(Value::Integer(newer), &mut values);
+            conditions.push(format!("m.date >= {NOW} - {place}"));
+        }
+        if let Some(larger) = query.larger {
+            let place = bind(Value::Integer(larger), &mut values);
+            conditions.push(format!("m.size > {place}"));
+        }
+        if let Some(smaller) = query.smaller {
+            let place = bind(Value::Integer(smaller), &mut values);
+            conditions.push(format!("m.size < {place}"));
+        }
+        if let Some(message) = query.thread_of {
+            // A message in no conversation is a conversation of one.
+            let place = bind(Value::Integer(message), &mut values);
+            conditions.push(format!(
+                "COALESCE(m.thread_id, -m.id) = \
+                 (SELECT COALESCE(t.thread_id, -t.id) FROM messages t WHERE t.id = {place})"
+            ));
+        }
+        if let Some(message_id) = &query.message_id {
+            let place = bind(Value::Text(message_id.clone()), &mut values);
+            conditions.push(format!("trim(m.message_id, '<>') = {place}"));
+        }
+        let lower = |text: &str| Value::Text(text.trim().to_lowercase());
+        if let Some(account) = &query.account {
+            let name = bind(lower(account), &mut values);
+            conditions.push(format!("lower(a.name) = {name}"));
+        }
+        for account in &query.not.accounts {
+            let name = bind(lower(account), &mut values);
+            conditions.push(format!("lower(a.name) <> {name}"));
+        }
+        // A folder is named by its name or by what it is for: `in:sent`
+        // finds the Sent folder whatever the server calls it.
+        let placed = |place: &quill_core::search::Place, values: &mut Vec<Value>| {
+            let mut all = Vec::new();
             if let Some(either) = &place.either {
-                let name = bind(lower(either), &mut values);
-                conditions.push(format!(
+                let name = bind(lower(either), values);
+                all.push(format!(
                     "(lower(a.name) = {name} OR lower(f.name) = {name} OR f.role = {name})"
                 ));
             }
             if let Some(account) = &place.account {
-                let name = bind(lower(account), &mut values);
-                conditions.push(format!("lower(a.name) = {name}"));
+                let name = bind(lower(account), values);
+                all.push(format!("lower(a.name) = {name}"));
             }
             if let Some(folder) = &place.folder {
-                let name = bind(lower(folder), &mut values);
-                conditions.push(format!("(lower(f.name) = {name} OR f.role = {name})"));
+                let name = bind(lower(folder), values);
+                all.push(format!("(lower(f.name) = {name} OR f.role = {name})"));
+            }
+            all
+        };
+        if let Some(place) = &query.within {
+            conditions.extend(placed(place, &mut values));
+        }
+        for place in &query.not.within {
+            let all = placed(place, &mut values);
+            if !all.is_empty() {
+                conditions.push(format!("NOT ({})", all.join(" AND ")));
             }
         }
         let limit = bind(
@@ -157,6 +217,28 @@ fn match_expression(query: &Query) -> Option<String> {
         }
     }
     (!parts.is_empty()).then(|| parts.join(" AND "))
+}
+
+/// The full-text expression for what a query leaves out: mail that has any
+/// of these is not wanted. `None` when nothing is left out by a word.
+fn unwanted_expression(query: &Query) -> Option<String> {
+    let mut parts = Vec::new();
+    for (column, terms) in [
+        (None, &query.not.text),
+        (Some("sender"), &query.not.from),
+        (Some("recipients"), &query.not.to),
+        (Some("subject"), &query.not.subject),
+    ] {
+        for term in terms {
+            if let Some(quoted) = quoted(term) {
+                parts.push(match column {
+                    Some(column) => format!("{column} : {quoted}"),
+                    None => quoted,
+                });
+            }
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join(" OR "))
 }
 
 /// A term as a quoted full-text string, which the index reads as the words

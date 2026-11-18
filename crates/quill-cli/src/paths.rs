@@ -8,7 +8,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 const CONFIG_DIR_VAR: &str = "QUILL_CONFIG_DIR";
-const DATA_DIR_VAR: &str = "QUILL_DATA_DIR";
+pub const DATA_DIR_VAR: &str = "QUILL_DATA_DIR";
 const APP_SUPPORT: &str = "Library/Application Support/Quill";
 
 #[derive(Debug, Clone, PartialEq, Eq)]

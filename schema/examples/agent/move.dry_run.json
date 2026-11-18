@@ -1,0 +1,50 @@
+{
+  "answer": {
+    "action": "move",
+    "changed": 0,
+    "dry_run": true,
+    "ids": [
+      17
+    ],
+    "messages": [
+      {
+        "account": "Personal",
+        "answered": false,
+        "attachments": false,
+        "cc": [],
+        "date": "2026-11-14T08:35:00Z",
+        "folder": "Inbox",
+        "from": [
+          {
+            "address": "peter.vale@example.com",
+            "name": "Peter Vale"
+          }
+        ],
+        "id": 17,
+        "message_id": "<personal.inbox-1@example.com>",
+        "on_this_mac": false,
+        "snoozed_until": null,
+        "starred": false,
+        "subject": "Sunday dinner",
+        "thread": 17,
+        "to": [
+          {
+            "address": "robin.vale@example.com",
+            "name": "Robin Vale"
+          }
+        ],
+        "unread": true
+      }
+    ],
+    "missing": [],
+    "schema": 1,
+    "skipped": [],
+    "would_change": 1
+  },
+  "arguments": {
+    "dry_run": true,
+    "to": "archive",
+    "where": "from:peter dinner"
+  },
+  "tool": "move"
+}

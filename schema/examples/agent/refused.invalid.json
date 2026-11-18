@@ -1,0 +1,13 @@
+{
+  "answer": {
+    "refused": {
+      "code": "invalid",
+      "message": "delete does not take \"id\". It takes: ids, msgids, where, dry_run, confirm."
+    },
+    "schema": 1
+  },
+  "arguments": {
+    "id": 1
+  },
+  "tool": "delete"
+}

@@ -241,6 +241,21 @@ pub fn save(
             "There is no Downloads folder to save to.".to_owned(),
         ));
     };
+    save_into(store, downloads, "The Downloads folder", message, part).map(|(name, _)| name)
+}
+
+/// Saves one attachment in `folder`, under its own name or the next free
+/// one like it, never over a file that is there. `called` is what the
+/// folder is called when it cannot be used. Returns the name it was saved
+/// under and where.
+pub fn save_into(
+    store: &Store,
+    folder: &Path,
+    called: &str,
+    message: LocalMessageId,
+    part: u32,
+) -> Result<(String, PathBuf), FileProblem> {
+    let downloads = folder;
     let raw = store.raw(message)?.ok_or_else(|| {
         FileProblem("That message has not been downloaded yet. Open it first.".to_owned())
     })?;
@@ -253,13 +268,14 @@ pub fn save(
     let bytes = quill_mime::attachment_bytes(&raw, part)
         .ok_or_else(|| FileProblem(format!("{} is not in the message.", file.name)))?;
     fs::create_dir_all(downloads)
-        .map_err(|err| FileProblem(format!("The Downloads folder cannot be used: {err}.")))?;
+        .map_err(|err| FileProblem(format!("{called} cannot be used: {err}.")))?;
     // Never over a file that is already there.
     let mut name = file.name.clone();
     let mut copy = 2;
     loop {
-        match write_new(&downloads.join(&name), &bytes) {
-            Ok(()) => return Ok(name),
+        let path = downloads.join(&name);
+        match write_new(&path, &bytes) {
+            Ok(()) => return Ok((name, path)),
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists && copy < 1000 => {
                 name = numbered(&file.name, copy);
                 copy += 1;

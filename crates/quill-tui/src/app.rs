@@ -28,9 +28,11 @@ use ratatui::crossterm::queue;
 use ratatui::crossterm::style::{Attribute, ContentStyle, Print, SetAttribute, SetStyle};
 use ratatui::crossterm::terminal::{Clear, ClearType};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio::sync::oneshot;
 
+use crate::agent::{Answer, Call, Caller, Refusal, Way};
 use crate::command::{Context, Menu};
-use crate::data::{self, DataEvent, DataHandle};
+use crate::data::{self, DataEvent, DataHandle, DataRequest};
 use crate::files::Files;
 use crate::keymap::KeyChord;
 use crate::setup::{AccountEvent, AccountRequest};
@@ -68,6 +70,46 @@ impl AccountsLink {
     }
 }
 
+/// Something asked of the Quill that is running from outside its window:
+/// by a command for a shell, or by an agent over MCP. Whoever starts the
+/// UI supplies the door these come in by; the UI itself listens nowhere.
+#[derive(Debug)]
+pub enum AgentAsk {
+    /// Do this, and answer.
+    Call {
+        caller: Caller,
+        call: Box<Call>,
+        reply: oneshot::Sender<Result<Answer, Refusal>>,
+    },
+    /// The tools this way in may use now, as an MCP client is told of
+    /// them: none when the way is switched off.
+    Tools {
+        way: Way,
+        reply: oneshot::Sender<Vec<serde_json::Value>>,
+    },
+    /// An MCP client has connected.
+    Hello { caller: Caller },
+}
+
+/// Where requests from outside the window arrive.
+pub struct AgentLink {
+    pub asks: UnboundedReceiver<AgentAsk>,
+    /// Hangs up on every program that is connected, when the user stops
+    /// the agents.
+    pub hang_up: Option<Box<dyn Fn() + Send>>,
+}
+
+impl AgentLink {
+    /// No door: nothing is ever asked.
+    pub fn none() -> Self {
+        let (_, asks) = unbounded_channel();
+        Self {
+            asks,
+            hang_up: None,
+        }
+    }
+}
+
 impl SyncLink {
     /// No engine: nothing syncs and nothing is ever downloaded.
     pub fn none() -> Self {
@@ -89,6 +131,7 @@ pub async fn run(
     attached: Attached,
     sync: SyncLink,
     accounts: AccountsLink,
+    agents: AgentLink,
 ) -> io::Result<()> {
     let (events_tx, events) = unbounded_channel();
     // Files taken out of messages for viewing go in a folder of this run's
@@ -135,6 +178,10 @@ pub async fn run(
         thumbnails: std::collections::HashMap::new(),
         editor_wanted: None,
         closing: Arc::new(AtomicBool::new(false)),
+        agents: Agents {
+            hang_up: agents.hang_up,
+            ..Agents::default()
+        },
     };
     let mut inbound = Inbound {
         data: events,
@@ -142,6 +189,7 @@ pub async fn run(
         sync: sync_events,
         accounts: account_events,
         injected,
+        agents: agents.asks,
     };
     let result = event_loop(&mut screen, &mut env, notices, &mut io, &mut inbound).await;
     // A hook still running is stopped: nothing started here outlives Quill.
@@ -184,6 +232,233 @@ struct Io<'a> {
     editor_wanted: Option<EditorWanted>,
     /// Set as the UI closes, for work started here that must end with it.
     closing: Arc<AtomicBool>,
+    /// What has been asked from outside the window and not yet answered.
+    agents: Agents,
+}
+
+/// Requests from outside the window that are waiting on the store worker
+/// or on the engine.
+#[derive(Default)]
+struct Agents {
+    next: u64,
+    /// Waiting on the store worker, by the ticket each was sent under.
+    asked: std::collections::HashMap<u64, oneshot::Sender<Result<Answer, Refusal>>>,
+    /// Waiting on the engine to have looked at these accounts.
+    checking: Vec<Checking>,
+    /// Hangs up on every program that is connected.
+    hang_up: Option<Box<dyn Fn() + Send>>,
+}
+
+/// A check for mail that someone outside is waiting on.
+struct Checking {
+    /// The accounts still being looked at.
+    waiting: Vec<quill_core::types::LocalAccountId>,
+    asked: usize,
+    arrived: usize,
+    problems: Vec<String>,
+    until: tokio::time::Instant,
+    reply: oneshot::Sender<Result<Answer, Refusal>>,
+}
+
+impl Checking {
+    fn answer(self) {
+        let Checking {
+            asked,
+            arrived,
+            problems,
+            reply,
+            ..
+        } = self;
+        let mut lines = vec![format!(
+            "{asked} account{} looked at, {arrived} new message{}.",
+            if asked == 1 { "" } else { "s" },
+            if arrived == 1 { "" } else { "s" },
+        )];
+        lines.extend(problems.iter().map(|line| crate::text::sanitize_line(line)));
+        let _ = reply.send(Ok(Answer {
+            value: serde_json::json!({
+                "schema": crate::agent::SCHEMA,
+                "accounts": asked,
+                "new": arrived,
+                "problems": problems,
+            }),
+            lines,
+        }));
+    }
+}
+
+/// How long a check for mail asked for from outside is waited on.
+const CHECK_WAIT: Duration = Duration::from_secs(90);
+
+impl Io<'_> {
+    /// What the settings are for a request from outside, now.
+    fn agent_settings(env: &Env) -> crate::agent::Settings {
+        crate::agent::Settings {
+            from_names: env
+                .identities
+                .iter()
+                .filter_map(|(account, identity)| {
+                    Some((account.clone(), identity.full_name.clone()?))
+                })
+                .collect(),
+            markdown: env.compose.markdown,
+            reply_above: env.compose.reply_above,
+            ..crate::agent::Settings::new(env.agent.clone(), env.tz.clone())
+        }
+    }
+
+    /// Takes a request from outside the window: answers what can be
+    /// answered here, and hands the rest to the store worker or the
+    /// engine.
+    fn agent_ask(&mut self, env: &Env, state: &State, ask: AgentAsk) -> Option<Action> {
+        match ask {
+            AgentAsk::Tools { reply, .. } => {
+                let settings = Self::agent_settings(env);
+                let _ = reply.send(crate::agent::tools_for(&settings));
+            }
+            // Always said: it is how the user learns that something has
+            // come in.
+            AgentAsk::Hello { caller } => return Some(Action::AgentConnected(caller.name)),
+            AgentAsk::Call {
+                caller,
+                call,
+                reply,
+            } => {
+                let settings = Self::agent_settings(env);
+                if let Call::Sync { account } = call.as_ref() {
+                    if let Some(refusal) = crate::agent::refused(&settings, caller.way, &call) {
+                        let _ = reply.send(Err(refusal));
+                        return None;
+                    }
+                    self.agent_check(state, account.as_deref(), reply);
+                    return None;
+                }
+                self.agents.next += 1;
+                let ticket = self.agents.next;
+                self.agents.asked.insert(ticket, reply);
+                let sent = self.data.send(DataRequest::Agent {
+                    ticket,
+                    caller: Box::new(caller),
+                    call,
+                    settings: Box::new(settings),
+                });
+                if !sent && let Some(reply) = self.agents.asked.remove(&ticket) {
+                    let _ = reply.send(Err(Refusal::new(
+                        crate::agent::Code::Failed,
+                        "Quill is closing.",
+                    )));
+                }
+            }
+        }
+        None
+    }
+
+    /// Checks for mail because someone outside asked, and keeps their
+    /// question until the accounts have been looked at.
+    fn agent_check(
+        &mut self,
+        state: &State,
+        account: Option<&str>,
+        reply: oneshot::Sender<Result<Answer, Refusal>>,
+    ) {
+        let Some(sync) = self.sync else {
+            let _ = reply.send(Err(Refusal::new(
+                crate::agent::Code::Failed,
+                "This mailbox has no accounts that sync.",
+            )));
+            return;
+        };
+        let accounts: Vec<_> = state
+            .accounts
+            .iter()
+            .filter(|row| env_sees(account, &row.name))
+            .map(|row| row.id)
+            .collect();
+        if accounts.is_empty() {
+            let _ = reply.send(Err(Refusal::not_found(match account {
+                Some(name) => format!(
+                    "There is no account named \"{}\".",
+                    crate::text::sanitize_line(name)
+                ),
+                None => "There is no account to check.".to_owned(),
+            })));
+            return;
+        }
+        match account {
+            Some(_) => {
+                for id in &accounts {
+                    sync.send(SyncRequest::SyncOne(*id));
+                }
+            }
+            None => {
+                sync.send(SyncRequest::SyncNow);
+            }
+        }
+        // And what is waiting in the queue is carried out.
+        sync.send(SyncRequest::Queue);
+        self.agents.checking.push(Checking {
+            asked: accounts.len(),
+            waiting: accounts,
+            arrived: 0,
+            problems: Vec::new(),
+            until: tokio::time::Instant::now() + CHECK_WAIT,
+            reply,
+        });
+    }
+
+    /// Notes what the engine said for whoever outside is waiting on a
+    /// check for mail, and answers those whose accounts have all been
+    /// looked at.
+    fn agent_heard(&mut self, event: &SyncEvent) {
+        if self.agents.checking.is_empty() {
+            return;
+        }
+        for check in &mut self.agents.checking {
+            match event {
+                SyncEvent::Syncing {
+                    account,
+                    active: false,
+                } => check.waiting.retain(|id| id != account),
+                SyncEvent::Arrived { messages, .. } => check.arrived += messages.len(),
+                SyncEvent::Problem { account, message } => {
+                    check.problems.push(format!("{account}: {message}"));
+                }
+                _ => {}
+            }
+        }
+        self.agent_settle(false);
+    }
+
+    /// Answers the checks for mail that are done, or with `late` those
+    /// that have been waited on long enough.
+    fn agent_settle(&mut self, late: bool) {
+        let now = tokio::time::Instant::now();
+        let (done, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut self.agents.checking)
+            .into_iter()
+            .partition(|check| check.waiting.is_empty() || (late && check.until <= now));
+        self.agents.checking = waiting;
+        for mut check in done {
+            if !check.waiting.is_empty() {
+                check
+                    .problems
+                    .push("Gave up waiting: not every account answered in time.".to_owned());
+            }
+            check.answer();
+        }
+    }
+
+    /// Gives a request from outside its answer, when the store worker has
+    /// one for it.
+    fn agent_done(&mut self, ticket: u64, result: Result<Answer, Refusal>) {
+        if let Some(reply) = self.agents.asked.remove(&ticket) {
+            let _ = reply.send(result);
+        }
+    }
+}
+
+/// Whether an account of this name is the one asked for, or any is.
+fn env_sees(wanted: Option<&str>, name: &str) -> bool {
+    wanted.is_none_or(|wanted| wanted.trim().eq_ignore_ascii_case(name))
 }
 
 /// A draft file in its own folder, and the editor to run on it.
@@ -839,6 +1114,8 @@ struct Inbound {
     accounts: UnboundedReceiver<AccountEvent>,
     /// Actions that background work feeds back into the loop.
     injected: UnboundedReceiver<Action>,
+    /// What is asked from outside the window.
+    agents: UnboundedReceiver<AgentAsk>,
 }
 
 async fn event_loop(
@@ -941,7 +1218,18 @@ async fn event_loop(
                     Err(_) => Action::EditorExited { ran: true, status: -1 },
                 })
             }
-            Some(event) = inbound.data.recv() => Some(Action::Data(event)),
+            Some(event) = inbound.data.recv() => match event {
+                // An answer for someone outside the window: theirs, and
+                // nothing for the UI.
+                DataEvent::AgentDone { ticket, result, notice } => {
+                    io.agent_done(ticket, *result);
+                    // What was changed is told to the user, as far as
+                    // they asked to be.
+                    notice.map(Action::AgentNotice)
+                }
+                event => Some(Action::Data(event)),
+            },
+            Some(ask) = inbound.agents.recv() => io.agent_ask(env, &state, ask),
             Some(event) = inbound.host.recv() => match event {
                 HostEvent::RunCommand(name) => Some(match env.registry.by_name(&name) {
                     Some(spec) => Action::Command(spec.id),
@@ -979,10 +1267,16 @@ async fn event_loop(
                 HostEvent::WillQuit | HostEvent::Disconnected => break,
                 HostEvent::Problem(text) => Some(Action::Notify(Notice::error(text))),
             },
-            Some(event) = inbound.sync.recv() => Some(Action::Sync(event)),
+            Some(event) = inbound.sync.recv() => {
+                io.agent_heard(&event);
+                Some(Action::Sync(event))
+            }
             Some(event) = inbound.accounts.recv() => Some(Action::Account(event)),
             Some(action) = inbound.injected.recv() => Some(action),
-            _ = clock.tick() => Some(Action::ClockTick(now())),
+            _ = clock.tick() => {
+                io.agent_settle(true);
+                Some(Action::ClockTick(now()))
+            }
             () = quiet_until(spelling_due) => Some(Action::TypingPaused),
             () = quiet_until(settle_due) => Some(Action::SelectionSettled),
             // The new width did not come: draw at the one there is.
@@ -1018,6 +1312,15 @@ async fn event_loop(
             }
             // And a theme being made, which is drawn with as its colours
             // are chosen, until it is saved or given up.
+            // And the agents stopped: both ways in are off from this
+            // moment, and whoever is connected is hung up on.
+            if std::mem::take(&mut effects.agents_stopped) {
+                env.agent.commands = false;
+                env.agent.mcp = false;
+                if let Some(hang_up) = &io.agents.hang_up {
+                    hang_up();
+                }
+            }
             if let Some(trying) = effects.trying.take() {
                 env.look.trying = trying;
                 env.restyle();
@@ -1230,7 +1533,9 @@ mod tests {
             look: crate::theme::Look::one(Theme::terminal()),
             tz: TimeZone::UTC,
             reader_width: 0.5,
+            program: None,
             sidebar_width: None,
+            agent: quill_core::config::AgentConfig::default(),
             images: false,
             accounts: false,
             cmd_keys: true,

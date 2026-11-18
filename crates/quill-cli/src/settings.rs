@@ -786,7 +786,7 @@ mod tests {
         // Until it is opened there is nothing to show.
         assert!(app.state.settings_shown(&app.env).is_none());
         app.open();
-        assert_eq!(app.shown().panes().len(), 7);
+        assert_eq!(app.shown().panes().len(), 8);
         assert_eq!(app.shown().problem(), None);
         // The one theme the file names is shown for both appearances.
         assert_eq!(app.chosen("appearance", "theme_light"), "light");
@@ -1120,7 +1120,7 @@ mod tests {
             "[ui]\ntheme = \"light\"   # mine\n",
         );
         app.open();
-        assert_eq!(app.shown().panes().len(), 7);
+        assert_eq!(app.shown().panes().len(), 8);
         assert_eq!(app.shown().problem(), None);
         app.set("general", "notifications", FormValue::Flag(false));
         assert_eq!(

@@ -5,7 +5,11 @@
 //!
 //! ```text
 //! from:ana has:attachment after:2026-10-01 is:unread in:work/inbox "exact phrase"
+//! -from:newsletter older:30d larger:5m account:work
 //! ```
+//!
+//! A `-` before a word or a filter means not: `-from:ana` is mail that is
+//! not from Ana, `-is:starred` mail that is not starred.
 //!
 //! Anything that is not a filter Quill knows is a word to find, so a typo in
 //! a filter's name finds nothing rather than everything, and a colon in
@@ -40,6 +44,42 @@ pub struct Query {
     /// Only mail in this account or folder, as typed: `work`, `inbox`, or
     /// `work/inbox`. Compared without regard to case.
     pub within: Option<Place>,
+    /// Only mail of the account of this name. Unlike `within`, never a
+    /// folder.
+    pub account: Option<String>,
+    /// Only mail dated more than this many seconds ago (`older:30d`), as
+    /// counted when the search is run.
+    pub older: Option<i64>,
+    /// Only mail dated within this many seconds (`newer:2w`).
+    pub newer: Option<i64>,
+    /// Only mail bigger than this many bytes (`larger:5m`).
+    pub larger: Option<i64>,
+    /// Only mail smaller than this many bytes.
+    pub smaller: Option<i64>,
+    /// Only the conversation this message is in, by the message's id in
+    /// the store (`thread:4127`).
+    pub thread_of: Option<i64>,
+    /// Only the message with this Message-ID, written without its angle
+    /// brackets (`msgid:<abc@example.com>`).
+    pub message_id: Option<String>,
+    /// What the mail must not be: what was typed with a `-` before it.
+    pub not: Negated,
+}
+
+/// What a search leaves out: each as the field of the same name in
+/// [`Query`], turned round.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Negated {
+    pub text: Vec<Term>,
+    pub from: Vec<Term>,
+    pub to: Vec<Term>,
+    pub subject: Vec<Term>,
+    /// Only mail with no files attached.
+    pub has_attachment: bool,
+    /// Not in any of these places.
+    pub within: Vec<Place>,
+    /// Not of any of these accounts.
+    pub accounts: Vec<String>,
 }
 
 /// A word or a phrase to find.
@@ -77,17 +117,33 @@ pub fn parse(input: &str, day_start: impl Fn(i32, u32, u32) -> Option<i64>) -> Q
     let mut query = Query::default();
     let tokens = tokens(input);
     let count = tokens.len();
-    for (index, token) in tokens.into_iter().enumerate() {
-        // Only what is still being typed matches by prefix.
+    for (index, mut token) in tokens.into_iter().enumerate() {
+        // A `-` before a piece means not. Dashes alone, or one inside
+        // quotes, are what they look like.
+        let negated = !token.quoted
+            && token.text.starts_with('-')
+            && token.text.chars().any(char::is_alphanumeric);
+        if negated {
+            token.text.remove(0);
+            token.value_quoted_at = token.value_quoted_at.map(|at| at - 1);
+        }
+        // Only what is still being typed matches by prefix, and only
+        // what is looked for: leaving out everything that starts with a
+        // half-typed word would empty the list as it is typed.
         let last = index + 1 == count;
         let term = |text: &str, phrase: bool| Term {
             text: text.to_owned(),
             phrase,
-            prefix: last && token.open,
+            prefix: last && token.open && !negated,
         };
         let Some((key, value, quoted)) = token.filter() else {
             if !token.text.is_empty() {
-                query.text.push(term(&token.text, token.quoted));
+                let word = term(&token.text, token.quoted);
+                if negated {
+                    query.not.text.push(word);
+                } else {
+                    query.text.push(word);
+                }
             }
             continue;
         };
@@ -96,33 +152,61 @@ pub fn parse(input: &str, day_start: impl Fn(i32, u32, u32) -> Option<i64>) -> Q
             continue;
         }
         let lower = value.to_lowercase();
+        // What is not a filter Quill knows, or has a value it cannot
+        // read, is a word to find, as it was typed.
+        let as_word = |query: &mut Query, quoted: bool| {
+            let word = term(&token.text, quoted);
+            if negated {
+                query.not.text.push(word);
+            } else {
+                query.text.push(word);
+            }
+        };
         match key.as_str() {
+            "from" if negated => query.not.from.push(term(value, quoted)),
             "from" => query.from.push(term(value, quoted)),
+            "to" | "cc" if negated => query.not.to.push(term(value, quoted)),
             "to" | "cc" => query.to.push(term(value, quoted)),
+            "subject" if negated => query.not.subject.push(term(value, quoted)),
             "subject" => query.subject.push(term(value, quoted)),
             "has" if is_prefix_of(&lower, "attachment") || lower == "file" || lower == "files" => {
-                query.has_attachment = true;
+                if negated {
+                    query.not.has_attachment = true;
+                } else {
+                    query.has_attachment = true;
+                }
             }
             "is" => match lower.as_str() {
-                "unread" | "new" => query.unread = Some(true),
-                "read" | "seen" => query.unread = Some(false),
-                "starred" | "flagged" => query.starred = Some(true),
-                "unstarred" => query.starred = Some(false),
-                "answered" | "replied" => query.answered = Some(true),
-                "unanswered" => query.answered = Some(false),
+                "unread" | "new" => query.unread = Some(!negated),
+                "read" | "seen" => query.unread = Some(negated),
+                "starred" | "flagged" => query.starred = Some(!negated),
+                "unstarred" => query.starred = Some(negated),
+                "answered" | "replied" => query.answered = Some(!negated),
+                "unanswered" => query.answered = Some(negated),
                 // Not a state Quill knows: nothing is in it.
-                _ => query.text.push(term(&token.text, false)),
+                _ => as_word(&mut query, false),
             },
-            "after" | "since" => match date(&lower, &day_start) {
-                Some(day) => query.after = Some(day),
-                None => query.text.push(term(&token.text, false)),
-            },
-            "before" | "until" => match date(&lower, &day_start) {
+            // Not after a day is before it, and so on down: a date or a
+            // size left out is the other side of it.
+            "after" | "since" | "before" | "until" => match date(&lower, &day_start) {
+                Some(day) if matches!(key.as_str(), "after" | "since") != negated => {
+                    query.after = Some(day);
+                }
                 Some(day) => query.before = Some(day),
-                None => query.text.push(term(&token.text, false)),
+                None => as_word(&mut query, false),
+            },
+            "older" | "newer" => match age(&lower) {
+                Some(seconds) if (key == "older") != negated => query.older = Some(seconds),
+                Some(seconds) => query.newer = Some(seconds),
+                None => as_word(&mut query, false),
+            },
+            "larger" | "bigger" | "smaller" => match size(&lower) {
+                Some(bytes) if (key != "smaller") != negated => query.larger = Some(bytes),
+                Some(bytes) => query.smaller = Some(bytes),
+                None => as_word(&mut query, false),
             },
             "in" => {
-                query.within = Some(match value.split_once('/') {
+                let place = match value.split_once('/') {
                     Some((account, folder)) => Place {
                         account: Some(account.trim().to_owned()).filter(|name| !name.is_empty()),
                         folder: Some(folder.trim().to_owned()).filter(|name| !name.is_empty()),
@@ -133,12 +217,71 @@ pub fn parse(input: &str, day_start: impl Fn(i32, u32, u32) -> Option<i64>) -> Q
                         folder: None,
                         either: Some(value.to_owned()),
                     },
-                });
+                };
+                if negated {
+                    query.not.within.push(place);
+                } else {
+                    query.within = Some(place);
+                }
             }
-            _ => query.text.push(term(&token.text, token.quoted)),
+            "account" if negated => query.not.accounts.push(value.trim().to_owned()),
+            "account" => query.account = Some(value.trim().to_owned()),
+            "thread" if !negated => match lower.parse::<i64>() {
+                Ok(id) if id > 0 => query.thread_of = Some(id),
+                _ => as_word(&mut query, false),
+            },
+            "msgid" if !negated => {
+                let id = value.trim().trim_start_matches('<').trim_end_matches('>');
+                if id.is_empty() {
+                    as_word(&mut query, false);
+                } else {
+                    query.message_id = Some(id.to_owned());
+                }
+            }
+            _ => as_word(&mut query, token.quoted),
         }
     }
     query
+}
+
+/// An age written `30d`, `2w`, `6m` or `1y`, or in hours as `12h`, in
+/// seconds. A month is thirty days and a year 365: this is for "older
+/// than about", not for a calendar.
+fn age(text: &str) -> Option<i64> {
+    let (number, unit) = split_unit(text)?;
+    let seconds: i64 = match unit {
+        "h" => 60 * 60,
+        "d" | "" => 24 * 60 * 60,
+        "w" => 7 * 24 * 60 * 60,
+        "m" | "mo" => 30 * 24 * 60 * 60,
+        "y" => 365 * 24 * 60 * 60,
+        _ => return None,
+    };
+    number.checked_mul(seconds).filter(|age| *age > 0)
+}
+
+/// A size written `5m`, `100k`, `2g` (or `5mb`, `100kb`), or in bytes as
+/// a number alone.
+fn size(text: &str) -> Option<i64> {
+    let (number, unit) = split_unit(text)?;
+    let bytes: i64 = match unit {
+        "" | "b" => 1,
+        "k" | "kb" => 1024,
+        "m" | "mb" => 1024 * 1024,
+        "g" | "gb" => 1024 * 1024 * 1024,
+        _ => return None,
+    };
+    number.checked_mul(bytes)
+}
+
+/// `30d` as 30 and `d`: digits, then letters, and nothing else.
+fn split_unit(text: &str) -> Option<(i64, &str)> {
+    let digits = text.chars().take_while(char::is_ascii_digit).count();
+    let (number, unit) = text.split_at(digits);
+    if !unit.chars().all(|c| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    Some((number.parse().ok()?, unit))
 }
 
 /// `has:att` means `has:attachment` while the word is being typed.
@@ -273,6 +416,89 @@ fn tokens(input: &str) -> Vec<Token> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_dash_before_a_piece_means_not() {
+        let query = parse("roadmap -draft -from:ana -subject:\"weekly digest\" ", day);
+        assert_eq!(query.text, [word("roadmap")]);
+        assert_eq!(query.not.text, [word("draft")]);
+        assert_eq!(query.not.from, [word("ana")]);
+        assert_eq!(
+            query.not.subject,
+            [Term {
+                text: "weekly digest".to_owned(),
+                phrase: true,
+                prefix: false,
+            }]
+        );
+        // A state left out is the other state.
+        assert_eq!(parse("-is:unread", day).unread, Some(false));
+        assert_eq!(parse("-is:starred ", day).starred, Some(false));
+        assert_eq!(parse("-is:unanswered ", day).answered, Some(true));
+        assert!(parse("-has:attachment ", day).not.has_attachment);
+        // A date left out is the other side of it.
+        assert_eq!(parse("-after:2026-10-01 ", day).before, Some(20_261_001));
+        assert_eq!(parse("-before:2026-10-01 ", day).after, Some(20_261_001));
+        // A place left out, and an account.
+        let query = parse("-in:work/sent -in:trash -account:personal ", day);
+        assert_eq!(query.within, None);
+        assert_eq!(query.not.within.len(), 2);
+        assert_eq!(query.not.accounts, ["personal"]);
+        // What is still being typed leaves nothing out by its first
+        // letters.
+        assert!(!parse("-dra", day).not.text[0].prefix);
+        // Dashes alone, and a quoted dash, are what they look like.
+        assert_eq!(parse("-- ", day).text, [word("--")]);
+        assert_eq!(parse("- ", day).text, [word("-")]);
+        assert_eq!(parse("\"-draft\" ", day).not, Negated::default());
+        // In the middle of a word it is part of the word.
+        assert_eq!(parse("e-mail ", day).text, [word("e-mail")]);
+    }
+
+    #[test]
+    fn ages_and_sizes_are_read_with_their_units() {
+        const DAY: i64 = 24 * 60 * 60;
+        assert_eq!(parse("older:30d ", day).older, Some(30 * DAY));
+        assert_eq!(parse("older:2w ", day).older, Some(14 * DAY));
+        assert_eq!(parse("newer:12h ", day).newer, Some(12 * 60 * 60));
+        assert_eq!(parse("older:6m ", day).older, Some(180 * DAY));
+        assert_eq!(parse("older:1y ", day).older, Some(365 * DAY));
+        // A number alone is days.
+        assert_eq!(parse("newer:7 ", day).newer, Some(7 * DAY));
+        // Not older is newer.
+        assert_eq!(parse("-older:30d ", day).newer, Some(30 * DAY));
+        assert_eq!(parse("larger:5m ", day).larger, Some(5 * 1024 * 1024));
+        assert_eq!(parse("larger:100kb ", day).larger, Some(100 * 1024));
+        assert_eq!(parse("smaller:900 ", day).smaller, Some(900));
+        assert_eq!(parse("-larger:1g ", day).smaller, Some(1024 * 1024 * 1024));
+        // What cannot be read is a word, and nothing is filtered by it.
+        for odd in [
+            "older:soon ",
+            "older:0d ",
+            "older:3x ",
+            "larger:big ",
+            "older:9999999999999y ",
+        ] {
+            let query = parse(odd, day);
+            assert_eq!((query.older, query.larger), (None, None), "{odd}");
+            assert_eq!(query.text.len(), 1, "{odd}");
+        }
+    }
+
+    #[test]
+    fn an_account_a_conversation_and_a_message_are_named() {
+        assert_eq!(parse("account:Work ", day).account.as_deref(), Some("Work"));
+        assert_eq!(parse("thread:4127 ", day).thread_of, Some(4127));
+        assert_eq!(parse("thread:x ", day).thread_of, None);
+        assert_eq!(
+            parse("msgid:<abc@example.com> ", day).message_id.as_deref(),
+            Some("abc@example.com")
+        );
+        assert_eq!(
+            parse("msgid:abc@example.com ", day).message_id.as_deref(),
+            Some("abc@example.com")
+        );
+    }
 
     /// Days counted from a made-up epoch, so the tests need no calendar.
     fn day(year: i32, month: u32, day: u32) -> Option<i64> {

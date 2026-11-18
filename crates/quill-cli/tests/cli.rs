@@ -76,7 +76,10 @@ fn looking_at_mail_that_is_not_there_says_so_and_makes_nothing() {
 fn the_headless_commands_are_in_the_help() {
     let output = quill().arg("--help").output().unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
-    for command in ["list", "search", "read", "send", "sync", "account"] {
+    for command in [
+        "list", "search", "read", "send", "sync", "account", "move", "delete", "restore", "undo",
+        "log", "drafts", "outbox", "mcp",
+    ] {
         assert!(stdout.contains(command), "{command}: {stdout}");
     }
     let output = quill().args(["list", "--help"]).output().unwrap();
@@ -163,4 +166,152 @@ fn a_theme_is_listed_and_imported_from_a_shell() {
         assert!(stderr.starts_with("quill: "), "{stderr}");
     }
     assert!(!dir.path().join("config/themes/notes").exists());
+}
+
+/// A mailbox on disk with the demo's mail in it, and a settings folder
+/// beside it.
+struct Scratch {
+    dir: tempfile::TempDir,
+}
+
+impl Scratch {
+    fn new(config: &str) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        let settings = dir.path().join("config");
+        std::fs::create_dir_all(&data).unwrap();
+        std::fs::create_dir_all(&settings).unwrap();
+        std::fs::write(settings.join("config.toml"), config).unwrap();
+        let mut store = quill_store::Store::open(&data.join("quill.db"))
+            .unwrap()
+            .with_blobs(quill_store::BlobStore::new(data.join("blobs")));
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(quill_tui::demo::seed(&mut store, 1_794_648_600))
+            .unwrap();
+        Self { dir }
+    }
+
+    fn run(&self, args: &[&str]) -> std::process::Output {
+        quill()
+            .args(args)
+            .arg("--config-dir")
+            .arg(self.dir.path().join("config"))
+            .arg("--data-dir")
+            .arg(self.dir.path().join("data"))
+            .stdin(std::process::Stdio::null())
+            .output()
+            .unwrap()
+    }
+
+    /// Runs a command that is to work, with `--json`, and reads what it
+    /// printed.
+    fn json(&self, args: &[&str]) -> serde_json::Value {
+        let mut args = args.to_vec();
+        args.push("--json");
+        let output = self.run(&args);
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).unwrap()
+    }
+}
+
+#[test]
+fn mail_is_found_changed_and_put_back_from_a_shell() {
+    let scratch = Scratch::new("");
+    let found = scratch.json(&["search", "from:peter", "dinner"]);
+    assert_eq!(found["schema"], 1);
+    let id = found["messages"][0]["id"].as_i64().unwrap().to_string();
+    assert_eq!(found["messages"][0]["subject"], "Sunday dinner");
+    assert_eq!(scratch.json(&["count", "from:peter", "dinner"])["count"], 1);
+
+    // Looked at first: nothing changes.
+    let dry = scratch.json(&["delete", "--where", "from:peter dinner", "--dry-run"]);
+    assert_eq!(dry["would_change"], 1);
+    assert_eq!(scratch.json(&["read", &id])["folder"], "Inbox");
+
+    let deleted = scratch.json(&["delete", &id]);
+    assert_eq!(deleted["changed"], 1);
+    assert_eq!(scratch.json(&["read", &id])["folder"], "Trash");
+
+    let log = scratch.json(&["log"]);
+    assert_eq!(log["entries"][0]["action"], "delete");
+    assert_eq!(log["entries"][0]["entry"], deleted["log"]);
+
+    let undone = scratch.json(&["undo"]);
+    assert_eq!(undone["entry"], deleted["log"]);
+    assert_eq!(scratch.json(&["read", &id])["folder"], "Inbox");
+
+    // For reading: a line that says what was done.
+    let said = scratch.run(&["mark", "starred", &id]);
+    assert!(said.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&said.stdout).trim(),
+        "Marked 1 message starred."
+    );
+    let said = scratch.run(&["archive", "--where", "from:peter dinner"]);
+    assert_eq!(
+        String::from_utf8_lossy(&said.stdout).trim(),
+        "Archived 1 message."
+    );
+    let folders = scratch.json(&["folders", "--account", "personal"]);
+    assert!(
+        folders["folders"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|folder| folder["role"] == "archive" && folder["messages"] != 0)
+    );
+}
+
+#[test]
+fn what_the_settings_refuse_exits_with_a_status_of_its_own() {
+    // Sending is off as Quill comes.
+    let scratch = Scratch::new("");
+    let sent = scratch.run(&["send", "--to", "ana.ruiz@example.com", "--subject", "Hello"]);
+    assert_eq!(sent.status.code(), Some(3));
+    assert!(
+        String::from_utf8_lossy(&sent.stderr).contains("Sending is switched off"),
+        "{}",
+        String::from_utf8_lossy(&sent.stderr)
+    );
+    // Nothing named is a mistake in the command.
+    let nothing = scratch.run(&["delete"]);
+    assert_eq!(nothing.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&nothing.stderr).contains("Say which messages"));
+    // What is not there is a plain failure.
+    assert_eq!(scratch.run(&["read", "999999"]).status.code(), Some(1));
+
+    let careful = Scratch::new("[agent]\ndelete = false\norganize = false\n");
+    let found = careful.json(&["search", "from:peter", "dinner"]);
+    let id = found["messages"][0]["id"].as_i64().unwrap().to_string();
+    let refused = careful.run(&["delete", &id, "--json"]);
+    assert_eq!(refused.status.code(), Some(3));
+    let value: serde_json::Value = serde_json::from_slice(&refused.stdout).unwrap();
+    assert_eq!(value["refused"]["code"], "switched_off");
+    assert_eq!(careful.run(&["archive", &id]).status.code(), Some(3));
+    assert_eq!(careful.json(&["read", &id])["folder"], "Inbox");
+    // The attempt is in the log, with what was looked at.
+    let log = careful.json(&["log", "--all"]);
+    assert!(
+        log["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["action"] == "delete"
+                && entry["summary"].as_str().unwrap().starts_with("refused"))
+    );
+
+    // With the commands themselves switched off, nothing is looked at
+    // either, and nothing is synced.
+    let closed = Scratch::new("[agent]\ncommands = false\n");
+    assert_eq!(closed.run(&["list"]).status.code(), Some(3));
+    assert_eq!(closed.run(&["sync"]).status.code(), Some(3));
+    // A settings file with a mistake in it is no licence.
+    let broken = Scratch::new("[agent]\nbulk_limit = 0\n");
+    assert_eq!(broken.run(&["list"]).status.code(), Some(1));
 }

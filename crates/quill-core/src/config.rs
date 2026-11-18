@@ -23,6 +23,9 @@ pub struct Config {
     /// What to do with mail as it arrives, in the order written.
     #[serde(rename = "rule")]
     pub rules: Vec<RuleConfig>,
+    /// What programs outside Quill's window, agents among them, may do
+    /// with the mail.
+    pub agent: AgentConfig,
 }
 
 /// Something to do with arriving mail that matches a search.
@@ -379,6 +382,97 @@ impl StorageConfig {
     }
 }
 
+/// The longest wait there can be between two messages agents send: a day.
+pub const SEND_GAP_LONGEST: u32 = 24 * 60 * 60;
+/// The most messages one change may be asked to touch, whatever is set.
+pub const BULK_CEILING: u32 = 1000;
+
+/// What may be done to the mail from outside Quill's window: by the
+/// commands for a shell, and by an agent's program over MCP. One set of
+/// switches for both ways in and for every agent: Quill cannot tell a
+/// skill running `quill send` from its user doing so, nor one agent from
+/// another by the name it gives.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgentConfig {
+    /// The commands for a shell that touch mail.
+    pub commands: bool,
+    /// MCP, served by the Quill that is running. Off as Quill comes.
+    pub mcp: bool,
+    /// Marks, moves, copies, snoozing, putting back, making a folder.
+    pub organize: bool,
+    /// Moving to a trash folder. Never more than that.
+    pub delete: bool,
+    /// Making, changing and discarding drafts.
+    pub draft: bool,
+    /// Sending. Off as Quill comes.
+    pub send: bool,
+    /// What is sent waits in the outbox for the user to let it go.
+    pub hold_sends: bool,
+    /// Seconds from one message sent this way to the next. 0: no wait.
+    pub send_gap: u32,
+    /// What the user is told of as a notification.
+    pub notify: AgentNotify,
+    /// The accounts that can be seen, by name. `None`: every account.
+    pub accounts: Option<Vec<String>>,
+    /// The most messages a search may name for one change without being
+    /// told to go on.
+    pub bulk_limit: u32,
+}
+
+impl Default for AgentConfig {
+    fn default() -> Self {
+        Self {
+            commands: true,
+            mcp: false,
+            organize: true,
+            delete: true,
+            draft: true,
+            send: false,
+            hold_sends: false,
+            send_gap: 30,
+            notify: AgentNotify::Changes,
+            accounts: None,
+            bulk_limit: 50,
+        }
+    }
+}
+
+impl AgentConfig {
+    /// Whether an account of this name can be seen.
+    pub fn sees(&self, account: &str) -> bool {
+        self.accounts
+            .as_ref()
+            .is_none_or(|names| names.iter().any(|name| name.eq_ignore_ascii_case(account)))
+    }
+}
+
+/// What agents do that the user is notified of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentNotify {
+    /// Every change to the mail, and every message sent.
+    #[default]
+    Changes,
+    /// Messages sent, or waiting to be let go.
+    Sends,
+    /// Nothing of what they do. A connection is still said.
+    None,
+}
+
+impl AgentNotify {
+    pub const ALL: [Self; 3] = [Self::Changes, Self::Sends, Self::None];
+
+    /// The word the config says it with.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Changes => "changes",
+            Self::Sends => "sends",
+            Self::None => "none",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PrivacyConfig {
@@ -652,6 +746,19 @@ impl Config {
             return Err(ConfigError::Invalid(
                 "ui.font must be the name of a font, on one line".to_owned(),
             ));
+        }
+        if self.agent.send_gap > SEND_GAP_LONGEST {
+            return Err(ConfigError::Invalid(format!(
+                "agent.send_gap is in seconds and must be {SEND_GAP_LONGEST} (a day) or less, \
+                 got {}",
+                self.agent.send_gap
+            )));
+        }
+        if !(1..=BULK_CEILING).contains(&self.agent.bulk_limit) {
+            return Err(ConfigError::Invalid(format!(
+                "agent.bulk_limit must be between 1 and {BULK_CEILING}, got {}",
+                self.agent.bulk_limit
+            )));
         }
         if !self.storage.cache_gb.is_finite() || self.storage.cache_gb < 0.0 {
             return Err(ConfigError::Invalid(

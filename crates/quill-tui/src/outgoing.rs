@@ -543,7 +543,7 @@ pub fn send_now(store: &mut Store, id: DraftId) -> quill_store::Result<Vec<DataE
     match row.state {
         DraftState::Sending => Ok(vec![flash("It is being sent right now.")]),
         DraftState::Draft => Ok(vec![flash("That is a draft: open it to send it.")]),
-        DraftState::Outbox | DraftState::Failed => {
+        DraftState::Outbox | DraftState::Failed | DraftState::Held => {
             if store.send_now(id, now())? {
                 Ok(vec![
                     DataEvent::StoreChanged,
@@ -568,7 +568,7 @@ pub fn open_draft(store: &mut Store, id: DraftId) -> quill_store::Result<Vec<Dat
         DraftState::Sending => {
             return Ok(vec![flash("It is being sent right now.")]);
         }
-        DraftState::Outbox => {
+        DraftState::Outbox | DraftState::Held => {
             if !store.unsend(id, now())? {
                 return Ok(vec![flash("It is being sent right now.")]);
             }

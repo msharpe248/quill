@@ -1,6 +1,6 @@
 # Quill for agents
 
-Agreed with the owner on 2026-11-17, but for the one open question at the end. What is built of it, and what was left, is said in `DECISIONS.md`. Where this and `Quill Terminal Email Client Spec.md` disagree about the shell commands, this is the newer.
+Agreed with the owner on 2026-11-17, but for the one open question at the end. Most of it is built; what is, what was decided on the way and what was left is in `DECISIONS.md`, under "Quill for agents". Where the two differ, `DECISIONS.md` says what Quill does. Where this and `Quill Terminal Email Client Spec.md` disagree about the shell commands, this is the newer.
 
 ## What it is for
 

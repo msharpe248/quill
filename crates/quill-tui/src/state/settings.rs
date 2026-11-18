@@ -17,8 +17,9 @@
 
 use quill_host::bridge::{SettingsDid, SettingsShow};
 
-use super::{Effects, Env, Notice, SettingsAct, State};
+use super::{Effects, Env, HostRequest, Notice, SettingsAct, State};
 use crate::command::CommandId;
+use crate::data::DataRequest;
 use crate::settings::{self, Applied, Can, Change, SettingsRead};
 use crate::setup::{AccountRequest, SignIn, SignInStage};
 use crate::text;
@@ -68,6 +69,7 @@ impl State {
                     edit: self.can_edit_account(env),
                     themes: self.themes_can_change(env),
                 },
+                &self.agent_recent,
                 window.refused.as_deref(),
             ),
             Err(problem) => settings::describe_unreadable(problem),
@@ -84,6 +86,8 @@ impl State {
             SettingsAct::Opened => {
                 self.settings.get_or_insert_default().refused = None;
                 out.accounts.push(AccountRequest::Settings(None));
+                // And what agents did last, for its pane.
+                out.data.push(DataRequest::AgentLog);
             }
             SettingsAct::Closed => self.settings = None,
             SettingsAct::Used(used) => {
@@ -128,6 +132,22 @@ impl State {
                             && used.field() == settings::BINDINGS =>
                     {
                         self.on_keys_action(env, action, row.as_deref(), out);
+                        self.settings_answered(None);
+                    }
+                    // What agents did last: its buttons stop them, and
+                    // copy the command that lets one in.
+                    SettingsDid::Action { action, .. }
+                        if used.pane() == settings::Pane::Agents.id()
+                            && used.field() == settings::AGENT_LOG =>
+                    {
+                        match action.as_str() {
+                            settings::STOP_AGENTS => self.run(env, CommandId::AgentsStop, out),
+                            settings::COPY_MCP => {
+                                out.host.push(HostRequest::Copy(settings::mcp_command(env)));
+                                self.flash = Some(("Copied the MCP command.".to_owned(), false));
+                            }
+                            _ => {}
+                        }
                         self.settings_answered(None);
                     }
                     SettingsDid::Action { action, row } => {

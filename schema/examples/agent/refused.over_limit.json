@@ -1,0 +1,14 @@
+{
+  "answer": {
+    "refused": {
+      "code": "over_limit",
+      "message": "The search finds 12 messages, more than the 3 one change may touch without being told to. Nothing was changed. Look at what it finds first (count, search, or dry_run), then give confirm to go on."
+    },
+    "schema": 1
+  },
+  "arguments": {
+    "as": "read",
+    "where": "is:unread"
+  },
+  "tool": "mark"
+}

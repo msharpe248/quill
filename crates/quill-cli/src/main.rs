@@ -4,8 +4,10 @@
 mod accounts;
 mod config_edit;
 mod discover;
+mod door;
 mod headless;
 mod keys_edit;
+mod mcp;
 mod oauth;
 mod password;
 mod paths;
@@ -46,7 +48,8 @@ use quill_auth::{Keychain, Remembered, SecretStore};
 use quill_core::config::{AccountConfig, Config};
 use quill_store::{BlobStore, Store};
 use quill_sync::SyncOptions;
-use quill_tui::app::SyncLink;
+use quill_tui::agent::{Call, Caller, Mark, Which};
+use quill_tui::app::{AgentLink, SyncLink};
 use quill_tui::theme::ColorMode;
 use quill_tui::{app, demo};
 
@@ -101,6 +104,174 @@ enum Command {
         /// The message exactly as it arrived, headers and all
         #[arg(long, conflicts_with = "json")]
         raw: bool,
+        /// Every header line as it arrived, in place of the few
+        #[arg(long)]
+        headers: bool,
+        /// At most this much of the text (20000 unless said; 0 for all)
+        #[arg(long, value_name = "CHARACTERS")]
+        max_chars: Option<usize>,
+        /// Start this far into the text, to read a long message on
+        #[arg(long, value_name = "CHARACTERS", default_value_t = 0)]
+        from_char: usize,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// How many messages a search finds
+    Count {
+        /// What to count: `from:news older:30d`
+        #[arg(required = true)]
+        words: Vec<String>,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// The conversation a message is in, oldest first
+    Thread {
+        id: i64,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// The accounts there are
+    Accounts {
+        #[command(flatten)]
+        output: Output,
+    },
+    /// The folders of every account, or of one, with how much is in each
+    Folders {
+        /// Only this account's folders
+        #[arg(long, value_name = "NAME")]
+        account: Option<String>,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// The files attached to a message
+    Attachments {
+        id: i64,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Write one of a message's files out
+    Attachment {
+        #[command(subcommand)]
+        action: AttachmentAction,
+    },
+    /// People Quill knows from the mail, by the start of a name or address
+    Contacts {
+        #[arg(required = true)]
+        words: Vec<String>,
+        /// At most this many
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// How things stand: unread mail, drafts, what is waiting to go
+    Status {
+        #[command(flatten)]
+        output: Output,
+    },
+    /// What commands and agents have done to the mail, newest first
+    Log {
+        /// At most this many
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+        /// What was looked at, as well as what was changed
+        #[arg(long)]
+        all: bool,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Mark messages read, unread, starred or unstarred
+    Mark {
+        #[arg(value_enum)]
+        what: MarkAs,
+        #[command(flatten)]
+        which: Selection,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Move messages to another folder of their account
+    Move {
+        /// The folder, by its name or what it is for: `archive`, `work/receipts`
+        #[arg(value_name = "FOLDER")]
+        to: String,
+        #[command(flatten)]
+        which: Selection,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Put a second copy of messages into another folder of their account
+    Copy {
+        #[arg(value_name = "FOLDER")]
+        to: String,
+        #[command(flatten)]
+        which: Selection,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Move messages to their account's archive
+    Archive {
+        #[command(flatten)]
+        which: Selection,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Move messages to the trash. Never for good: `restore` puts them back
+    Delete {
+        #[command(flatten)]
+        which: Selection,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Put messages that are in the trash back where they were
+    Restore {
+        #[command(flatten)]
+        which: Selection,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Put messages aside until a time: `2h`, `tomorrow`, "fri 14:30"
+    Snooze {
+        #[arg(value_name = "WHEN")]
+        until: String,
+        #[command(flatten)]
+        which: Selection,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Bring snoozed messages back now
+    Unsnooze {
+        #[command(flatten)]
+        which: Selection,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Make a folder
+    Folder {
+        #[command(subcommand)]
+        action: FolderAction,
+    },
+    /// The drafts there are
+    Drafts {
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Write, show, change, send or discard a draft
+    Draft {
+        #[command(subcommand)]
+        action: DraftAction,
+    },
+    /// What is on its way out: waiting, held for your OK, or refused
+    Outbox {
+        #[command(subcommand)]
+        action: Option<OutboxAction>,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Take back a change a command or an agent made: the last, or the
+    /// one with this number in `quill log`
+    Undo {
+        #[arg(value_name = "NUMBER")]
+        entry: Option<i64>,
         #[command(flatten)]
         output: Output,
     },
@@ -121,8 +292,18 @@ enum Command {
         /// A file to attach. Repeat for more
         #[arg(long, value_name = "FILE")]
         attach: Vec<String>,
+        /// When to send it: `2h`, "tomorrow 9". Now, unless said
+        #[arg(long, value_name = "WHEN")]
+        at: Option<String>,
         #[command(flatten)]
         output: Output,
+    },
+    /// Serve an agent's program over MCP, on standard input and output. It
+    /// carries what is asked to the Quill that is running, and does
+    /// nothing itself
+    Mcp {
+        #[command(flatten)]
+        dirs: Dirs,
     },
     /// Fetch new mail, carry out what is queued and send what is waiting,
     /// once, and stop
@@ -164,6 +345,170 @@ enum ThemeAction {
         #[command(flatten)]
         output: Output,
     },
+}
+
+#[derive(Subcommand)]
+enum AttachmentAction {
+    /// Write one file of a message into a folder, and print where it is
+    Save {
+        id: i64,
+        /// Which file, by its number from `quill attachments`
+        part: u32,
+        /// The folder to write into. This one, if not said
+        #[arg(long, value_name = "DIR", default_value = ".")]
+        to: String,
+        #[command(flatten)]
+        output: Output,
+    },
+}
+
+#[derive(Subcommand)]
+enum FolderAction {
+    /// Make a folder on this Mac. Mail moved into it is taken off the
+    /// server, and is then only on this Mac
+    Create {
+        name: String,
+        /// The account it is for. Needed when there is more than one
+        #[arg(long, value_name = "NAME")]
+        account: Option<String>,
+        #[command(flatten)]
+        output: Output,
+    },
+}
+
+/// Who a message is to and what it is about. Its text is read from
+/// standard input.
+#[derive(Args)]
+struct Letter {
+    /// A recipient. Repeat for more
+    #[arg(long, value_name = "ADDRESS")]
+    to: Vec<String>,
+    #[arg(long, value_name = "ADDRESS")]
+    cc: Vec<String>,
+    #[arg(long, value_name = "ADDRESS")]
+    bcc: Vec<String>,
+    #[arg(long, default_value = "")]
+    subject: String,
+    /// The account it is from, by its name. The first one otherwise
+    #[arg(long, value_name = "NAME")]
+    account: Option<String>,
+    /// A file to attach. Repeat for more
+    #[arg(long, value_name = "FILE")]
+    attach: Vec<String>,
+}
+
+#[derive(Subcommand)]
+enum DraftAction {
+    /// Write a new draft. The text is read from standard input
+    New {
+        #[command(flatten)]
+        letter: Letter,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Write a reply to a message as a draft. The text is read from
+    /// standard input
+    Reply {
+        /// The message to answer, by its id
+        id: i64,
+        /// Answer everyone it went to
+        #[arg(long)]
+        all: bool,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Print a draft, or a message in the outbox, with its text
+    Show {
+        id: i64,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Change a draft that a command or an agent wrote. With --body, the
+    /// new text is read from standard input
+    Edit {
+        id: i64,
+        /// Who it is to, in place of who it was to. Repeat for more
+        #[arg(long, value_name = "ADDRESS")]
+        to: Option<Vec<String>>,
+        #[arg(long, value_name = "ADDRESS")]
+        cc: Option<Vec<String>>,
+        #[arg(long, value_name = "ADDRESS")]
+        bcc: Option<Vec<String>>,
+        #[arg(long)]
+        subject: Option<String>,
+        /// Read a new text from standard input
+        #[arg(long)]
+        body: bool,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Send a draft
+    Send {
+        id: i64,
+        /// When to send it: `2h`, "tomorrow 9". Now, unless said
+        #[arg(long, value_name = "WHEN")]
+        at: Option<String>,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Discard a draft that a command or an agent wrote
+    Discard {
+        id: i64,
+        #[command(flatten)]
+        output: Output,
+    },
+}
+
+#[derive(Subcommand)]
+enum OutboxAction {
+    /// Take a message that has not gone back out of the outbox
+    Cancel {
+        id: i64,
+        #[command(flatten)]
+        output: Output,
+    },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum MarkAs {
+    Read,
+    Unread,
+    Starred,
+    Unstarred,
+}
+
+/// Which messages a command is for.
+#[derive(Args)]
+struct Selection {
+    /// Messages by id, as `list` and `search` print them
+    #[arg(value_name = "ID")]
+    ids: Vec<i64>,
+    /// A message by its Message-ID header, which does not change when it
+    /// moves. Repeat for more
+    #[arg(long, value_name = "MESSAGE-ID")]
+    msgid: Vec<String>,
+    /// Messages by a search, in the search box's words: 'from:news older:30d'
+    #[arg(long = "where", value_name = "SEARCH")]
+    query: Option<String>,
+    /// Change nothing; say what would be changed
+    #[arg(long)]
+    dry_run: bool,
+    /// Go on although the search finds more messages than one change may
+    /// touch without being told to
+    #[arg(long)]
+    yes: bool,
+}
+
+impl Selection {
+    fn which(self) -> Which {
+        Which {
+            ids: self.ids,
+            msgids: self.msgid,
+            query: self.query,
+            dry_run: self.dry_run,
+            confirm: self.yes,
+        }
+    }
 }
 
 #[derive(Args)]
@@ -269,6 +614,13 @@ fn main() -> ExitCode {
             eprintln!("quill: {err}.");
             ExitCode::from(ALREADY_OPEN_STATUS)
         }
+        Err(err) if err.downcast_ref::<headless::Turned>().is_some() => {
+            eprintln!("quill: {err}.");
+            ExitCode::from(
+                err.downcast_ref::<headless::Turned>()
+                    .map_or(1, headless::Turned::status),
+            )
+        }
         Err(err) => {
             eprintln!("quill: {err:#}");
             ExitCode::FAILURE
@@ -293,35 +645,175 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             unread,
             limit,
             output,
-        } => {
-            let (store, _) = mail(output.dirs)?;
-            headless::list(
-                &mut std::io::stdout(),
-                &store,
-                within.as_deref(),
+        } => act(
+            output,
+            Call::List {
+                within,
                 unread,
-                limit,
-                output.json,
-            )
-        }
+                limit: Some(limit),
+            },
+        ),
         Command::Search {
             words,
             limit,
             output,
+        } => act(
+            output,
+            Call::Search {
+                query: words.join(" "),
+                limit: Some(limit),
+            },
+        ),
+        Command::Count { words, output } => act(
+            output,
+            Call::Count {
+                query: words.join(" "),
+            },
+        ),
+        Command::Read {
+            id,
+            raw: true,
+            output,
+            ..
         } => {
-            let (store, _) = mail(output.dirs)?;
-            headless::search(
+            let (mut store, paths) = mail(output.dirs)?;
+            let config = Config::load(&paths.config_file())?;
+            headless::raw(
                 &mut std::io::stdout(),
-                &store,
-                &words.join(" "),
-                limit,
-                output.json,
+                &mut store,
+                &headless::settings(&config),
+                id,
             )
         }
-        Command::Read { id, raw, output } => {
-            let (store, _) = mail(output.dirs)?;
-            headless::read(&mut std::io::stdout(), &store, id, raw, output.json)
-        }
+        Command::Read {
+            id,
+            raw: false,
+            headers,
+            max_chars,
+            from_char,
+            output,
+        } => act(
+            output,
+            Call::Read {
+                id,
+                headers,
+                max_chars,
+                from_char,
+            },
+        ),
+        Command::Thread { id, output } => act(output, Call::Thread { id }),
+        Command::Accounts { output } => act(output, Call::Accounts),
+        Command::Folders { account, output } => act(output, Call::Folders { account }),
+        Command::Attachments { id, output } => act(output, Call::Attachments { id }),
+        Command::Attachment {
+            action:
+                AttachmentAction::Save {
+                    id,
+                    part,
+                    to,
+                    output,
+                },
+        } => act(
+            output,
+            Call::AttachmentSave {
+                id,
+                part,
+                to: Some(to),
+            },
+        ),
+        Command::Contacts {
+            words,
+            limit,
+            output,
+        } => act(
+            output,
+            Call::Contacts {
+                words: words.join(" "),
+                limit: Some(limit),
+            },
+        ),
+        Command::Status { output } => act(output, Call::Status),
+        Command::Log { limit, all, output } => act(
+            output,
+            Call::Log {
+                limit: Some(limit),
+                all,
+            },
+        ),
+        Command::Mark {
+            what,
+            which,
+            output,
+        } => act(
+            output,
+            Call::Mark {
+                which: which.which(),
+                mark: match what {
+                    MarkAs::Read => Mark::Read,
+                    MarkAs::Unread => Mark::Unread,
+                    MarkAs::Starred => Mark::Starred,
+                    MarkAs::Unstarred => Mark::Unstarred,
+                },
+            },
+        ),
+        Command::Move { to, which, output } => act(
+            output,
+            Call::Move {
+                which: which.which(),
+                to,
+            },
+        ),
+        Command::Copy { to, which, output } => act(
+            output,
+            Call::Copy {
+                which: which.which(),
+                to,
+            },
+        ),
+        Command::Archive { which, output } => act(
+            output,
+            Call::Archive {
+                which: which.which(),
+            },
+        ),
+        Command::Delete { which, output } => act(
+            output,
+            Call::Delete {
+                which: which.which(),
+            },
+        ),
+        Command::Restore { which, output } => act(
+            output,
+            Call::Restore {
+                which: which.which(),
+            },
+        ),
+        Command::Snooze {
+            until,
+            which,
+            output,
+        } => act(
+            output,
+            Call::Snooze {
+                which: which.which(),
+                until,
+            },
+        ),
+        Command::Unsnooze { which, output } => act(
+            output,
+            Call::Unsnooze {
+                which: which.which(),
+            },
+        ),
+        Command::Folder {
+            action:
+                FolderAction::Create {
+                    name,
+                    account,
+                    output,
+                },
+        } => act(output, Call::FolderCreate { name, account }),
+        Command::Undo { entry, output } => act(output, Call::Undo { entry }),
         Command::Send {
             to,
             cc,
@@ -329,30 +821,79 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             subject,
             account,
             attach,
+            at,
             output,
-        } => {
-            let (mut store, paths) = mail(output.dirs)?;
-            let config = Config::load(&paths.config_file())?;
-            let mut body = String::new();
-            if !std::io::stdin().is_terminal() {
-                std::io::Read::read_to_string(&mut std::io::stdin(), &mut body)
-                    .context("cannot read the message from standard input")?;
-            }
-            headless::send(
-                &mut std::io::stdout(),
-                &mut store,
-                &config,
-                headless::Message {
-                    account,
+        } => act(
+            output,
+            Call::Send {
+                to,
+                cc,
+                bcc,
+                subject,
+                body: typed_in()?,
+                account,
+                attach: whole_paths(attach),
+                at,
+            },
+        ),
+        Command::Drafts { output } => act(output, Call::Drafts),
+        Command::Draft { action } => match action {
+            DraftAction::New { letter, output } => act(
+                output,
+                Call::DraftNew {
+                    to: letter.to,
+                    cc: letter.cc,
+                    bcc: letter.bcc,
+                    subject: letter.subject,
+                    body: typed_in()?,
+                    account: letter.account,
+                    attach: whole_paths(letter.attach),
+                },
+            ),
+            DraftAction::Reply { id, all, output } => act(
+                output,
+                Call::DraftReply {
+                    id,
+                    all,
+                    body: typed_in()?,
+                },
+            ),
+            DraftAction::Show { id, output } => act(output, Call::DraftShow { id }),
+            DraftAction::Edit {
+                id,
+                to,
+                cc,
+                bcc,
+                subject,
+                body,
+                output,
+            } => act(
+                output,
+                Call::DraftEdit {
+                    id,
                     to,
                     cc,
                     bcc,
                     subject,
-                    body,
-                    attach,
+                    body: if body { Some(typed_in()?) } else { None },
                 },
-                output.json,
-            )
+            ),
+            DraftAction::Send { id, at, output } => act(output, Call::DraftSend { id, at }),
+            DraftAction::Discard { id, output } => act(output, Call::DraftDiscard { id }),
+        },
+        Command::Outbox {
+            action: Some(OutboxAction::Cancel { id, output }),
+            ..
+        } => act(output, Call::OutboxCancel { id }),
+        Command::Outbox {
+            action: None,
+            output,
+        } => act(output, Call::Outbox),
+        Command::Mcp { dirs } => {
+            let paths = Paths::resolve(dirs.config_dir, dirs.data_dir, |name| {
+                std::env::var_os(name)
+            })?;
+            mcp::run(paths.data_dir.clone(), paths.config_file())
         }
         Command::Sync { output } => {
             let paths = Paths::resolve(output.dirs.config_dir, output.dirs.data_dir, |name| {
@@ -362,8 +903,26 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 Ok(config) => (config, true),
                 Err(err) => anyhow::bail!("{err}. Nothing was synced"),
             };
+            // With Quill running on the mailbox, it is asked to look: a
+            // second engine beside its own would fetch and send twice.
+            if let Some(mut quill) = door::connect(&paths.data_dir) {
+                let result = quill
+                    .call(&Caller::shell(), &Call::Sync { account: None })
+                    .context("Quill is running on this mailbox and did not answer")?;
+                let fine = result.as_ref().is_ok_and(|answer| {
+                    answer.value["problems"]
+                        .as_array()
+                        .is_none_or(Vec::is_empty)
+                });
+                headless::print(&mut std::io::stdout(), result, output.json)?;
+                anyhow::ensure!(fine, "not everything synced");
+                return Ok(());
+            }
+            headless::may_run(&config)?;
             create_private_dir(&paths.data_dir)
                 .with_context(|| format!("cannot create {}", paths.data_dir.display()))?;
+            // And none may start while this one is at work.
+            let _held = hold_mailbox(&paths.data_dir)?;
             let fine = runtime.block_on(headless::sync(
                 &mut std::io::stdout(),
                 &config,
@@ -416,6 +975,10 @@ async fn tui(args: TuiArgs) -> anyhow::Result<()> {
     if !std::io::stdout().is_terminal() || !std::io::stdin().is_terminal() {
         anyhow::bail!("`quill tui` needs a terminal to draw in");
     }
+    // Whether this run was told where its mail is, and is not simply
+    // where everyone's is.
+    let data_chosen =
+        args.dirs.data_dir.is_some() || std::env::var_os(paths::DATA_DIR_VAR).is_some();
     let paths = Paths::resolve(args.dirs.config_dir, args.dirs.data_dir, |name| {
         std::env::var_os(name)
     })?;
@@ -491,6 +1054,26 @@ async fn tui(args: TuiArgs) -> anyhow::Result<()> {
         )
     };
 
+    // The door for the user's own commands and agents: open for as long
+    // as this Quill has the mailbox. The demo mailbox opens one only in a
+    // data folder it was given: beside the user's real mail, a command
+    // meant for that mail would be answered from the demo.
+    let (door, agents) = if !args.demo || data_chosen {
+        let opened = create_private_dir(&paths.data_dir).and_then(|()| door::open(&paths.data_dir));
+        match opened {
+            Ok((door, agents)) => (Some(door), agents),
+            Err(err) => {
+                notices.push(quill_tui::state::Notice::error(format!(
+                    "Commands from a shell and agents cannot reach this Quill: {err}. They work \
+                     on the mail directly, and what they change shows here after the next sync."
+                )));
+                (None, AgentLink::none())
+            }
+        }
+    } else {
+        (None, AgentLink::none())
+    };
+
     let attached = quill_host::attach(std::env::var_os(quill_host::SOCKET_VARIABLE).as_deref());
     let mut env = loaded.env;
     // Quill's own shell always draws images. Elsewhere, go by what the
@@ -513,9 +1096,12 @@ async fn tui(args: TuiArgs) -> anyhow::Result<()> {
             system_appearance(std::env::var("QUILL_SYSTEM_APPEARANCE").ok().as_deref());
         env.restyle();
     }
-    let ended = app::run(store, env, notices, attached, sync, accounts)
+    let ended = app::run(store, env, notices, attached, sync, accounts, agents)
         .await
         .context("the terminal UI stopped");
+    // Closed before the mailbox is let go of, so that no command finds a
+    // door with nobody behind it.
+    drop(door);
     drop(mailbox_held);
     ended
 }
@@ -671,12 +1257,70 @@ async fn account(
     Ok(())
 }
 
+/// A message's text, from standard input when something is piped in.
+/// Typed at a terminal, there is none: a prompt is not waited at.
+fn typed_in() -> anyhow::Result<String> {
+    let mut body = String::new();
+    if !std::io::stdin().is_terminal() {
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut body)
+            .context("cannot read the message from standard input")?;
+    }
+    Ok(body)
+}
+
+/// Files to attach, by their whole paths: the Quill that is running does
+/// not stand where this command was typed.
+fn whole_paths(files: Vec<String>) -> Vec<String> {
+    files
+        .into_iter()
+        .map(|file| match std::path::absolute(&file) {
+            Ok(path) => path.to_string_lossy().into_owned(),
+            Err(_) => file,
+        })
+        .collect()
+}
+
+/// Does one thing to the mail, as the user's settings for what may be
+/// done from outside Quill's window allow, and prints what came of it.
+///
+/// With Quill running on the mailbox, the request is handed to it: there
+/// is one writer, and its window shows the change as it is made. With no
+/// Quill running, it is done here on the store, and reaches a server when
+/// Quill next runs or at `quill sync`. A settings file that cannot be
+/// read is no licence: nothing is done.
+fn act(output: Output, call: Call) -> anyhow::Result<()> {
+    let paths = Paths::resolve(output.dirs.config_dir, output.dirs.data_dir, |name| {
+        std::env::var_os(name)
+    })?;
+    if let Some(mut quill) = door::connect(&paths.data_dir) {
+        // Asked once. If Quill goes away before it answers, the request
+        // is not made again here: it may have been done.
+        let result = quill
+            .call(&Caller::shell(), &call)
+            .context("Quill is running on this mailbox and did not answer")?;
+        return headless::print(&mut std::io::stdout(), result, output.json);
+    }
+    let (mut store, paths) = mail_at(paths)?;
+    let config = Config::load(&paths.config_file())?;
+    headless::ask(
+        &mut std::io::stdout(),
+        &mut store,
+        &headless::settings(&config),
+        &call,
+        output.json,
+    )
+}
+
 /// Opens the mail there is, for the commands that only look at it or add
 /// to the outbox. They make nothing: with no mail yet, they say so.
 fn mail(dirs: Dirs) -> anyhow::Result<(Store, Paths)> {
-    let paths = Paths::resolve(dirs.config_dir, dirs.data_dir, |name| {
+    mail_at(Paths::resolve(dirs.config_dir, dirs.data_dir, |name| {
         std::env::var_os(name)
-    })?;
+    })?)
+}
+
+/// As [`mail`], for a place already worked out.
+fn mail_at(paths: Paths) -> anyhow::Result<(Store, Paths)> {
     let database = paths.database();
     anyhow::ensure!(
         database.is_file(),

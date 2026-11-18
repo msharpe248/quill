@@ -1,0 +1,35 @@
+{
+  "answer": {
+    "entries": [
+      {
+        "action": "undo",
+        "agent": "A shell command",
+        "at": "2026-11-14T09:30:00Z",
+        "can_undo": false,
+        "change": true,
+        "entry": 9,
+        "messages": 1,
+        "summary": "took back change 8 (delete): 1 message",
+        "undone": null,
+        "way": "shell"
+      },
+      {
+        "action": "delete",
+        "agent": "A shell command",
+        "at": "2026-11-14T09:30:00Z",
+        "can_undo": false,
+        "change": true,
+        "entry": 8,
+        "messages": 1,
+        "summary": "moved 1 message to the trash (1 message by id)",
+        "undone": "2026-11-14T09:30:00Z",
+        "way": "shell"
+      }
+    ],
+    "schema": 1
+  },
+  "arguments": {
+    "limit": 2
+  },
+  "tool": "log"
+}

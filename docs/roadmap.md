@@ -6,7 +6,7 @@ Nothing here is a promise or a date.
 
 ## Next
 
-- **Quill for agents.** A person's AI agent working their mail through Quill: more commands for a shell (`quill move`, `quill delete`, `quill draft reply`, ...), and Quill as an MCP server while it runs, with a Settings pane that says what agents may do. Off until the user switches it on. The design is in [Quill Agents Spec.md](../Quill%20Agents%20Spec.md); nothing of it is built.
+- **Finishing Quill for agents.** The shell commands, MCP, the Settings pane, the log, undo, held sends and Stop Agents are built ([the manual](manual.md#agents); the design is in [Quill Agents Spec.md](../Quill%20Agents%20Spec.md)). Still to come: a skill file that ships with Quill (`quill skill show`), `quill watch`, forwarding and invitations from a shell, the 2026-07-28 revision of MCP, and trying all of it with real accounts and real agents.
 - **A download that simply opens.** A disk image signed with a Developer ID and notarized by Apple, and a Homebrew cask. Until then Quill is built from the source.
 - **Google's verification of Quill.** Until it is through, signing in with Google as Quill shows a warning and is open to a limited number of people; see [oauth.md](oauth.md).
 
@@ -32,6 +32,7 @@ Nothing here is a promise or a date.
 
 Quill is tested against mail servers run on the Mac it is built on, and against stand-ins written from the providers' documentation. What has met a real provider so far: reading and sending through an IMAP account with a password, and Gmail signed in to with Google. What has not:
 
+- The commands for a shell and MCP, with a real account or a real agent's program: they are tried on the demo mailbox, and through the protocol by hand.
 - Microsoft 365 and Outlook.com: the sign-in, and reading and sending through Microsoft Graph.
 - Exchange on your own servers (EWS).
 - A POP3 provider (it is tested against a POP3 server run locally).

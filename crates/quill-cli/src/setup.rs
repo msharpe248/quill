@@ -57,7 +57,9 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
         look,
         tz,
         reader_width: config.ui.reader_width,
+        program: std::env::current_exe().ok(),
         sidebar_width: config.ui.sidebar_width,
+        agent: config.agent.clone(),
         // Decided by the caller, once it knows what hosts the core.
         images: false,
         accounts: false,

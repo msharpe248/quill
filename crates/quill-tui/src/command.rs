@@ -236,6 +236,7 @@ pub enum CommandId {
     FolderCreate,
     FolderRemove,
     MailboxSync,
+    AgentsStop,
     SidebarOpen,
     SidebarClose,
     HelpToggle,
@@ -980,6 +981,17 @@ impl Registry {
                     AccountRemove,
                     "account.remove",
                     "Remove this account\u{2026}",
+                    General,
+                    Some(Menu::File),
+                    PANES,
+                ),
+                // Stops everything that works the mail from outside the
+                // window, at once: for when an agent is doing what it
+                // should not.
+                spec(
+                    AgentsStop,
+                    "agents.stop",
+                    "Stop Agents",
                     General,
                     Some(Menu::File),
                     PANES,

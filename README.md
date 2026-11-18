@@ -32,7 +32,9 @@ The same program runs in a terminal of your own, over the same mailbox: `quill t
 
 **At home on a Mac.** New mail is pushed to Quill where the server can, and announced; the Dock shows what is unread; `mailto:` links open in Quill. Attachments open beside your mail in Quick Look, and sound and video play in a pane. It follows the Mac between light and dark, with a theme for each, and imports any theme made for Ghostty.
 
-**Yours to script.** `quill list`, `search`, `read`, `send` and `sync` work from a shell, each with `--json`. A hook hands the message you are on to a program of your own.
+**Yours to script.** Everything above works from a shell too: `quill search`, `read`, `move`, `archive`, `delete`, `draft reply`, `send`, each with `--json`, a dry run, and an undo. A hook hands the message you are on to a program of your own.
+
+**Ready for your AI agent, on your terms.** Give an agent a skill that uses those commands, or switch on MCP and Quill serves it the same things as tools while it is running: every kind of account behind one set of tools, working on mail that is already on your Mac. You decide what it may do, in Settings: look, organize, delete (to the trash, never for good), draft, send. It is off until you switch it on, nothing listens on the network, every change is logged and can be taken back, what it sends can wait for your OK, and one command stops it all. [The manual](docs/manual.md#agents) has the whole of it.
 
 **Private.** Quill has no servers of its own, no analytics and no tracking. Your mail goes between your Mac and your mail providers and nowhere else, and your passwords are in the macOS Keychain. [PRIVACY.md](PRIVACY.md) says exactly what it keeps and what it connects to.
 
@@ -86,6 +88,7 @@ The keys for where you are stand along the bottom of the window, and everything 
 | [Building and working on Quill](docs/development.md) | The build scripts, the checks, how the code is laid out |
 | [Signing in with Google and Microsoft](docs/oauth.md) | What a provider's sign-in needs, and how to register a client of your own |
 | [Where Quill is going](docs/roadmap.md) | What is next, what is missing, and the plan Quill started from |
+| [Quill for agents](Quill%20Agents%20Spec.md) | The design of the shell commands and MCP: what an agent may do, and what it never can |
 | [DECISIONS.md](DECISIONS.md) | Why each thing is the way it is, and what was and was not verified |
 | [The spec](Quill%20Terminal%20Email%20Client%20Spec.md) | The original design |
 
@@ -94,6 +97,7 @@ The keys for where you are stand along the bottom of the window, and everything 
 - **It is young.** Quill is used for real mail, but by few people and not for long. Settings, keys and commands may still change between versions.
 - **Some of it has only met test servers.** IMAP with a password, and Gmail signed in to with Google, have been used against the real thing. Microsoft 365, Exchange and POP3 providers have so far been tested only against servers run locally and stand-ins written from the providers' documentation. [The roadmap](docs/roadmap.md#not-yet-tried-on-the-real-thing) has the list. If you use one of these, your report matters more than most.
 - **There is no signed download.** A notarized disk image and a Homebrew cask are next; until then, see "Get it".
+- **Agents are new.** The shell commands and MCP are a day old, and have been tried on the demo mailbox, not yet on a real account or with a real agent's program. Start with sending off or held.
 - **Apple silicon only, so far.** An Intel Mac has not been tried.
 - **It acts on your real mail.** Quill is careful: deleting moves a message to the account's Trash, where it can be put back. But it is young software. The one thing to know before you start: mail you move into a folder "On This Mac" is taken off the server and then exists only on your Mac, as the name says. Keep a backup of your Mac if you use those.
 

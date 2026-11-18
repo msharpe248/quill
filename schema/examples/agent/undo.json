@@ -1,0 +1,46 @@
+{
+  "answer": {
+    "action": "undo",
+    "changed": 1,
+    "entry": 8,
+    "ids": [
+      17
+    ],
+    "log": 9,
+    "messages": [
+      {
+        "account": "Personal",
+        "answered": false,
+        "attachments": false,
+        "cc": [],
+        "date": "2026-11-14T08:35:00Z",
+        "folder": "Inbox",
+        "from": [
+          {
+            "address": "peter.vale@example.com",
+            "name": "Peter Vale"
+          }
+        ],
+        "id": 17,
+        "message_id": "<personal.inbox-1@example.com>",
+        "on_this_mac": false,
+        "snoozed_until": null,
+        "starred": false,
+        "subject": "Sunday dinner",
+        "thread": 17,
+        "to": [
+          {
+            "address": "robin.vale@example.com",
+            "name": "Robin Vale"
+          }
+        ],
+        "unread": true
+      }
+    ],
+    "not_undone": [],
+    "schema": 1,
+    "undid": "delete"
+  },
+  "arguments": {},
+  "tool": "undo"
+}

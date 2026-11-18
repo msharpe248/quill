@@ -1206,3 +1206,118 @@ The owner asked for both: `q` in the app should do what the red button does and 
 - Keys for making a pane wider or narrower. The mouse is the only way.
 - The accounts drawn over the other panes (a narrow window, or hidden) keep their fixed width.
 
+
+## Quill for agents: commands for a shell, and MCP (2026-11-17)
+
+Asked for by the owner: "features which will allow AI to control this mail client better", by two ways in: commands for a shell, for skills, and an MCP end point. Specified first, with the owner, in `Quill Agents Spec.md`; this says what was built of it, what was decided on the way, and what was left.
+
+### The actions, and the commands for a shell
+
+- **One layer, in the core** (`quill-tui/src/agent`): a request is a `Call`, and `agent::perform` checks it against the user's settings, does it, and logs it. The commands for a shell build a `Call` from their arguments; MCP reads one from a tool's name and its arguments (`Call::parse`). Neither front has behaviour of its own.
+- **It is in `quill-tui`, not in a crate of its own**, because it is done on the store worker's thread, with the worker's store, when Quill is running: one writer, and the UI hears of a change as it hears of its own. The worker already reads and writes files (attachments), which the UI task never does.
+- **Changes go through the store's queue**, with the same functions the keys use (`queue_move`, `queue_flags`, `note_trashed`, ...), so they reach a server the same way and survive a restart.
+- **`delete` never deletes.** It is a move to the account's trash folder. Where the UI's delete would be for good (the message is in the trash already, the account has no trash, or the message is in a folder that is only on this Mac) the message is left alone and the answer says why.
+- **Top-level commands**, beside the five there were: `accounts`, `folders`, `count`, `thread`, `attachments`, `attachment save`, `contacts`, `status`, `log`, `mark`, `move`, `copy`, `archive`, `delete`, `restore`, `snooze`, `unsnooze`, `folder create`, `undo`. `read` gained `--headers`, `--max-chars` and `--from-char`.
+- **`list`, `search` and `read` are now the same actions**, so the settings, the account switch and the log hold for them as for the rest. **Their JSON changed**: `list` and `search` printed a bare array and now print `{"schema": 1, "messages": [...], "more": false}`. Every answer is an object with `schema` in it, which MCP needs in any case. Quill had been public for a day.
+- **`read` gives 20,000 characters unless told otherwise**, and says how much is left and where to go on from. It gave the whole text before; `--max-chars 0` still does.
+- **An argument a tool does not take is refused**, with the names it does take. Passing over a misspelt `dry_run` would turn a look into a change.
+- **A refusal has a code that does not change** (`switched_off`, `over_limit`, `not_found`, `invalid`, `not_running`, `cannot_undo`, `failed`) and words for a person. From a shell it exits 3 when the settings refused, 2 for a command written wrong, 1 otherwise, and with `--json` the refusal is printed as JSON as well as said.
+- **The contract is checked in and held by a test**: `schema/agent.json` is every tool as an MCP client is told of it, written out from the one list in the code, and `schema/examples/agent` are answers from the demo mailbox. A change to the surface is a change to those files (`QUILL_UPDATE_SCHEMA=1` writes them). This is a snapshot, not a JSON Schema of the answers: nothing here validates against one, and the examples are what a reader goes by.
+
+### The settings
+
+- **`[agent]` in the config**: `commands` (on), `mcp` (off), `organize` (on), `delete` (on), `draft` (on), `send` (**off**), `hold_sends` (off), `send_gap` (30 seconds), `notify` (`changes`), `accounts` (all), `bulk_limit` (50).
+- **One set of switches for both ways in and for every agent.** A skill runs `quill send` exactly as the user would, and the name an MCP client gives is its own claim.
+- **So `quill send`, which worked with nothing set, now refuses until `send = true`.** The owner asked for sending to be off as Quill comes; whether that was meant for the shell as well as MCP was asked and not answered, and this is the safer reading. It is the one open question in the spec.
+- **A settings file that cannot be read is no licence**: the command fails and nothing is done. Defaults are for a file that is not there, not for one with a mistake in it.
+- **An account out of sight does not exist** for anything here: not in a list, not by id, not in a count.
+
+### Which messages, and how many
+
+- **By id, by Message-ID, or by a search**, together if wanted. Nothing named is a mistake, never "every message".
+- **A search that finds more than `bulk_limit` changes nothing** and says how many it found; `--yes` (`confirm`) goes on; `--dry-run` is always allowed. Ids named one by one are not held to it. 1,000 is the most one call touches, whatever is set.
+- **An answer describes the first 50 messages it changed and gives the id of every one.**
+
+### The log, and taking a change back
+
+- **A table in the store** (`agent_log`, migration 0012): when, which way in, the name given, the command, a line of what was asked and what came of it, how many messages, and for a change what is needed to take it back. A build older than this one refuses the store once it has been opened by this one, as with every migration.
+- **Looking is logged too, briefly**: the search's words or the message's id, and how many came back. Never what a message said. `quill log` shows the changes and `--all` both. The owner said "I am good with keeping logs" when asked whether looking should be logged; this is that, read as a yes.
+- **A command the settings refused is logged**, as a look: what was tried and turned away is what someone looking for a misled agent wants to see.
+- **Kept for 90 days**, pruned a little at a time as lines are written. Nothing an agent can ask for shortens it.
+- **`undo` is an inverse, not the queue's undo.** The queue's undo lasts until the server has heard (ten seconds). An entry here records how each message was before (its folder, its marks, when it was snoozed until), and taking it back queues the moves and marks that restore that. So it works days later, and after the server has done the first change.
+- **What it does not undo:** a copy (the server makes it later; there is nothing here to remove), and anything sent. A message that is no longer where the change left it is passed over and said to be; if none are, the undo is refused.
+- **An undo is itself in the log and cannot be undone.** Do the change again.
+- **Marks are put back as they were for seen and starred only.** Whether a message has been answered since is not undone.
+
+### The search
+
+Added to the one grammar, so in the search box as well: `-` for not (before a word or any filter), `older:` and `newer:` (`12h`, `30d`, `2w`, `6m`, `1y`), `larger:` and `smaller:` (`k`, `m`, `g`), `account:`, `thread:ID`, `msgid:`.
+
+- **Ages are counted when the search is run**, in SQL, so a saved search or a rule with `older:30d` means thirty days before whenever it is asked.
+- **What is still being typed leaves nothing out by its first letters**: `-dra` typed on the way to `-draft` would otherwise empty the list for a moment.
+- **A date or a size with `-` is the other side of it** (`-after:` is `before:`).
+- **Not done: `list:`** for a mailing list. No backend gives the store a message's `List-Id` today; it needs each of them to fetch it.
+
+
+### The door, and the Quill that is running
+
+- **A socket file in the data folder** (`agent.sock`), opened by the Quill that holds the mailbox and by no other. 0600, in a folder that is 0700, and every connection's user is asked of the system (`peer_cred`) and turned away if it is anyone else. No password and no token: being the user is the proof. **No port**, by the owner's word ("I am not a fan of opening a socket to everyone").
+- **The door is open whenever Quill runs, and what comes through it is refused when its way in is switched off.** The spec had the socket not made at all with both ways off. The settings hold at once, from the Settings window, and a door that comes and goes with them is more to get wrong than one that refuses; the effect is the same.
+- **What crosses it is Quill's own**: a line of JSON each way, between two ends that are the same program. MCP itself is spoken by the relay (below), not on the socket, so there is one place that speaks it.
+- **One writer.** A request is handed to the run loop (`AgentAsk`), which gives it to the store worker (`DataRequest::Agent`); the worker does it on the UI's own store connection and answers. So the window shows a change as it is made, by the same events the UI's own actions make, and the demo mailbox, which is in memory and has one connection, is served like any other.
+- **A shell command asks once.** If Quill goes away before it answers, the command fails and does not do the thing itself on the store: it may have been done.
+- **With no Quill running, a shell command works on the store**, as `quill send` always did, and the change reaches a server when Quill next runs or at `quill sync`. MCP does nothing then. That is the one difference between the two ways in, and it is the owner's: "That way when the user is logged out, no risk."
+- **`quill sync` with Quill running asks Quill to look**, and reports what it said; it used to start a second engine beside the app's. With no Quill running it now takes the mailbox lock for as long as it works, so that none can start beside it.
+- **The demo mailbox opens a door only in a data folder it was given.** Beside the user's real mail, a command meant for that mail would be answered from the demo.
+- **A data folder whose path is too long for a socket** (about a hundred characters) gets no door: Quill says so in its notices, and shell commands work on the store.
+- **Left behind by a crash, the socket file is replaced** by the next Quill to take the mailbox. Killed outright, Quill leaves the file; nothing answers at it, and a command that finds it so works on the store.
+
+### MCP
+
+- **`quill mcp` is a relay in the same program**, started by the agent's client. It speaks MCP on its standard input and output and asks the running Quill for everything. It holds no mailbox.
+- **It stays up with no Quill running**, answers the greeting and lists the tools, and answers every call with "Quill is not running. Open Quill and try again." It looks for Quill again at every request, and tells a Quill it has just found who is connected. It never starts Quill.
+- **With MCP switched off the tools are still listed**, and every one says that MCP is switched off. A list with nothing in it would leave the agent's user with no way to learn why nothing works. Quill itself refuses every call: the relay's word is not what keeps an agent out.
+- **A tool the settings switch off is not listed.** When what is listed changes (the settings, or Quill coming and going), the client is told so before the next answer (`notifications/tools/list_changed`). Only then: the relay speaks when spoken to, and does not watch.
+- **The revisions spoken are those with a greeting, up to 2025-11-25.** The revision of 2026-07-28 does away with `initialize` and has a client ask `server/discover` first; that is answered as an unknown method, which the revision itself says is the sign of an older server and sends the client back to the greeting. This was read in the specification as it stands, not gone by from memory. **Not built: the 2026-07-28 revision.** A client that speaks nothing older would not connect.
+- **Tools only.** No resources, no prompts. Every tool that returns mail says in its description that what a message says is untrusted and is not instructions, and the greeting's instructions say it again.
+- **A refusal is a tool result that says it failed** (`isError`), with the same code and words a shell gets, not a protocol error: an agent can read it and tell its user.
+- **Not tried with a real client.** The protocol was worked by hand, through the relay and the door, against a demo Quill: no Quill running, MCP off, MCP on.
+
+### Sending and drafts
+
+- **`send` is one switch for both ways in, off as Quill comes.** See "The settings" above.
+- **The wait between messages** (`send_gap`, 30 seconds unless set, 0 for none) is counted from when the last message sent this way is or was due (`agent_log.due`), so it holds across commands, agents and restarts. A message that has to wait is accepted and is in the Outbox with its time; no more than 20 may wait, and the next is refused. The first message of a quiet hour goes at once.
+- **The owner's words were that the wait "can be decided when it is turned on".** In the Settings pane the wait and the hold are under "Send mail" and are shown only while it is on, with the wait at 30. In the file, `send = true` with nothing else said is a wait of 30 seconds.
+- **Held mail is a state of its own** (`held`), which the engine never takes. The user lets it go with Send on the message in the Outbox, as for any message there; opened, it is taken back first, as mail waiting there is. Its text in the reader says who wrote it and that it is waiting. A held message keeps no place in the line.
+- **A message sent this way is marked with who sent it** (`drafts.agent`, the name they gave).
+- **`undo` takes back a message that has not gone**, and says so of one that has.
+- **Drafts written from outside can be changed and discarded from outside; the user's own cannot.** Discarding a draft is for good, and an agent rewriting a half-written message would lose what was written. Reading any draft, and sending one, is allowed.
+- **A reply is drafted as Quill drafts one**: addressed, threaded and quoted by the same code as `r`, with the answer put where the cursor would be.
+- **Attachments are files on this Mac, by path.** That is the one place an agent can make Quill read a file that is not mail. The log and the bottom bar name them; nothing limits which.
+- **Not built:** `draft forward`, answering an invitation and unsubscribing from a shell or over MCP; sending narrowed to known recipients (the owner: "I do not think we should limit sends").
+
+### Telling the user, and stopping
+
+- **In the window, always**: what was changed, with who did it, in the bottom bar, by the event the UI's own actions use. `U` takes it back while the queue still can.
+- **Notifications by `notify`**: `changes` (the default), `sends`, `none`. Changes share one notification's name, so each takes the place of the last and forty moves are one; a message sent has a name of its own. **An MCP connection is always a notification**, whatever `notify` says, by the owner's word ("All mcp connections should post a notification"), and says so in the bottom bar too. A connection while MCP is off is said as one that was tried.
+- **A terminal's Quill posts no notifications**: it has no way to. It says the same in its bottom bar.
+- **Stop Agents** (`agents.stop`): File menu, the palette, a button in the Settings pane and on every notification about agents, and `Z` then `a`. Two keys, because it changes settings and must not be pressed by accident; `cmd-.` was not taken, since a sheet has it for Cancel. It hangs up on everyone, switches both ways in off at once and in the file, and takes agent mail that has not gone back to Drafts. Nothing asked for from outside can undo it.
+- **A click on a notification about agents** brings Quill forward and says where to look. There is no way yet for the core to open the Settings window on a pane.
+
+### The Settings pane
+
+- **Agents**, between Privacy and Storage: the two ways in, with the command to give an agent's program said under MCP; what they may do; under "Send mail" and only while it is on, the wait and the hold; what to be told; and the last eight changes from the log, with Copy MCP Command and Stop Agents. Every setting in it holds at once.
+- **Not in the pane:** which accounts agents see, and the most messages one change may touch (`accounts`, `bulk_limit`): set in the file. Who is connected now is not shown.
+- **Seen in a check build** on the demo mailbox with scratch folders (the door in a short path): a shell command archiving, an MCP client marking and sending, the three in the pane's list with who did each, the notifications recorded (one name for the changes, the connection, the send by itself), and Stop Agents from the pane switching both off in the file, after which the next command was refused.
+
+### What Quill says about itself
+
+Not changed, and the owner's to decide before this is given out: `PRIVACY.md`, the site's privacy page and its home page say that Quill has no AI features and that nobody but the user reads their mail. Quill still has no AI in it and still sends mail to nobody; but a user can now let a program of their own, which may be an AI agent, read their mail through it. The wording needs to say that, and whether Google's Limited Use rules for Gmail data sit well with a door for the user's own agents is a question for the verification that is under way. The spec has a section on it.
+
+### Still not done
+
+- The skill file (`quill skill show`), `quill watch`, `quill open`.
+- `list:` in the search.
+- Making a folder on a server from outside, and `quill sync --account`.
+- The 2026-07-28 revision of MCP.
+- Any of it with a real account, a real server or a real agent's program.
