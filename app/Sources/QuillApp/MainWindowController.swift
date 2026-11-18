@@ -1453,7 +1453,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         if !FileManager.default.fileExists(atPath: file.path) {
             makeConfigFolder()
             let start = [
-                "# Quill's settings. The README says what can go here.",
+                "# Quill's settings. The manual says what can go here (docs/manual.md).",
                 "# Quill reads this file when it starts.", "",
             ].joined(separator: "\n")
             FileManager.default.createFile(

@@ -16,6 +16,8 @@ On 2026-11-16 the owner chose to give Quill out as source and as a download (Git
 
 What each milestone left undone is listed under it in `DECISIONS.md`.
 
+The milestones are history now (`docs/roadmap.md`), and are kept out of `README.md` (2026-11-17). The README says what Quill does in the release as it stands, how to get it and how to report a problem, and is written to be read by someone deciding whether to try it: current, factual, nothing claimed that is not so. How each thing is used goes in `docs/manual.md`, building and checking in `docs/development.md`, what is next and what is missing in `docs/roadmap.md`. A change a user can see updates the manual, and the README too when it changes what Quill can be said to do.
+
 Quill is public at https://github.com/msharpe248/quill since 2026-11-16, under the MIT License with the Commons Clause (`LICENSE`). `main` is what is published, and is where work goes now; the milestone branches (`m2-imap-read`, `m3-compose-send`, `m4-rendering-media`) are local history and are not pushed.
 
 Commit finished, checked work as you go, locally. Push only when the owner says to: a push is public. Before any commit, `git config user.email` must be the owner's GitHub no-reply address, and nothing checked in may carry their own address, their employer's name, either half of the Google client, or anything about their own accounts and mail.
@@ -32,7 +34,7 @@ cargo deny check
 (cd app && swift test && swift format lint --configuration .swift-format -r Sources Tests Package.swift)
 ```
 
-For anything visible in the app, also build it and look: `app/build-app.sh`, then run it with `--script` and `--dump-screen` (see `README.md`) and read the text and the `.png` it writes.
+For anything visible in the app, also build it and look: `app/build-app.sh`, then run it with `--script` and `--dump-screen` (see `docs/development.md`) and read the text and the `.png` it writes.
 
 ## This machine
 
@@ -51,7 +53,7 @@ For anything visible in the app, also build it and look: `app/build-app.sh`, the
 - `update` in `quill-tui/src/state.rs` is the only place UI state changes. Views take `&State`. It returns `Effects` (store requests and host requests) for the run loop to perform.
 - The UI task never touches disk. It sends a `DataRequest` to the store worker (`quill-tui/src/data.rs`) and gets `DataEvent`s back.
 - `quill-tui` reads no files. `quill-cli` loads config, theme and keys and passes their contents in.
-- Every user action is a command in `quill-tui/src/command.rs`. Adding one means: the registry entry, its keys in both presets in `keymap.rs`, a hint if it deserves one, the README tables, and tests. The app's menus and toolbar pick it up from `commands.list` by themselves.
+- Every user action is a command in `quill-tui/src/command.rs`. Adding one means: the registry entry, its keys in both presets in `keymap.rs`, a hint if it deserves one, the manual's tables (`docs/manual.md`), and tests. The app's menus and toolbar pick it up from `commands.list` by themselves.
 - The shell holds no mail logic. It knows command names, titles and keys. If Swift needs to know what a message is, add a command or a bridge message instead.
 - Only `app/Sources/TerminalKit` imports `GhosttyTerminal`. Everything else uses the `TerminalSurface` protocol.
 - A bridge change touches `schema/bridge.json`, `schema/examples`, `crates/quill-host/src/bridge.rs` and `app/Sources/Bridge` in the same change.
@@ -65,7 +67,7 @@ For anything visible in the app, also build it and look: `app/build-app.sh`, the
 - A password crosses the bridge only in `form.used`, under `secrets`, in a type that does not print (`bridge::Secret`, `FormSecret`). The core never sends one back, and nothing logs or dumps one: keep it so when adding a log line or a dump line near the bridge.
 - The UI adds accounts through a service it is handed (`AccountsLink`, implemented in `quill-cli/src/service.rs`); it reaches no server, Keychain or config file itself.
 - `config.toml` is changed for the user only through `quill-cli/src/config_edit.rs`, which keeps their comments and refuses to write a file Quill could not read back.
-- The app's Settings window is described by the core and drawn by the shell. Which settings it has, their panes, labels, allowed values and help are in `quill-tui/src/settings.rs`, by the names `quill-core/src/config.rs` reads the file with. Adding one means: `Setting` (key, section, pane, whether it holds at once), its field in `describe`, its arms in `change` and `Change::written`, `Settings::of`, `Applied` if it holds at once, the README's table, and tests. The shell knows a field by its kind and nothing more; a new kind is a bridge change.
+- The app's Settings window is described by the core and drawn by the shell. Which settings it has, their panes, labels, allowed values and help are in `quill-tui/src/settings.rs`, by the names `quill-core/src/config.rs` reads the file with. Adding one means: `Setting` (key, section, pane, whether it holds at once), its field in `describe`, its arms in `change` and `Change::written`, `Settings::of`, `Applied` if it holds at once, the manual's table (`docs/manual.md`), and tests. The shell knows a field by its kind and nothing more; a new kind is a bridge change.
 - The Settings window's file work is the accounts service's (`quill-cli/src/settings.rs`): every request reads `config.toml` from disk, a change goes through `config_edit::set`, and the answer is the file read again. Nothing of the config is kept between requests, so a hand edit is never written over, and a file with a mistake in it is never written at all.
 - The user's own keys are changed in Settings > Keys (the app only): the pane lists the registry with the keys in force (`settings::keys`), a key is pressed into a `keys` field of a sheet (`KeysPrompt`, `Context::RecordKeys`; the shell's `KeyRecorder` writes it as `KeyNotation.written` does, which must stay what `KeyChord::from_str` reads), and the service writes `keys.toml` (`AccountRequest::Keys`, `keys_edit::apply`), never over a file it could not read. Whether a key can be had is decided in `KeysPrompt::verdict` and nowhere in Swift. A new command is in the pane by being in the registry.
 - A theme is made, changed and deleted in Settings > Appearance (the app only): the pane lists the themes as the service read them (`ThemeLine`), a theme's colours are picked in the `color` fields of a sheet (`ThemePrompt`, `Context::EditTheme`, in `state/themes.rs`), and the service writes and deletes the files (`AccountRequest::Themes`, `quill-cli/src/theme_edit.rs`). While the sheet is up Quill is drawn with the theme being made (`Look::trying`), which only `State::follow_theme_draft` asks for and only the run loop sets. A colour the theme leaves to the terminal stays so unless another is picked: what a well comes back with is compared with what it was shown. What a theme may be called is decided in `ThemePrompt::refused` and checked again where the file is written; a theme Quill comes with is never saved over. A new colour a theme can have is a `Slot`, and is in the sheet and the file by being one.
