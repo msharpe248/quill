@@ -57,6 +57,7 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
         look,
         tz,
         reader_width: config.ui.reader_width,
+        sidebar_width: config.ui.sidebar_width,
         // Decided by the caller, once it knows what hosts the core.
         images: false,
         accounts: false,
@@ -127,6 +128,7 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
         // says is kept for it.
         web_pane: false,
         keys_window: false,
+        window: false,
         web_reading: config.ui.web_reading,
         sidebar: config.ui.sidebar,
         editor_tips: config.compose.editor_tips,

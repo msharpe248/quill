@@ -21,6 +21,11 @@ import WebKit
 /// - `clicktext:TEXT` click the terminal where this text first is on its
 ///   screen, with mouse events sent to the window; `clicktext:2,TEXT` clicks
 ///   the second place it is at. The pointer is not moved
+/// - `dragcell:COLUMN,ROW,TOCOLUMN` press on a cell of the terminal, counted
+///   from 0 at its top left, move along the row to another column and let
+///   go, with mouse events sent to the window: how the edge between two
+///   panes is dragged. `clickcell:COLUMN,ROW` presses there and lets go.
+///   Neither moves the pointer
 /// - `clickeditor:`   click the middle of the editor that has the text of
 ///   the message being written, where it lies over the terminal, with mouse
 ///   events sent to the window. The pointer is not moved
@@ -288,6 +293,25 @@ enum DebugScript {
                 postMouse(.leftMouseUp, at: at, clicks: 1, in: window)
             } else {
                 note("\(text.debugDescription) is not on the terminal's screen to click")
+            }
+            try? await Task.sleep(for: .milliseconds(400))
+        case "dragcell", "clickcell":
+            let numbers = argument.split(separator: ",").compactMap { Int($0) }
+            let wanted = verb == "dragcell" ? 3 : 2
+            if numbers.count == wanted, let window = controller.window,
+                let from = controller.terminalPoint(column: numbers[0], row: numbers[1]),
+                let to = controller.terminalPoint(column: numbers.last ?? 0, row: numbers[1])
+            {
+                postMouse(.leftMouseDown, at: from, clicks: 1, in: window)
+                if verb == "dragcell" {
+                    postMouse(.leftMouseDragged, at: NSPoint(x: (from.x + to.x) / 2, y: from.y), clicks: 1, in: window)
+                    postMouse(.leftMouseDragged, at: to, clicks: 1, in: window)
+                    postMouse(.leftMouseUp, at: to, clicks: 1, in: window)
+                } else {
+                    postMouse(.leftMouseUp, at: from, clicks: 1, in: window)
+                }
+            } else {
+                note("\(verb):\(argument) names no cells of the terminal")
             }
             try? await Task.sleep(for: .milliseconds(400))
         case "clickeditor":

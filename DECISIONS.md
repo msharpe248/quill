@@ -1174,3 +1174,35 @@ Found by a test that failed once on GitHub and about one time in fifty here with
 - **The engine hurries what was waiting, and only it does** (`set_account`: when the queue starts with the new settings, if the account has a server to send through). The accounts service did it before handing the account over, which is what made the message due while the old runner could still take it. At the start of a run nothing changes: `accounts::prepare` already hurried the same mail.
 - **An account that is removed, and the engine stopping, cut off as before.** What was in hand then is found as after a crash, and a message that may have gone is held for the user and not sent twice.
 - **Seen:** the test that failed, 960 times with 24 at once, none failing (it had failed 4 times in 288, and 14 in 720); the engine's whole suite 36 times under the same load.
+
+## `q` closes the window in the app, and the panes' edges are dragged (2026-11-17)
+
+The owner asked for both: `q` in the app should do what the red button does and not quit, with `Q` to quit outright in both; and the panes should be resizable left and right.
+
+### Close and quit
+
+- **Two commands where there was one.** `window.close` ("Close", on `q` and `ctrl-c`) and `app.quit` ("Quit", now on `Q`). In a terminal both quit: there is no window to leave Quill running behind. In the app (`Env::window`) `window.close` asks the shell to close the main window (`HostRequest::CloseWindow`, `window.close` on the bridge), which is `performClose` and nothing else: the red button's close, with the core left running. `app.quit` ends the core, and the app quits when its core has gone, as it always did.
+- **`ctrl-c` goes with `q`.** In a terminal it must quit; in the app it is the gentler of the two.
+- **A `keys.toml` that names `app.quit` still quits with those keys.** Only the default key moved.
+- **Neither has a menu item.** Close Window and Quit Quill are the shell's own, as before.
+- **The bottom bar says what the key does where Quill is running:** "quit", or "close window" in the app.
+
+### The panes' edges
+
+- **Dragged in the core, so a terminal has it too.** An edge is the two columns where one pane's border meets the next one's (`layout::divider_at`). A press there takes hold of it (`State::resizing`), a drag moves it (`layout::dragged`), and letting go has it remembered. The letting go is a new kind of mouse event (`MouseKind::Release`); a press that arrives with an edge still in hand stands in for one that never came.
+- **Two settings.** `sidebar_width` under `[ui]` is new: the accounts' columns, 12 to 60, and left out it goes by the window's width as before. `reader_width` was there already. Both are written by the accounts service like the other remembered choices (`Preference::SidebarWidth`, `Preference::ReaderWidth`), the share in thousandths so that the next run comes to the same columns.
+- **Moving the accounts' edge leaves the message alone.** The list gives or takes the columns, and the message's share is worked out again from what is left, as a split view on a Mac does. Beside the app's reading pane the same holds, so the pane does not move while the edge is dragged.
+- **No pane is dragged too narrow to use:** 12 columns for the accounts, 20 for the list and the message, and a share the config can hold.
+- **A double click puts an edge back.** Two presses on the same edge with nothing moved and nothing else done between them, within a second or so (the core's clock ticks in seconds). The setting is taken out of the file.
+- **The edge between the list and the app's reading pane is still the window's own divider,** kept in the app's defaults as it was. It is not the core's to move.
+- **Nothing shows that an edge can be taken until it is:** a terminal program is not told where the pointer is unless a button is down, so there is no resize cursor. The edge in hand is drawn as a focused pane's border is.
+
+### Seen
+
+- In a check build on the demo mailbox with scratch folders: `q` and `ctrl-c` each closed the window with the core running, and the Dock's reopen brought it back; `Q` ended the app. Both edges dragged with mouse events sent to the window, the config written with `sidebar_width` and `reader_width`, a double click took `sidebar_width` out again, and with web reading on the terminal kept its columns while the accounts' edge moved.
+
+### Not done
+
+- Keys for making a pane wider or narrower. The mouse is the only way.
+- The accounts drawn over the other panes (a narrow window, or hidden) keep their fixed width.
+

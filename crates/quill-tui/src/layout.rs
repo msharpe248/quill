@@ -3,6 +3,7 @@
 //! A pure function shared by `update`, which needs pane heights to page and
 //! to keep selections visible, and by the views, which draw into the result.
 
+use quill_core::config::{READER_LEAST, READER_MOST, SIDEBAR_NARROWEST, SIDEBAR_WIDEST};
 use ratatui::layout::Rect;
 
 use crate::compose::{Compose, Field};
@@ -65,20 +66,72 @@ pub struct Areas {
 /// The fewest columns the list or the reader is given beside the other.
 const MIN_PANE: u16 = 20;
 
+/// How the columns are shared out among the panes, as far as the user has
+/// a say in it: the config's, or where they have dragged an edge to.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Split {
+    /// The reader's share of the room right of the accounts.
+    pub reader: f32,
+    /// The accounts' columns. `None`: by the width of the window.
+    pub sidebar: Option<u16>,
+}
+
+impl Split {
+    /// What is in force: `reader_width` is the config's, and an edge the
+    /// user has dragged in this run stands in place of it.
+    pub fn of(state: &State, reader_width: f32) -> Self {
+        Self {
+            reader: state.reader_share.unwrap_or(reader_width),
+            sidebar: state.sidebar_width,
+        }
+    }
+}
+
+/// A share of the reader's and nothing said of the accounts.
+impl From<f32> for Split {
+    fn from(reader: f32) -> Self {
+        Self {
+            reader,
+            sidebar: None,
+        }
+    }
+}
+
+/// The columns the user gave the accounts, held to `most`: what leaves
+/// the panes beside them their least.
+fn held_sidebar(columns: u16, most: u16) -> u16 {
+    columns.min(most).max(SIDEBAR_NARROWEST.min(most))
+}
+
 /// The accounts pane's columns where the window is wide enough for all
 /// three panes.
-fn wide_sidebar(width: u16) -> u16 {
-    (width / 6).clamp(MEDIUM_SIDEBAR, 28)
+fn wide_sidebar(width: u16, split: Split) -> u16 {
+    match split.sidebar {
+        Some(columns) => held_sidebar(columns, width.saturating_sub(2 * MIN_PANE)),
+        None => (width / 6).clamp(MEDIUM_SIDEBAR, 28),
+    }
+}
+
+/// The accounts pane's columns beside one other pane, in `width` columns.
+fn medium_sidebar(width: u16, split: Split) -> u16 {
+    match split.sidebar {
+        Some(columns) => held_sidebar(columns, width.saturating_sub(MIN_PANE)),
+        None => MEDIUM_SIDEBAR,
+    }
 }
 
 /// How `width` columns, at least [`WIDE_COLUMNS`] of them, are divided
 /// among the accounts, the list and the reader. With the accounts hidden
 /// (`accounts` false) they have no columns, and the other two have them
 /// all.
-fn wide_split(width: u16, reader_width: f32, accounts: bool) -> (u16, u16, u16) {
-    let sidebar = if accounts { wide_sidebar(width) } else { 0 };
+fn wide_split(width: u16, split: Split, accounts: bool) -> (u16, u16, u16) {
+    let sidebar = if accounts {
+        wide_sidebar(width, split)
+    } else {
+        0
+    };
     let rest = width - sidebar;
-    let reader = (f32::from(rest) * reader_width).round() as u16;
+    let reader = (f32::from(rest) * split.reader).round() as u16;
     let reader = reader.clamp(MIN_PANE, rest.saturating_sub(MIN_PANE).max(MIN_PANE));
     (sidebar, rest.saturating_sub(reader), reader)
 }
@@ -95,12 +148,13 @@ fn wide_split(width: u16, reader_width: f32, accounts: bool) -> (u16, u16, u16) 
 /// A window too narrow for three panes has no reader beside its list. The
 /// pane is given the reader's share of the whole window there, and the
 /// terminal draws in what is left.
-pub fn beside_reading(window: u16, reader_width: f32, accounts: bool) -> u16 {
+pub fn beside_reading(window: u16, split: impl Into<Split>, accounts: bool) -> u16 {
+    let split = split.into();
     if window >= WIDE_COLUMNS {
-        let (sidebar, list, _) = wide_split(window, reader_width, true);
+        let (sidebar, list, _) = wide_split(window, split, true);
         if accounts { sidebar + list } else { list }
     } else {
-        let reader = (f32::from(window) * reader_width).round() as u16;
+        let reader = (f32::from(window) * split.reader).round() as u16;
         window
             .saturating_sub(reader)
             .max(MIN_SIZE.0)
@@ -132,12 +186,12 @@ impl WebColumns {
     ///
     /// `accounts`: whether the accounts are on show at all. Hidden, they
     /// have no columns at any width.
-    fn of(window: Option<u16>, width: u16, reader_width: f32, accounts: bool) -> Self {
+    fn of(window: Option<u16>, width: u16, split: Split, accounts: bool) -> Self {
         let Some(window) = window else {
             // A host that has not said: by the terminal's own width.
             let sidebar = match LayoutMode::for_width(width) {
-                LayoutMode::Wide => Some(wide_sidebar(width)),
-                LayoutMode::Medium => Some(MEDIUM_SIDEBAR),
+                LayoutMode::Wide => Some(wide_sidebar(width, split)),
+                LayoutMode::Medium => Some(medium_sidebar(width, split)),
                 LayoutMode::Narrow => None,
             };
             return Self {
@@ -146,19 +200,19 @@ impl WebColumns {
             };
         };
         let drawn = if width >= window {
-            beside_reading(window, reader_width, accounts).min(width)
+            beside_reading(window, split, accounts).min(width)
         } else {
             width
         };
         let sidebar = if window >= WIDE_COLUMNS {
-            Some(wide_sidebar(window)).filter(|sidebar| drawn >= sidebar + MIN_PANE)
+            Some(wide_sidebar(window, split)).filter(|sidebar| drawn >= sidebar + MIN_PANE)
         } else {
             None
         };
         Self {
             drawn,
             sidebar: sidebar
-                .or_else(|| (drawn >= NARROW_COLUMNS).then_some(MEDIUM_SIDEBAR))
+                .or_else(|| (drawn >= NARROW_COLUMNS).then(|| medium_sidebar(drawn, split)))
                 .filter(|_| accounts),
         }
     }
@@ -177,7 +231,8 @@ impl WebColumns {
 pub fn mode(state: &State, width: u16, reader_width: f32) -> LayoutMode {
     if state.web_reading {
         let accounts = !state.sidebar_hidden;
-        WebColumns::of(state.window_columns, width, reader_width, accounts).mode()
+        let split = Split::of(state, reader_width);
+        WebColumns::of(state.window_columns, width, split, accounts).mode()
     } else {
         LayoutMode::for_width(width)
     }
@@ -199,9 +254,10 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
     // the accounts and the list are what is drawn, at any width, and only
     // a message being written takes the list's place.
     let accounts = !state.sidebar_hidden;
+    let split = Split::of(state, reader_width);
     let web = state
         .web_reading
-        .then(|| WebColumns::of(state.window_columns, width, reader_width, accounts));
+        .then(|| WebColumns::of(state.window_columns, width, split, accounts));
     let mode = web.map_or_else(|| LayoutMode::for_width(width), WebColumns::mode);
     let mut areas = Areas {
         mode,
@@ -256,7 +312,7 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
     } else {
         match mode {
             LayoutMode::Wide => {
-                let (sidebar, list, reader) = wide_split(width, reader_width, accounts);
+                let (sidebar, list, reader) = wide_split(width, split, accounts);
                 areas.list = Some(Rect::new(sidebar, 0, list, body_height));
                 areas.reader = Some(Rect::new(sidebar + list, 0, reader, body_height));
                 if accounts {
@@ -270,10 +326,11 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
                 float(&mut areas, width);
             }
             LayoutMode::Medium => {
-                areas.sidebar = Some(Rect::new(0, 0, MEDIUM_SIDEBAR, body_height));
+                let sidebar = medium_sidebar(width, split);
+                areas.sidebar = Some(Rect::new(0, 0, sidebar, body_height));
                 show_main(
                     &mut areas,
-                    Rect::new(MEDIUM_SIDEBAR, 0, width - MEDIUM_SIDEBAR, body_height),
+                    Rect::new(sidebar, 0, width - sidebar, body_height),
                 );
             }
             LayoutMode::Narrow => {
@@ -384,6 +441,140 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
         ));
     }
     areas
+}
+
+/// An edge between two panes that can be taken hold of and moved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Divider {
+    /// Between the accounts and the pane beside them.
+    Sidebar,
+    /// Between the list and the message.
+    Reader,
+}
+
+/// The edge under this cell, if one is there to be moved, and the column
+/// the pane right of it starts at. An edge is the two columns where one
+/// pane's border meets the next one's.
+///
+/// The accounts drawn over the other panes have no edge to move, and
+/// while they are there nothing under them has: a press beside them puts
+/// them away. Nor has a pane that has the whole terminal.
+pub fn divider_at(areas: &Areas, column: u16, row: u16) -> Option<(Divider, u16)> {
+    if areas.sidebar_overlay {
+        return None;
+    }
+    let meet = |left: Option<Rect>, right: Option<Rect>| {
+        let (left, right) = left.zip(right)?;
+        let hit = left.right() == right.x
+            && (column.checked_add(1) == Some(right.x) || column == right.x)
+            && (right.y..right.bottom()).contains(&row);
+        hit.then_some(right.x)
+    };
+    let sidebar = areas.sidebar;
+    if let Some(edge) = meet(sidebar, areas.list).or_else(|| meet(sidebar, areas.reader)) {
+        return Some((Divider::Sidebar, edge));
+    }
+    meet(areas.list, areas.reader).map(|edge| (Divider::Reader, edge))
+}
+
+/// The two columns `divider` is drawn in, where the two panes it lies
+/// between are side by side: one pane's border and the next one's.
+pub fn divider_edge(areas: &Areas, divider: Divider) -> Option<Rect> {
+    let (left, right) = match divider {
+        Divider::Sidebar => (
+            areas.sidebar.filter(|_| !areas.sidebar_overlay),
+            areas.list.or(areas.reader),
+        ),
+        Divider::Reader => (areas.list, areas.reader),
+    };
+    let (left, right) = left.zip(right)?;
+    (left.right() == right.x && right.x > 0)
+        .then(|| Rect::new(right.x - 1, right.y, 2, right.height))
+}
+
+/// A share of the reader's as it is kept: in thousandths, and within what
+/// the config allows.
+fn kept_share(share: f32) -> f32 {
+    (share.clamp(READER_LEAST, READER_MOST) * 1000.0).round() / 1000.0
+}
+
+/// How the columns are shared out once `divider` has been dragged to
+/// `edge`, the column the pane right of it is to start at, as nearly as
+/// every pane's least width allows. `None` where that edge is not one
+/// that can be moved as the panes are now.
+///
+/// Moving the accounts' edge takes from the pane beside them and gives to
+/// them, or the other way: the message keeps the columns it has, so its
+/// share is worked out again from what is left.
+pub fn dragged(
+    state: &State,
+    width: u16,
+    reader_width: f32,
+    divider: Divider,
+    edge: u16,
+) -> Option<Split> {
+    let split = Split::of(state, reader_width);
+    let accounts = !state.sidebar_hidden;
+    match divider {
+        Divider::Sidebar => {
+            if !accounts || state.zoomed {
+                return None;
+            }
+            // The columns all three panes are shared out of, where there
+            // are three: the terminal's, or the window's while the
+            // message is in the host's pane beside the terminal.
+            let (drawn, three) = if state.web_reading {
+                let web = WebColumns::of(state.window_columns, width, split, accounts);
+                web.sidebar?;
+                (
+                    web.drawn,
+                    state
+                        .window_columns
+                        .filter(|window| *window >= WIDE_COLUMNS),
+                )
+            } else {
+                match LayoutMode::for_width(width) {
+                    LayoutMode::Wide => (width, Some(width)),
+                    LayoutMode::Medium => (width, None),
+                    LayoutMode::Narrow => return None,
+                }
+            };
+            let fewest = SIDEBAR_NARROWEST;
+            let mut most = SIDEBAR_WIDEST.min(drawn.saturating_sub(MIN_PANE));
+            let Some(whole) = three else {
+                return Some(Split {
+                    sidebar: Some(edge.clamp(fewest.min(most), most)),
+                    ..split
+                });
+            };
+            // The message keeps its columns: the list keeps its least,
+            // and the message's share of what is left stays one the
+            // config can hold.
+            let (_, _, reader) = wide_split(whole, split, true);
+            let room = (f32::from(reader) / READER_MOST).ceil() as u16;
+            most = most
+                .min(whole.saturating_sub(reader + MIN_PANE))
+                .min(whole.saturating_sub(room));
+            let sidebar = edge.clamp(fewest.min(most), most);
+            Some(Split {
+                sidebar: Some(sidebar),
+                reader: kept_share(f32::from(reader) / f32::from(whole - sidebar)),
+            })
+        }
+        Divider::Reader => {
+            if state.web_reading || state.zoomed || width < WIDE_COLUMNS {
+                return None;
+            }
+            let (sidebar, _, _) = wide_split(width, split, accounts);
+            let rest = width - sidebar;
+            let most = rest.saturating_sub(MIN_PANE).max(MIN_PANE);
+            let reader = width.saturating_sub(edge).clamp(MIN_PANE, most);
+            Some(Split {
+                reader: kept_share(f32::from(reader) / f32::from(rest)),
+                ..split
+            })
+        }
+    }
 }
 
 /// How many rows of the compose pane the header fields take, with the rule

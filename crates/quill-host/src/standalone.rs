@@ -117,6 +117,8 @@ impl Host for StandaloneHost {
             // Nor a window of keys: the list is drawn over the panes.
             | CoreToShell::KeysList(_)
             | CoreToShell::KeysShow(_)
+            // Nor a window to close with Quill left running.
+            | CoreToShell::WindowClose(_)
             | CoreToShell::SpellCheck(_)
             | CoreToShell::SpellSuggest(_)
             | CoreToShell::NotifyPost(_)

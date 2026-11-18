@@ -303,6 +303,33 @@ pub fn set_sidebar(text: &str, on: bool) -> Result<String, String> {
     set_value(text, "ui", "sidebar", Value::from(on))
 }
 
+/// `text` with `sidebar_width` under `[ui]` set: how many columns the
+/// accounts pane has. Written when the user lets go of the pane's edge.
+/// `None` takes the line out, and the pane goes by the window's width
+/// again.
+pub fn set_sidebar_width(text: &str, columns: Option<u16>) -> Result<String, String> {
+    match columns {
+        Some(columns) => set_value(text, "ui", "sidebar_width", Value::from(i64::from(columns))),
+        None => remove_value(text, "ui", "sidebar_width"),
+    }
+}
+
+/// `text` with `reader_width` under `[ui]` set, from thousandths: the
+/// message's share of the room right of the accounts. Written when the
+/// user lets go of the edge between the list and the message. `None`
+/// takes the line out.
+pub fn set_reader_width(text: &str, thousandths: Option<u16>) -> Result<String, String> {
+    match thousandths {
+        Some(thousandths) => set_value(
+            text,
+            "ui",
+            "reader_width",
+            Value::from(f64::from(thousandths) / 1000.0),
+        ),
+        None => remove_value(text, "ui", "reader_width"),
+    }
+}
+
 /// `text` with `editor_tips` under `[compose]` set: whether what an
 /// editor's keys do is said above it. Written once they have been shown
 /// for one message, and when the user puts them away.
@@ -640,6 +667,38 @@ mod tests {
             set_web_reading(commented, true).unwrap(),
             "[ui]\nweb_reading = true   # I like the text reader\ntheme = \"dark\"\n"
         );
+    }
+
+    #[test]
+    fn where_an_edge_between_panes_was_left_is_written_and_taken_out_again() {
+        let before = "[ui]\ntheme = \"light\"\nreader_width = 0.4  # the list is the wider\n";
+        let wide = set_sidebar_width(before, Some(34)).unwrap();
+        assert_eq!(
+            wide,
+            "[ui]\ntheme = \"light\"\nreader_width = 0.4  # the list is the wider\nsidebar_width = 34\n"
+        );
+        // The message's share is changed where it stands, comment and all.
+        let shared = set_reader_width(&wide, Some(625)).unwrap();
+        assert_eq!(
+            shared,
+            "[ui]\ntheme = \"light\"\nreader_width = 0.625  # the list is the wider\nsidebar_width = 34\n"
+        );
+        let config = Config::parse(&shared).unwrap();
+        assert_eq!(config.ui.sidebar_width, Some(34));
+        assert_eq!(config.ui.reader_width, 0.625);
+        // Taken out, each is as when the file never said.
+        let back = set_sidebar_width(&shared, None).unwrap();
+        let back = set_reader_width(&back, None).unwrap();
+        assert_eq!(back, "[ui]\ntheme = \"light\"\n");
+        assert_eq!(set_sidebar_width(&back, None).unwrap(), back);
+        // A file with none of it gets a section for it.
+        assert_eq!(
+            set_sidebar_width("", Some(20)).unwrap(),
+            "[ui]\nsidebar_width = 20\n"
+        );
+        // Nothing the config would refuse is written.
+        assert!(set_sidebar_width(before, Some(3)).is_err());
+        assert!(set_reader_width(before, Some(950)).is_err());
     }
 
     #[test]

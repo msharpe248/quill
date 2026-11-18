@@ -535,6 +535,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             keysWindow.set(list)
         case .keysShow:
             keysWindow.show()
+        case .windowClose:
+            // The user closed Quill with a key. It is the red button's
+            // close and nothing else: Quill goes on running.
+            window?.performClose(nil)
         case let .readingShow(page):
             showReading(page)
         case let .readingScroll(by):
@@ -820,7 +824,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         placeReadingDivider()
     }
 
-    /// The window was closed, by its red button or from the Window menu.
+    /// The window was closed, by its red button, from the Window menu or
+    /// by the core's saying so (`q`).
     /// Quill goes on running, as a mail program does: mail is still
     /// fetched and sent, new mail is still announced, and the Dock still
     /// has the count of what is unread. The window comes back from the
@@ -1617,6 +1622,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         let from = splitView.convert(
             NSPoint(x: terminal.maxX + splitView.dividerThickness / 2, y: splitView.bounds.midY), to: nil)
         return (from, NSPoint(x: from.x + cells.width(forColumns: columns) - terminal.width, y: from.y))
+    }
+
+    /// Where the middle of a cell of the terminal is in the window, counted
+    /// from 0 at the top left: for a scripted run to press or drag there.
+    /// Nil for a cell the terminal has not got.
+    func terminalPoint(column: Int, row: Int) -> NSPoint? {
+        guard let grid = surface.grid, grid.rows > 0, (0..<grid.rows).contains(row), column >= 0 else { return nil }
+        let view = surface.view
+        let cellWidth = CGFloat(grid.cellWidthPixels) / grid.scale
+        let cellHeight = view.bounds.height / CGFloat(grid.rows)
+        let across = (CGFloat(column) + 0.5) * cellWidth
+        guard across < view.bounds.width else { return nil }
+        let down = (CGFloat(row) + 0.5) * cellHeight
+        return view.convert(NSPoint(x: across, y: view.isFlipped ? down : view.bounds.height - down), to: nil)
     }
 
     /// Where the first cell of `text` is in the window, by the terminal's

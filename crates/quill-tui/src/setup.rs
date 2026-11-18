@@ -317,6 +317,14 @@ pub enum Preference {
     WebReading(bool),
     /// `sidebar` under `[ui]`: whether the accounts pane is on show.
     Sidebar(bool),
+    /// `sidebar_width` under `[ui]`: how many columns the accounts pane
+    /// has. `None`: as many as the window's width comes to, as when the
+    /// file does not say.
+    SidebarWidth(Option<u16>),
+    /// `reader_width` under `[ui]`: the message's share of the room right
+    /// of the accounts, in thousandths. `None`: as when the file does not
+    /// say.
+    ReaderWidth(Option<u16>),
     /// `editor_tips` under `[compose]`: whether what an editor's keys do
     /// is said above it.
     EditorTips(bool),

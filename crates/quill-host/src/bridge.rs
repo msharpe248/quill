@@ -105,6 +105,11 @@ pub enum CoreToShell {
     /// Bring up the window of keys, showing the latest `keys.list`.
     #[serde(rename = "keys.show")]
     KeysShow(NoParams),
+    /// Close the main window and go on running behind it, as the
+    /// window's own close button does: the user asked for that with a
+    /// key.
+    #[serde(rename = "window.close")]
+    WindowClose(NoParams),
 }
 
 /// A message the shell sends to the core.

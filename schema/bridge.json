@@ -35,7 +35,8 @@
         { "$ref": "#/$defs/settings.show" },
         { "$ref": "#/$defs/themes.pick" },
         { "$ref": "#/$defs/keys.list" },
-        { "$ref": "#/$defs/keys.show" }
+        { "$ref": "#/$defs/keys.show" },
+        { "$ref": "#/$defs/window.close" }
       ]
     },
     "shellToCore": {
@@ -1626,6 +1627,18 @@
       "properties": {
         "jsonrpc": { "const": "2.0" },
         "method": { "const": "keys.show" },
+        "params": { "type": "object", "additionalProperties": false }
+      }
+    },
+
+    "window.close": {
+      "description": "Core to shell. Close the main window and go on running behind it, exactly as the window's own close button does: the user asked for that with a key (window.close, q). The core is not stopped and nothing is quit; the window comes back as it does after the close button. Quitting is the shell's own (Quit Quill), or the core ending by itself (app.quit, Q).",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "window.close" },
         "params": { "type": "object", "additionalProperties": false }
       }
     },

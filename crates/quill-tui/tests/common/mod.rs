@@ -191,6 +191,7 @@ impl Harness {
             look: quill_tui::theme::Look::one(Theme::builtin("dark").unwrap()),
             tz: TimeZone::UTC,
             reader_width: 0.5,
+            sidebar_width: None,
             images: false,
             accounts,
             // As in Quill's own window.
@@ -221,6 +222,7 @@ impl Harness {
             // As in a terminal: there is no web view pane to read in.
             web_pane: false,
             keys_window: false,
+            window: false,
             web_reading: false,
             sidebar: true,
             editor_tips: true,

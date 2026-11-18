@@ -93,6 +93,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
                 env.external.name()
             } else if in_vim && hint.commands == [CommandId::NavBack] {
                 env.external.close_hint()
+            } else if env.window && hint.commands == [CommandId::WindowClose] {
+                // In a window of its own Quill is closed, not quit.
+                "close window"
             } else {
                 hint.label
             };

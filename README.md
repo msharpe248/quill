@@ -35,7 +35,7 @@ You need a stable Rust toolchain (1.98 or later; `rust-toolchain.toml` selects i
 cargo run --release -- tui --demo
 ```
 
-`--demo` opens an invented mailbox held in memory. It reads your config, theme and keys if you have them, and writes nothing. (In the app it does write what you change yourself: the choice of reading pane, `web_reading`, when you switch it, whether the accounts pane is on show, `sidebar`, when you hide it or put it back, and whatever you change in the Settings window. The demo is then a way to try the settings: see "The Settings window".)
+`--demo` opens an invented mailbox held in memory. It reads your config, theme and keys if you have them, and writes nothing. (In the app it does write what you change yourself: the choice of reading pane, `web_reading`, when you switch it, whether the accounts pane is on show, `sidebar`, when you hide it or put it back, where you leave the edges between the panes, `sidebar_width` and `reader_width`, and whatever you change in the Settings window. The demo is then a way to try the settings: see "The Settings window".)
 
 Without `--demo`, `quill tui` opens your own mail. The first time, with no accounts yet, it opens the form for adding one.
 
@@ -56,7 +56,7 @@ The app is not sandboxed: it runs your own editor on your own settings, which a 
 
 Settings… in the Quill menu (`cmd-,`) opens a settings window for the settings changed most; see "The Settings window". The app is light, dark or as the Mac is, with a theme for each, and Import Theme… in the same menu brings in any theme made for Ghostty; a theme's colours are changed, and themes of your own made and deleted, in Settings, Appearance, where the font and its size are chosen too; see "Themes".
 
-Closing the window does not quit Quill. As with any mail program on a Mac, the red button (or `cmd-w`) only puts the window away: Quill stays in the Dock, goes on fetching and sending mail, and still announces new mail and shows the unread count. A click on its Dock icon, Window > Main Window (`cmd-0`), a notification or a mail link brings the window back as you left it. `cmd-q` quits.
+Closing the window does not quit Quill. As with any mail program on a Mac, the red button (or `cmd-w`, or `q`) only puts the window away: Quill stays in the Dock, goes on fetching and sending mail, and still announces new mail and shows the unread count. A click on its Dock icon, Window > Main Window (`cmd-0`), a notification or a mail link brings the window back as you left it. `cmd-q` quits, and so does `Q`.
 
 Around the terminal the app adds a menu bar and toolbar built from the core's commands, the mailbox name and unread count in the title bar, the unread count on the Dock icon, and a second pane beside the terminal for looking at attachments and playing sound and video. `esc` closes the pane, and `cmd-]` moves focus between the panes.
 
@@ -205,7 +205,8 @@ Press `?` at any time for the keys that apply where you are, and `K` (or `f1`) f
 | `\` | Hide the accounts pane, or put it back | `z` | Zoom the focused pane |
 | `enter` | Open | `u` | Mark read or unread |
 | `esc` | Back, close, dismiss | `s` | Star or unstar |
-| `?` | Help for this context | `q` | Quit |
+| `?` | Help for this context | `q` | Close Quill: quit, or in the app close the window |
+| `Q` | Quit | | |
 | `t` | Show as HTML or plain text | `o` | Open a link |
 | `c` | Write a new message | `r` / `R` | Reply, reply to all |
 | `f` | Forward | `e` | Archive |
@@ -228,7 +229,9 @@ Press `?` at any time for the keys that apply where you are, and `K` (or `f1`) f
 
 `\` hides the accounts pane and gives its room to the others; in the app that is View > Show the Accounts Pane and a button in the toolbar. Hidden, the accounts still come up over the other panes when you go to them (`shift-tab` or `1`) and are gone again when you choose a mailbox or leave (`esc`, `tab`, a click elsewhere). The choice is kept, as `sidebar = false` under `[ui]` in `config.toml`.
 
-Arrow keys, `home`, `end`, `pageup` and `pagedown` work too; in the accounts pane `→` shows an account's folders and `←` hides them. `ctrl-d` also pages down and `ctrl-c` also quits.
+Arrow keys, `home`, `end`, `pageup` and `pagedown` work too; in the accounts pane `→` shows an account's folders and `←` hides them. `ctrl-d` also pages down and `ctrl-c` does what `q` does.
+
+`q` closes Quill. In a terminal that is quitting it. In the app it closes the window and leaves Quill running, as the red button does, so mail is still fetched and announced; the bottom bar says which ("quit" or "close window"). `Q` quits outright in both. Neither does anything while the help is up but put the help away.
 
 Set `keymap = "mutt"` in the config for mutt-flavoured keys. There the arrows show and hide an account's folders, and `h` and `l` are left free.
 
@@ -238,7 +241,9 @@ The accounts pane lists "Unified", every account's inbox together, then each acc
 
 `:` or `ctrl-k` opens the command palette: type a few letters of a command or a mailbox and press `enter`. Each command is listed with its key.
 
-The mouse works too. A click selects, a second click on what is selected opens it, and the wheel scrolls whatever is under the pointer. In the accounts pane a click on the mark before an account's name shows or hides its folders. A link in a message opens in your browser when clicked: on its words, on the number after them, or on its line in the list of links under the message. The line naming a message's files can be clicked too, and in a message being written a click places the cursor and a drag selects. While Quill has the mouse, selecting text the terminal's own way needs `shift` held; `mouse = false` under `[ui]` gives the mouse back to the terminal.
+The mouse works too. A click selects, a second click on what is selected opens it, and the wheel scrolls whatever is under the pointer. In the accounts pane a click on the mark before an account's name shows or hides its folders. A link in a message opens in your browser when clicked: on its words, on the number after them, or on its line in the list of links under the message. The line naming a message's files can be clicked too, and in a message being written a click places the cursor and a drag selects.
+
+The edges between the panes can be dragged: the one between the accounts and the list, and the one between the list and the message. Press on the line between two panes and move; the edge is drawn brighter while you have it. Moving the accounts' edge takes from the list or gives to it, and the message keeps its width. No pane is made too narrow to use. Where an edge is left is kept, as `sidebar_width` (the accounts' columns, 12 to 60) and `reader_width` (the message's share of what is right of the accounts, 0.2 to 0.8) under `[ui]`, and a double click on an edge puts it back where Quill has it by itself. With web reading on, the edge between the list and the page is the window's own divider, which is dragged and double-clicked the same way. While Quill has the mouse, selecting text the terminal's own way needs `shift` held; `mouse = false` under `[ui]` gives the mouse back to the terminal.
 
 In the message list, `>` marks the cursor, `+` a selected message, `*` an unread one, `r` one you have answered, `!` a starred one and `@` one with attachments.
 
@@ -715,7 +720,7 @@ In the app, Settings… in the Quill menu (`cmd-,`) opens a settings window. It 
 
 The two that wait for the next start say so in the window, and say what Quill is going by until then.
 
-Everything else is set in the file, and the button at the foot of each pane opens it: rules, saved searches, an account's servers, name and signature, the reader's width, the mouse; and beside it your keys (`keys.toml`), themes, templates and hooks. "Reveal Settings File in Finder", in the same menu, shows where the file is.
+Everything else is set in the file, and the button at the foot of each pane opens it: rules, saved searches, an account's servers, name and signature, the panes' widths, the mouse; and beside it your keys (`keys.toml`), themes, templates and hooks. "Reveal Settings File in Finder", in the same menu, shows where the file is.
 
 The window shows what the file says. Edit the file by hand while it is open and the window catches up when you come back to it, and so does Quill, for the settings that take effect at once. If the file has a mistake in it, the window says so, offers to open the file, and changes nothing until the mistake is put right.
 
@@ -787,7 +792,8 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `account.remove` | Remove the account chosen in the accounts pane, after asking |
 | `help.toggle` | Show or hide help |
 | `help.keys` | Show or hide the list of every key |
-| `app.quit` | Quit |
+| `window.close` | Close Quill: quit in a terminal, close the window in the app |
+| `app.quit` | Quit, in a terminal and in the app |
 
 ### Disk space
 

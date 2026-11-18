@@ -287,7 +287,8 @@ const VIM: PresetTable = &[
     (CommandId::NavPageDown, &["space", "ctrl-d", "pagedown"]),
     (CommandId::NavPageUp, &["ctrl-u", "pageup"]),
     (CommandId::NavOpen, &["enter"]),
-    (CommandId::AppQuit, &["q", "ctrl-c"]),
+    (CommandId::WindowClose, &["q", "ctrl-c"]),
+    (CommandId::AppQuit, &["Q"]),
     (CommandId::NavBack, &["esc", "q"]),
     (CommandId::FocusSidebar, &["1"]),
     (CommandId::FocusList, &["2"]),
@@ -368,7 +369,8 @@ const MUTT: PresetTable = &[
     (CommandId::NavPageDown, &["space", "pagedown"]),
     (CommandId::NavPageUp, &["-", "pageup"]),
     (CommandId::NavOpen, &["enter"]),
-    (CommandId::AppQuit, &["q", "ctrl-c"]),
+    (CommandId::WindowClose, &["q", "ctrl-c"]),
+    (CommandId::AppQuit, &["Q"]),
     (CommandId::NavBack, &["i", "esc", "q"]),
     (CommandId::FocusSidebar, &["1"]),
     (CommandId::FocusList, &["2"]),
@@ -692,7 +694,7 @@ mod tests {
 
     #[test]
     fn no_preset_binds_one_key_to_two_commands_in_the_same_context_by_accident() {
-        // The only intended overlap is quit and back sharing `q`.
+        // The only intended overlap is close and back sharing `q`.
         let registry = Registry::builtin();
         for preset in [KeymapPreset::Vim, KeymapPreset::Mutt] {
             let keymap = Keymap::preset(preset);
@@ -704,7 +706,7 @@ mod tests {
                     }
                     for key in keymap.keys_for(a.id) {
                         let clash = keymap.keys_for(b.id).contains(key);
-                        let intended = a.id == CommandId::AppQuit
+                        let intended = a.id == CommandId::WindowClose
                             && b.id == CommandId::NavBack
                             && key.to_string() == "q";
                         assert!(
@@ -734,7 +736,7 @@ mod tests {
             Resolution::Command(CommandId::NavTop)
         );
         assert_eq!(resolve("g Q", Context::List), Resolution::Unbound);
-        assert_eq!(resolve("Q", Context::List), Resolution::Unbound);
+        assert_eq!(resolve("ctrl-q", Context::List), Resolution::Unbound);
     }
 
     #[test]
@@ -744,6 +746,10 @@ mod tests {
         let resolve = |keys: &str, context| keymap.resolve(&registry, &chords(keys), context);
         assert_eq!(
             resolve("q", Context::List),
+            Resolution::Command(CommandId::WindowClose)
+        );
+        assert_eq!(
+            resolve("Q", Context::List),
             Resolution::Command(CommandId::AppQuit)
         );
         assert_eq!(

@@ -748,6 +748,45 @@ fn ctrl_c_quits() {
 }
 
 #[test]
+fn shift_q_quits_and_not_from_the_help() {
+    let mut harness = Harness::demo(80, 24);
+    harness.keys("? Q");
+    assert!(harness.state.help.is_some() && !harness.state.should_quit);
+    harness.keys("esc Q");
+    assert!(harness.state.should_quit);
+}
+
+#[test]
+fn in_a_window_of_its_own_q_closes_the_window_and_only_shift_q_quits() {
+    let mut harness = Harness::demo(200, 60);
+    // In a terminal the key quits, and the bottom bar says so.
+    assert!(harness.screen().lines().last().unwrap().contains("q quit"));
+    harness.env.window = true;
+    // The help first, as anywhere.
+    harness.keys("? q");
+    assert!(harness.state.help.is_none());
+    assert!(!harness.host_requests.contains(&HostRequest::CloseWindow));
+
+    for key in ["q", "ctrl-c"] {
+        harness.host_requests.clear();
+        harness.keys(key);
+        assert_eq!(harness.host_requests, [HostRequest::CloseWindow], "{key}");
+        assert!(!harness.state.should_quit, "{key}");
+    }
+    // The bottom bar says what the key does here.
+    let bar = harness.screen().lines().last().unwrap().to_owned();
+    assert!(
+        bar.contains("q close window") && !bar.contains("quit"),
+        "{bar}"
+    );
+
+    harness.host_requests.clear();
+    harness.keys("Q");
+    assert!(harness.host_requests.is_empty());
+    assert!(harness.state.should_quit);
+}
+
+#[test]
 fn notices_are_dismissed_one_at_a_time_before_esc_does_anything_else() {
     let mut harness = Harness::demo(80, 24);
     harness.keys("enter");
@@ -1169,6 +1208,7 @@ fn the_host_is_told_what_applies_where_the_focus_is() {
     assert_eq!(state.context, Context::Help);
     assert!(state.enabled.contains(&CommandId::NavBack));
     assert!(!state.enabled.contains(&CommandId::AppQuit));
+    assert!(!state.enabled.contains(&CommandId::WindowClose));
 }
 
 #[test]

@@ -171,6 +171,7 @@ pub enum CommandId {
     NavPageDown,
     NavPageUp,
     NavOpen,
+    WindowClose,
     AppQuit,
     NavBack,
     FocusSidebar,
@@ -383,10 +384,14 @@ impl Registry {
                         Context::Palette,
                     ],
                 ),
-                // Before nav.back, so that a key bound to both quits from a
-                // pane and only closes the help overlay.
-                // No menu item: in the app, Quit belongs to the shell, which asks the
-                // core to stop over the bridge.
+                // Before nav.back, so that a key bound to both closes Quill
+                // from a pane and only closes the help overlay.
+                // In a terminal closing Quill is quitting it. In the app
+                // it is closing the window, with Quill left running, as
+                // the window's red button does.
+                // No menu item for either: Close Window and Quit belong
+                // to the shell, which has its own.
+                spec(WindowClose, "window.close", "Close", General, None, PANES),
                 spec(AppQuit, "app.quit", "Quit", General, None, PANES),
                 spec(
                     NavBack,
@@ -1054,7 +1059,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         hint(&[FocusNext], "list"),
         hint(&[ViewZoom], "zoom"),
         hint(&[HelpToggle], "help"),
-        hint(&[AppQuit], "quit"),
+        hint(&[WindowClose], "quit"),
     ];
     const LIST: &[Hint] = &[
         hint(&[NavNext, NavPrev], "move"),
@@ -1075,7 +1080,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         hint_while_enabled(&[FocusNext], "message"),
         hint(&[ViewZoom], "zoom"),
         hint(&[HelpToggle], "help"),
-        hint(&[AppQuit], "quit"),
+        hint(&[WindowClose], "quit"),
     ];
     const READER: &[Hint] = &[
         hint(&[NavNext, NavPrev], "scroll"),
@@ -1097,7 +1102,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         hint_while_enabled(&[MessageHook], "hooks"),
         hint(&[ViewZoom], "zoom"),
         hint(&[HelpToggle], "help"),
-        hint(&[AppQuit], "quit"),
+        hint(&[WindowClose], "quit"),
     ];
     const HELP: &[Hint] = &[
         hint(&[NavNext, NavPrev], "scroll"),
@@ -1281,7 +1286,7 @@ mod tests {
     }
 
     #[test]
-    fn quit_comes_before_back_so_a_shared_key_quits_from_a_pane() {
+    fn close_comes_before_back_so_a_shared_key_closes_from_a_pane() {
         let registry = Registry::builtin();
         let position = |id| {
             registry
@@ -1290,12 +1295,9 @@ mod tests {
                 .position(|spec| spec.id == id)
                 .unwrap()
         };
-        assert!(position(CommandId::AppQuit) < position(CommandId::NavBack));
-        assert!(
-            !registry
-                .get(CommandId::AppQuit)
-                .unwrap()
-                .applies_in(Context::Help)
-        );
+        for id in [CommandId::WindowClose, CommandId::AppQuit] {
+            assert!(position(id) < position(CommandId::NavBack));
+            assert!(!registry.get(id).unwrap().applies_in(Context::Help));
+        }
     }
 }

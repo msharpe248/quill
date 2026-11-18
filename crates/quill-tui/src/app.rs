@@ -377,6 +377,7 @@ impl Io<'_> {
                 HostRequest::PickFiles => self.host.pick_files(),
                 HostRequest::PickTheme => self.host.pick_theme(),
                 HostRequest::ShowKeys => self.host.show_keys(),
+                HostRequest::CloseWindow => self.host.close_window(),
                 HostRequest::Preview { files, index } => {
                     let files: Vec<(&std::path::Path, &str)> = files
                         .iter()
@@ -1190,10 +1191,10 @@ fn translate(event: Event) -> Option<Action> {
             let kind = match mouse.kind {
                 MouseEventKind::Down(MouseButton::Left) => MouseKind::Press,
                 MouseEventKind::Drag(MouseButton::Left) => MouseKind::Drag,
+                MouseEventKind::Up(MouseButton::Left) => MouseKind::Release,
                 MouseEventKind::ScrollUp => MouseKind::WheelUp,
                 MouseEventKind::ScrollDown => MouseKind::WheelDown,
-                // Other buttons, releases and plain movement mean nothing
-                // here.
+                // Other buttons and plain movement mean nothing here.
                 _ => return None,
             };
             Some(Action::Mouse(Mouse {
@@ -1229,6 +1230,7 @@ mod tests {
             look: crate::theme::Look::one(Theme::terminal()),
             tz: TimeZone::UTC,
             reader_width: 0.5,
+            sidebar_width: None,
             images: false,
             accounts: false,
             cmd_keys: true,
@@ -1252,6 +1254,7 @@ mod tests {
             hooks_enabled: false,
             web_pane: false,
             keys_window: false,
+            window: false,
             web_reading: false,
             sidebar: true,
             editor_tips: true,
@@ -1276,8 +1279,11 @@ mod tests {
         assert_eq!(star.menu, Some(bridge::Menu::Message));
         assert_eq!(star.symbol.as_deref(), Some("star"));
         assert_eq!(find("nav.top").keys[0], "g g");
-        // Quit is the shell's to offer.
+        // Quit and Close Window are the shell's to offer.
         assert_eq!(find("app.quit").menu, None);
+        assert_eq!(find("app.quit").keys, ["Q"]);
+        assert_eq!(find("window.close").menu, None);
+        assert_eq!(find("window.close").keys, ["q", "ctrl-c"]);
         assert_eq!(find("help.toggle").menu, Some(bridge::Menu::Help));
     }
 

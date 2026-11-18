@@ -76,6 +76,9 @@ public enum CoreToShell: Equatable, Sendable {
     case keysList(KeysList)
     /// Bring up the window of keys, showing the latest `keysList`.
     case keysShow
+    /// Close the main window and go on running behind it, as the
+    /// window's own close button does.
+    case windowClose
 }
 
 /// A message the shell sends to the core.

@@ -551,6 +551,9 @@ fn suit_host(env: &mut quill_tui::state::Env, shell: bool, vim: Option<std::ffi:
     env.web_pane = shell;
     // And a window for the list of every key, which stays up.
     env.keys_window = shell;
+    // And a window of its own, which can be closed with Quill left
+    // running: `q` closes it there, and quits only in a terminal.
+    env.window = shell;
 }
 
 /// What the app said the Mac looks like as it started the core: `dark` or
@@ -778,7 +781,7 @@ mod tests {
         assert!(env.cmd_keys && env.file_panel && env.thumbnails && env.spell_check);
         assert!(env.editor_pane && env.sheets);
         assert!(!env.hooks_enabled);
-        assert!(env.web_pane);
+        assert!(env.web_pane && env.window);
         assert_eq!(env.editor_program, Some("/opt/homebrew/bin/nvim".into()));
 
         // In a terminal: the user's own Vim, and their hooks.
@@ -787,7 +790,7 @@ mod tests {
         assert!(!env.cmd_keys && !env.file_panel && !env.thumbnails && !env.spell_check);
         assert!(!env.editor_pane && !env.sheets);
         assert!(env.hooks_enabled);
-        assert!(!env.web_pane);
+        assert!(!env.web_pane && !env.window);
         assert_eq!(env.editor_program, Some("/opt/homebrew/bin/nvim".into()));
         let mut env = load();
         suit_host(&mut env, false, Some("".into()));

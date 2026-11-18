@@ -61,6 +61,18 @@ pub struct SavedSearch {
     pub query: String,
 }
 
+/// The fewest columns the accounts pane can be given: room for the
+/// marker before a name and a few letters of it.
+pub const SIDEBAR_NARROWEST: u16 = 12;
+/// The most columns the accounts pane can be given.
+pub const SIDEBAR_WIDEST: u16 = 60;
+/// The least and the most of the room right of the accounts that the
+/// message has beside the list: what `reader_width` may be.
+pub const READER_LEAST: f32 = 0.2;
+pub const READER_MOST: f32 = 0.8;
+/// What `reader_width` is when the file does not say: half each.
+pub const READER_USUAL: f32 = 0.5;
+
 /// The smallest and the largest the font of the app's terminals may be,
 /// in points.
 pub const FONT_SMALLEST: u32 = 6;
@@ -83,7 +95,13 @@ pub struct UiConfig {
     pub theme_dark: Option<String>,
     pub keymap: KeymapPreset,
     /// The reader's share of the space right of the sidebar, in wide layouts.
+    /// Quill writes this itself when the user drags the edge between the
+    /// list and the message.
     pub reader_width: f32,
+    /// How many columns the accounts pane has beside the others. Left
+    /// out, it goes by the window's width. Quill writes this itself when
+    /// the user drags the pane's edge.
+    pub sidebar_width: Option<u16>,
     pub toolbar: bool,
     /// Terminal font for the app shell. `None` leaves the shell's default.
     pub font: Option<String>,
@@ -113,7 +131,8 @@ impl Default for UiConfig {
             theme_light: None,
             theme_dark: None,
             keymap: KeymapPreset::Vim,
-            reader_width: 0.5,
+            reader_width: READER_USUAL,
+            sidebar_width: None,
             toolbar: true,
             font: None,
             font_size: 13.0,
@@ -604,10 +623,18 @@ impl Config {
     }
 
     fn validate(&self) -> Result<(), ConfigError> {
-        if !(0.2..=0.8).contains(&self.ui.reader_width) {
+        if !(READER_LEAST..=READER_MOST).contains(&self.ui.reader_width) {
             return Err(ConfigError::Invalid(format!(
                 "ui.reader_width must be between 0.2 and 0.8, got {}",
                 self.ui.reader_width
+            )));
+        }
+        if let Some(columns) = self.ui.sidebar_width
+            && !(SIDEBAR_NARROWEST..=SIDEBAR_WIDEST).contains(&columns)
+        {
+            return Err(ConfigError::Invalid(format!(
+                "ui.sidebar_width must be between {SIDEBAR_NARROWEST} and {SIDEBAR_WIDEST} \
+                 columns, got {columns}"
             )));
         }
         let sizes = FONT_SMALLEST as f32..=FONT_LARGEST as f32;
@@ -1001,6 +1028,21 @@ smtp = { host = "smtp.fastmail.com", port = 465, tls = "implicit" }
         ] {
             let err = Config::parse(&format!("[ui]\n{bad}\n")).unwrap_err();
             assert!(matches!(err, ConfigError::Invalid(_)), "{bad}: {err:?}");
+        }
+    }
+
+    #[test]
+    fn the_accounts_pane_has_the_columns_it_is_given_within_reason() {
+        assert_eq!(Config::parse("").unwrap().ui.sidebar_width, None);
+        for columns in [SIDEBAR_NARROWEST, 24, SIDEBAR_WIDEST] {
+            let config = Config::parse(&format!("[ui]\nsidebar_width = {columns}\n")).unwrap();
+            assert_eq!(config.ui.sidebar_width, Some(columns));
+        }
+        for columns in ["0", "11", "61", "-3", "24.5", "\"wide\""] {
+            assert!(
+                Config::parse(&format!("[ui]\nsidebar_width = {columns}\n")).is_err(),
+                "{columns}"
+            );
         }
     }
 

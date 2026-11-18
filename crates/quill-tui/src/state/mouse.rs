@@ -1,9 +1,11 @@
 //! The mouse: a click focuses and selects, a second click on what is
-//! selected opens it, the wheel scrolls what is under the pointer.
+//! selected opens it, the wheel scrolls what is under the pointer, and
+//! the edge between two panes can be dragged.
 //!
-//! Nothing here does anything the keyboard cannot: a click ends in the same
-//! selection or the same command a key would have reached. Where the
-//! pointer is, is worked out from the same layout the views draw with.
+//! But for the dragging, nothing here does anything the keyboard cannot:
+//! a click ends in the same selection or the same command a key would
+//! have reached. Where the pointer is, is worked out from the same layout
+//! the views draw with.
 
 use quill_core::types::LocalAccountId;
 use ratatui::layout::{Position, Rect};
@@ -11,6 +13,8 @@ use ratatui::layout::{Position, Rect};
 use super::{Effects, Env, HostRequest, Motion, Notice, Pane, State, step};
 use crate::command::CommandId;
 use crate::compose::Field;
+use crate::layout::{Divider, Split};
+use crate::setup::{AccountRequest, Preference};
 use crate::{layout, text};
 
 /// What the mouse did.
@@ -20,6 +24,8 @@ pub enum MouseKind {
     Press,
     /// The pointer moved with the main button held.
     Drag,
+    /// The main button was let go.
+    Release,
     WheelUp,
     WheelDown,
 }
@@ -31,6 +37,23 @@ pub struct Mouse {
     pub column: u16,
     pub row: u16,
 }
+
+/// An edge between two panes that the user has hold of: from the press on
+/// it to the letting go.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Resizing {
+    pub divider: Divider,
+    /// How many columns left of the edge the pointer took hold.
+    grab: u16,
+    /// The column the pointer last asked the edge to be at.
+    edge: u16,
+    /// Whether the edge has been moved since.
+    moved: bool,
+}
+
+/// How many seconds may pass between two presses on an edge for them to
+/// be a double click. The clock here ticks in whole seconds.
+const DOUBLE_PRESS_SECONDS: i64 = 1;
 
 /// How many rows one notch of the wheel moves.
 const WHEEL_ROWS: usize = 3;
@@ -45,13 +68,29 @@ fn opens_on_click(style: quill_mime::html::Style) -> bool {
 
 impl State {
     pub(super) fn on_mouse(&mut self, env: &Env, mouse: Mouse, out: &mut Effects) {
+        // An edge between panes that is in hand has the mouse to itself
+        // until it is let go.
+        match mouse.kind {
+            MouseKind::Release => {
+                self.let_go_of_divider(out);
+                return;
+            }
+            MouseKind::Drag if self.resizing.is_some() => {
+                self.drag_divider(env, mouse.column);
+                return;
+            }
+            // A press with an edge still in hand: its letting go never
+            // arrived. Where it was left is kept all the same.
+            MouseKind::Press => self.let_go_of_divider(out),
+            MouseKind::Drag | MouseKind::WheelUp | MouseKind::WheelDown => {}
+        }
         let areas = layout::compute(self, self.size, env.reader_width);
         let at = Position::new(mouse.column, mouse.row);
         let over = |rect: Option<Rect>| rect.is_some_and(|rect| rect.contains(at));
         let wheel = match mouse.kind {
             MouseKind::WheelUp => Some(Motion::Prev),
             MouseKind::WheelDown => Some(Motion::Next),
-            MouseKind::Press | MouseKind::Drag => None,
+            MouseKind::Press | MouseKind::Drag | MouseKind::Release => None,
         };
 
         // What is drawn over the panes takes the mouse first.
@@ -79,6 +118,15 @@ impl State {
             self.mouse_in_list_box(env, rect, mouse, wheel, out);
             return;
         }
+        // The edge between two panes, before either of them: it is the
+        // border of both.
+        if mouse.kind == MouseKind::Press {
+            if let Some((divider, edge)) = layout::divider_at(&areas, mouse.column, mouse.row) {
+                self.press_divider(divider, edge, edge - mouse.column, out);
+                return;
+            }
+            self.divider_pressed = None;
+        }
         if self.compose.is_some() && over(areas.reader) {
             self.mouse_in_compose(areas.reader, mouse, wheel);
             return;
@@ -97,6 +145,107 @@ impl State {
         } else if over(areas.reader) {
             self.mouse_in_reader(env, areas.reader, mouse, wheel, out);
         }
+    }
+
+    /// The main button went down on the edge between two panes: it is in
+    /// hand until it is let go. A second press straight after one that
+    /// moved nothing is a double click, and puts the edge back where
+    /// Quill has it by itself.
+    fn press_divider(&mut self, divider: Divider, edge: u16, grab: u16, out: &mut Effects) {
+        let again = self.divider_pressed.take().is_some_and(|(pressed, at)| {
+            pressed == divider && self.now - at <= DOUBLE_PRESS_SECONDS
+        });
+        if again {
+            self.reset_divider(divider, out);
+            return;
+        }
+        self.resizing = Some(Resizing {
+            divider,
+            grab,
+            edge,
+            moved: false,
+        });
+        self.divider_pressed = Some((divider, self.now));
+    }
+
+    /// The pointer moved to `column` with an edge in hand: the edge goes
+    /// with it, as far as every pane's least width allows.
+    fn drag_divider(&mut self, env: &Env, column: u16) {
+        let Some(held) = self.resizing else {
+            return;
+        };
+        let edge = column.saturating_add(held.grab);
+        // Up and down the edge is no move at all.
+        if edge == held.edge {
+            return;
+        }
+        let Some(split) = layout::dragged(self, self.size.0, env.reader_width, held.divider, edge)
+        else {
+            return;
+        };
+        self.set_split(env, split);
+        self.resizing = Some(Resizing {
+            edge,
+            moved: true,
+            ..held
+        });
+        // It has been moved, so it is not half of a double click.
+        self.divider_pressed = None;
+    }
+
+    /// The widths the panes are shared out by, from now and for the rest
+    /// of the run.
+    fn set_split(&mut self, env: &Env, split: Split) {
+        if split.sidebar != self.sidebar_width {
+            self.sidebar_dragged = Some(split.sidebar);
+            self.sidebar_width = split.sidebar;
+        }
+        if split.reader != Split::of(self, env.reader_width).reader {
+            self.reader_share = Some(split.reader);
+        }
+    }
+
+    /// The edge in hand was let go: where it was left is remembered for
+    /// the next run, if it was moved at all.
+    fn let_go_of_divider(&mut self, out: &mut Effects) {
+        let Some(held) = self.resizing.take() else {
+            return;
+        };
+        if !held.moved {
+            return;
+        }
+        if held.divider == Divider::Sidebar {
+            out.accounts
+                .push(AccountRequest::Remember(Preference::SidebarWidth(
+                    self.sidebar_width,
+                )));
+        }
+        // Moving the accounts' edge changes the message's share as well,
+        // where the message kept its columns.
+        if let Some(share) = self.reader_share {
+            out.accounts
+                .push(AccountRequest::Remember(Preference::ReaderWidth(Some(
+                    (share * 1000.0).round() as u16,
+                ))));
+        }
+    }
+
+    /// Puts an edge back where Quill has it when nobody has moved it, and
+    /// has the setting taken out of the config.
+    fn reset_divider(&mut self, divider: Divider, out: &mut Effects) {
+        self.resizing = None;
+        let preference = match divider {
+            Divider::Sidebar => {
+                self.sidebar_dragged = Some(None);
+                self.sidebar_width = None;
+                Preference::SidebarWidth(None)
+            }
+            Divider::Reader => {
+                self.reader_share = Some(quill_core::config::READER_USUAL);
+                Preference::ReaderWidth(None)
+            }
+        };
+        out.accounts.push(AccountRequest::Remember(preference));
     }
 
     /// A box with a list in it: links, attachments, folders, templates,

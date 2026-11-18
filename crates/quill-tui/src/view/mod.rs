@@ -98,6 +98,16 @@ pub fn render(frame: &mut Frame, state: &State, env: &Env) -> Overlays {
         }
         sidebar::render(frame, rect, state, env);
     }
+    // An edge the mouse has hold of is drawn as the border of the pane
+    // with the keys is, so that it shows which one is being moved.
+    if let Some(edge) = state
+        .resizing
+        .and_then(|held| layout::divider_edge(&areas, held.divider))
+    {
+        frame
+            .buffer_mut()
+            .set_style(edge.intersection(area), env.styles.border(true));
+    }
     status::render(frame, areas.status, state, env);
     if let Some(rect) = areas.links {
         clear(frame, rect, &env.styles);

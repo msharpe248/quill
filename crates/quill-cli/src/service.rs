@@ -173,6 +173,8 @@ fn remember(config_file: &Path, preference: Preference) -> Result<(), String> {
     let after = match preference {
         Preference::WebReading(on) => config_edit::set_web_reading(&before, on)?,
         Preference::Sidebar(on) => config_edit::set_sidebar(&before, on)?,
+        Preference::SidebarWidth(columns) => config_edit::set_sidebar_width(&before, columns)?,
+        Preference::ReaderWidth(share) => config_edit::set_reader_width(&before, share)?,
         Preference::EditorTips(on) => config_edit::set_editor_tips(&before, on)?,
     };
     if after == before {
@@ -3171,6 +3173,46 @@ mod tests {
         );
         assert!(!rig.config().compose.editor_tips);
         assert!(config_text(&rig).contains("[compose]\neditor_tips = false\n"));
+
+        // And where the edges between the panes were left.
+        for (preference, line) in [
+            (Preference::SidebarWidth(Some(34)), "\nsidebar_width = 34\n"),
+            (
+                Preference::ReaderWidth(Some(538)),
+                "\nreader_width = 0.538\n",
+            ),
+        ] {
+            assert_eq!(
+                rig.service
+                    .handle(AccountRequest::Remember(preference))
+                    .await,
+                AccountEvent::Remembered(Ok(()))
+            );
+            assert!(config_text(&rig).contains(line), "{}", config_text(&rig));
+        }
+        assert_eq!(rig.config().ui.sidebar_width, Some(34));
+        assert_eq!(rig.config().ui.reader_width, 0.538);
+        // Put back, each line is taken out and nothing else is.
+        let with_both = config_text(&rig);
+        for preference in [
+            Preference::SidebarWidth(None),
+            Preference::ReaderWidth(None),
+        ] {
+            assert_eq!(
+                rig.service
+                    .handle(AccountRequest::Remember(preference))
+                    .await,
+                AccountEvent::Remembered(Ok(()))
+            );
+        }
+        assert_eq!(
+            config_text(&rig),
+            with_both
+                .replace("sidebar_width = 34\n", "")
+                .replace("reader_width = 0.538\n", "")
+        );
+        assert_eq!(rig.config().ui.sidebar_width, None);
+        assert_eq!(rig.config().ui.reader_width, 0.5);
 
         // A config Quill cannot read is left exactly as it is, and the
         // reason comes back.

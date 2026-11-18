@@ -293,6 +293,13 @@ pub trait Host: Send + Sync {
         self.send(CoreToShell::KeysShow(NoParams {}));
     }
 
+    /// Closes the host's window and leaves Quill running behind it. Only
+    /// a shell has one: in a terminal closing Quill is quitting it, and
+    /// this is never asked.
+    fn close_window(&self) {
+        self.send(CoreToShell::WindowClose(NoParams {}));
+    }
+
     /// Puts text on the system clipboard, if this host can. Returns
     /// whether it took it; a terminal is asked instead when it did not.
     fn copy_text(&self, text: &str) -> bool {

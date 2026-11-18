@@ -53,7 +53,7 @@ use crate::template::{self, Template};
 use crate::theme::{Look, Styles, Theme};
 use crate::vim::{self, ExternalEditor, Verdict};
 use crate::{text, view};
-pub use mouse::{Mouse, MouseKind};
+pub use mouse::{Mouse, MouseKind, Resizing};
 
 /// What a notification about one message is called: this and the message's
 /// id in the store.
@@ -82,6 +82,9 @@ pub struct Env {
     pub tz: TimeZone,
     /// The reader's share of the space right of the sidebar, from the config.
     pub reader_width: f32,
+    /// The accounts pane's columns, from the config: `sidebar_width`
+    /// under `[ui]`. `None`: by the window's width.
+    pub sidebar_width: Option<u16>,
     /// The terminal draws images (the Kitty graphics protocol).
     pub images: bool,
     /// Accounts can be added and their certificates accepted from here.
@@ -158,6 +161,10 @@ pub struct Env {
     /// there and stays up beside the mail. Asked for by its key it is
     /// drawn over the panes, whatever the host.
     pub keys_window: bool,
+    /// Whether Quill is in a window of the host's that can be closed and
+    /// brought back while Quill goes on running, as the app's can. A
+    /// terminal has none: there, closing Quill is quitting it.
+    pub window: bool,
     /// Web reading is on as Quill starts: `web_reading` under `[ui]` in
     /// the config. It means nothing without [`Env::web_pane`].
     pub web_reading: bool,
@@ -394,6 +401,9 @@ pub enum HostRequest {
     PickTheme,
     /// Bring up the host's window of every key.
     ShowKeys,
+    /// Close the host's window and leave Quill running behind it, as the
+    /// window's own close button does.
+    CloseWindow,
     /// Show files in the host's viewer, starting with the one at `index`.
     /// Each is a path and what to call it.
     Preview {
@@ -1340,6 +1350,24 @@ pub struct State {
     /// The user has switched the accounts pane the other way from the
     /// one Quill started with.
     sidebar_flipped: bool,
+    /// How many columns the accounts pane has beside the others, where
+    /// the user has said: in the config, or by dragging its edge in this
+    /// run. `None`: by the window's width. Worked out from the config and
+    /// [`State::sidebar_dragged`] at every update.
+    pub sidebar_width: Option<u16>,
+    /// Where the user has left the accounts pane's edge in this run, in
+    /// place of what the config says: so many columns, or back to going
+    /// by the window's width.
+    sidebar_dragged: Option<Option<u16>>,
+    /// The message's share of the room right of the accounts, where the
+    /// user has dragged an edge in this run: it stands in place of the
+    /// config's.
+    pub reader_share: Option<f32>,
+    /// An edge between two panes the user has hold of with the mouse.
+    pub resizing: Option<Resizing>,
+    /// The edge last pressed and let go of without moving it, and when: a
+    /// second press on it straight away puts it back where Quill has it.
+    divider_pressed: Option<(layout::Divider, i64)>,
     /// What an editor's keys do is said above it. Worked out from the
     /// config and [`State::tips_asked`] at every update.
     pub editor_tips: bool,
@@ -1431,6 +1459,11 @@ impl State {
             web_flipped: false,
             sidebar_hidden: false,
             sidebar_flipped: false,
+            sidebar_width: None,
+            sidebar_dragged: None,
+            reader_share: None,
+            resizing: None,
+            divider_pressed: None,
             editor_tips: false,
             tips_asked: None,
             tips_seen: false,
@@ -1540,7 +1573,16 @@ impl State {
         // And so is whether there is a pane to read mail in.
         self.web_reading = self.web_reading_wanted(env);
         self.sidebar_hidden = env.sidebar == self.sidebar_flipped;
+        self.sidebar_width = self.sidebar_dragged.unwrap_or(env.sidebar_width);
         self.editor_tips = self.tips_asked.unwrap_or(env.editor_tips);
+        // A press on an edge between panes is half of a double click only
+        // while nothing else is done in between.
+        if matches!(
+            action,
+            Action::Key(_) | Action::Command(_) | Action::Paste(_)
+        ) {
+            self.divider_pressed = None;
+        }
         match action {
             Action::Key(chord) => self.on_key(env, chord, &mut out),
             // Asked for from the host's menu, the list of every key goes
@@ -2375,7 +2417,11 @@ impl State {
             }
             CommandId::NavOpen => self.open(out),
             CommandId::NavBack => self.back(env, out),
-            CommandId::AppQuit => self.should_quit = true,
+            // Where Quill has a window that can be closed with Quill left
+            // running, closing is that, and the host's to do. Anywhere
+            // else it is quitting.
+            CommandId::WindowClose if env.window => out.host.push(HostRequest::CloseWindow),
+            CommandId::WindowClose | CommandId::AppQuit => self.should_quit = true,
             CommandId::FocusSidebar => self.set_focus(Pane::Sidebar),
             CommandId::FocusList => self.set_focus(Pane::List),
             CommandId::FocusReader => self.set_focus(Pane::Reader),
