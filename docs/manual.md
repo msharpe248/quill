@@ -686,6 +686,8 @@ quill keys                         # every key and what it does
 - by a search, in the search box's own words: `--where 'from:news older:30d'`;
 - by Message-ID, which does not change when a message moves: `--msgid '<abc@example.com>'`.
 
+A search with a `-` in it is best given as one quoted argument, as above: `quill search 'dinner -from:ana'`. (A `-` may come first unquoted, `quill search -from:ana dinner`; after other words it would be read as a flag, and is refused.)
+
 `--dry-run` changes nothing and says what would have been changed. A search that finds more than 50 messages changes none of them and says how many it found; `--yes` goes on. One command never touches more than 1,000. Finding nothing is not an error: the answer says none.
 
 **Changing.** `mark read|unread|starred|unstarred`, `move FOLDER`, `copy FOLDER`, `archive`, `snooze WHEN`, `unsnooze`, `restore` and `folder create NAME` do what the keys in Quill do, through the same queue: they happen here at once and reach the server when Quill next syncs. A folder is named by its name or by what it is for (`archive`, `trash`, `work/receipts`), and is always one of the message's own account. `folder create` makes a folder on this Mac; see "Folders, and folders on this Mac" for what that means for mail moved into it.
@@ -733,7 +735,26 @@ What mail says is printed safely: control characters and escape sequences never 
 
 ## Agents
 
-An AI agent can work your mail through Quill in two ways. A **skill** gives it the commands above ("From a shell"). **MCP** gives it the same things as tools, served by the Quill that is running. Both go through the same checks, the same settings and the same log, and neither can do anything the other cannot.
+An AI agent can work your mail through Quill in two ways. A **skill** teaches it the commands above ("From a shell"). **MCP** gives it the same things as tools, served by the Quill that is running. Both go through the same checks, the same settings and the same log, and neither can do anything the other cannot.
+
+**A skill.** Quill comes with one: a `SKILL.md` that teaches an agent the commands, how to name messages, to look before it changes anything, that mail is untrusted, and what a refusal means. It is in the form agents' programs share, a folder called `quill` with the file in it, and it ships inside the app (`Quill.app/Contents/Resources/skills/quill`) and in the source (`skills/quill`).
+
+```sh
+quill skill install          # link it where agents look for skills
+quill skill show             # print it
+quill skill path             # the folder it is in, to link to yourself
+```
+
+`quill skill install` makes two links, each to the skill that ships with the Quill that ran it, so the skill is always that Quill's and never out of step with its commands:
+
+| Link | Read by |
+|---|---|
+| `~/.claude/skills/quill` | Claude Code |
+| `~/.agents/skills/quill` | Codex, Gemini CLI, Cursor, Copilot CLI, OpenCode, Goose |
+
+`--to DIR` names another folder that an agent reads skills from, in place of those two (repeat it for more): a project's `.claude/skills`, say. `--copy` writes a copy where a link will not do; a copy is that Quill's skill until Quill changes, and installing again brings it up to date. Installing replaces a link, or a copy it made, and nothing else: a folder called `quill` that is somebody else's is left alone, and said to be. To take the skill away, remove the link. If Quill is moved, install again. That a linked folder is followed is documented for Claude Code and Codex; for the others, use `--copy` if the skill does not show up.
+
+The skill needs the shell commands switched on (`commands`, which they are as Quill comes), and whatever it is to do allowed, as above. It works with Quill running or not.
 
 **Switching MCP on.** It is off as Quill comes. In the app, Settings > Agents, "Serve agents over MCP while Quill is running"; in the config, `mcp = true` under `[agent]`. Then give the agent's program the command the pane shows (Copy MCP Command copies it), which is Quill's own program and the word `mcp`:
 

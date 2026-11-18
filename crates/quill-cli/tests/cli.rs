@@ -193,13 +193,14 @@ impl Scratch {
         Self { dir }
     }
 
+    /// Runs `quill` on this mailbox. Where the mailbox is goes in the
+    /// environment, not after the arguments: a test of how arguments are
+    /// read must never be one flag away from the mail of whoever runs it.
     fn run(&self, args: &[&str]) -> std::process::Output {
         quill()
             .args(args)
-            .arg("--config-dir")
-            .arg(self.dir.path().join("config"))
-            .arg("--data-dir")
-            .arg(self.dir.path().join("data"))
+            .env("QUILL_CONFIG_DIR", self.dir.path().join("config"))
+            .env("QUILL_DATA_DIR", self.dir.path().join("data"))
             .stdin(std::process::Stdio::null())
             .output()
             .unwrap()
@@ -314,4 +315,136 @@ fn what_the_settings_refuse_exits_with_a_status_of_its_own() {
     // A settings file with a mistake in it is no licence.
     let broken = Scratch::new("[agent]\nbulk_limit = 0\n");
     assert_eq!(broken.run(&["list"]).status.code(), Some(1));
+}
+
+#[test]
+fn a_search_may_start_with_a_dash_and_what_follows_it_is_still_read_as_flags() {
+    let scratch = Scratch::new("");
+    let subjects = |value: &serde_json::Value| -> Vec<String> {
+        value["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|message| message["subject"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let all = scratch.json(&["search", "dinner"]);
+    assert!(subjects(&all).contains(&"Sunday dinner".to_owned()));
+    // Not from Peter: typed plainly when it comes first, and inside
+    // quotes with the rest when it does not. Flags are flags wherever
+    // they stand.
+    for args in [
+        vec!["search", "-from:peter", "newer:36500d"],
+        vec!["search", "newer:36500d -from:peter"],
+        vec!["search", "--limit", "40", "-from:peter", "newer:36500d"],
+        vec!["search", "-from:peter newer:36500d", "--limit", "40"],
+    ] {
+        let found = scratch.json(&args);
+        assert!(
+            !subjects(&found).contains(&"Sunday dinner".to_owned()),
+            "{args:?}"
+        );
+        assert!(!subjects(&found).is_empty(), "{args:?}");
+    }
+    // Loose, after other words, it is not guessed at: the command is
+    // refused, and says how to write it.
+    let loose = scratch.run(&["search", "newer:36500d", "-from:peter", "--json"]);
+    assert_eq!(loose.status.code(), Some(2));
+    // `-has:attachment` begins like the flag for help, and is a search.
+    let without = scratch.json(&["count", "-has:attachment"]);
+    let with = scratch.json(&["count", "has:attachment"]);
+    assert!(without["count"].as_u64().unwrap() > 0 && with["count"].as_u64().unwrap() > 0);
+    // What comes after the words is a flag, not one more word.
+    let two = scratch.json(&["search", "-from:peter", "newer:36500d", "--limit", "2"]);
+    assert_eq!(two["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(two["more"], true);
+    // And so for the search a change is given.
+    let dry = scratch.json(&["archive", "--where", "-from:peter dinner", "--dry-run"]);
+    assert_eq!(dry["changed"], 0);
+    assert!(dry["would_change"].is_u64());
+
+    // Where the mail is, said after a search, is where it is looked for:
+    // with the environment pointing nowhere, only the flags can have
+    // found this mailbox.
+    let nowhere = scratch.dir.path().join("nowhere");
+    let output = quill()
+        .args(["search", "-from:peter", "dinner", "--json", "--data-dir"])
+        .arg(scratch.dir.path().join("data"))
+        .arg("--config-dir")
+        .arg(scratch.dir.path().join("config"))
+        .env("QUILL_CONFIG_DIR", &nowhere)
+        .env("QUILL_DATA_DIR", &nowhere)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn the_skill_is_printed_and_put_where_agents_look_for_it() {
+    let shown = quill().args(["skill", "show"]).output().unwrap();
+    assert!(shown.status.success());
+    let text = String::from_utf8(shown.stdout).unwrap();
+    assert!(
+        text.starts_with("---\nname: quill\ndescription: "),
+        "{}",
+        &text[..80]
+    );
+    assert!(text.contains("quill search"));
+
+    // Beside a build in a checkout, the skill that ships is the
+    // checkout's own, and that is what is linked to.
+    let path = quill().args(["skill", "path"]).output().unwrap();
+    assert!(path.status.success());
+    let shipped = std::path::PathBuf::from(String::from_utf8(path.stdout).unwrap().trim());
+    assert!(shipped.ends_with("skills/quill") && shipped.join("SKILL.md").is_file());
+
+    // With no folder named, the two that agents' programs read: under a
+    // home of this test's own.
+    let home = tempfile::tempdir().unwrap();
+    let installed = quill()
+        .args(["skill", "install"])
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(
+        installed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&installed.stderr)
+    );
+    for place in [".claude/skills/quill", ".agents/skills/quill"] {
+        let at = home.path().join(place);
+        assert_eq!(std::fs::read_link(&at).unwrap(), shipped, "{place}");
+        assert_eq!(std::fs::read_to_string(at.join("SKILL.md")).unwrap(), text);
+    }
+    // A copy, in a folder that is named. And what is somebody else's
+    // stops it, with a status that says so.
+    let elsewhere = home.path().join("other/skills");
+    let copied = quill()
+        .args(["skill", "install", "--copy", "--to"])
+        .arg(&elsewhere)
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(copied.status.success());
+    assert!(
+        !std::fs::symlink_metadata(elsewhere.join("quill"))
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    std::fs::write(elsewhere.join("quill/mine.md"), "mine").unwrap();
+    let refused = quill()
+        .args(["skill", "install", "--to"])
+        .arg(&elsewhere)
+        .env("HOME", home.path())
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("not Quill's skill"));
+    assert!(elsewhere.join("quill/mine.md").is_file());
 }

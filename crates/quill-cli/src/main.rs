@@ -16,6 +16,7 @@ mod service;
 mod settings;
 mod setup;
 mod signin;
+mod skill;
 mod theme_edit;
 mod themes;
 
@@ -89,8 +90,13 @@ enum Command {
     },
     /// Search mail, with the same words and filters as the search box
     Search {
-        /// What to find: `from:ana is:unread "exact phrase"`
-        #[arg(required = true)]
+        /// What to find: `from:ana is:unread "exact phrase"`. A `-` before
+        /// a word or a filter means not, and may come first: `-from:ana`
+        #[arg(value_name = "WORDS", allow_hyphen_values = true)]
+        first: String,
+        /// More of what to find. One that starts with `-` goes inside
+        /// quotes with the rest: 'dinner -from:ana'
+        #[arg(value_name = "WORDS")]
         words: Vec<String>,
         /// At most this many, newest first
         #[arg(long, default_value_t = 50)]
@@ -118,8 +124,12 @@ enum Command {
     },
     /// How many messages a search finds
     Count {
-        /// What to count: `from:news older:30d`
-        #[arg(required = true)]
+        /// What to count: `from:news older:30d`. A `-` before a word or a
+        /// filter means not, and may come first
+        #[arg(value_name = "WORDS", allow_hyphen_values = true)]
+        first: String,
+        /// More of what to count
+        #[arg(value_name = "WORDS")]
         words: Vec<String>,
         #[command(flatten)]
         output: Output,
@@ -298,6 +308,12 @@ enum Command {
         #[command(flatten)]
         output: Output,
     },
+    /// The skill that teaches an agent these commands: print it, or put it
+    /// where agents' programs look for skills
+    Skill {
+        #[command(subcommand)]
+        action: SkillAction,
+    },
     /// Serve an agent's program over MCP, on standard input and output. It
     /// carries what is asked to the Quill that is running, and does
     /// nothing itself
@@ -344,6 +360,27 @@ enum ThemeAction {
         what: String,
         #[command(flatten)]
         output: Output,
+    },
+}
+
+#[derive(Subcommand)]
+enum SkillAction {
+    /// Print the skill
+    Show,
+    /// Print the folder the skill is in, beside this Quill, to link to
+    Path,
+    /// Put the skill where agents' programs find it: as a link to the one
+    /// that ships with Quill, so that it is always this Quill's
+    Install {
+        /// A folder an agent reads skills from. Repeat for more. Without
+        /// it: ~/.claude/skills (Claude Code) and ~/.agents/skills (Codex,
+        /// Gemini CLI, Cursor, Copilot CLI, OpenCode, Goose)
+        #[arg(long, value_name = "DIR")]
+        to: Vec<PathBuf>,
+        /// Write a copy, not a link. A copy is this Quill's skill until
+        /// Quill changes: install again then
+        #[arg(long)]
+        copy: bool,
     },
 }
 
@@ -488,7 +525,7 @@ struct Selection {
     #[arg(long, value_name = "MESSAGE-ID")]
     msgid: Vec<String>,
     /// Messages by a search, in the search box's words: 'from:news older:30d'
-    #[arg(long = "where", value_name = "SEARCH")]
+    #[arg(long = "where", value_name = "SEARCH", allow_hyphen_values = true)]
     query: Option<String>,
     /// Change nothing; say what would be changed
     #[arg(long)]
@@ -654,20 +691,25 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             },
         ),
         Command::Search {
+            first,
             words,
             limit,
             output,
         } => act(
             output,
             Call::Search {
-                query: words.join(" "),
+                query: one_search(first, words),
                 limit: Some(limit),
             },
         ),
-        Command::Count { words, output } => act(
+        Command::Count {
+            first,
+            words,
+            output,
+        } => act(
             output,
             Call::Count {
-                query: words.join(" "),
+                query: one_search(first, words),
             },
         ),
         Command::Read {
@@ -889,6 +931,41 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             action: None,
             output,
         } => act(output, Call::Outbox),
+        Command::Skill { action } => match action {
+            SkillAction::Show => {
+                print!("{}", skill::SKILL);
+                Ok(())
+            }
+            SkillAction::Path => {
+                let folder = skill::shipped().context(
+                    "this quill has no skill folder beside it to link to. `quill skill install \
+                     --copy` writes one out",
+                )?;
+                println!("{}", folder.display());
+                Ok(())
+            }
+            SkillAction::Install { to, copy } => {
+                let places = if to.is_empty() {
+                    let home = std::env::var_os("HOME").context("there is no home folder")?;
+                    skill::usual_places(std::path::Path::new(&home))
+                } else {
+                    to
+                };
+                let shipped = skill::shipped();
+                let mut failed = false;
+                for place in &places {
+                    match skill::install(place, shipped.as_deref(), copy) {
+                        Ok(put) => println!("{put}"),
+                        Err(why) => {
+                            eprintln!("quill: {why}.");
+                            failed = true;
+                        }
+                    }
+                }
+                anyhow::ensure!(!failed, "the skill was not put everywhere");
+                Ok(())
+            }
+        },
         Command::Mcp { dirs } => {
             let paths = Paths::resolve(dirs.config_dir, dirs.data_dir, |name| {
                 std::env::var_os(name)
@@ -1255,6 +1332,14 @@ async fn account(
         }
     }
     Ok(())
+}
+
+/// A search as it was typed, in one piece or several.
+fn one_search(first: String, rest: Vec<String>) -> String {
+    std::iter::once(first)
+        .chain(rest)
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// A message's text, from standard input when something is piped in.

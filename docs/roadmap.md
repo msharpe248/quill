@@ -6,7 +6,7 @@ Nothing here is a promise or a date.
 
 ## Next
 
-- **Finishing Quill for agents.** The shell commands, MCP, the Settings pane, the log, undo, held sends and Stop Agents are built ([the manual](manual.md#agents); the design is in [Quill Agents Spec.md](../Quill%20Agents%20Spec.md)). Still to come: a skill file that ships with Quill (`quill skill show`), `quill watch`, forwarding and invitations from a shell, the 2026-07-28 revision of MCP, and trying all of it with real accounts and real agents.
+- **Finishing Quill for agents.** The shell commands, the skill, MCP, the Settings pane, the log, undo, held sends and Stop Agents are built ([the manual](manual.md#agents); the design is in [Quill Agents Spec.md](../Quill%20Agents%20Spec.md)). Still to come: `quill watch`, forwarding and invitations from a shell, the 2026-07-28 revision of MCP, and trying all of it with real accounts and real agents.
 - **A download that simply opens.** A disk image signed with a Developer ID and notarized by Apple, and a Homebrew cask. Until then Quill is built from the source.
 - **Google's verification of Quill.** Until it is through, signing in with Google as Quill shows a warning and is open to a limited number of people; see [oauth.md](oauth.md).
 

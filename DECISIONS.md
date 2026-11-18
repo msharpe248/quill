@@ -1321,3 +1321,21 @@ Not changed, and the owner's to decide before this is given out: `PRIVACY.md`, t
 - Making a folder on a server from outside, and `quill sync --account`.
 - The 2026-07-28 revision of MCP.
 - Any of it with a real account, a real server or a real agent's program.
+
+### The skill (2026-11-17)
+
+Asked for by the owner: a `SKILL.md`, and "it would be nice if it could be symlinked for various agents".
+
+- **One file, `skills/quill/SKILL.md`**, in the form agents' programs share (a folder named for the skill, with `name` and `description` at the top of the file). It is in the source, in the app's bundle (`Contents/Resources/skills/quill`, copied there before signing), and compiled into `quill`, which prints it (`quill skill show`).
+- **It is linked, not copied.** `quill skill install` makes `~/.claude/skills/quill` and `~/.agents/skills/quill` links to the skill that ships beside the `quill` that ran it (`quill skill path`): in the bundle, or in the checkout a build was made from. A link is always the installed Quill's skill; a copy would be yesterday's. `--copy` writes one where a link will not do, and it is what happens when a `quill` has no skill on disk beside it.
+- **Those two folders**, from each program's own documentation as it stood: `~/.claude/skills` is Claude Code's, and `~/.agents/skills` is read by Codex, Gemini CLI, Cursor, Copilot CLI, OpenCode and Goose. That a linked folder is followed is documented for Claude Code and Codex only. `--to DIR` names any other folder.
+- **An install replaces only what an install made**: a link at that name, or a folder with nothing in it but this skill's `SKILL.md`. Anything else called `quill` there is somebody's, and stops it.
+- **Only the fields every program takes** (`name`, `description`, `compatibility`). **No `allowed-tools`**: approving `quill` ahead of the user would approve `quill delete` and `quill send` with it. Which commands an agent may run without asking is the user's to set in their agent.
+- **A test holds the skill to the commands**: every action in the one list of tools must be shown in it as a command, and every way of being refused named.
+- **Not tried with a real agent's program.** Whether Claude Code, or any other, picks the linked skill up and uses it well has not been seen.
+
+### A search may start with a dash
+
+- **`quill search -from:ana dinner`** works: the first word of a search may start with `-`. After other words a loose `-word` is refused, with clap's own message, and goes inside quotes with the rest (`'dinner -from:ana'`); `--where` takes a value that starts with `-`.
+- **Not done by letting every word start with a dash.** Tried first, and it made every flag after the words into one more word: `--json`, and `--data-dir` with it. A command whose `--data-dir` is lost works on the default mailbox.
+- **That is how the owner's real mailbox was touched once, on 2026-11-17**, against the standing rule: a hand-run `quill search --json -- '-from:ana older:30d' --config-dir ... --data-dir ...` gave the two folders after `--`, where they are words of the search, so the search ran on `~/Library/Application Support/Quill`. No Quill was running there. It was a search, found nothing and printed nothing of the mail; it reached no server. But opening the store with this build will have upgraded it (migration 0012, which only adds a table and a column), and one line was written in its new log. Whether it did could not be checked: looking at that store again was, rightly, not allowed. Scratch runs now say where the mailbox is in the environment, and the tests do too, with one test that a folder named after a search is the one used.

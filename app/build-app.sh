@@ -82,6 +82,10 @@ cp "$root/target/release/quill" "$out/Contents/Helpers/quill"
 # is where SwiftPM looks by default; libghostty-spm looks in Resources first.
 find "$products" -maxdepth 1 -name '*.bundle' -exec cp -R {} "$out/Contents/Resources/" \;
 # The app's icon, made from the pictures of it at each size.
+# The skill that teaches an agent `quill`'s commands, where `quill skill
+# install` links agents' own folders to it.
+mkdir -p "$out/Contents/Resources/skills"
+cp -R "$root/skills/quill" "$out/Contents/Resources/skills/"
 iconutil --convert icns --output "$out/Contents/Resources/Quill.icns" \
     "$root/app/Resources/icon/Quill.iconset"
 
