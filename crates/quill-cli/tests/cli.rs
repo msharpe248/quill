@@ -448,3 +448,47 @@ fn the_skill_is_printed_and_put_where_agents_look_for_it() {
     assert!(String::from_utf8_lossy(&refused.stderr).contains("not Quill's skill"));
     assert!(elsewhere.join("quill/mine.md").is_file());
 }
+
+#[test]
+fn quill_is_linked_into_a_folder_that_is_named() {
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("bin");
+    // The folder is said twice over, so that no way of reading the
+    // arguments could send the link to the folders everyone's programs
+    // are in.
+    let link = || {
+        quill()
+            .args(["link", "--to"])
+            .arg(&bin)
+            .env("QUILL_LINK_DIR", &bin)
+            .env("HOME", dir.path())
+            .output()
+            .unwrap()
+    };
+    let linked = link();
+    assert!(
+        linked.status.success(),
+        "{}",
+        String::from_utf8_lossy(&linked.stderr)
+    );
+    let at = bin.join("quill");
+    assert_eq!(
+        std::fs::read_link(&at).unwrap(),
+        std::path::Path::new(env!("CARGO_BIN_EXE_quill"))
+            .canonicalize()
+            .unwrap()
+    );
+    // The link runs, and is this quill.
+    let version = Command::new(&at).arg("--version").output().unwrap();
+    assert!(String::from_utf8_lossy(&version.stdout).starts_with("quill "));
+    // Not on the `PATH` of this test, so how to put it there is said.
+    assert!(String::from_utf8_lossy(&linked.stdout).contains("~/.zprofile"));
+    // Again changes nothing.
+    assert!(link().status.success());
+    // Somebody's own program of that name stops it.
+    std::fs::remove_file(&at).unwrap();
+    std::fs::write(&at, "another").unwrap();
+    let refused = link();
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("not a link to Quill"));
+}

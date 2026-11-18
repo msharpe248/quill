@@ -7,6 +7,7 @@ mod discover;
 mod door;
 mod headless;
 mod keys_edit;
+mod link;
 mod mcp;
 mod oauth;
 mod password;
@@ -307,6 +308,14 @@ enum Command {
         at: Option<String>,
         #[command(flatten)]
         output: Output,
+    },
+    /// Put a link to this quill where a shell looks for programs, so that
+    /// `quill` works at a prompt: what Install Command Line Tool does
+    Link {
+        /// The folder to link into. Without it: /usr/local/bin, or
+        /// /opt/homebrew/bin, or ~/.local/bin, whichever can be written to
+        #[arg(long, value_name = "DIR")]
+        to: Option<PathBuf>,
     },
     /// The skill that teaches an agent these commands: print it, or put it
     /// where agents' programs look for skills
@@ -931,6 +940,11 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             action: None,
             output,
         } => act(output, Call::Outbox),
+        Command::Link { to } => {
+            let said = link::install_this(to).map_err(|why| anyhow::anyhow!(why))?;
+            println!("{said}");
+            Ok(())
+        }
         Command::Skill { action } => match action {
             SkillAction::Show => {
                 print!("{}", skill::SKILL);

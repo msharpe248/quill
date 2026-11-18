@@ -2450,6 +2450,8 @@ impl State {
             CommandId::WindowClose if env.window => out.host.push(HostRequest::CloseWindow),
             CommandId::WindowClose | CommandId::AppQuit => self.should_quit = true,
             CommandId::AgentsStop => self.stop_agents(env, out),
+            // The service does it, and says what it did.
+            CommandId::CommandLineInstall => out.accounts.push(AccountRequest::LinkCommand),
             CommandId::FocusSidebar => self.set_focus(Pane::Sidebar),
             CommandId::FocusList => self.set_focus(Pane::List),
             CommandId::FocusReader => self.set_focus(Pane::Reader),
@@ -4250,6 +4252,16 @@ impl State {
                         text::sanitize_line(&reason)
                     ))),
                 }
+                return;
+            }
+            AccountEvent::CommandLinked(result) => {
+                self.notices.push_back(match result {
+                    Ok(said) => Notice::info(text::sanitize_line(&said)),
+                    Err(reason) => Notice::error(format!(
+                        "The command line tool was not installed: {}.",
+                        text::sanitize_line(reason.trim_end_matches('.'))
+                    )),
+                });
                 return;
             }
             AccountEvent::Remembered(result) => {

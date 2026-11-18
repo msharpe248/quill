@@ -54,7 +54,7 @@ app/build-app.sh
 open target/app/Quill.app
 ```
 
-The first build takes a while. Quill opens on the form for adding an account.
+The first build takes a while. Quill opens on the form for adding an account. Quill > Install Command Line Tool then puts `quill` on your `PATH`, for the command line below.
 
 **Just looking?** The demo opens an invented mailbox and touches no account of yours:
 

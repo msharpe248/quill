@@ -19,7 +19,7 @@ Quill is the user's mail program. Its `quill` command works their real mail: eve
 
 ## Running it
 
-Use `quill` if it is on the `PATH`. If it is not, it is inside the app:
+Use `quill` if it is on the `PATH`. If it is not, it is inside the app (and the user can put it on the `PATH` with Quill > Install Command Line Tool):
 
 ```sh
 /Applications/Quill.app/Contents/Helpers/quill status --json

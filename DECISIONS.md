@@ -1343,3 +1343,17 @@ Asked for by the owner: a `SKILL.md`, and "it would be nice if it could be symli
 ### What is for agents, and what is only a command line (2026-11-17)
 
 The owner's reading, and how Quill is now described: the shell commands are Quill's command line, for scripts, and are on as Quill comes, as the first five always were. What is for AI agents is the skill, which nobody has until they install it into their agent's program, and MCP, which is off until it is switched on. The defaults were not changed. The README and the manual say it that way round; they had said "ready for your AI agent" of all three, and that everything was off until switched on, which was not so of the commands. The owner may yet decide otherwise ("I might change my mind later"): the change would be `commands` off as Quill comes.
+
+## Install Command Line Tool (2026-11-17)
+
+Asked for by the owner. The command line is inside the app's bundle, where no shell looks, and the skill and every example in the manual say `quill`.
+
+- **A command of the core's, `app.install_command_line`**, in the Quill menu (the app's own menu takes the core's commands placed there), the palette, and on `Z` then `c`; and `quill link` from a terminal. One piece of code (`quill-cli/src/link.rs`) behind both, run by the accounts service, which is where Quill's file work outside the store is done.
+- **A link, not a copy**, called `quill`, to the program that is running: so it is always the installed Quill's command line, and an upgrade needs nothing done.
+- **No administrator's password.** The link goes in the first of `/usr/local/bin`, `/opt/homebrew/bin` and `~/.local/bin` that is there and can be written to; only the last is made if it is missing. Other programs ask for a password to write in `/usr/local/bin`; Quill has no part that runs as an administrator, and this was not worth the first one.
+- **`~/.local/bin` is not on a Mac's `PATH` until the user puts it there**, and the app cannot see the `PATH` of the user's shell, so when the link goes there Quill says the line to add to `~/.zprofile`. It is said in the bottom bar, kept short enough to be read there.
+- **Nothing is replaced but a link to a `quill`**, or a link to nothing. A program of the same name that is somebody else's stops the install, and no link is made further along the `PATH`, where a shell would never find it first.
+- **Not from the disk image, or from where macOS runs a quarantined app**: a link to there would not last. Quill says to move it to Applications.
+- **"Install Command Line Tool", with no ellipsis**: nothing is asked before it is done.
+- **Seen in a check build**, with the link sent to a scratch folder (`QUILL_LINK_DIR`): the item in the Quill menu, the link made to the bundle's `quill`, which ran, and what the bottom bar said. **Not seen:** the link made in a real `/opt/homebrew/bin` or `/usr/local/bin`, which is the owner's to do, and the item under a hand.
+- **Not done:** taking the link away again (remove it by hand), and offering the install by itself the first time Quill runs.

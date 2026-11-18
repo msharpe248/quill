@@ -294,6 +294,9 @@ pub enum AccountRequest {
     /// is how Quill starts next time. Answered with
     /// [`AccountEvent::Remembered`].
     Remember(Preference),
+    /// Put a link to this Quill's command line where a shell looks for
+    /// programs. Answered with [`AccountEvent::CommandLinked`].
+    LinkCommand,
     /// Read the settings from the config for the host's settings window,
     /// having first made this change to it, if there is one. The file is
     /// read afresh every time, so a change is always made to the file as
@@ -415,6 +418,9 @@ pub enum AccountEvent {
     /// The choice is in the config, or why it could not be written there.
     /// It holds for this run either way.
     Remembered(Result<(), String>),
+    /// The command line is linked, with what to tell the user of it; or
+    /// why it is not.
+    CommandLinked(Result<String, String>),
     /// The user's own keys were changed, or why they were not: then the
     /// file is as it was. With it, what the settings say now.
     KeysChanged {
@@ -1457,6 +1463,7 @@ impl Setup {
             | AccountEvent::Removed { .. }
             | AccountEvent::EditAsked { .. }
             | AccountEvent::Remembered(_)
+            | AccountEvent::CommandLinked(_)
             | AccountEvent::KeysChanged { .. }
             | AccountEvent::ThemesChanged { .. }
             | AccountEvent::Settings { .. } => (Vec::new(), Outcome::Open),

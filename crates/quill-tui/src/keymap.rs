@@ -353,6 +353,7 @@ const VIM: PresetTable = &[
     // Two keys, so that it is never pressed by accident: it switches
     // settings off.
     (CommandId::AgentsStop, &["Z a"]),
+    (CommandId::CommandLineInstall, &["Z c"]),
     (CommandId::MessageCopy, &["C"]),
     (CommandId::MessagePutBack, &["P"]),
     (CommandId::FolderCreate, &["+"]),
@@ -438,6 +439,7 @@ const MUTT: PresetTable = &[
     // Two keys, so that it is never pressed by accident: it switches
     // settings off.
     (CommandId::AgentsStop, &["Z a"]),
+    (CommandId::CommandLineInstall, &["Z c"]),
     (CommandId::MessageCopy, &["C"]),
     (CommandId::MessagePutBack, &["P"]),
     (CommandId::FolderCreate, &["+"]),

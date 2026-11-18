@@ -140,6 +140,7 @@ pub fn spawn_remembering(config_file: PathBuf) -> AccountsLink {
                 AccountRequest::Themes(change) => {
                     settings::themes_off_thread(config_file.clone(), change).await
                 }
+                AccountRequest::LinkCommand => link_command().await,
                 _ => continue,
             };
             if events_tx.send(event).is_err() {
@@ -158,6 +159,16 @@ async fn remember_off_thread(config_file: PathBuf, preference: Preference) -> Re
     tokio::task::spawn_blocking(move || remember(&config_file, preference))
         .await
         .unwrap_or_else(|err| Err(err.to_string()))
+}
+
+/// Links this Quill's command line into a folder a shell looks in, off
+/// the async threads, and says what to tell the user.
+async fn link_command() -> AccountEvent {
+    AccountEvent::CommandLinked(
+        tokio::task::spawn_blocking(|| crate::link::install_this(None))
+            .await
+            .unwrap_or_else(|err| Err(err.to_string())),
+    )
 }
 
 /// Writes a choice made in the UI into `config.toml`, leaving the rest of
@@ -361,6 +372,7 @@ impl Service {
             AccountRequest::Themes(change) => {
                 settings::themes_off_thread(self.config_file.clone(), change).await
             }
+            AccountRequest::LinkCommand => link_command().await,
         }
     }
 

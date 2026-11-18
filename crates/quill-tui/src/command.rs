@@ -237,6 +237,7 @@ pub enum CommandId {
     FolderRemove,
     MailboxSync,
     AgentsStop,
+    CommandLineInstall,
     SidebarOpen,
     SidebarClose,
     HelpToggle,
@@ -983,6 +984,16 @@ impl Registry {
                     "Remove this account\u{2026}",
                     General,
                     Some(Menu::File),
+                    PANES,
+                ),
+                // In the app's own menu: it is about the program, not the
+                // mail. No dialog follows it, so no ellipsis.
+                spec(
+                    CommandLineInstall,
+                    "app.install_command_line",
+                    "Install Command Line Tool",
+                    General,
+                    Some(Menu::App),
                     PANES,
                 ),
                 // Stops everything that works the mail from outside the

@@ -2136,3 +2136,46 @@ fn checking_for_new_mail_asks_every_account_now() {
     demo.keys("ctrl-r");
     assert!(demo.sync_requests.is_empty());
 }
+
+#[test]
+fn installing_the_command_line_is_asked_of_the_service_and_what_it_says_is_shown() {
+    use quill_tui::setup::AccountEvent;
+    let mut harness = Harness::demo(200, 60);
+    // By its keys, two of them, and it is in the app's own menu.
+    harness.keys("Z c");
+    assert_eq!(
+        harness.account_requests.last(),
+        Some(&AccountRequest::LinkCommand)
+    );
+    let spec = *harness
+        .env
+        .registry
+        .by_name("app.install_command_line")
+        .unwrap();
+    assert_eq!(spec.title, "Install Command Line Tool");
+    assert!(matches!(spec.menu, Some(quill_tui::command::Menu::App)));
+
+    harness.act(Action::Account(AccountEvent::CommandLinked(Ok(
+        "Installed at /opt/homebrew/bin/quill: in a new terminal window, quill is this Quill."
+            .to_owned(),
+    ))));
+    assert!(
+        harness
+            .screen()
+            .contains("Installed at /opt/homebrew/bin/quill"),
+        "{}",
+        harness.screen()
+    );
+    harness.keys("esc");
+    harness.act(Action::Account(AccountEvent::CommandLinked(Err(
+        "/usr/local/bin/quill is there already and is not a link to Quill. Move it away first"
+            .to_owned(),
+    ))));
+    assert!(
+        harness
+            .screen()
+            .contains("The command line tool was not installed: /usr/local/bin/quill is there"),
+        "{}",
+        harness.screen()
+    );
+}

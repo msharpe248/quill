@@ -125,6 +125,7 @@ expression: outline(&shown)
      row "Sign in to an account": S [change]
      row "Edit this account…": E [change]
      row "Remove this account…": D [change]
+     row "Install Command Line Tool": Z c [change]
      row "Stop Agents": Z a [change]
      row "Help for this context": ? [change]
      row "Keyboard shortcuts": K, f1 [change]

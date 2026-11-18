@@ -36,6 +36,8 @@ Without `--demo`, Quill opens your own mail. The first time, with no accounts ye
 
 The app is not sandboxed: it runs your own editor on your own settings, which a sandboxed app cannot. It keeps its settings and mail in `~/Library/Application Support/Quill`, the same place as `quill` run in a terminal, so the two are one mailbox. Only one of them can have it open at a time: the second says that Quill is already open and stops, since two would fetch and send the same mail twice. (The commands that do one thing and exit, such as `quill keys`, are not held back.)
 
+**Install Command Line Tool**, in the Quill menu, puts `quill` on your `PATH`, so that the commands under "From a shell" work at a prompt. The command line is inside the app, where no shell looks; this makes a link to it, called `quill`, in the first of `/usr/local/bin`, `/opt/homebrew/bin` and `~/.local/bin` that you can write to, without asking for an administrator's password. Quill's bottom bar says where it went. If that is `~/.local/bin`, which a shell does not look in until it is told to, it also says the line to add to `~/.zprofile`. Because it is a link, `quill` is always the installed Quill's own; if you move Quill, choose the item again. A program of someone else's called `quill` in that folder is never replaced: Quill says it is there. It is not offered from the disk image: drag Quill to Applications first. From a terminal the same thing is `quill link`, and `quill link --to DIR` names the folder.
+
 Settings… in the Quill menu (`cmd-,`) opens a settings window for the settings changed most; see "The Settings window". The app is light, dark or as the Mac is, with a theme for each, and Import Theme… in the same menu brings in any theme made for Ghostty; a theme's colours are changed, and themes of your own made and deleted, in Settings, Appearance, where the font and its size are chosen too; see "Themes".
 
 Closing the window does not quit Quill. As with any mail program on a Mac, the red button (or `cmd-w`, or `q`) only puts the window away: Quill stays in the Dock, goes on fetching and sending mail, and still announces new mail and shows the unread count. A click on its Dock icon, Window > Main Window (`cmd-0`), a notification or a mail link brings the window back as you left it. `cmd-q` quits, and so does `Q`.
@@ -204,7 +206,7 @@ Press `?` at any time for the keys that apply where you are, and `K` (or `f1`) f
 | `y` / `n` | Accept, decline an invitation | `M` | Answer an invitation with maybe |
 | `l` / `h` | In the accounts pane: show, hide an account's folders | `K` | Every key, and what it does |
 | `D` | Remove the account chosen in the accounts pane, after asking | `E` | Change the account chosen in the accounts pane: its servers and password |
-| `Z` `a` | Stop Agents: see "Agents" | | |
+| `Z` `a` | Stop Agents: see "Agents" | `Z` `c` | Install the command line tool: see "The app" |
 | `P` | Put back: in a Trash folder, the messages chosen; anywhere else, the one deleted last | `C` | Copy to a folder |
 | `+` | Make a folder, on the server or on this Mac | `_` | In the accounts pane: take away an empty folder of this Mac's |
 
@@ -640,7 +642,7 @@ Hooks work in a terminal only. In the app the command is switched off and the li
 
 ## From a shell
 
-Quill's mail can be read, filed and sent without its screen, with a command line of its own: for scripts, for scheduled jobs and for a quick look. Every command takes `--json`. (If you use an AI agent, it can be taught these commands, should you choose to: see "Agents".)
+Quill's mail can be read, filed and sent without its screen, with a command line of its own: for scripts, for scheduled jobs and for a quick look. Every command takes `--json`. In the app, Quill > Install Command Line Tool puts `quill` on your `PATH` (see "The app"); until then it is `/Applications/Quill.app/Contents/Helpers/quill`. (If you use an AI agent, it can be taught these commands, should you choose to: see "Agents".)
 
 ```sh
 quill list                         # every inbox together, newest first
@@ -905,6 +907,7 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `account.sign_in` | Sign an account in to Microsoft or Google |
 | `account.edit` | Change the account chosen in the accounts pane: its servers, the name it signs in with and its password |
 | `account.remove` | Remove the account chosen in the accounts pane, after asking |
+| `app.install_command_line` | Install Command Line Tool: link `quill` into a folder on your `PATH` |
 | `agents.stop` | Stop Agents: switch shell commands and MCP off at once, and take back their mail that has not gone |
 | `help.toggle` | Show or hide help |
 | `help.keys` | Show or hide the list of every key |
