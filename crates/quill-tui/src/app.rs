@@ -1421,14 +1421,21 @@ fn run_editor(
     input: &mut Option<EventStream>,
     mut command: std::process::Command,
 ) -> io::Result<Option<EditorWait>> {
-    // Stop reading the keyboard: what is typed from here on is Vim's.
-    // Dropping the stream stops its reader; looking once more makes sure
-    // it has let go, and anything already typed is not kept for later.
+    // Stop reading the keyboard: what is typed from here on is the
+    // editor's. Dropping the stream tells its reader thread to stop: a
+    // flag, and one wake for whichever look at the keyboard comes next.
+    //
+    // Nothing here looks at the keyboard after that, and it matters. The
+    // reader thread may have been asked to look and not have started yet.
+    // A look from here would take the wake that was meant for it; the
+    // thread would then start, find nothing to wake it, and wait on the
+    // keyboard for ever with crossterm's reader in its hand, eating what
+    // is typed for the editor. Taking the terminal back would then stop
+    // dead at making a new stream, with the screen cleared and nothing
+    // drawn. Left alone, the wake is the thread's whenever it starts.
+    // What was typed and not read is cleared when the terminal is taken
+    // back ([`settle_keyboard`]).
     *input = None;
-    let _ = ratatui::crossterm::event::poll(Duration::from_millis(20));
-    while matches!(ratatui::crossterm::event::poll(Duration::ZERO), Ok(true)) {
-        let _ = ratatui::crossterm::event::read();
-    }
     // Pictures are drawn over the screen being left: take them down.
     let _ = io.images.sync(Vec::new(), io.images.size);
     let _ = terminal.show_cursor();
@@ -1436,7 +1443,10 @@ fn run_editor(
     match command.spawn() {
         Ok(mut child) => Ok(Some(tokio::task::spawn_blocking(move || child.wait()))),
         Err(_) => {
-            // It was there and would not start. Take the terminal back.
+            // It was there and would not start. Take the terminal back,
+            // once the reader that was stopped has had a moment to go:
+            // no editor ran to give it one.
+            std::thread::sleep(Duration::from_millis(20));
             *terminal = step("cannot take the terminal back", retake(env.mouse))?;
             *input = Some(EventStream::new());
             Ok(None)
@@ -1452,7 +1462,31 @@ fn retake(mouse: bool) -> io::Result<DefaultTerminal> {
     // Asked of the terminal directly: nothing here waits on an answer
     // from it.
     ratatui::crossterm::execute!(stdout(), Clear(ClearType::All))?;
+    settle_keyboard();
     Ok(terminal)
+}
+
+/// Clears what is left of the keyboard from before an editor had the
+/// terminal, so that a new stream starts clean: keys that were typed and
+/// never read, which are not kept for later, and the wake left by the
+/// reader that was stopped, if nothing took it. A stream that met that
+/// wake on its first look would report it as a failure to read.
+///
+/// Only once the editor has gone: by then the reader thread that the wake
+/// was for has long had it (see [`run_editor`]).
+fn settle_keyboard() {
+    // A bound, so that a keyboard that cannot be read at all is the new
+    // stream's to report, not a loop here.
+    for _ in 0..64 {
+        match ratatui::crossterm::event::poll(Duration::ZERO) {
+            Ok(true) => {
+                let _ = ratatui::crossterm::event::read();
+            }
+            Ok(false) => break,
+            // The wake: taken by looking, so look again.
+            Err(_) => {}
+        }
+    }
 }
 
 /// How long the keys are quiet before the spelling of what was typed is

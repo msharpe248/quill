@@ -1357,3 +1357,13 @@ Asked for by the owner. The command line is inside the app's bundle, where no sh
 - **"Install Command Line Tool", with no ellipsis**: nothing is asked before it is done.
 - **Seen in a check build**, with the link sent to a scratch folder (`QUILL_LINK_DIR`): the item in the Quill menu, the link made to the bundle's `quill`, which ran, and what the bottom bar said. **Not seen:** the link made in a real `/opt/homebrew/bin` or `/usr/local/bin`, which is the owner's to do, and the item under a hand.
 - **Not done:** taking the link away again (remove it by hand), and offering the install by itself the first time Quill runs.
+
+## Coming back from an editor to an empty screen (2026-11-17)
+
+A fault that had been seen now and then in the terminal tests, and three times in four CI runs on this day: after an editor outside Quill ended, Quill took the terminal back, cleared it, and drew nothing.
+
+- **The cause was a race with crossterm's keyboard reader**, found by reading its source, not by catching it: it did not happen once on this Mac in dozens of runs, even with every processor busy. Dropping the keyboard stream sets a flag and leaves one wake for the stream's reader thread. Quill then looked at the keyboard itself, to be sure the reader had let go and to throw away what had been typed. If the thread had been asked to look and had not started yet, that look took the wake meant for it. The thread then started, found nothing to wake it, and waited on the keyboard with no end, holding crossterm's reader. When the editor ended, making the new stream waited for that reader for ever: exactly where the screen stopped.
+- **For a person it will have looked different**: the stuck thread reads the keyboard, so the first key typed in the editor went to it and not to the editor, and that let it go. A key lost at the start of an editor, now and then.
+- **The fix is to not look.** Nothing touches the keyboard between dropping the stream and the editor ending, so the wake is the thread's whenever it starts. What was typed and not read, and the wake itself when no thread took it, are cleared as the terminal is taken back (`settle_keyboard`), when the thread has long gone.
+- **What is left of the race:** an editor that cannot be started is taken back from at once, with nothing but a short pause for the thread. Rare twice over.
+- **Not proved by a test.** It cannot be made to happen here. That it has gone will show in CI, where it was failing more often than not.
