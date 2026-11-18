@@ -43,6 +43,22 @@ Either way, what may be done is yours to say (look, organize, delete to the tras
 
 **Private.** Quill has no servers of its own, no analytics and no tracking. Your mail goes between your Mac and your mail providers and nowhere else, and your passwords are in the macOS Keychain. [PRIVACY.md](PRIVACY.md) says exactly what it keeps and what it connects to.
 
+## A look around
+
+**Mail as it was sent.** Press `w` and the message opens in a web pane beside the list, with remote pictures left out until you ask for them.
+
+![Quill's window with the web reading pane: the inbox on the left, a newsletter shown as a web page on the right, and a bar offering to load its pictures](docs/images/quill-web-reading.png)
+
+**In a terminal of your own.** The same program, the same mail and the same keys: here `quill tui` in Ghostty.
+
+![Quill running in a terminal: the accounts, the inbox and a message read as text](docs/images/quill-terminal.png)
+
+**Settings, as on any Mac.** A settings window for what you change most, and a plain file behind it for everything else.
+
+<p align="center">
+  <img src="docs/images/quill-settings.png" width="520" alt="Quill's Settings window on its Appearance pane: light, dark or as the Mac is, a theme for each, the font and its size, and the themes there are">
+</p>
+
 ## Get it
 
 There is no download yet: Quill is built from the source. You need macOS 13 or later, Xcode's command line tools (`xcode-select --install`) and a stable Rust (1.98 or later, from [rustup](https://rustup.rs)).
