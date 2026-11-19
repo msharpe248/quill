@@ -91,6 +91,7 @@ Two things to know about a build of your own:
 |---|---|---|---|
 | `j` / `k` | Down, up | `enter` | Open the message |
 | `c` | Write a message | `r` | Reply |
+| `R` | Reply to all | `f` | Forward |
 | `e` | Archive | `d` | Delete |
 | `s` | Star | `u` | Mark unread |
 | `m` | Move to a folder | `b` | Snooze |
