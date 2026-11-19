@@ -135,6 +135,7 @@ expression: outline(&shown)
      row "Run a Rule…": Z r [change]
      row "Run All Rules…": Z R [change]
      row "Run the Rule Shown": Z y [change]
+     row "New Rule…": Z N [change]
      row "New Rule from This Message…": Z n [change]
      row "Edit Rules": Z e [change]
      row "What Rules Did": Z l [change]

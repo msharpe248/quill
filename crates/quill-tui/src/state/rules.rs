@@ -12,11 +12,13 @@
 
 use std::sync::Arc;
 
-use quill_core::types::LocalMessageId;
+use quill_core::types::{FolderRole, LocalMessageId};
 use quill_store::{AgentEntry, DraftId};
 use quill_sync::RuleSet;
 
-use super::{Effects, Env, HookPicker, HostRequest, MessageList, Notice, Pane, Search, State};
+use super::{
+    Effects, Env, HookPicker, HostRequest, MessageList, Notice, Pane, Search, SidebarEntry, State,
+};
 use crate::data::DataRequest;
 use crate::input::LineInput;
 use crate::keymap::{Key, KeyChord, Mods};
@@ -117,23 +119,101 @@ impl RuleAction {
 pub enum RuleField {
     #[default]
     Name,
-    Matching,
+    /// Which account's mail, where there is more than one.
+    Account,
+    From,
+    To,
+    Subject,
+    /// Words in the message's text.
+    Text,
     Action,
     Folder,
 }
 
-/// The form for a new rule, started from a message.
+/// An account a rule can be for, with the folders it can file mail in.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RuleAccount {
+    pub name: String,
+    /// Its folders, by name, with what each is for.
+    pub folders: Vec<(String, FolderRole)>,
+}
+
+impl RuleAccount {
+    /// The folder `wanted` names: by its name, whatever the case, or by
+    /// what a folder is for (`archive`, `trash`, `junk`), as a rule's
+    /// `move_to` is read.
+    pub fn folder(&self, wanted: &str) -> Option<&str> {
+        let wanted = wanted.trim().to_lowercase();
+        let role = match wanted.as_str() {
+            "archive" => Some(FolderRole::Archive),
+            "trash" => Some(FolderRole::Trash),
+            "junk" | "spam" => Some(FolderRole::Junk),
+            "sent" => Some(FolderRole::Sent),
+            "drafts" => Some(FolderRole::Drafts),
+            _ => None,
+        };
+        self.folders
+            .iter()
+            .find(|(name, _)| name.to_lowercase() == wanted)
+            .or_else(|| {
+                self.folders
+                    .iter()
+                    .find(|(_, is)| role.is_some_and(|role| *is == role))
+            })
+            .map(|(name, _)| name.as_str())
+    }
+
+    /// The folders a rule would file mail in: not the inbox, which is
+    /// where the mail already is, and not the folders for mail the user
+    /// is writing or has sent.
+    pub fn filing(&self) -> Vec<&str> {
+        self.folders
+            .iter()
+            .filter(|(_, role)| {
+                !matches!(
+                    role,
+                    FolderRole::Inbox | FolderRole::Drafts | FolderRole::Sent
+                )
+            })
+            .map(|(name, _)| name.as_str())
+            .collect()
+    }
+
+    /// The folder to offer before one is chosen: the archive, where
+    /// there is one, and else the first there is.
+    pub fn usual(&self) -> Option<&str> {
+        self.folders
+            .iter()
+            .find(|(_, role)| *role == FolderRole::Archive)
+            .map(|(name, _)| name.as_str())
+            .or_else(|| self.filing().first().copied())
+    }
+}
+
+/// The form for a new rule: begun with nothing in it, or from a message,
+/// with who sent it filled in.
+///
+/// Which mail the rule is for is asked a part at a time: who it is from,
+/// who it is to, its subject, its text. Whatever is filled in must be in
+/// the message. What is written into the file is a search made of them,
+/// which can say more there than this form asks.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RulePrompt {
     pub name: LineInput,
-    /// Which mail it is for, in the search box's words.
-    pub matching: LineInput,
+    pub from: LineInput,
+    pub to: LineInput,
+    pub subject: LineInput,
+    /// Words in the message's text.
+    pub text: LineInput,
     pub action: RuleAction,
     /// The folder to move to, by name.
     pub folder: LineInput,
-    /// The account the message is in, when there is more than one: the
-    /// rule is for that account's mail.
-    pub account: Option<String>,
+    /// The accounts there are, with their folders, as the form was
+    /// opened.
+    pub accounts: Vec<RuleAccount>,
+    /// The account the rule is for, as a place in `accounts`. `None`:
+    /// every account's mail.
+    pub account: Option<usize>,
     pub focus: RuleField,
     /// Why what was typed would not do.
     pub problem: Option<String>,
@@ -141,11 +221,24 @@ pub struct RulePrompt {
     pub busy: bool,
 }
 
+/// What the choice of every account is called.
+pub const EVERY_ACCOUNT: &str = "Every account";
+
 impl RulePrompt {
-    /// The fields there are now: a folder is asked for only by a rule
-    /// that moves.
+    /// The fields there are now: an account is chosen only where there
+    /// are several, and a folder is asked for only by a rule that moves.
     fn fields(&self) -> Vec<RuleField> {
-        let mut fields = vec![RuleField::Name, RuleField::Matching, RuleField::Action];
+        let mut fields = vec![RuleField::Name];
+        if self.accounts.len() > 1 {
+            fields.push(RuleField::Account);
+        }
+        fields.extend([
+            RuleField::From,
+            RuleField::To,
+            RuleField::Subject,
+            RuleField::Text,
+            RuleField::Action,
+        ]);
         if self.action == RuleAction::Move {
             fields.push(RuleField::Folder);
         }
@@ -170,9 +263,12 @@ impl RulePrompt {
     pub fn typing(&mut self) -> Option<&mut LineInput> {
         match self.focus {
             RuleField::Name => Some(&mut self.name),
-            RuleField::Matching => Some(&mut self.matching),
+            RuleField::From => Some(&mut self.from),
+            RuleField::To => Some(&mut self.to),
+            RuleField::Subject => Some(&mut self.subject),
+            RuleField::Text => Some(&mut self.text),
             RuleField::Folder => Some(&mut self.folder),
-            RuleField::Action => None,
+            RuleField::Action | RuleField::Account => None,
         }
     }
 
@@ -185,14 +281,51 @@ impl RulePrompt {
         }
     }
 
+    /// The account the rule is for, by name; or that it is for all.
+    pub fn account_name(&self) -> &str {
+        self.chosen().map_or(EVERY_ACCOUNT, |account| &account.name)
+    }
+
+    /// The one account the rule is about: the one chosen, or the only
+    /// one there is.
+    pub fn chosen(&self) -> Option<&RuleAccount> {
+        match (self.account, self.accounts.as_slice()) {
+            (Some(index), accounts) => accounts.get(index),
+            (None, [only]) => Some(only),
+            (None, _) => None,
+        }
+    }
+
+    /// The folders to choose from, when the rule is about one account:
+    /// that account's. About every account there is no one list, and the
+    /// folder is typed.
+    pub fn folder_choices(&self) -> Option<Vec<&str>> {
+        self.chosen()
+            .map(RuleAccount::filing)
+            .filter(|folders| !folders.is_empty())
+    }
+
+    /// Every account, then each: the next of them, or the one before.
+    fn next_account(&mut self, forward: bool) {
+        let count = self.accounts.len() + 1;
+        let at = self.account.map_or(0, |index| index + 1);
+        let next = if forward {
+            (at + 1) % count
+        } else {
+            (at + count - 1) % count
+        };
+        self.account = next.checked_sub(1);
+    }
+
     /// Takes a key: `tab` and the arrows go between the fields, `space`
-    /// and the side arrows change what the rule does, and anything else
-    /// is typing. Returns whether the key was the form's.
+    /// and the side arrows change a choice, and anything else is typing.
+    /// Returns whether the key was the form's.
     pub fn key(&mut self, chord: KeyChord) -> bool {
         if self.busy {
             return false;
         }
         let plain = chord.mods == Mods::default();
+        let choosing = matches!(self.focus, RuleField::Action | RuleField::Account);
         match chord.key {
             Key::Tab if plain => self.step(true),
             Key::Tab
@@ -206,8 +339,14 @@ impl RulePrompt {
             }
             Key::Down if plain => self.step(true),
             Key::Up if plain => self.step(false),
-            Key::Left | Key::Right | Key::Char(' ') if plain && self.focus == RuleField::Action => {
-                self.set_action(self.action.next(chord.key != Key::Left));
+            Key::Left | Key::Right | Key::Char(' ') if plain && choosing => {
+                let forward = chord.key != Key::Left;
+                if self.focus == RuleField::Action {
+                    self.set_action(self.action.next(forward));
+                } else {
+                    self.next_account(forward);
+                }
+                self.problem = None;
             }
             _ => {
                 let typed = self.typing().is_some_and(|input| input.key(chord));
@@ -220,44 +359,119 @@ impl RulePrompt {
         true
     }
 
+    /// Which mail the rule is for, as a search: each part that is filled
+    /// in, in the place it names.
+    pub fn matching(&self) -> String {
+        [
+            ("from", &self.from),
+            ("to", &self.to),
+            ("subject", &self.subject),
+            ("body", &self.text),
+        ]
+        .into_iter()
+        .filter_map(|(filter, input)| {
+            let value = filter_value(input.text());
+            (!value.is_empty()).then(|| format!("{filter}:{value}"))
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+    }
+
+    /// The folder the rule files mail in, as it is to be written, or why
+    /// what was typed is no folder the rule could use.
+    fn filing_folder(&self) -> Result<String, String> {
+        let typed = self.folder.text().trim();
+        if typed.is_empty() {
+            return Err("Name the folder to move the mail to.".to_owned());
+        }
+        let such_as = |account: &RuleAccount| {
+            let folders = account.filing();
+            if folders.is_empty() {
+                String::new()
+            } else {
+                format!(" Its folders are: {}.", folders.join(", "))
+            }
+        };
+        match self.chosen() {
+            // Written as the account names it, whatever case was typed.
+            Some(account) => account
+                .folder(typed)
+                .filter(|name| account.filing().contains(name))
+                .map(str::to_owned)
+                .ok_or_else(|| {
+                    format!(
+                        "{} has no folder called \"{typed}\".{}",
+                        account.name,
+                        such_as(account)
+                    )
+                }),
+            None => {
+                let without: Vec<&str> = self
+                    .accounts
+                    .iter()
+                    .filter(|account| account.folder(typed).is_none())
+                    .map(|account| account.name.as_str())
+                    .collect();
+                if without.is_empty() {
+                    Ok(typed.to_owned())
+                } else {
+                    Err(format!(
+                        "There is no folder called \"{typed}\" in {}. Choose the account the \
+                         rule is for, or a folder every account has, such as archive.",
+                        without.join(" or ")
+                    ))
+                }
+            }
+        }
+    }
+
     /// The rule as it is to be written, or what is missing from it.
     pub fn rule(&self) -> Result<NewRule, String> {
         let name = self.name.text().trim();
         if name.is_empty() {
             return Err("Give the rule a name.".to_owned());
         }
-        let matching = self.matching.text().trim();
+        let matching = self.matching();
         if matching.is_empty() {
             return Err(
-                "Say which mail the rule is for, in the search box's words: from:ana \
-                 subject:invoice."
+                "Say which mail the rule is for: fill in who it is from, who it is to, its \
+                 subject or its text."
                     .to_owned(),
             );
         }
-        let folder = self.folder.text().trim();
-        if self.action == RuleAction::Move && folder.is_empty() {
-            return Err("Name the folder to move the mail to.".to_owned());
-        }
+        let move_to = match self.action {
+            RuleAction::Move => Some(self.filing_folder()?),
+            RuleAction::Delete | RuleAction::MarkRead => None,
+        };
         Ok(NewRule {
             name: name.to_owned(),
-            matching: matching.to_owned(),
-            account: self.account.clone(),
-            move_to: (self.action == RuleAction::Move).then(|| folder.to_owned()),
+            matching,
+            // Said only where it narrows anything.
+            account: self
+                .account
+                .and_then(|index| self.accounts.get(index))
+                .filter(|_| self.accounts.len() > 1)
+                .map(|account| account.name.clone()),
+            move_to,
             delete: self.action == RuleAction::Delete,
             mark_read: self.action == RuleAction::MarkRead,
         })
     }
 }
 
-/// A value for a search filter, as the search box reads one: quoted when
-/// it has a space in it, and never with a quote of its own.
+/// What was typed in one part of the form, as the value of a search
+/// filter: quoted when it is more than a word, and never with a quote of
+/// its own or anything that would end it. A leading `-`, which a search
+/// reads as "not", is dropped: the form asks what the mail has.
 fn filter_value(text: &str) -> String {
     let cleaned: String = text
         .chars()
         .filter(|c| *c != '"' && !c.is_control())
         .collect();
-    let cleaned = cleaned.trim();
-    if cleaned.contains(char::is_whitespace) {
+    let cleaned = cleaned.trim().trim_start_matches('-').trim();
+    if cleaned.is_empty() {
+        String::new()
+    } else if cleaned.contains(char::is_whitespace) || cleaned.contains(':') {
         format!("\"{cleaned}\"")
     } else {
         cleaned.to_owned()
@@ -441,6 +655,48 @@ impl State {
         self.select_mailbox_row(self.mailbox, out);
     }
 
+    /// The accounts there are, each with its folders, for the form.
+    fn rule_accounts(&self) -> Vec<RuleAccount> {
+        let mut accounts: Vec<RuleAccount> = self
+            .accounts
+            .iter()
+            .map(|account| RuleAccount {
+                name: text::sanitize_line(&account.name),
+                folders: Vec::new(),
+            })
+            .collect();
+        for entry in &self.sidebar.entries {
+            if let SidebarEntry::Folder {
+                account,
+                name,
+                role,
+                ..
+            } = entry
+                && let Some(of) = accounts.get_mut(*account)
+            {
+                of.folders.push((name.clone(), *role));
+            }
+        }
+        accounts
+    }
+
+    /// Whether a rule can be begun now.
+    pub fn can_create_rule(&self) -> bool {
+        self.compose.is_none() && self.new_rule.is_none() && !self.accounts.is_empty()
+    }
+
+    /// Opens the form for a new rule, with nothing in it: for every
+    /// account's mail, until one is chosen.
+    pub(super) fn ask_blank_rule(&mut self) {
+        if !self.can_create_rule() {
+            return;
+        }
+        self.new_rule = Some(RulePrompt {
+            accounts: self.rule_accounts(),
+            ..RulePrompt::default()
+        });
+    }
+
     /// Opens the form for a new rule about mail from whoever sent the
     /// message the user is on.
     pub(super) fn ask_new_rule(&mut self) {
@@ -448,18 +704,15 @@ impl State {
             return;
         };
         // With several accounts the rule is for the one the message is
-        // in: the folder it names is that account's.
+        // in, until another is chosen: the folder it names is that
+        // account's.
         let account = (self.accounts.len() > 1)
-            .then(|| {
-                self.accounts
-                    .iter()
-                    .find(|row| row.id == account)
-                    .map(|row| row.name.clone())
-            })
+            .then(|| self.accounts.iter().position(|row| row.id == account))
             .flatten();
         self.new_rule = Some(RulePrompt {
             name: LineInput::new(text::sanitize_line(&format!("From {name}"))),
-            matching: LineInput::new(format!("from:{}", filter_value(&address))),
+            from: LineInput::new(text::sanitize_line(&address)),
+            accounts: self.rule_accounts(),
             account,
             ..RulePrompt::default()
         });

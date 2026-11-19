@@ -363,6 +363,17 @@ fn the_switch_holds_at_once_and_is_written_for_the_engine() {
     );
 }
 
+/// The rule the form asked to have written, if it has asked.
+fn asked_for(harness: &Harness) -> Option<NewRule> {
+    harness
+        .account_requests
+        .iter()
+        .find_map(|request| match request {
+            AccountRequest::Rules(RulesAsk::Add(new)) => Some(new.clone()),
+            _ => None,
+        })
+}
+
 #[test]
 fn a_new_rule_starts_from_the_message_and_is_tried_once_saved() {
     let mut harness = Harness::demo(200, 60);
@@ -375,22 +386,18 @@ fn a_new_rule_starts_from_the_message_and_is_tried_once_saved() {
         harness.row_with("Name:").contains("From Ana Ruiz"),
         "{screen}"
     );
+    // Who sent the message is filled in, and nothing else.
     assert!(
-        harness
-            .row_with("Matching:")
-            .contains("from:ana.ruiz@example.com"),
+        harness.row_with("From:").contains("ana.ruiz@example.com"),
         "{screen}"
     );
     assert!(
         harness.row_with("Do:").contains("Move to a folder"),
         "{screen}"
     );
-    // The demo has two accounts: the rule is for the one the message is
-    // in, whose folder it will name.
-    assert!(
-        harness.row_with("For:").contains("mail in Work"),
-        "{screen}"
-    );
+    // The demo has two accounts: the rule starts as one for the account
+    // the message is in, whose folder it will name.
+    assert!(harness.row_with("For:").contains("Work"), "{screen}");
 
     // Saved with no folder named, it says what is missing and stays.
     harness.keys("enter");
@@ -401,20 +408,50 @@ fn a_new_rule_starts_from_the_message_and_is_tried_once_saved() {
     );
     assert!(harness.account_requests.is_empty());
 
-    // tab goes on through the fields; the folder is typed.
-    harness.keys("tab tab tab");
+    // tab goes on through the fields to the folder, where the account's
+    // folders are said. One it does not have is refused, with the ones
+    // it has.
+    harness.keys("tab tab tab tab tab tab tab");
+    assert!(
+        harness.screen().contains("Folders: Archive, Trash."),
+        "{}",
+        harness.screen()
+    );
     harness.type_text("Plans");
     harness.keys("enter");
+    let screen = harness.screen();
+    assert!(
+        screen.contains("Work has no folder called \"Plans\""),
+        "{screen}"
+    );
+    assert!(harness.account_requests.is_empty());
+
+    // Nor is mail filed where sent mail is kept.
+    harness.keys("backspace backspace backspace backspace backspace");
+    harness.type_text("Sent");
+    harness.keys("enter");
+    assert!(
+        harness
+            .screen()
+            .contains("Work has no folder called \"Sent\""),
+        "{}",
+        harness.screen()
+    );
+    harness.type_text("x");
+    // One it has, in any case, is written as the account names it.
+    harness.keys("backspace backspace backspace backspace backspace");
+    harness.type_text("archive");
+    harness.keys("enter");
     assert_eq!(
-        harness.account_requests,
-        [AccountRequest::Rules(RulesAsk::Add(NewRule {
+        asked_for(&harness),
+        Some(NewRule {
             name: "From Ana Ruiz".to_owned(),
             matching: "from:ana.ruiz@example.com".to_owned(),
             account: Some("Work".to_owned()),
-            move_to: Some("Plans".to_owned()),
+            move_to: Some("Archive".to_owned()),
             delete: false,
             mark_read: false,
-        }))]
+        })
     );
     assert!(harness.screen().contains("Saving"));
     // While it is being written the form takes nothing more.
@@ -456,11 +493,96 @@ fn a_new_rule_starts_from_the_message_and_is_tried_once_saved() {
 }
 
 #[test]
+fn a_new_rule_is_written_from_nothing_a_part_at_a_time() {
+    let mut harness = Harness::demo(200, 60);
+    // From anywhere: no message is needed.
+    harness.keys("1");
+    assert!(
+        harness
+            .state
+            .is_enabled(&harness.env, CommandId::RulesCreate)
+    );
+    harness.keys("Z N");
+    assert_eq!(harness.state.context(), Context::NewRule);
+    let screen = harness.screen();
+    assert!(screen.contains("New rule"), "{screen}");
+    // Nothing is filled in, and it is for every account's mail.
+    let prompt = harness.state.new_rule.as_ref().unwrap();
+    assert!(prompt.name.is_empty() && prompt.matching().is_empty());
+    assert!(
+        harness.row_with("For:").contains("Every account"),
+        "{screen}"
+    );
+
+    // It needs a name, and something to go by.
+    harness.keys("enter");
+    assert!(harness.screen().contains("Give the rule a name."));
+    harness.type_text("Offers");
+    harness.keys("enter");
+    assert!(
+        harness
+            .screen()
+            .contains("Say which mail the rule is for: fill in who it is from"),
+        "{}",
+        harness.screen()
+    );
+    assert!(harness.account_requests.is_empty());
+
+    // On the account, space and the arrows go round the accounts.
+    harness.keys("tab space");
+    assert!(harness.row_with("For:").contains("Work"));
+    harness.keys("right");
+    assert!(harness.row_with("For:").contains("Personal"));
+    harness.keys("right");
+    assert!(harness.row_with("For:").contains("Every account"));
+    harness.keys("left");
+    assert!(harness.row_with("For:").contains("Personal"));
+    harness.keys("space");
+
+    // The subject and the text are filled in; the rest is left empty.
+    harness.keys("tab tab tab");
+    harness.type_text("special offer");
+    harness.keys("tab");
+    harness.type_text("unsubscribe");
+
+    // Moved, by every account, to a folder not every account has: no.
+    harness.keys("tab tab");
+    harness.type_text("Receipts");
+    harness.keys("enter");
+    let screen = harness.screen();
+    assert!(
+        screen.contains("There is no folder called \"Receipts\" in Work or Personal."),
+        "{screen}"
+    );
+    // To one they all have, by what it is for: yes, as typed.
+    for _ in 0.."Receipts".len() {
+        harness.keys("backspace");
+    }
+    harness.type_text("archive");
+    harness.keys("enter");
+    assert_eq!(
+        asked_for(&harness),
+        Some(NewRule {
+            name: "Offers".to_owned(),
+            // More than a word is a phrase: the words together.
+            matching: "subject:\"special offer\" body:unsubscribe".to_owned(),
+            account: None,
+            move_to: Some("archive".to_owned()),
+            delete: false,
+            mark_read: false,
+        })
+    );
+}
+
+#[test]
 fn a_new_rule_can_delete_or_mark_and_then_asks_for_no_folder() {
     let mut harness = Harness::demo(200, 60);
-    harness.keys("Z n tab tab");
+    harness.keys("Z N");
+    harness.type_text("Deals");
+    harness.keys("tab tab");
+    harness.type_text("deals@example.com");
     // On what it does, the side arrows and space change it.
-    harness.keys("right");
+    harness.keys("tab tab tab tab right");
     assert!(
         harness
             .row_with("Do:")
@@ -472,38 +594,101 @@ fn a_new_rule_can_delete_or_mark_and_then_asks_for_no_folder() {
     harness.keys("left");
     assert!(harness.row_with("Do:").contains("Delete"));
     harness.keys("enter");
-    match harness.account_requests.as_slice() {
-        [AccountRequest::Rules(RulesAsk::Add(new))] => {
-            assert!(new.delete && new.move_to.is_none() && !new.mark_read);
-        }
-        other => panic!("{other:?}"),
-    }
+    assert_eq!(
+        asked_for(&harness),
+        Some(NewRule {
+            name: "Deals".to_owned(),
+            matching: "from:deals@example.com".to_owned(),
+            account: None,
+            move_to: None,
+            delete: true,
+            mark_read: false,
+        })
+    );
 
     // esc puts the form away, and nothing more is asked.
     let mut harness = Harness::demo(200, 60);
-    harness.keys("Z n esc");
+    harness.keys("Z N esc");
     assert_eq!(harness.state.context(), Context::List);
     assert!(harness.account_requests.is_empty());
 }
 
 #[test]
-fn in_the_app_the_new_rule_is_a_sheet_with_the_same_fields() {
+fn what_is_typed_in_the_form_is_what_the_mail_has_and_never_a_filter_of_its_own() {
     let mut harness = Harness::demo(200, 60);
-    harness.env.sheets = true;
-    harness.keys("Z n");
-    let form = harness.state.form(&harness.env).unwrap();
-    assert_eq!((form.step(), form.title()), ("new_rule", "New Rule"));
-    let ids: Vec<&str> = form
-        .fields()
+    harness.keys("Z N");
+    harness.type_text("Odd");
+    // A quote, a filter's name and a dash for "not" are all typed where a
+    // sender is asked for.
+    harness.keys("tab tab");
+    harness.type_text("-is:starred \"x");
+    harness.keys("tab tab tab tab right enter");
+    let asked = asked_for(&harness).unwrap();
+    assert_eq!(asked.matching, "from:\"is:starred x\"");
+    // Read as a search, it looks for those words in the sender and asks
+    // nothing else.
+    let query = quill_core::search::parse(&format!("{} ", asked.matching), |_, _, _| None);
+    assert_eq!(query.from.len(), 1);
+    assert_eq!(query.from[0].text, "is:starred x");
+    assert_eq!(query.starred, None);
+    assert!(query.not.from.is_empty() && query.text.is_empty());
+}
+
+/// The names of a form's fields, in order.
+fn field_ids(form: &quill_host::bridge::FormShow) -> Vec<String> {
+    form.fields()
         .iter()
         .map(|field| match field {
             FormField::Text { id, .. }
             | FormField::Choice { id, .. }
-            | FormField::Static { id, .. } => id.as_str(),
+            | FormField::Static { id, .. } => id.clone(),
             other => panic!("{other:?}"),
         })
-        .collect();
-    assert_eq!(ids, ["name", "match", "does", "folder", "account"]);
+        .collect()
+}
+
+/// A choice field of a form: what it is on, and what it offers.
+fn choice(form: &quill_host::bridge::FormShow, wanted: &str) -> (String, Vec<(String, String)>) {
+    form.fields()
+        .iter()
+        .find_map(|field| match field {
+            FormField::Choice {
+                id, value, options, ..
+            } if id == wanted => Some((
+                value.clone(),
+                options
+                    .iter()
+                    .map(|option| (option.id.clone(), option.title.clone()))
+                    .collect(),
+            )),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no choice called {wanted}"))
+}
+
+#[test]
+fn in_the_app_the_new_rule_is_a_sheet_and_an_accounts_folders_are_chosen_from() {
+    let mut harness = Harness::demo(200, 60);
+    harness.env.sheets = true;
+    harness.keys("Z N");
+    let form = harness.state.form(&harness.env).unwrap();
+    assert_eq!((form.step(), form.title()), ("new_rule", "New Rule"));
+    assert_eq!(
+        field_ids(&form),
+        [
+            "name", "account", "from", "to", "subject", "text", "does", "folder"
+        ]
+    );
+    let (account, accounts) = choice(&form, "account");
+    assert_eq!(account, "all");
+    let titles: Vec<&str> = accounts.iter().map(|(_, title)| title.as_str()).collect();
+    assert_eq!(titles, ["Every account", "Work", "Personal"]);
+    // For every account there is no one list of folders: it is typed.
+    assert!(
+        form.fields()
+            .iter()
+            .any(|field| matches!(field, FormField::Text { id, .. } if id == "folder"))
+    );
     let buttons: Vec<(&str, &str)> = form
         .buttons()
         .iter()
@@ -513,15 +698,18 @@ fn in_the_app_the_new_rule_is_a_sheet_with_the_same_fields() {
     // The terminal's own keys are off while the sheet has the form.
     assert!(!harness.state.is_enabled(&harness.env, CommandId::NavOpen));
 
-    // What the rule does is changed: the folder goes with it.
+    // An account is chosen: the folder is now one of that account's,
+    // with the inbox left out, and the first is the one shown and held.
+    let work = accounts[1].0.clone();
     harness.act(Action::FormUsed(
         FormUsed::new(
             "new_rule",
             None,
             &[
-                ("name", "Ana"),
-                ("match", "from:ana.ruiz@example.com subject:roadmap"),
-                ("does", "mark_read"),
+                ("name", "Receipts"),
+                ("account", &work),
+                ("from", "orders@example.com"),
+                ("does", "move"),
                 ("folder", ""),
             ],
             &[],
@@ -529,52 +717,137 @@ fn in_the_app_the_new_rule_is_a_sheet_with_the_same_fields() {
         .unwrap(),
     ));
     let form = harness.state.form(&harness.env).unwrap();
-    assert!(
-        !form
-            .fields()
-            .iter()
-            .any(|field| matches!(field, FormField::Text { id, .. } if id == "folder"))
-    );
+    let (folder, folders) = choice(&form, "folder");
+    let titles: Vec<&str> = folders.iter().map(|(_, title)| title.as_str()).collect();
+    assert_eq!(titles, ["Archive", "Trash"]);
+    // The archive is what is offered until another is chosen.
+    assert_eq!(folder, folders[0].0);
     assert!(harness.account_requests.is_empty());
 
-    // Save sends what the sheet's fields held.
+    // Another folder is chosen, and Save sends what the sheet held.
+    let trash = folders
+        .iter()
+        .find(|(_, title)| title == "Trash")
+        .unwrap()
+        .0
+        .clone();
     harness.act(Action::FormUsed(
         FormUsed::new(
             "new_rule",
             Some("confirm"),
             &[
-                ("name", "Ana"),
-                ("match", "from:ana.ruiz@example.com subject:roadmap"),
-                ("does", "mark_read"),
+                ("name", "Receipts"),
+                ("account", &work),
+                ("from", "orders@example.com"),
+                ("subject", "your receipt"),
+                ("does", "move"),
+                ("folder", &trash),
             ],
             &[],
         )
         .unwrap(),
     ));
     assert_eq!(
-        harness.account_requests,
-        [AccountRequest::Rules(RulesAsk::Add(NewRule {
-            name: "Ana".to_owned(),
-            matching: "from:ana.ruiz@example.com subject:roadmap".to_owned(),
+        asked_for(&harness),
+        Some(NewRule {
+            name: "Receipts".to_owned(),
+            matching: "from:orders@example.com subject:\"your receipt\"".to_owned(),
             account: Some("Work".to_owned()),
-            move_to: None,
+            move_to: Some("Trash".to_owned()),
             delete: false,
-            mark_read: true,
-        }))]
+            mark_read: false,
+        })
     );
     let form = harness.state.form(&harness.env).unwrap();
     assert!(form.busy().is_some());
+    // The folder chosen is the one the form shows while it waits.
+    assert_eq!(choice(&form, "folder").0, trash);
 
-    // Cancel, once it has failed, puts it away.
+    // It failed: the sheet says why. What the rule does is changed, and
+    // the folder goes with it.
     harness.act(Action::Account(AccountEvent::RuleAdded(Err(
         "rules.toml cannot be written".to_owned(),
     ))));
     let form = harness.state.form(&harness.env).unwrap();
     assert_eq!(form.error(), Some("rules.toml cannot be written"));
     harness.act(Action::FormUsed(
+        FormUsed::new("new_rule", None, &[("does", "mark_read")], &[]).unwrap(),
+    ));
+    let form = harness.state.form(&harness.env).unwrap();
+    assert!(!field_ids(&form).contains(&"folder".to_owned()));
+    assert_eq!(form.error(), None);
+
+    // Cancel puts it away.
+    harness.act(Action::FormUsed(
         FormUsed::new("new_rule", Some("cancel"), &[], &[]).unwrap(),
     ));
     assert!(harness.state.new_rule.is_none());
+}
+
+#[test]
+fn the_folder_shown_in_the_sheet_follows_the_account_chosen() {
+    let mut harness = Harness::demo(200, 60);
+    harness.env.sheets = true;
+    // From a message in Work: the account is Work, and its folders are
+    // there to choose from at once.
+    harness.keys("Z n");
+    let form = harness.state.form(&harness.env).unwrap();
+    let (account, accounts) = choice(&form, "account");
+    assert_eq!(
+        accounts
+            .iter()
+            .find(|(id, _)| *id == account)
+            .map(|(_, title)| title.as_str()),
+        Some("Work")
+    );
+    let (_, folders) = choice(&form, "folder");
+    let trash = folders
+        .iter()
+        .find(|(_, title)| title == "Trash")
+        .unwrap()
+        .0
+        .clone();
+
+    // Trash is chosen, and then the other account: its Trash is still
+    // what is shown, since it has one.
+    let personal = accounts[2].0.clone();
+    harness.act(Action::FormUsed(
+        FormUsed::new("new_rule", None, &[("folder", &trash)], &[]).unwrap(),
+    ));
+    harness.act(Action::FormUsed(
+        FormUsed::new(
+            "new_rule",
+            None,
+            &[("folder", &trash), ("account", &personal)],
+            &[],
+        )
+        .unwrap(),
+    ));
+    let form = harness.state.form(&harness.env).unwrap();
+    let (folder, folders) = choice(&form, "folder");
+    assert_eq!(
+        folders
+            .iter()
+            .find(|(id, _)| *id == folder)
+            .map(|(_, title)| title.as_str()),
+        Some("Trash")
+    );
+
+    // Every account: the folder is typed, and holds what was chosen.
+    harness.act(Action::FormUsed(
+        FormUsed::new(
+            "new_rule",
+            None,
+            &[("folder", &folder), ("account", "all")],
+            &[],
+        )
+        .unwrap(),
+    ));
+    let form = harness.state.form(&harness.env).unwrap();
+    assert!(form.fields().iter().any(|field| matches!(
+        field,
+        FormField::Text { id, value, .. } if id == "folder" && value == "Trash"
+    )));
 }
 
 #[test]
@@ -699,6 +972,7 @@ fn the_rules_commands_are_in_a_menu_of_their_own_with_keys_in_both_presets() {
             "Run a Rule\u{2026}",
             "Run All Rules\u{2026}",
             "Run the Rule Shown",
+            "New Rule\u{2026}",
             "New Rule from This Message\u{2026}",
             "Edit Rules",
             "What Rules Did",

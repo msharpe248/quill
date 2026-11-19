@@ -208,7 +208,7 @@ Press `?` at any time for the keys that apply where you are, and `K` (or `f1`) f
 | `D` | Remove the account chosen in the accounts pane, after asking | `E` | Change the account chosen in the accounts pane: its servers and password |
 | `Z` `a` | Stop Agents: see "Agents" | `Z` `c` | Install the command line tool: see "The app" |
 | `Z` `t` | Rules on or off: see "Rules" | `Z` `r` / `Z` `R` | Run a rule, or all of them: shows what would change first |
-| `Z` `y` | Run the rule that is shown | `Z` `n` | A new rule from this message |
+| `Z` `y` | Run the rule that is shown | `Z` `N` / `Z` `n` | A new rule; a new rule from this message |
 | `Z` `e` | Edit the rules | `Z` `l` | What rules did, and taking one back |
 | `P` | Put back: in a Trash folder, the messages chosen; anywhere else, the one deleted last | `C` | Copy to a folder |
 | `+` | Make a folder, on the server or on this Mac | `_` | In the accounts pane: take away an empty folder of this Mac's |
@@ -596,7 +596,7 @@ Send and Save in the menus and toolbar reach Vim: it does as it would for `:Quil
 
 A rule does something with mail by itself: files it in a folder, deletes it, marks it, or keeps quiet about it. A rule says which mail it is for, in the search box's words, and what to do with it.
 
-Rules are written in a file of their own, `rules.toml`, beside `config.toml`. **Rules > Edit Rules** (`Z` `e`) opens it in the app, with examples in it the first time; in a terminal it says where the file is. Quill reads the file again whenever it is saved: there is nothing to restart.
+Rules are written in a file of their own, `rules.toml`, beside `config.toml`. You do not have to open it to make one: **Rules > New Rule…** (`Z` `N`) asks for a rule in a form and writes it into the file for you (see "A new rule, without opening the file"). **Rules > Edit Rules** (`Z` `e`) opens the file in the app, with examples in it the first time; in a terminal it says where the file is. Quill reads the file again whenever it is saved: there is nothing to restart.
 
 ```toml
 [[rule]]
@@ -656,9 +656,23 @@ A rule that is switched off can be tried and run this way, which is how to find 
 
 `U` takes a run back while its ten seconds last, all of it as one.
 
-### A new rule from a message
+### A new rule, without opening the file
 
-**Rules > New Rule from This Message…** (`Z` `n`) starts a rule for mail from whoever sent the message you are on: a name, what it matches (written as a search, and yours to change: add `subject:invoice`), and what to do with it: move it to a folder, delete it, or mark it read. With more than one account the rule is for the account the message is in, whose folder it names. Saving writes the rule at the end of `rules.toml`, leaving what is there as it is, and shows what the rule would match. Nothing is changed until you run it. In a terminal `tab` goes between the fields and `space` or the arrows change what the rule does; in the app it is a sheet.
+**Rules > New Rule…** (`Z` `N`) makes a rule in a form, from anywhere in Quill. **Rules > New Rule from This Message…** (`Z` `n`) is the same form with who sent the message you are on filled in, and a name to match.
+
+| In the form | Means |
+|---|---|
+| Name | What the rule is called |
+| For mail in | With more than one account: every account, or one of them |
+| From contains, To contains, Subject contains, Text contains | What the mail has. Fill in any of them and leave the rest empty: the rule is for mail that has all of what is filled in. More than one word is the words together, in that order |
+| Do | Move to a folder, delete (to the Trash), or mark as read |
+| Folder | Where to move it. For one account, one of that account's folders (not its Inbox, Drafts or Sent); for every account, a folder they all have, by name, or `archive` |
+
+Saving writes the rule at the end of `rules.toml`, leaving what is there as it is, and shows what the rule would match. Nothing is changed until you run it (`Z` `y`).
+
+In the app the form is a sheet, and an account's folders are a pop-up to choose from. In a terminal `tab` and the arrows go between the fields, `space` or the side arrows change the account and what the rule does, and the folder is typed, with the account's folders listed under the form while you type it. A folder the account does not have is refused, with the ones it has.
+
+The form asks for what most rules need. A rule can say more in the file: either of two things (`match` as a list), mail that does not have something (`-from:ana`), an attachment, a size, the list it came through, a look-back of its own, a star, or no notification. Write the rule in the form, then open the file and add to it.
 
 ### The switch, and what rules did
 

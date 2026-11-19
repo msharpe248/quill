@@ -21,8 +21,8 @@ use quill_host::bridge::{
 };
 
 use super::{
-    Effects, Env, FolderPrompt, ON_THE_SERVER, ON_THIS_MAC, RemovePrompt, RuleAction, RuleField,
-    RulePrompt, State, UnsubscribePrompt, WhenFor, WhenPrompt,
+    EVERY_ACCOUNT, Effects, Env, FolderPrompt, ON_THE_SERVER, ON_THIS_MAC, RemovePrompt,
+    RuleAction, RuleField, RulePrompt, State, UnsubscribePrompt, WhenFor, WhenPrompt,
 };
 use crate::command::{CommandId, Context};
 use crate::setup::{
@@ -301,32 +301,87 @@ impl FolderPrompt {
 /// The step of the form for a new rule, and its fields.
 const NEW_RULE: &str = "new_rule";
 const RULE_NAME: &str = "name";
-const RULE_MATCH: &str = "match";
+const RULE_ACCOUNT: &str = "account";
+const RULE_FROM: &str = "from";
+const RULE_TO: &str = "to";
+const RULE_SUBJECT: &str = "subject";
+const RULE_TEXT: &str = "text";
 const RULE_DOES: &str = "does";
 const RULE_FOLDER: &str = "folder";
-const RULE_ACCOUNT: &str = "account";
+/// The choice of every account, and what the name of an account's or a
+/// folder's choice starts with: its place in the list follows.
+const EVERY: &str = "all";
+const ACCOUNT_AT: &str = "a";
+const FOLDER_AT: &str = "f";
+
+/// The place in a list that a choice's name gives: `f3` is the fourth.
+fn place(id: &str, starts: &str) -> Option<usize> {
+    id.strip_prefix(starts)?.parse().ok()
+}
 
 impl RulePrompt {
-    /// The form as a host shows it: the rule's name, which mail it is
-    /// for, what to do with it, and the folder when it moves mail. The
-    /// words are the terminal's.
+    /// The form as a host shows it: the rule's name, whose mail it is
+    /// for, what the mail has, what to do with it, and the folder when
+    /// it moves mail. A rule about one account chooses among that
+    /// account's folders; about every account, the folder is typed.
     pub fn form(&self) -> Option<FormShow> {
-        let mut fields = vec![
+        let on = |field| self.focus == field;
+        let mut fields = vec![typed(
+            RULE_NAME,
+            "Name:",
+            &self.name,
+            on(RuleField::Name),
+            None,
+        )];
+        if self.accounts.len() > 1 {
+            let mut options = vec![FormOption {
+                id: EVERY.to_owned(),
+                title: EVERY_ACCOUNT.to_owned(),
+            }];
+            options.extend(
+                self.accounts
+                    .iter()
+                    .enumerate()
+                    .map(|(index, account)| FormOption {
+                        id: format!("{ACCOUNT_AT}{index}"),
+                        title: text::sanitize_line(&account.name),
+                    }),
+            );
+            fields.push(FormField::Choice {
+                id: RULE_ACCOUNT.to_owned(),
+                label: "For Mail In:".to_owned(),
+                value: self
+                    .account
+                    .map_or_else(|| EVERY.to_owned(), |index| format!("{ACCOUNT_AT}{index}")),
+                options,
+                focus: on(RuleField::Account),
+                help: None,
+            });
+        }
+        fields.extend([
             typed(
-                RULE_NAME,
-                "Name:",
-                &self.name,
-                self.focus == RuleField::Name,
+                RULE_FROM,
+                "From Contains:",
+                &self.from,
+                on(RuleField::From),
+                None,
+            ),
+            typed(RULE_TO, "To Contains:", &self.to, on(RuleField::To), None),
+            typed(
+                RULE_SUBJECT,
+                "Subject Contains:",
+                &self.subject,
+                on(RuleField::Subject),
                 None,
             ),
             typed(
-                RULE_MATCH,
-                "Mail Matching:",
-                &self.matching,
-                self.focus == RuleField::Matching,
+                RULE_TEXT,
+                "Text Contains:",
+                &self.text,
+                on(RuleField::Text),
                 Some(
-                    "Written as a search is: from:ana subject:invoice body:unsubscribe. \
-                     Every word must match.",
+                    "Fill in any of these and leave the rest empty. The rule is for mail \
+                     that has all of what is filled in.",
                 ),
             ),
             FormField::Choice {
@@ -340,32 +395,55 @@ impl RulePrompt {
                         title: action.words().to_owned(),
                     })
                     .collect(),
-                focus: self.focus == RuleField::Action,
+                focus: on(RuleField::Action),
                 help: None,
             },
-        ];
+        ]);
         if self.action == RuleAction::Move {
-            fields.push(typed(
-                RULE_FOLDER,
-                "Folder:",
-                &self.folder,
-                self.focus == RuleField::Folder,
-                Some("A folder's name, or archive."),
-            ));
-        }
-        if let Some(account) = &self.account {
-            fields.push(shown(
-                RULE_ACCOUNT,
-                "For:",
-                format!("Mail in {}", text::sanitize_line(account)),
-            ));
+            fields.push(match self.folder_choices() {
+                Some(folders) => {
+                    // The folder the form has, or the one an account's
+                    // mail is usually filed in: a choice always shows
+                    // one.
+                    let account = self.chosen();
+                    let chosen = account
+                        .and_then(|account| account.folder(self.folder.text()))
+                        .or_else(|| account.and_then(|account| account.usual()))
+                        .and_then(|name| folders.iter().position(|folder| *folder == name))
+                        .unwrap_or(0);
+                    FormField::Choice {
+                        id: RULE_FOLDER.to_owned(),
+                        label: "Folder:".to_owned(),
+                        value: format!("{FOLDER_AT}{chosen}"),
+                        options: folders
+                            .iter()
+                            .enumerate()
+                            .map(|(index, folder)| FormOption {
+                                id: format!("{FOLDER_AT}{index}"),
+                                title: text::sanitize_line(folder),
+                            })
+                            .collect(),
+                        focus: on(RuleField::Folder),
+                        help: None,
+                    }
+                }
+                None => typed(
+                    RULE_FOLDER,
+                    "Folder:",
+                    &self.folder,
+                    on(RuleField::Folder),
+                    Some(
+                        "A folder every account has: its name, or archive. Choose an account \
+                         above to pick from its folders.",
+                    ),
+                ),
+            });
         }
         FormShow::new(FormShowParams {
             step: NEW_RULE.to_owned(),
             title: "New Rule".to_owned(),
             note: Some(
-                "Saving the rule writes it into rules.toml and shows what it would match. \
-                 Nothing is changed until you run it."
+                "Saving shows what the rule would match. Nothing is changed until you run it."
                     .to_owned(),
             ),
             error: self.problem.as_deref().map(text::sanitize_line),
@@ -386,10 +464,51 @@ impl RulePrompt {
     /// Puts what the host's fields held into the form's own.
     fn fill(&mut self, used: &FormUsed) {
         put(&mut self.name, used.value(RULE_NAME));
-        put(&mut self.matching, used.value(RULE_MATCH));
-        put(&mut self.folder, used.value(RULE_FOLDER));
+        put(&mut self.from, used.value(RULE_FROM));
+        put(&mut self.to, used.value(RULE_TO));
+        put(&mut self.subject, used.value(RULE_SUBJECT));
+        put(&mut self.text, used.value(RULE_TEXT));
+        // The folder first, read against the list it was chosen from:
+        // the account's as it was shown, before any change to it here.
+        if let Some(value) = used.value(RULE_FOLDER) {
+            match self.folder_choices() {
+                Some(folders) => {
+                    if let Some(folder) = place(value, FOLDER_AT).and_then(|at| folders.get(at)) {
+                        let folder = (*folder).to_owned();
+                        self.folder.set(folder);
+                    }
+                }
+                None => put(&mut self.folder, Some(value)),
+            }
+        }
+        match used.value(RULE_ACCOUNT) {
+            Some(EVERY) => self.account = None,
+            Some(value) => {
+                if let Some(at) = place(value, ACCOUNT_AT).filter(|at| *at < self.accounts.len()) {
+                    self.account = Some(at);
+                }
+            }
+            None => {}
+        }
         if let Some(action) = used.value(RULE_DOES).and_then(RuleAction::named) {
             self.set_action(action);
+        }
+        // A choice of folders always shows one of them: the form holds
+        // the one shown, so that what is saved is what was seen.
+        if self.action == RuleAction::Move
+            && let Some(folders) = self.folder_choices()
+        {
+            let account = self.chosen();
+            let held = account
+                .and_then(|account| account.folder(self.folder.text()))
+                .filter(|name| folders.contains(name));
+            let folder = held
+                .or_else(|| account.and_then(|account| account.usual()))
+                .or(folders.first().copied())
+                .map(str::to_owned);
+            if let Some(folder) = folder {
+                self.folder.set(folder);
+            }
         }
     }
 }

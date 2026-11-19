@@ -50,11 +50,11 @@ expression: harness.screen()
 ┃                          ┃│                                       ┃   Z r                            Run a Rule…                 ┃                                                                   │
 ┃                          ┃│                                       ┃   Z R                            Run All Rules…              ┃                                                                   │
 ┃                          ┃│                                       ┃   Z y                            Run the Rule Shown          ┃                                                                   │
+┃                          ┃│                                       ┃   Z N                            New Rule…                   ┃                                                                   │
 ┃                          ┃│                                       ┃   Z e                            Edit Rules                  ┃                                                                   │
 ┃                          ┃│                                       ┃   Z l                            What Rules Did              ┃                                                                   │
 ┃                          ┃│                                       ┃   ?                              Help for this context       ┃                                                                   │
 ┃                          ┃│                                       ┃   K, f1                          Keyboard shortcuts          ┃                                                                   │
-┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │

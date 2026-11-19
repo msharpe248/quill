@@ -118,22 +118,18 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         use crate::state::{RuleAction, RuleField};
         let inner = dialog(frame, area, " New rule ", env);
         let mut rows = Rows::new(frame, inner, env);
-        rows.field("Name:", &prompt.name, prompt.focus == RuleField::Name);
-        rows.field(
-            "Matching:",
-            &prompt.matching,
-            prompt.focus == RuleField::Matching,
-        );
-        rows.choice(
-            "Do:",
-            prompt.action.words(),
-            prompt.focus == RuleField::Action,
-        );
-        if prompt.action == RuleAction::Move {
-            rows.field("Folder:", &prompt.folder, prompt.focus == RuleField::Folder);
+        let on = |field| prompt.focus == field;
+        rows.field("Name:", &prompt.name, on(RuleField::Name));
+        if prompt.accounts.len() > 1 {
+            rows.choice("For:", prompt.account_name(), on(RuleField::Account));
         }
-        if let Some(account) = &prompt.account {
-            rows.pair("For:", &format!("mail in {account}"));
+        rows.field("From:", &prompt.from, on(RuleField::From));
+        rows.field("To:", &prompt.to, on(RuleField::To));
+        rows.field("Subject:", &prompt.subject, on(RuleField::Subject));
+        rows.field("Text:", &prompt.text, on(RuleField::Text));
+        rows.choice("Do:", prompt.action.words(), on(RuleField::Action));
+        if prompt.action == RuleAction::Move {
+            rows.field("Folder:", &prompt.folder, on(RuleField::Folder));
         }
         rows.blank();
         if let Some(problem) = &prompt.problem {
@@ -142,15 +138,18 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         }
         if prompt.busy {
             rows.dim("Saving\u{2026}");
+        } else if on(RuleField::Folder) {
+            // Where the mail could go, while the folder is being named.
+            match prompt.folder_choices() {
+                Some(folders) => rows.dim(&format!("Folders: {}.", folders.join(", "))),
+                None => rows.dim("A folder every account has: its name, or archive."),
+            }
         } else {
             rows.dim(
-                "What it matches is written as a search is: from:ana subject:invoice \
-                 body:unsubscribe. tab moves between these, and space changes what it does.",
+                "The mail a rule is for has everything filled in here: who it is from, who \
+                 it is to, its subject, words in its text. Leave the rest empty.",
             );
-            rows.dim(
-                "Saving it writes it into rules.toml and shows what it would match. Nothing \
-                 is changed until you run it.",
-            );
+            rows.dim("Saving shows what the rule would match. Nothing changes until you run it.");
         }
         return;
     }

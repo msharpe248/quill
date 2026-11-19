@@ -132,6 +132,8 @@ The bottom bar says what rules did as it happens ("Rules filed 3"). A rule that 
 
 Choosing a rule is a picker, drawn in the terminal like the folder picker: it is chosen with the keyboard. A rule that is switched off is in the picker, said to be off, and can still be run by hand.
 
+(Changed on 2026-11-19: there is a New Rule… as well, from nothing, and the form asks for From, To, Subject and Text apart. See `DECISIONS.md`.)
+
 **New Rule from This Message** is a short form, a sheet in the app and drawn in a terminal: the rule's name; who it is from, filled in from the message; words in the subject, empty; what to do (move to a folder, delete, mark read). Continue shows the preview. Save adds the rule to `rules.toml`; Save and Run does both.
 
 **Settings** has the switch and the default look-back.

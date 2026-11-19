@@ -246,6 +246,7 @@ pub enum CommandId {
     RulesRun,
     RulesRunAll,
     RulesApply,
+    RulesCreate,
     RulesNew,
     RulesEdit,
     RulesLog,
@@ -1053,6 +1054,16 @@ impl Registry {
                     RulesApply,
                     "rules.apply",
                     "Run the Rule Shown",
+                    General,
+                    Some(Menu::Rules),
+                    PANES,
+                ),
+                // A rule from nothing, and one begun from the message the
+                // user is on: the same form.
+                spec(
+                    RulesCreate,
+                    "rules.create",
+                    "New Rule\u{2026}",
                     General,
                     Some(Menu::Rules),
                     PANES,

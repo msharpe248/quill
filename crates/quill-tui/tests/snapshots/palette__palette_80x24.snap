@@ -12,14 +12,14 @@ expression: harness.screen()
 │    Tra┃   Load remote pictures for this message                    i ┃    Fri┃
 │  ▾ Per┃   Always load remote pictures from this sender             I ┃    Thu┃
 │    Inb┃   Rules On                                               Z t ┃    Thu┃
-│    Dra┃   Edit Rules                                             Z e ┃    Wed┃
-│    Sen┃   Select a range                                           V ┃    Tue┃
-│    Arc┃   What Rules Did                                         Z l ┃    Mon┃
-│    Tra┃   New Rule from This Message…                            Z n ┃    Sun┃
-│       ┃   Focus the previous pane or field                 shift-tab ┃ Nov 06┃
-│       ┃   Archive                                                  e ┃ Nov 02┃
-│       ┃   Go to Work / Sent                                          ┃ Oct 25┃
-│       ┃   Select or unselect                                       x ┃ct 2025┃
+│    Dra┃   New Rule…                                              Z N ┃    Wed┃
+│    Sen┃   Edit Rules                                             Z e ┃    Tue┃
+│    Arc┃   Select a range                                           V ┃    Mon┃
+│    Tra┃   What Rules Did                                         Z l ┃    Sun┃
+│       ┃   New Rule from This Message…                            Z n ┃ Nov 06┃
+│       ┃   Focus the previous pane or field                 shift-tab ┃ Nov 02┃
+│       ┃   Archive                                                  e ┃ Oct 25┃
+│       ┃   Go to Work / Sent                                          ┃ct 2025┃
 │       ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛       ┃
 │                │┃                                                            ┃
 │                │┃                                                            ┃

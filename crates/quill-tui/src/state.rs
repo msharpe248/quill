@@ -42,7 +42,10 @@ use quill_host::bridge::{FormUsed, Number, SettingsUsed};
 pub use self::folders::{FolderPrompt, ON_THE_SERVER, ON_THIS_MAC};
 pub use self::keys::{KeysAsk, KeysHow, KeysPrompt};
 pub use self::remove::{REMOVING, RemovePrompt, YES as REMOVE_YES};
-pub use self::rules::{PickFor, PickLine, PickList, RuleAction, RuleField, RulePrompt, RuleTrial};
+pub use self::rules::{
+    EVERY_ACCOUNT, PickFor, PickLine, PickList, RuleAccount, RuleAction, RuleField, RulePrompt,
+    RuleTrial,
+};
 pub use self::settings::SettingsWindow;
 pub use self::themes::{ThemeAsk, ThemePrompt};
 use crate::settings::Applied;
@@ -2194,6 +2197,7 @@ impl State {
             CommandId::RulesRunAll => self.try_rules(env, None, out),
             CommandId::RulesApply => self.apply_rule(out),
             CommandId::RulesNew => self.ask_new_rule(),
+            CommandId::RulesCreate => self.ask_blank_rule(),
             CommandId::RulesEdit => out.accounts.push(AccountRequest::Rules(RulesAsk::Open)),
             CommandId::RulesLog => out.data.push(DataRequest::RulesLog),
             CommandId::SelectToggle => {
@@ -2745,6 +2749,7 @@ impl State {
             CommandId::RulesRunAll => self.can_run_all_rules(),
             CommandId::RulesApply => self.can_apply_rule(),
             CommandId::RulesNew => self.can_start_rule(),
+            CommandId::RulesCreate => self.can_create_rule(),
             CommandId::MessageCopy => self
                 .target_row()
                 .is_some_and(|row| DraftId::from_message_id(row.id).is_none()),

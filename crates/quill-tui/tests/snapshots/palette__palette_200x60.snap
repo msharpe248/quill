@@ -24,14 +24,14 @@ expression: harness.screen()
 │                          │┃                                       ┃   Load remote pictures for this message                    i ┃                                                                   │
 │                          │┃                                       ┃   Always load remote pictures from this sender             I ┃detail, including the dependency chart you asked for. Comments in  │
 │                          │┃                                       ┃   Rules On                                               Z t ┃ply, whichever is easier.                                          │
+│                          │┃                                       ┃   New Rule…                                              Z N ┃                                                                   │
 │                          │┃                                       ┃   Edit Rules                                             Z e ┃                                                                   │
 │                          │┃                                       ┃   Select a range                                           V ┃                                                                   │
 │                          │┃                                       ┃   What Rules Did                                         Z l ┃                                                                   │
 │                          │┃                                       ┃   New Rule from This Message…                            Z n ┃                                                                   │
 │                          │┃                                       ┃   Focus the previous pane or field                 shift-tab ┃                                                                   │
-│                          │┃                                       ┃   Archive                                                  e ┃                                                                   │
-│                          │┃                                       ┃   Go to Work / Sent                                          ┃ Corp                                                              │
-│                          │┃                                       ┃   Select or unselect                                       x ┃                                                                   │
+│                          │┃                                       ┃   Archive                                                  e ┃ Corp                                                              │
+│                          │┃                                       ┃   Go to Work / Sent                                          ┃                                                                   │
 │                          │┃                                       ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛                                                                   │
 │                          │┃                                                                                    ┃│                                                                                    │
 │                          │┃                                                                                    ┃│                                                                                    │

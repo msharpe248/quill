@@ -1416,3 +1416,15 @@ Asked for by the owner: rules that move mail to folders or delete it; that match
 - Rules on the server (Sieve, Gmail's filters, Graph's inbox rules); rules for folders other than inboxes; patterns; forwarding, answering or running a hook from a rule.
 - A form to change or remove a rule: they are edited in the file. A menu item for each rule.
 - Carrying "asked about" across a move that gives no new id.
+
+### New Rule…, from nothing (2026-11-19)
+
+Asked for by the owner the day after: New Rule from This Message was liked, and making any other rule meant being put in front of a file, which was "quite harsh".
+
+- **`rules.create`, New Rule…** (`Z` `N`), in the Rules menu above New Rule from This Message…, enabled wherever there is an account. One form for both: from a message it opens with the sender and a name filled in.
+- **What the mail has is asked a part at a time**: From, To, Subject, Text. This replaces the one line written as a search that the first form had, which asked a person making their first rule to know the search's words. What is written into the file is still a search, made of the parts filled in (`RulePrompt::matching`): `from:`, `to:`, `subject:`, `body:`, each quoted when it is more than a word. A quote, a filter's name or a leading `-` typed into a part is part of what is looked for, never a filter of its own.
+- **The account is chosen in the form** where there is more than one: every account (the start, from nothing), or one. From a message it starts on the message's account, and can be changed.
+- **A folder is checked before the rule is written.** For one account it must be one of that account's folders (the sheet offers them as a pop-up, a terminal lists them and takes a name); for every account, a folder each of them has. The Inbox, Drafts and Sent are not offered or taken: mail is not filed where it already is, or among what the user wrote. The archive is what is offered first. Before, a wrong name was found out when the rule first met mail, as a notice.
+- **The folder is written as the account names it** ("Archive", for `archive` typed), except for every account, where it is written as typed: there the same word may name differently named folders.
+- **The form does not do everything a rule can**: either-of, not, attachments, sizes, lists, a look-back, a star, quiet. Those are added in the file. A form that changes or removes a rule is still not built.
+- **Seen in a check build** on the demo mailbox: the sheet from nothing, an account chosen and its folders offered with the archive first, a subject of several words saved into `rules.toml` as a phrase, and the rule then shown with the message it matches. **Not seen:** the form in a real terminal, which the tests of what is drawn stand in for.
