@@ -43,6 +43,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
     // While searching, the title is the search: what is typed, and how
     // much it finds.
     let title = match &state.search {
+        // A rule being tried: the list is what it would change, and the
+        // title says what it would do with it.
+        Some(_) if state.rule_trial().is_some() => state.trial_title().unwrap_or_default(),
         Some(search) => {
             let found = match (search.found, search.more) {
                 (Some(count), true) => format!(" - {count}+ found"),
@@ -95,6 +98,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
     if state.list.rows.is_empty() {
         if state.list.loaded {
             let words = match &state.search {
+                Some(_) if state.rule_trial().is_some() => {
+                    "Nothing in the inbox, as far back as this looks, would be changed"
+                }
                 Some(search) if search.input.is_empty() => {
                     "Words, \"a phrase\", from:ana, is:unread, in:work/sent"
                 }

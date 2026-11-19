@@ -23,36 +23,44 @@ pub struct Config {
     /// What to do with mail as it arrives, in the order written.
     #[serde(rename = "rule")]
     pub rules: Vec<RuleConfig>,
+    /// Whether the rules run, and how far back.
+    #[serde(rename = "rules")]
+    pub ruling: RulesConfig,
     /// What programs outside Quill's window, agents among them, may do
     /// with the mail.
     pub agent: AgentConfig,
 }
 
-/// Something to do with arriving mail that matches a search.
+/// A rule written in `config.toml`: as one in `rules.toml`, but that it
+/// may have no name.
+pub type RuleConfig = crate::rules::RuleSpec;
+
+/// The rules as a whole: whether they run, and how far back they go over
+/// mail that is already here.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RuleConfig {
-    /// What the rule is called when Quill has something to say about it.
-    #[serde(default)]
-    pub name: Option<String>,
-    /// Which mail it is for, in the search box's words: `from:buildbot`.
-    #[serde(rename = "match")]
-    pub matching: String,
-    /// Only mail of this account. Every account's, without it.
-    #[serde(default)]
-    pub account: Option<String>,
-    /// File it in this folder of its account: a folder's name, or what a
-    /// folder is for (`archive`, `trash`, `junk`).
-    #[serde(default)]
-    pub move_to: Option<String>,
-    #[serde(default)]
-    pub mark_read: bool,
-    #[serde(default)]
-    pub star: bool,
-    /// Whether to announce it. Left out: announced if it stays in the
-    /// inbox, not if the rule files it elsewhere.
-    #[serde(default)]
-    pub notify: Option<bool>,
+#[serde(default, deny_unknown_fields)]
+pub struct RulesConfig {
+    /// Whether rules run at all. Switching them on catches up.
+    pub enabled: bool,
+    /// How far back a run over mail already here goes, for a rule that
+    /// does not say: `1d`, `1w`, `30d`.
+    pub look_back: String,
+}
+
+impl Default for RulesConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            look_back: crate::rules::LOOK_BACK.to_owned(),
+        }
+    }
+}
+
+impl RulesConfig {
+    /// The look-back in seconds.
+    pub fn look_back_seconds(&self) -> i64 {
+        crate::rules::look_back_seconds(&self.look_back).unwrap_or(7 * 24 * 60 * 60)
+    }
 }
 
 /// A search with a name, shown in the sidebar.
@@ -779,16 +787,13 @@ impl Config {
                 .name
                 .clone()
                 .unwrap_or_else(|| format!("rule {}", index + 1));
-            if rule.matching.trim().is_empty() {
-                return Err(ConfigError::Invalid(format!(
-                    "{named} has nothing to match. Give it `match = \"from:someone\"`"
-                )));
-            }
-            if rule.move_to.is_none() && !rule.mark_read && !rule.star && rule.notify.is_none() {
-                return Err(ConfigError::Invalid(format!(
-                    "{named} does nothing. Give it one of move_to, mark_read, star or notify"
-                )));
-            }
+            rule.check(&named).map_err(ConfigError::Invalid)?;
+        }
+        if crate::rules::look_back_seconds(&self.ruling.look_back).is_none() {
+            return Err(ConfigError::Invalid(format!(
+                "rules.look_back must be an age such as \"1d\", \"1w\" or \"30d\", got {:?}",
+                self.ruling.look_back
+            )));
         }
         for search in &self.searches {
             if search.name.trim().is_empty() || search.query.trim().is_empty() {

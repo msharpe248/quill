@@ -7,6 +7,7 @@
       { "name": "nav.top", "title": "Go to the top", "keys": ["g g", "home"] },
       { "name": "view.zoom", "title": "Zoom the focused pane", "keys": ["z"], "menu": "view", "symbol": "arrow.up.left.and.arrow.down.right" },
       { "name": "message.toggle_star", "title": "Star or unstar", "keys": [], "menu": "message", "symbol": "star" },
+      { "name": "rules.toggle", "title": "Rules On", "keys": ["Z t"], "menu": "rules" },
       { "name": "window.close", "title": "Close", "keys": ["q", "ctrl-c"] },
       { "name": "app.quit", "title": "Quit", "keys": ["Q"] }
     ]

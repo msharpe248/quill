@@ -76,6 +76,9 @@ public enum CoreToShell: Equatable, Sendable {
     case keysList(KeysList)
     /// Bring up the window of keys, showing the latest `keysList`.
     case keysShow
+    /// Open the file the user's rules are written in, `rules.toml` in
+    /// the settings folder. No path is named: the shell knows the folder.
+    case rulesEdit
     /// Close the main window and go on running behind it, as the
     /// window's own close button does.
     case windowClose
@@ -190,7 +193,7 @@ public struct CommandInfo: Equatable, Sendable, Codable {
 }
 
 public enum Menu: String, Equatable, Sendable, Codable, CaseIterable {
-    case app, file, edit, view, mailbox, message, window, help
+    case app, file, edit, view, mailbox, message, rules, window, help
 }
 
 public struct StateUpdate: Equatable, Sendable, Codable {

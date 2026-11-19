@@ -492,3 +492,76 @@ fn quill_is_linked_into_a_folder_that_is_named() {
     assert_eq!(refused.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&refused.stderr).contains("not a link to Quill"));
 }
+
+#[test]
+fn rules_are_listed_and_tried_from_a_shell_and_change_nothing() {
+    // A look-back long enough for the demo's mail whenever this is run.
+    let scratch = Scratch::new("[rules]\nlook_back = \"200y\"\n");
+    let file = scratch.dir.path().join("config").join("rules.toml");
+    std::fs::write(
+        &file,
+        r#"
+[[rule]]
+name = "Build mail"
+match = "from:ci@example.com"
+move_to = "archive"
+
+[[rule]]
+name = "Promotions"
+match = ["body:unsubscribe", "from:deals"]
+delete = true
+enabled = false
+look_back = "1d"
+"#,
+    )
+    .unwrap();
+
+    let listed = scratch.json(&["rules", "list"]);
+    assert_eq!(listed["on"], true);
+    assert_eq!(listed["problem"], serde_json::Value::Null);
+    assert_eq!(listed["rules"][0]["name"], "Build mail");
+    assert_eq!(listed["rules"][0]["does"], "move to archive");
+    assert_eq!(listed["rules"][0]["needs_body"], false);
+    assert_eq!(listed["rules"][1]["enabled"], false);
+    assert_eq!(listed["rules"][1]["look_back"], "1d");
+    assert_eq!(listed["rules"][1]["needs_body"], true);
+    let text = scratch.run(&["rules", "list"]);
+    let text = String::from_utf8_lossy(&text.stdout).into_owned();
+    assert!(text.contains("Rules are on."), "{text}");
+    assert!(text.contains("1  Build mail  move to archive"), "{text}");
+    assert!(text.contains("delete  (looks back 1d, off)"), "{text}");
+
+    // A rule is tried by its name, in any case, and nothing is changed.
+    let tried = scratch.json(&["rules", "test", "build mail"]);
+    assert_eq!(tried["rule"], "Build mail");
+    assert_eq!(tried["count"], 1);
+    assert_eq!(tried["would"], "would move 1 message to Archive");
+    assert_eq!(tried["messages"][0]["subject"], "[quill] PR #42 passed");
+    assert_eq!(
+        scratch.json(&["count", "in:work/inbox", "from:ci@example.com"])["count"],
+        1
+    );
+    assert_eq!(
+        scratch.json(&["log"])["entries"].as_array().map(Vec::len),
+        Some(0)
+    );
+
+    // A rule there is not is said, with the ones there are.
+    let none = scratch.run(&["rules", "test", "Receipts"]);
+    assert!(!none.status.success());
+    let said = String::from_utf8_lossy(&none.stderr).into_owned();
+    assert!(said.contains("no rule called \"Receipts\""), "{said}");
+    assert!(said.contains("Build mail, Promotions"), "{said}");
+
+    // A mistake in the file is said, and none of its rules are listed.
+    std::fs::write(&file, "[[rule]]\nname = \"Bad\"\nmatch = \"x\"\n").unwrap();
+    let listed = scratch.json(&["rules", "list"]);
+    assert!(
+        listed["problem"]
+            .as_str()
+            .unwrap()
+            .contains("\"Bad\" does nothing"),
+        "{listed}"
+    );
+    assert_eq!(listed["rules"].as_array().map(Vec::len), Some(0));
+}

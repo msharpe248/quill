@@ -46,7 +46,7 @@
             "help": "The font of Quill's own window."
           }
         ],
-        "more": "Rules and saved searches are set in the settings file."
+        "more": "Saved searches are set in the settings file."
       },
       {
         "id": "accounts",

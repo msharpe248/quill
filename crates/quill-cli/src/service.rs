@@ -67,6 +67,14 @@ pub struct Service {
 pub fn spawn(service: Service) -> AccountsLink {
     let (requests_tx, mut requests) = unbounded_channel();
     let (events_tx, events) = unbounded_channel();
+    // The rules are kept beside the service: read when they change, and
+    // given to the engine and the UI.
+    let rules = crate::rules::Keeper::new(
+        service.config_file.clone(),
+        Some(Arc::clone(&service.sync)),
+        events_tx.clone(),
+    );
+    rules.watch();
     tokio::spawn(async move {
         let service = Arc::new(service);
         // A sign-in waits on the user for minutes. It runs beside the
@@ -98,10 +106,24 @@ pub fn spawn(service: Service) -> AccountsLink {
                         let _ = events.send(service.handle(request).await);
                     });
                 }
+                AccountRequest::Rules(ask) => {
+                    if !answer_rules(&rules, ask, &events_tx).await {
+                        break;
+                    }
+                }
                 request => {
+                    // The config may say something else about the rules
+                    // once this is done: whether they run is a setting.
+                    let rules_may_change = matches!(
+                        request,
+                        AccountRequest::Remember(_) | AccountRequest::Settings(Some(_))
+                    );
                     let event = service.handle(request).await;
                     if events_tx.send(event).is_err() {
                         break;
+                    }
+                    if rules_may_change {
+                        refresh_rules(&rules).await;
                     }
                 }
             }
@@ -125,9 +147,23 @@ pub fn spawn(service: Service) -> AccountsLink {
 pub fn spawn_remembering(config_file: PathBuf) -> AccountsLink {
     let (requests_tx, mut requests) = unbounded_channel();
     let (events_tx, events) = unbounded_channel();
+    // The rules are read here too, so that they can be seen and tried on
+    // the demo's mail. There is no engine to run them by themselves.
+    let rules = crate::rules::Keeper::new(config_file.clone(), None, events_tx.clone());
+    rules.watch();
     tokio::spawn(async move {
         while let Some(request) = requests.recv().await {
+            let rules_may_change = matches!(
+                request,
+                AccountRequest::Remember(_) | AccountRequest::Settings(Some(_))
+            );
             let event = match request {
+                AccountRequest::Rules(ask) => {
+                    if !answer_rules(&rules, ask, &events_tx).await {
+                        break;
+                    }
+                    continue;
+                }
                 AccountRequest::Remember(preference) => AccountEvent::Remembered(
                     remember_off_thread(config_file.clone(), preference).await,
                 ),
@@ -146,12 +182,40 @@ pub fn spawn_remembering(config_file: PathBuf) -> AccountsLink {
             if events_tx.send(event).is_err() {
                 break;
             }
+            if rules_may_change {
+                refresh_rules(&rules).await;
+            }
         }
     });
     AccountsLink {
         requests: Some(requests_tx),
         events,
     }
+}
+
+/// Does what the UI asked about the rules, off the async threads, and
+/// sends the answer. Returns whether the UI is still there to hear it.
+async fn answer_rules(
+    rules: &Arc<crate::rules::Keeper>,
+    ask: quill_tui::setup::RulesAsk,
+    events: &tokio::sync::mpsc::UnboundedSender<AccountEvent>,
+) -> bool {
+    let keeper = Arc::clone(rules);
+    let answer = tokio::task::spawn_blocking(move || keeper.answer(ask))
+        .await
+        .ok()
+        .flatten();
+    match answer {
+        Some(event) => events.send(event).is_ok(),
+        None => !events.is_closed(),
+    }
+}
+
+/// Reads the rules again, off the async threads, and tells the engine
+/// and the UI if they have changed.
+async fn refresh_rules(rules: &Arc<crate::rules::Keeper>) {
+    let keeper = Arc::clone(rules);
+    let _ = tokio::task::spawn_blocking(move || keeper.refresh(false)).await;
 }
 
 /// [`remember`], off the async threads: the config file blocks.
@@ -188,6 +252,7 @@ fn remember(config_file: &Path, preference: Preference) -> Result<(), String> {
         Preference::ReaderWidth(share) => config_edit::set_reader_width(&before, share)?,
         Preference::EditorTips(on) => config_edit::set_editor_tips(&before, on)?,
         Preference::AgentsOff => config_edit::stop_agents(&before)?,
+        Preference::Rules(on) => config_edit::set_rules_enabled(&before, on)?,
     };
     if after == before {
         return Ok(());
@@ -373,6 +438,26 @@ impl Service {
                 settings::themes_off_thread(self.config_file.clone(), change).await
             }
             AccountRequest::LinkCommand => link_command().await,
+            // The keeper of the rules answers these, beside the service
+            // (see `spawn`). Asked of the service itself, what there is
+            // to say is what the rules are.
+            AccountRequest::Rules(_) => {
+                let config_file = self.config_file.clone();
+                let loaded = tokio::task::spawn_blocking(move || {
+                    let config = quill_core::config::Config::load(&config_file).unwrap_or_default();
+                    let dir = config_file
+                        .parent()
+                        .map(Path::to_path_buf)
+                        .unwrap_or_default();
+                    crate::rules::load(&config, &crate::paths::rules_file_in(&dir))
+                })
+                .await
+                .unwrap_or_default();
+                AccountEvent::Rules(quill_tui::setup::RulesNow {
+                    set: Arc::new(loaded.set),
+                    problem: loaded.problem,
+                })
+            }
         }
     }
 

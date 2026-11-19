@@ -420,6 +420,11 @@ impl Rig {
         options: SyncOptions,
         rules: Vec<quill_sync::Rule>,
     ) -> Self {
+        Self::start_set(backend, options, quill_sync::RuleSet::of(rules))
+    }
+
+    /// With the rules as a whole: switched on or off, and how far back.
+    fn start_set(backend: MemoryBackend, options: SyncOptions, rules: quill_sync::RuleSet) -> Self {
         let post = Outgoing::default();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("quill.db");
@@ -954,12 +959,15 @@ async fn new_unread_mail_in_the_inbox_is_announced_and_nothing_else_is() {
 fn rule(matching: &str) -> quill_sync::Rule {
     quill_sync::Rule {
         name: matching.to_owned(),
-        query: quill_core::search::parse(matching, |_, _, _| None),
+        queries: vec![quill_core::search::parse(matching, |_, _, _| None)],
         account: None,
         move_to: None,
+        delete: false,
         mark_read: false,
         star: false,
         notify: None,
+        enabled: true,
+        look_back: None,
     }
 }
 
@@ -993,7 +1001,8 @@ fn announced(rig: &Rig, events: &[SyncEvent]) -> Vec<String> {
 #[tokio::test(flavor = "multi_thread")]
 async fn rules_file_and_mark_arriving_mail_on_the_server_too() {
     let backend = MemoryBackend::new(100);
-    backend.add("INBOX", "1", "Already here: build passed", NOW_ISH);
+    // Long ago: further back than any rule looks.
+    backend.add("INBOX", "1", "Already here: build passed", 1_000_000);
     backend.add("Archive", "1", "Old", NOW_ISH);
     let rules = vec![
         quill_sync::Rule {
@@ -1012,8 +1021,9 @@ async fn rules_file_and_mark_arriving_mail_on_the_server_too() {
     ];
     let mut rig = Rig::start_ruled(backend, hour_long(), rules);
     rig.pass().await;
-    // What was there before the rules were is left alone: a rule is for
-    // mail as it arrives, not a way to reorganise a mailbox.
+    // Old mail that was there before the rules were is left alone: a
+    // rule looks back only so far, and is not a way to reorganise a
+    // mailbox.
     assert_eq!(rig.subjects("INBOX"), ["Already here: build passed"]);
 
     rig.backend.add("INBOX", "2", "Build failed", NOW_ISH + 1);
@@ -2182,4 +2192,340 @@ async fn mail_caught_mid_send_by_a_crash_is_held_not_resent() {
         store.draft(draft).unwrap().unwrap().state,
         quill_store::DraftState::Failed
     );
+}
+
+/// The first event that `wanted` picks something out of.
+async fn wait_for<T>(rig: &mut Rig, wanted: impl Fn(&SyncEvent) -> Option<T>) -> T {
+    loop {
+        let event = rig.next().await;
+        if let Some(found) = wanted(&event) {
+            return found;
+        }
+    }
+}
+
+fn said_by_rules(events: &[SyncEvent]) -> Vec<String> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            SyncEvent::Ruled { said } => Some(said.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn catching_up_asks_about_mail_already_here_once_and_only_as_far_back_as_a_rule_looks() {
+    let backend = MemoryBackend::new(100);
+    backend.add("INBOX", "1", "Build passed", NOW_ISH);
+    backend.add("INBOX", "2", "Build from long ago", 1_000_000);
+    backend.add("INBOX", "3", "Lunch?", NOW_ISH);
+    backend.add("Archive", "a1", "Old", NOW_ISH);
+    let rules = vec![quill_sync::Rule {
+        move_to: Some("archive".to_owned()),
+        ..rule("subject:build")
+    }];
+    let mut rig = Rig::start_ruled(backend, hour_long(), rules);
+    let events = rig.pass().await;
+    rig.queue_empty().await;
+
+    // What the inbox held when it was first synced is caught up on,
+    // within the look-back: said to the user, and not announced as new.
+    assert_eq!(said_by_rules(&events), ["Rules filed 1"]);
+    assert!(announced(&rig, &events).is_empty());
+    assert!(rig.subjects("Archive").contains(&"Build passed".to_owned()));
+    let mut inbox = rig.subjects("INBOX");
+    inbox.sort();
+    assert_eq!(inbox, ["Build from long ago", "Lunch?"]);
+
+    // Put back in the inbox by the user, it stays: the rules were asked
+    // about it once.
+    let message = rig
+        .store
+        .messages(Mailbox::Unified)
+        .unwrap()
+        .into_iter()
+        .map(|row| row.id)
+        .chain(
+            rig.store
+                .search(
+                    &quill_core::search::parse("subject:passed", |_, _, _| None),
+                    10,
+                )
+                .unwrap()
+                .into_iter()
+                .map(|row| row.id),
+        )
+        .last()
+        .unwrap();
+    let inbox_folder = rig
+        .store
+        .folders()
+        .unwrap()
+        .into_iter()
+        .find(|row| row.name == "INBOX")
+        .unwrap()
+        .id;
+    assert!(
+        rig.store
+            .queue_move(message, inbox_folder, 0, 0)
+            .unwrap()
+            .is_some()
+    );
+    assert!(rig.handle.send(SyncRequest::Queue));
+    rig.queue_empty().await;
+    let events = rig.sync_now().await;
+    assert!(said_by_rules(&events).is_empty());
+    assert!(rig.subjects("INBOX").contains(&"Build passed".to_owned()));
+
+    // The rules read again change nothing either: it is still mail they
+    // have been asked about.
+    rig.handle
+        .set_rules(quill_sync::RuleSet::of(vec![quill_sync::Rule {
+            move_to: Some("archive".to_owned()),
+            ..rule("subject:build")
+        }]));
+    let events = rig.sync_now().await;
+    assert!(said_by_rules(&events).is_empty());
+    assert!(rig.subjects("INBOX").contains(&"Build passed".to_owned()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rules_that_are_off_do_nothing_and_catch_up_when_switched_on() {
+    let backend = MemoryBackend::new(100);
+    backend.add("INBOX", "1", "First", NOW_ISH);
+    backend.add("Archive", "1", "Old", NOW_ISH);
+    let rules = || {
+        vec![
+            quill_sync::Rule {
+                move_to: Some("archive".to_owned()),
+                ..rule("subject:build")
+            },
+            // Switched off by itself: asked nothing.
+            quill_sync::Rule {
+                star: true,
+                enabled: false,
+                ..rule("subject:build")
+            },
+        ]
+    };
+    let off = quill_sync::RuleSet {
+        on: false,
+        ..quill_sync::RuleSet::of(rules())
+    };
+    let mut rig = Rig::start_set(backend, hour_long(), off);
+    rig.pass().await;
+    rig.backend.add("INBOX", "2", "Build failed", NOW_ISH + 1);
+    let events = rig.sync_now().await;
+    // Off: the mail arrives, is announced, and stays.
+    assert_eq!(announced(&rig, &events), ["Build failed"]);
+    assert!(rig.subjects("INBOX").contains(&"Build failed".to_owned()));
+
+    // Switched on, they catch up on what came meanwhile.
+    rig.handle.set_rules(quill_sync::RuleSet::of(rules()));
+    let said = wait_for(&mut rig, |event| match event {
+        SyncEvent::Ruled { said } => Some(said.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(said, "Rules filed 1");
+    rig.queue_empty().await;
+    assert!(rig.subjects("Archive").contains(&"Build failed".to_owned()));
+    let filed = rig
+        .store
+        .search(
+            &quill_core::search::parse("subject:failed", |_, _, _| None),
+            10,
+        )
+        .unwrap();
+    assert!(!filed[0].flags.flagged, "a rule that is off was asked");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rule_that_deletes_moves_mail_to_the_trash_and_writes_down_how_to_take_it_back() {
+    let backend = MemoryBackend::new(100);
+    backend.add("INBOX", "1", "First", 1_000_000);
+    backend.add("Trash", "1", "Old", NOW_ISH);
+    let rules = vec![quill_sync::Rule {
+        delete: true,
+        mark_read: true,
+        ..rule("subject:offer")
+    }];
+    let mut rig = Rig::start_ruled(backend, hour_long(), rules);
+    rig.pass().await;
+    rig.backend
+        .add("INBOX", "2", "A special offer", NOW_ISH + 1);
+    let events = rig.sync_now().await;
+    rig.queue_empty().await;
+
+    assert!(
+        rig.subjects("Trash")
+            .contains(&"A special offer".to_owned())
+    );
+    assert!(announced(&rig, &events).is_empty());
+    assert_eq!(said_by_rules(&events), ["Rules deleted 1"]);
+    // On the server it is in the trash too, not gone.
+    rig.backend.with(|server| {
+        assert!(!server.folders["INBOX"].contains_key("2"));
+        assert!(
+            server.folders["Trash"]
+                .values()
+                .any(|mail| mail.subject == "A special offer")
+        );
+    });
+    // Where it was is noted, so that it can be put back.
+    let offer = rig
+        .store
+        .search(
+            &quill_core::search::parse("subject:offer", |_, _, _| None),
+            10,
+        )
+        .unwrap()[0]
+        .id;
+    let inbox = rig
+        .store
+        .folders()
+        .unwrap()
+        .into_iter()
+        .find(|row| row.name == "INBOX")
+        .unwrap()
+        .id;
+    assert_eq!(rig.store.trashed_from(offer).unwrap(), Some(inbox));
+    // And it is in the log, under the rule's name, with what is needed
+    // to take it back.
+    let log = rig.store.agent_log(10, false).unwrap();
+    assert_eq!(log.len(), 1);
+    assert_eq!(log[0].way, "rule");
+    assert_eq!(log[0].agent, "subject:offer");
+    assert_eq!(log[0].summary, "deleted 1 message, marked 1 message");
+    assert_eq!(log[0].count, 1);
+    let undo: serde_json::Value = serde_json::from_str(log[0].undo.as_deref().unwrap()).unwrap();
+    assert_eq!(undo["op"], "rule");
+    assert_eq!(undo["moved"][0]["id"], offer.0);
+    assert_eq!(undo["moved"][0]["from"], inbox.0);
+    assert_eq!(undo["moved"][0]["trashed"], true);
+    assert_eq!(undo["marked"][0]["flags"], "0000");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rule_about_what_a_message_says_has_it_downloaded_before_it_is_asked() {
+    let backend = MemoryBackend::new(100);
+    backend.add("INBOX", "1", "First", 1_000_000);
+    backend.add("Archive", "1", "Old", NOW_ISH);
+    // The body of a message here is "Body of SUBJECT.": `body:` looks
+    // only there, and finds nothing until the message is downloaded.
+    let rules = vec![quill_sync::Rule {
+        move_to: Some("archive".to_owned()),
+        ..rule("body:newsletter")
+    }];
+    let mut rig = Rig::start_ruled(backend, hour_long(), rules);
+    rig.pass().await;
+    rig.backend.add("INBOX", "2", "Newsletter", NOW_ISH + 1);
+    rig.backend.add("INBOX", "3", "Lunch?", NOW_ISH + 2);
+    let events = rig.sync_now().await;
+    rig.queue_empty().await;
+
+    assert!(rig.subjects("Archive").contains(&"Newsletter".to_owned()));
+    // Filed before it was announced: only the other is news.
+    assert_eq!(announced(&rig, &events), ["Lunch?"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn catching_up_leaves_more_than_it_should_change_alone_for_the_user() {
+    let backend = MemoryBackend::new(200);
+    for index in 0..=quill_core::rules::CAP {
+        backend.add(
+            "INBOX",
+            &format!("{}", index + 1),
+            &format!("Build {index}"),
+            NOW_ISH + i64::try_from(index).unwrap(),
+        );
+    }
+    backend.add("Archive", "1", "Old", NOW_ISH);
+    let rules = vec![quill_sync::Rule {
+        move_to: Some("archive".to_owned()),
+        ..rule("subject:build")
+    }];
+    let mut rig = Rig::start_ruled(backend, hour_long(), rules);
+    let events = rig.pass().await;
+    let waiting: Vec<(String, usize)> = events
+        .iter()
+        .filter_map(|event| match event {
+            SyncEvent::RulesWaiting { account, count } => Some((account.clone(), *count)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(waiting, [("Work".to_owned(), quill_core::rules::CAP + 1)]);
+    assert_eq!(rig.subjects("Archive"), ["Old"]);
+    assert_eq!(rig.subjects("INBOX").len(), quill_core::rules::CAP + 1);
+    assert!(rig.store.agent_log(10, false).unwrap().is_empty());
+
+    // Said once, not at every pass.
+    let events = rig.sync_now().await;
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, SyncEvent::RulesWaiting { .. }))
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_rule_written_later_is_for_mail_from_then_on_and_not_for_what_was_here() {
+    let backend = MemoryBackend::new(100);
+    backend.add("INBOX", "1", "Build passed", NOW_ISH);
+    backend.add("Archive", "a1", "Old", NOW_ISH);
+    // Rules are on, and there are none yet.
+    let mut rig = Rig::start_ruled(backend, hour_long(), Vec::new());
+    rig.pass().await;
+    rig.backend.add("INBOX", "2", "Build failed", NOW_ISH + 1);
+    rig.sync_now().await;
+
+    // The first rule is written. What is in the inbox already is left
+    // for the user to run it on: nothing is filed behind their back.
+    rig.handle
+        .set_rules(quill_sync::RuleSet::of(vec![quill_sync::Rule {
+            move_to: Some("archive".to_owned()),
+            ..rule("subject:build")
+        }]));
+    let events = rig.sync_now().await;
+    assert!(said_by_rules(&events).is_empty());
+    assert_eq!(rig.subjects("INBOX").len(), 2);
+
+    // Mail from then on is filed.
+    rig.backend.add("INBOX", "3", "Build fixed", NOW_ISH + 2);
+    let events = rig.sync_now().await;
+    rig.queue_empty().await;
+    assert_eq!(said_by_rules(&events), ["Rules filed 1"]);
+    assert_eq!(rig.subjects("INBOX").len(), 2);
+    assert!(rig.subjects("Archive").contains(&"Build fixed".to_owned()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn rules_with_a_mistake_in_them_leave_mail_to_be_asked_about_when_put_right() {
+    let backend = MemoryBackend::new(100);
+    backend.add("INBOX", "1", "First", 1_000_000);
+    backend.add("Archive", "a1", "Old", NOW_ISH);
+    // The file could not be read: none of its rules are here.
+    let held = quill_sync::RuleSet {
+        held: true,
+        ..quill_sync::RuleSet::default()
+    };
+    let mut rig = Rig::start_set(backend, hour_long(), held);
+    rig.pass().await;
+    rig.backend.add("INBOX", "2", "Build failed", NOW_ISH + 1);
+    rig.sync_now().await;
+    assert!(rig.subjects("INBOX").contains(&"Build failed".to_owned()));
+
+    // Put right, the rules are asked about what came meanwhile.
+    rig.handle
+        .set_rules(quill_sync::RuleSet::of(vec![quill_sync::Rule {
+            move_to: Some("archive".to_owned()),
+            ..rule("subject:build")
+        }]));
+    let said = wait_for(&mut rig, |event| match event {
+        SyncEvent::Ruled { said } => Some(said.clone()),
+        _ => None,
+    })
+    .await;
+    assert_eq!(said, "Rules filed 1");
 }

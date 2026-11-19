@@ -11,15 +11,15 @@ expression: harness.screen()
 │    Arc┃   Mark read or unread                                      u ┃    Fri┃
 │    Tra┃   Load remote pictures for this message                    i ┃    Fri┃
 │  ▾ Per┃   Always load remote pictures from this sender             I ┃    Thu┃
-│    Inb┃   Select a range                                           V ┃    Thu┃
-│    Dra┃   Focus the previous pane or field                 shift-tab ┃    Wed┃
-│    Sen┃   Archive                                                  e ┃    Tue┃
-│    Arc┃   Go to Work / Sent                                          ┃    Mon┃
-│    Tra┃   Select or unselect                                       x ┃    Sun┃
-│       ┃   Open in the browser                                      B ┃ Nov 06┃
-│       ┃   Write a new message                                      c ┃ Nov 02┃
-│       ┃   Go to Work / Archive                                       ┃ Oct 25┃
-│       ┃   Help for this context                                    ? ┃ct 2025┃
+│    Inb┃   Rules On                                               Z t ┃    Thu┃
+│    Dra┃   Edit Rules                                             Z e ┃    Wed┃
+│    Sen┃   Select a range                                           V ┃    Tue┃
+│    Arc┃   What Rules Did                                         Z l ┃    Mon┃
+│    Tra┃   New Rule from This Message…                            Z n ┃    Sun┃
+│       ┃   Focus the previous pane or field                 shift-tab ┃ Nov 06┃
+│       ┃   Archive                                                  e ┃ Nov 02┃
+│       ┃   Go to Work / Sent                                          ┃ Oct 25┃
+│       ┃   Select or unselect                                       x ┃ct 2025┃
 │       ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛       ┃
 │                │┃                                                            ┃
 │                │┃                                                            ┃

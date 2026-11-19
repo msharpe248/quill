@@ -132,7 +132,7 @@ fn in_a_terminal_there_is_no_web_reading_and_nothing_changes() {
         assert!(harness.host_requests.is_empty());
         assert_eq!(
             harness.state.host_state(&harness.env).checked,
-            [CommandId::ViewSidebar]
+            [CommandId::ViewSidebar, CommandId::RulesToggle]
         );
         assert_eq!(harness.state.settle_due(), None);
 
@@ -166,7 +166,7 @@ fn in_the_app_it_is_off_until_it_is_switched_on_and_the_choice_is_remembered() {
     );
     assert_eq!(
         harness.state.host_state(&harness.env).checked,
-        [CommandId::ViewSidebar]
+        [CommandId::ViewSidebar, CommandId::RulesToggle]
     );
     assert!(
         status(&harness).contains("w web/text"),
@@ -185,7 +185,11 @@ fn in_the_app_it_is_off_until_it_is_switched_on_and_the_choice_is_remembered() {
     assert_eq!(remembered(&harness), [true]);
     assert_eq!(
         harness.state.host_state(&harness.env).checked,
-        [CommandId::ViewSidebar, CommandId::ViewWebReading]
+        [
+            CommandId::ViewSidebar,
+            CommandId::ViewWebReading,
+            CommandId::RulesToggle
+        ]
     );
     let page = showing(&harness);
     assert_eq!(page.title, "Q4 roadmap");
@@ -225,7 +229,7 @@ fn in_the_app_it_is_off_until_it_is_switched_on_and_the_choice_is_remembered() {
     );
     assert_eq!(
         harness.state.host_state(&harness.env).checked,
-        [CommandId::ViewSidebar]
+        [CommandId::ViewSidebar, CommandId::RulesToggle]
     );
     let screen = harness.screen();
     assert!(screen.contains("[3] Reader"), "{screen}");
@@ -262,7 +266,11 @@ fn it_starts_on_when_the_config_says_so_and_shows_the_first_message_without_read
     assert!(remembered(&harness).is_empty());
     assert_eq!(
         harness.state.host_state(&harness.env).checked,
-        [CommandId::ViewSidebar, CommandId::ViewWebReading]
+        [
+            CommandId::ViewSidebar,
+            CommandId::ViewWebReading,
+            CommandId::RulesToggle
+        ]
     );
 }
 

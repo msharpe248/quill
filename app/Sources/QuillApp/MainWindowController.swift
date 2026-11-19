@@ -535,6 +535,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             keysWindow.set(list)
         case .keysShow:
             keysWindow.show()
+        case .rulesEdit:
+            editRules()
         case .windowClose:
             // The user closed Quill with a key. It is the red button's
             // close and nothing else: Quill goes on running.
@@ -1443,6 +1445,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             return
         }
         settingsWindow.open()
+    }
+
+    /// Opens the file the rules are written in, in the application the
+    /// Mac opens it with: the user chose Edit Rules. The core made the
+    /// file before asking, with how to write a rule in it; if it is not
+    /// there, nothing is opened and nothing is made here. Which file is
+    /// this side's to say, by the settings folder: the core names none.
+    private func editRules() {
+        let file = configFolder.appendingPathComponent("rules.toml")
+        var isFolder: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: file.path, isDirectory: &isFolder), !isFolder.boolValue
+        else {
+            NSLog("Quill: the rules' file is not there to open")
+            return
+        }
+        fileOpener(file)
     }
 
     /// Opens `config.toml` in the application the Mac edits text with. With

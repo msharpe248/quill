@@ -662,6 +662,7 @@ impl Io<'_> {
                 }
                 HostRequest::Play { path, title } => self.host.play(&path, &title),
                 HostRequest::OpenFile(path) => self.host.open_file(&path),
+                HostRequest::EditRules => self.host.edit_rules(),
                 // Only ever asked for where the host has the pane.
                 HostRequest::Reading {
                     path,
@@ -831,6 +832,8 @@ impl Io<'_> {
                 Context::When => bridge::Context::Folders,
                 // Another box to type in over the panes.
                 Context::NewFolder => bridge::Context::Folders,
+                // And another: a rule being written.
+                Context::NewRule => bridge::Context::Folders,
                 // A question in the host's sheet, as a certificate is.
                 Context::RecordKeys => bridge::Context::Certificate,
                 Context::EditTheme => bridge::Context::Certificate,
@@ -1098,6 +1101,7 @@ pub fn command_infos(env: &Env) -> Vec<CommandInfo> {
                 Menu::Mailbox => bridge::Menu::Mailbox,
                 Menu::View => bridge::Menu::View,
                 Menu::Message => bridge::Menu::Message,
+                Menu::Rules => bridge::Menu::Rules,
                 Menu::Help => bridge::Menu::Help,
             }),
             symbol: spec.symbol.map(str::to_owned),
@@ -1136,6 +1140,13 @@ async fn event_loop(
     io.send_keys(env);
     for request in state.startup_requests() {
         io.data.send(request);
+    }
+    // The rules are files, and the service reads them: what they say is
+    // asked for once, and told from then on whenever it changes.
+    if let Some(service) = &io.accounts {
+        let _ = service.send(crate::setup::AccountRequest::Rules(
+            crate::setup::RulesAsk::Read,
+        ));
     }
 
     // `None` while Vim has the terminal: its keys are not Quill's to read.

@@ -654,6 +654,7 @@ Accepted 2026-11-15: repeated polls never duplicate or lose a message under each
 - **`move_to` names a folder of the message's own account**, by the folder's name first and then by what a folder is for (`archive`, `trash`, `junk`). An account with no such folder gets a notice naming the rule, and the message stays put.
 - **No labels.** The spec lists "label" among a rule's actions; Quill has folders (Gmail's labels appear as folders), so filing is the action.
 - **Rules run only while Quill does**, in the app or in `quill sync`. They are not server-side rules (Sieve, Graph inbox rules), which are on the P2 list.
+- Changed on 2026-11-18: rules have a file of their own, see what a message says, delete, catch up, and are run by hand. See "Rules: a file of their own, tried before they are run" at the end of this file, which is what Quill does where the two differ.
 
 ### Unsubscribing
 
@@ -1317,7 +1318,7 @@ Not changed, and the owner's to decide before this is given out: `PRIVACY.md`, t
 ### Still not done
 
 - `quill watch`, `quill open`.
-- `list:` in the search.
+- ~~`list:` in the search.~~ Done on 2026-11-18, with the rules.
 - Making a folder on a server from outside, and `quill sync --account`.
 - The 2026-07-28 revision of MCP.
 - Any of it with a real account, a real server or a real agent's program.
@@ -1367,3 +1368,51 @@ A fault that had been seen now and then in the terminal tests, and three times i
 - **The fix is to not look.** Nothing touches the keyboard between dropping the stream and the editor ending, so the wake is the thread's whenever it starts. What was typed and not read, and the wake itself when no thread took it, are cleared as the terminal is taken back (`settle_keyboard`), when the thread has long gone.
 - **What is left of the race:** an editor that cannot be started is taken back from at once, with nothing but a short pause for the thread. Rare twice over.
 - **Not proved by a test.** It cannot be made to happen here. That it has gone will show in CI, where it was failing more often than not.
+
+## Rules: a file of their own, tried before they are run (2026-11-18)
+
+Asked for by the owner: rules that move mail to folders or delete it; that match who mail is to and from, its subject and what it says; a switch for all of them; a new rule that can be defined and run; a preview of what a rule would match; a simple syntax in a file; rules that run as mail comes in and when they are switched on; a limit on how far back a rule goes. The design is `Quill Rules Spec.md`, agreed the same day ("build it"), which settled its open questions as proposed.
+
+### What was built
+
+- **`rules.toml`**, beside `config.toml`: `[[rule]]` with `name`, `match` (a search, or a list meaning any), `account`, `move_to`, `delete`, `mark_read`, `star`, `notify`, `enabled`, `look_back`. Read by `quill_core::rules::parse`. A mistake anywhere in it leaves every rule of the file out, and is said. `[[rule]]` in `config.toml` still works, takes the same keys, and is asked first.
+- **`[rules]` in `config.toml`**: `enabled` (on) and `look_back` (`1w`). The switch is a setting, so the Settings window and the Rules menu change it as they change any other.
+- **`body:` and `list:` in the search**, for rules and for the search box alike. `list:` is part of a message's `List-Id`, which Quill had not kept: it is read when a message is downloaded (`messages.list_id`), and mail downloaded before is gone back over in the background, a hundred messages at a time.
+- **A rule that needs what a message says has it downloaded first.** When any rule that is on has a bare word, `body:` or `list:`, arriving mail is fetched before the rules are asked and announced after. Not a message over 5 MB: it is asked what can be told without it, is not noted as asked, and is asked again when catching up finds it downloaded. For an account whose mail is kept here (POP3), which downloads at the end of a pass a session at a time, the rules and the announcement both wait for that.
+- **`delete` is a move to the trash**, found by what the folder is for and never by a folder the user happens to have called "trash", with where the message was noted so that Put Back returns it. No trash folder: the mail is left alone and that is said.
+- **A message is asked about once** (`messages.ruled_at`). The rules by themselves never ask twice, so a message put back in the inbox stays there. Running by hand asks whatever is in the look-back.
+- **Catching up** (`Engine::catch_up`): after every pass, and when the rules are given to the engine again, the mail in an account's inboxes that has not been asked about, as far back as each rule looks, is put to the rules. This is what "switching them on catches up" is; it is also what a new account's first sync gets, and what mail a rule could not read yet gets.
+- **The cap is 50, on catching up only.** More than that and nothing is changed: the engine says how many, once, and it waits for Run All Rules. Arriving mail is not capped. A run by hand is always shown first, which is its asking.
+- **Run by hand, shown first.** Run a Rule… and Run All Rules… put what would change in the message list, as a search does (`Search::rule`), with what would be done in the list's title; Run the Rule Shown does it (`rules::by_hand`). Leaving the list changes nothing. A rule that is switched off can be run this way.
+- **Written down.** Each rule that changed something has a line in the store's log (`agent_log`, under the way `rule` and the rule's name) with how to take it back: `quill undo` does, and so does `enter` on a line of What Rules Did. A run by hand is also one undo for `U`. The Agents pane's list leaves these lines out: they are not an agent's.
+- **A Rules menu** between Message and Window (a Mac keeps Window and Help last): Rules On, Run a Rule…, Run All Rules…, Run the Rule Shown, New Rule from This Message…, Edit Rules, What Rules Did. Keys under `Z` in both presets.
+- **New Rule from This Message** is a form with two views, like the others: a name, what it matches (one line, written as a search: a rule is a search), what to do, and a folder. Saving writes it at the end of `rules.toml` (`rules::add`, which keeps what is there and refuses a file it could not read) and then shows what it would match.
+- **`quill rules list` and `quill rules test NAME`**, and nothing from a shell that runs or switches rules: a shell command cannot tell the user from an agent, and no agent touches rules.
+
+### Decided on the way
+
+- **A rule written later is for mail from then on.** With rules on and none written, arriving mail is still noted as asked about. Otherwise the first rule anyone wrote would be put, the moment its file was saved, to a week of mail it had never been tried on, with nobody watching. The owner's "define a new rule and run the rule" is two steps on purpose.
+- **While the file has a mistake nothing is noted as asked** (`RuleSet::held`), so that the mail that came meanwhile is put to the rules when it is put right.
+- **Edit Rules needed a bridge message** (`rules.edit`, with no path in it). The shell opens only files in the app's own temporary folder when the core names one, and that rule was kept: the shell opens `rules.toml` in the settings folder it already knows. In a terminal nothing is opened: Quill says where the file is.
+- **The rules and the hooks share a picker.** The list of rules, and of what rules did, is drawn in the box the hooks are chosen from (`HookPicker::list`), with its own title.
+- **One line per rule in the log, also for a run by hand** of all the rules: the spec said one line for the run. `U` still takes the whole run back as one.
+- **The engine is told of the rules by a keeper** (`quill-cli/src/rules.rs`, `Keeper`) that looks at the two files every two seconds and when a setting is changed, and tells the UI when they differ from what it was last told. The UI asks once at the start. The demo mailbox has a keeper and no engine, so rules can be seen, tried and run by hand there.
+
+### Known limits
+
+- **A server that gives no new id for a moved message** (IMAP without UIDPLUS) has the message come back as a new one after a move. Put back in the inbox there, a message is an arrival again and is asked again. Gmail, Microsoft 365 and current IMAP servers give the id.
+- **A dry run does not follow one rule into the next.** What a later rule matches is asked of the mail as it stands, so a rule that asks `is:unread` after one that marks read may be counted in the preview and do nothing in the run.
+- **A race between an arrival and a catch-up** for the same account can put a message to the rules by catching up before its own arrival does: it is then filed, and announced as well.
+- **The preview shows at most 500 messages**, and says how many there are in all.
+
+### Not seen
+
+- **Any of it with a real account or a real server.** The engine's side is tested against the stand-in server only: arriving mail, catching up, the cap, a rule that deletes, a rule about the body, rules that are off. That a real server's mail is filed, and that a body is fetched before the rules, has not been seen.
+- **Seen in a check build** on the demo mailbox with scratch folders: the Rules menu and what it enables, the list of rules, a rule shown and run, the new-rule sheet saved into `rules.toml` and then shown, the switch written to `config.toml`, the two settings in the General pane, Edit Rules asking for `rules.toml` to be opened (the scripted run's recorder took the request: no application was opened), Run All Rules over two rules, and a change taken back from What Rules Did. **Not seen there:** the file opening in an application, and anything in a real terminal, which the snapshot tests stand in for.
+- **Catching up when rules are switched on** has no engine in the demo mailbox, so it was seen only in the engine's tests.
+
+### Not done
+
+- Rules on the server (Sieve, Gmail's filters, Graph's inbox rules); rules for folders other than inboxes; patterns; forwarding, answering or running a hook from a rule.
+- A form to change or remove a rule: they are edited in the file. A menu item for each rule.
+- Carrying "asked about" across a move that gives no new id.

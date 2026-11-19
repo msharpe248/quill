@@ -15,7 +15,7 @@
 
 pub mod rules;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -30,7 +30,7 @@ use tokio::sync::Notify;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio::task::JoinHandle;
 
-pub use crate::rules::Rule;
+pub use crate::rules::{Rule, RuleSet};
 
 /// An account for the engine to keep in sync.
 pub struct SyncAccount {
@@ -147,6 +147,13 @@ pub enum SyncEvent {
     FolderMade { account: String, name: String },
     /// Something went wrong that the user should see.
     Problem { account: String, message: String },
+    /// The rules did something by themselves: `said` is the line for the
+    /// user ("Rules filed 3").
+    Ruled { said: String },
+    /// Catching up, the rules would change more of an account's mail
+    /// than they do without asking. Nothing was changed: it waits for the
+    /// user to run them.
+    RulesWaiting { account: String, count: usize },
     /// An account's server presented a certificate that was not accepted.
     /// Nothing was sent to it. The user is shown the certificate and
     /// decides: this is never settled quietly.
@@ -212,6 +219,31 @@ impl SyncHandle {
         self.engine.remove_account(id);
     }
 
+    /// Gives the engine the rules as they now are: read again from their
+    /// file, or switched on or off. Mail in an inbox that the rules have
+    /// not been asked about is put to them now, as far back as they look
+    /// (catching up). Must be called on the engine's Tokio runtime.
+    pub fn set_rules(&self, rules: RuleSet) {
+        self.engine.set_rules(rules);
+        let engine = Arc::downgrade(&self.engine);
+        tokio::spawn(async move {
+            let Some(engine) = engine.upgrade() else {
+                return;
+            };
+            for running in engine.running() {
+                let account = &running.account;
+                if let Err(problem) = engine.catch_up(account.id, &account.name).await {
+                    engine.problem(account, format!("The rules could not be run: {problem}"));
+                }
+            }
+        });
+    }
+
+    /// The rules the engine has.
+    pub fn rules(&self) -> Arc<RuleSet> {
+        self.engine.rule_set()
+    }
+
     /// Sets how many bytes downloaded mail may take, and has the engine
     /// keep to it from now on: soon after this is called, and every few
     /// hours after. Must be called on the engine's Tokio runtime.
@@ -251,6 +283,13 @@ const NO_SERVER: &str = "this account has no server to send through. Edit the ac
 /// sooner when the account is given a server: that hurries it.
 const NO_SERVER_WAIT: i64 = 60 * 60;
 
+/// The biggest message downloaded ahead of the rules being asked about it.
+/// A bigger one is asked what can be told without it, and again when it
+/// has been downloaded for another reason.
+const RULES_FETCH_LARGEST: i64 = 5 * 1024 * 1024;
+/// The most mail one catching up asks about.
+const RULES_CATCH_UP_MOST: usize = 5000;
+
 /// How long after starting the cache is first measured.
 const CACHE_FIRST_LOOK: Duration = Duration::from_secs(120);
 /// And how often after that.
@@ -277,7 +316,7 @@ pub fn spawn(
     options: SyncOptions,
     events: UnboundedSender<SyncEvent>,
 ) -> SyncHandle {
-    spawn_with_rules(store, blobs, accounts, options, Vec::new(), events)
+    spawn_with_rules(store, blobs, accounts, options, RuleSet::default(), events)
 }
 
 /// As [`spawn`], with rules for mail as it arrives. They are there from
@@ -287,7 +326,7 @@ pub fn spawn_with_rules(
     blobs: Option<PathBuf>,
     accounts: Vec<SyncAccount>,
     options: SyncOptions,
-    rules: Vec<Rule>,
+    rules: RuleSet,
     events: UnboundedSender<SyncEvent>,
 ) -> SyncHandle {
     let (requests, queue) = unbounded_channel();
@@ -295,7 +334,8 @@ pub fn spawn_with_rules(
         store: Arc::new(Mutex::new(store)),
         blobs: blobs.map(|root| Arc::new(BlobStore::new(root))),
         options,
-        rules,
+        rules: RwLock::new(Arc::new(rules)),
+        rules_waiting: Mutex::new(HashSet::new()),
         events,
         accounts: RwLock::new(HashMap::new()),
     });
@@ -326,6 +366,24 @@ pub fn spawn_with_rules(
                     Ok(0) | Err(_) => return,
                     Ok(_) => engine.emit(SyncEvent::Changed),
                 }
+            }
+        }
+    });
+    // And mail downloaded before lists were kept is asked which list it
+    // came through, a little at a time: nothing waits on it.
+    tokio::spawn({
+        let engine = Arc::downgrade(&engine);
+        async move {
+            loop {
+                let Some(engine) = engine.upgrade() else {
+                    return;
+                };
+                match engine.list_some().await {
+                    Ok(0) | Err(_) => return,
+                    Ok(_) => {}
+                }
+                drop(engine);
+                tokio::time::sleep(Duration::from_millis(200)).await;
             }
         }
     });
@@ -380,8 +438,12 @@ struct Engine {
     /// settings change.
     accounts: RwLock<HashMap<LocalAccountId, Arc<Running>>>,
     options: SyncOptions,
-    /// What to do with mail as it arrives.
-    rules: Vec<Rule>,
+    /// What to do with mail by itself. Replaced whole when the rules are
+    /// read again or switched.
+    rules: RwLock<Arc<RuleSet>>,
+    /// Accounts whose catching up is waiting for the user, and has been
+    /// said to be: it is said once.
+    rules_waiting: Mutex<HashSet<LocalAccountId>>,
     events: UnboundedSender<SyncEvent>,
 }
 
@@ -721,6 +783,9 @@ impl Engine {
             self.emit(SyncEvent::Changed);
         }
 
+        // Arrivals whose rules wait for the mail to be downloaded: the
+        // new messages, and which of them to announce.
+        let mut later: (Vec<LocalMessageId>, Vec<LocalMessageId>) = (Vec::new(), Vec::new());
         // The inbox first, the rubbish last.
         folders.sort_by_key(|(_, _, role)| match role {
             FolderRole::Inbox => 0,
@@ -780,9 +845,7 @@ impl Engine {
                 } else {
                     Vec::new()
                 };
-                let rules = self.rules.clone();
-                let account_name = account.name.clone();
-                let (applied, mut arrived, ruled) = self
+                let (applied, new, mut arrived) = self
                     .db(move |store| {
                         // A backend may list a message again because it
                         // changed; that is not an arrival.
@@ -799,22 +862,25 @@ impl Engine {
                                 }
                             }
                         }
-                        let ruled =
-                            rules::apply(store, &rules, account_id, &account_name, &new, now())?;
-                        Ok((applied, unread, ruled))
+                        Ok((applied, new, unread))
                     })
                     .await?;
-                changed |= applied | ruled.queued;
-                if ruled.queued {
-                    // What the rules decided goes to the server now.
-                    if let Some(running) = self.account(account_id) {
-                        running.queue.notify_one();
+                changed |= applied;
+                let set = self.rule_set();
+                if !new.is_empty() && !set.active().is_empty() {
+                    if keeps_here && set.needs_body() {
+                        // This account's mail is downloaded at the end of
+                        // the pass, a session at a time. A rule that needs
+                        // what a message says is asked then, and the mail
+                        // announced after.
+                        later.0.extend(new);
+                        later.1.append(&mut arrived);
+                    } else {
+                        let ruled = self.rule_arrivals(account, &set, new, !keeps_here).await?;
+                        changed |= ruled.queued;
+                        arrived.retain(|id| !ruled.quiet.contains(id));
                     }
                 }
-                for problem in ruled.problems {
-                    self.problem(account, problem);
-                }
-                arrived.retain(|id| !ruled.quiet.contains(id));
                 if !arrived.is_empty() {
                     self.emit(SyncEvent::Arrived {
                         account: account_id,
@@ -831,7 +897,24 @@ impl Engine {
         }
 
         if keeps_here {
-            return self.keep_here(account).await;
+            let kept = self.keep_here(account).await;
+            let (new, mut arrived) = later;
+            if !new.is_empty() {
+                let set = self.rule_set();
+                let ruled = self.rule_arrivals(account, &set, new, false).await?;
+                arrived.retain(|id| !ruled.quiet.contains(id));
+                if !arrived.is_empty() {
+                    self.emit(SyncEvent::Arrived {
+                        account: account_id,
+                        messages: arrived,
+                    });
+                }
+                if ruled.queued {
+                    self.emit(SyncEvent::Changed);
+                }
+            }
+            kept?;
+            return Ok(self.catch_up(account_id, &account.name).await?);
         }
 
         // Recent mail should read offline, so fetch its bodies ahead.
@@ -848,7 +931,224 @@ impl Engine {
                 Err(FetchFailure::Other(message)) => return Err(message.into()),
             }
         }
+        // Mail in the inbox the rules have not been asked about: what
+        // came while they were off, and what a folder held when it was
+        // first synced.
+        Ok(self.catch_up(account_id, &account.name).await?)
+    }
+
+    /// The rules the engine has now.
+    fn rule_set(&self) -> Arc<RuleSet> {
+        self.rules
+            .read()
+            .map(|rules| Arc::clone(&rules))
+            .unwrap_or_default()
+    }
+
+    fn set_rules(&self, rules: RuleSet) {
+        if let Ok(mut held) = self.rules.write() {
+            *held = Arc::new(rules);
+        }
+        // What was waiting to be asked about is said again, if it still
+        // is, of the rules as they are now.
+        if let Ok(mut waiting) = self.rules_waiting.lock() {
+            waiting.clear();
+        }
+    }
+
+    /// Puts mail that has just arrived in an inbox to the rules, and does
+    /// what they say. With `fetch`, a rule that needs what a message says
+    /// has the message downloaded first. Tells the user what was done,
+    /// and returns it for the caller to announce the rest by.
+    async fn rule_arrivals(
+        &self,
+        account: &SyncAccount,
+        set: &Arc<RuleSet>,
+        new: Vec<LocalMessageId>,
+        fetch: bool,
+    ) -> Result<rules::Outcome, String> {
+        let needs_body = set.needs_body();
+        if needs_body && fetch {
+            let among = new.clone();
+            let wanted = self
+                .db(move |store| store.small_without_body(&among, RULES_FETCH_LARGEST))
+                .await?;
+            for id in wanted {
+                // One that cannot be had now is asked what can be told
+                // without it, and again once it is here.
+                let _ = self.fetch_body(id).await;
+            }
+        }
+        let account_id = account.id;
+        let account_name = account.name.clone();
+        let set = Arc::clone(set);
+        let ruled = self
+            .db(move |store| {
+                let at = now();
+                let rules = set.active();
+                let ruled = rules::apply(
+                    store,
+                    &rules,
+                    &rules::Run {
+                        account: account_id,
+                        account_name: &account_name,
+                        among: &new,
+                        look_back: None,
+                        dry: false,
+                        // No waiting to be undone: nobody is watching.
+                        not_before: at,
+                        now: at,
+                    },
+                )?;
+                // A message is asked once. One a rule could not read yet
+                // is asked again when catching up finds it downloaded.
+                if !set.held {
+                    let asked = if needs_body {
+                        store.with_body(&new)?
+                    } else {
+                        new
+                    };
+                    store.mark_ruled(&asked, at)?;
+                }
+                Ok(ruled)
+            })
+            .await?;
+        self.after_rules(account, &ruled);
+        Ok(ruled)
+    }
+
+    /// What follows the rules having done something: the server is told,
+    /// and the user.
+    fn after_rules(&self, account: &SyncAccount, ruled: &rules::Outcome) {
+        if ruled.queued
+            && let Some(running) = self.account(account.id)
+        {
+            // What the rules decided goes to the server now.
+            running.queue.notify_one();
+        }
+        for problem in &ruled.problems {
+            self.problem(account, problem.clone());
+        }
+        if let Some(said) = rules::said(ruled) {
+            self.emit(SyncEvent::Ruled { said });
+        }
+    }
+
+    /// Catching up: puts the mail in an account's inboxes that the rules
+    /// have not been asked about to them, as far back as each looks. More
+    /// than a rule should change with nobody watching is left, and the
+    /// user told, once.
+    async fn catch_up(&self, account: LocalAccountId, name: &str) -> Result<(), String> {
+        let set = self.rule_set();
+        if !set.on {
+            // Off: what comes meanwhile is left unasked, and is what
+            // switching them on catches up on.
+            return Ok(());
+        }
+        if set.active().is_empty() {
+            // On, with no rule to ask: there is nothing to catch up on,
+            // now or when the first rule is written. A new rule is for
+            // mail from then on, and for what the user runs it on.
+            if !set.held {
+                self.db(move |store| {
+                    let among = store.inbox_mail(account, i64::MIN, true, RULES_CATCH_UP_MOST)?;
+                    store.mark_ruled(&among, now())
+                })
+                .await?;
+            }
+            return Ok(());
+        }
+        let account_name = name.to_owned();
+        let caught = self
+            .db(move |store| {
+                let at = now();
+                let since = at.saturating_sub(set.longest_look_back());
+                let among = store.inbox_mail(account, since, true, RULES_CATCH_UP_MOST)?;
+                if among.is_empty() {
+                    return Ok(None);
+                }
+                let rules = set.active();
+                let run = rules::Run {
+                    account,
+                    account_name: &account_name,
+                    among: &among,
+                    look_back: Some(set.look_back),
+                    dry: true,
+                    not_before: at,
+                    now: at,
+                };
+                let would = rules::apply(store, &rules, &run)?;
+                if would.changed.len() > quill_core::rules::CAP {
+                    return Ok(Some(Err(would.changed.len())));
+                }
+                let ruled = rules::apply(store, &rules, &rules::Run { dry: false, ..run })?;
+                if !set.held {
+                    let asked = if set.needs_body() {
+                        store.with_body(&among)?
+                    } else {
+                        among
+                    };
+                    store.mark_ruled(&asked, at)?;
+                }
+                Ok(Some(Ok(ruled)))
+            })
+            .await?;
+        let said_already = |waiting: bool| {
+            self.rules_waiting.lock().is_ok_and(|mut held| {
+                if waiting {
+                    !held.insert(account)
+                } else {
+                    held.remove(&account);
+                    false
+                }
+            })
+        };
+        match caught {
+            None => {
+                said_already(false);
+            }
+            Some(Ok(ruled)) => {
+                said_already(false);
+                if let Some(running) = self.account(account) {
+                    self.after_rules(&running.account, &ruled);
+                }
+                if ruled.queued {
+                    self.emit(SyncEvent::Changed);
+                }
+            }
+            Some(Err(count)) => {
+                if !said_already(true) {
+                    self.emit(SyncEvent::RulesWaiting {
+                        account: name.to_owned(),
+                        count,
+                    });
+                }
+            }
+        }
         Ok(())
+    }
+
+    /// Asks which list some of the mail downloaded before lists were kept
+    /// came through. Returns how many messages were looked at.
+    async fn list_some(&self) -> Result<usize, String> {
+        let Some(blobs) = self.blobs.clone() else {
+            return Ok(0);
+        };
+        self.db(move |store| {
+            let waiting = store.without_list_id(100)?;
+            for id in &waiting {
+                let raw = match store.blob_hash(*id)? {
+                    Some(hash) => blobs.get(&hash).ok().flatten(),
+                    None => None,
+                };
+                // One that cannot be read came through no list: it is
+                // settled either way, and not looked at again.
+                let list = raw.and_then(|raw| quill_mime::list_id(&raw));
+                store.set_list_id(*id, list.as_deref())?;
+            }
+            Ok(waiting.len())
+        })
+        .await
     }
 
     /// The rest of a pass for an account whose mail is kept here: every
@@ -972,6 +1272,8 @@ impl Engine {
             .as_ref()
             .map(|parsed| (parsed.headers.message_id.clone(), parsed.thread()));
         let text = parsed.map(|parsed| parsed.body).unwrap_or_default();
+        // The list it came through, for `list:` in a search or a rule.
+        let list = quill_mime::list_id(&raw);
         let blobs = self.blobs.clone();
         let hash = tokio::task::spawn_blocking(move || match blobs {
             Some(blobs) => blobs.put(&raw).map(Some),
@@ -988,6 +1290,7 @@ impl Engine {
             if let Some((own, follows)) = ids {
                 store.thread_message(id, own.as_deref(), &follows)?;
             }
+            store.set_list_id(id, list.as_deref())?;
             Ok(())
         })
         .await

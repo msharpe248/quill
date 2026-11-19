@@ -1050,6 +1050,9 @@ public extension CoreToShell {
         case "keys.show":
             try envelope.requireOnly([])
             self = .keysShow
+        case "rules.edit":
+            try envelope.requireOnly([])
+            self = .rulesEdit
         case "window.close":
             try envelope.requireOnly([])
             self = .windowClose
@@ -1114,6 +1117,8 @@ public extension CoreToShell {
             encodeLine(method: "keys.list", params: list)
         case .keysShow:
             encodeLine(method: "keys.show", params: NoParams())
+        case .rulesEdit:
+            encodeLine(method: "rules.edit", params: NoParams())
         case .windowClose:
             encodeLine(method: "window.close", params: NoParams())
         }

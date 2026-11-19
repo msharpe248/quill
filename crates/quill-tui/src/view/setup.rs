@@ -114,6 +114,46 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         }
         return;
     }
+    if let Some(prompt) = &state.new_rule {
+        use crate::state::{RuleAction, RuleField};
+        let inner = dialog(frame, area, " New rule ", env);
+        let mut rows = Rows::new(frame, inner, env);
+        rows.field("Name:", &prompt.name, prompt.focus == RuleField::Name);
+        rows.field(
+            "Matching:",
+            &prompt.matching,
+            prompt.focus == RuleField::Matching,
+        );
+        rows.choice(
+            "Do:",
+            prompt.action.words(),
+            prompt.focus == RuleField::Action,
+        );
+        if prompt.action == RuleAction::Move {
+            rows.field("Folder:", &prompt.folder, prompt.focus == RuleField::Folder);
+        }
+        if let Some(account) = &prompt.account {
+            rows.pair("For:", &format!("mail in {account}"));
+        }
+        rows.blank();
+        if let Some(problem) = &prompt.problem {
+            rows.warning(problem);
+            rows.blank();
+        }
+        if prompt.busy {
+            rows.dim("Saving\u{2026}");
+        } else {
+            rows.dim(
+                "What it matches is written as a search is: from:ana subject:invoice \
+                 body:unsubscribe. tab moves between these, and space changes what it does.",
+            );
+            rows.dim(
+                "Saving it writes it into rules.toml and shows what it would match. Nothing \
+                 is changed until you run it.",
+            );
+        }
+        return;
+    }
     if let Some(prompt) = &state.unsubscribe {
         let inner = dialog(frame, area, " Unsubscribe ", env);
         let mut rows = Rows::new(frame, inner, env);

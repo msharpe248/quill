@@ -8,7 +8,11 @@ expression: outline(&shown)
    notifications "New mail:": toggle "Show a notification when mail arrives" = false
    threads "Message list:": toggle "List the messages of a conversation together" = false
    web_reading "Reading:": toggle "Read mail in a web pane beside the list" = true
-   more: Rules and saved searches are set in the settings file. Hooks and templates are files beside it.
+   enabled "Rules:": toggle "Run rules on mail as it arrives" = true
+     help: Rules are written in rules.toml: Rules > Edit Rules opens it. Switching them on catches up on the mail that came while they were off.
+   look_back "Look back:": choice = back_1w of back_1d "A day" | back_3d "3 days" | back_1w "A week" | back_2w "2 weeks" | back_30d "30 days"
+     help: How far back a rule goes over mail already in the inbox, when rules catch up or are run by hand. A rule can say otherwise for itself.
+   more: Saved searches are set in the settings file. Rules, hooks and templates are files beside it.
 == Appearance (appearance, paintpalette)
    appearance "Appearance:": choice = system of system "System" | light "Light" | dark "Dark"
      help: System follows the Mac, and changes with it.
@@ -26,7 +30,7 @@ expression: outline(&shown)
      action import "Import…"
      empty: 
      help: Edit… changes a theme’s colours, and Quill is drawn in them as they are chosen. Saved under another name it is a new theme, and the one it was made from is left as it was. Themes made for Ghostty can be imported. Your own themes are files in the themes folder beside the settings file.
-   more: Rules and saved searches are set in the settings file. Hooks and templates are files beside it.
+   more: Saved searches are set in the settings file. Rules, hooks and templates are files beside it.
 == Accounts (accounts, at)
    accounts "": list
      row "Work": Microsoft 365, robin@example.com. Signs in with Microsoft. [sign_in, remove]
@@ -37,7 +41,7 @@ expression: outline(&shown)
      action remove "Remove…", of a row
      empty: No accounts yet.
      help: Edit… changes an account’s servers, the name it signs in with and its password. Removing an account takes it out of the settings file and the Keychain, and deletes the copy of its mail kept on this Mac. Mail on its server is not touched.
-   more: Rules and saved searches are set in the settings file. Hooks and templates are files beside it.
+   more: Saved searches are set in the settings file. Rules, hooks and templates are files beside it.
 == Composing (composing, square.and.pencil)
    editor "Write in:": choice = nano of builtin "Quill’s own editor" | vim "Vim" | nano "nano" | pico "Pico" | mg "mg"
      help: An editor other than Quill’s own is yours, with your own settings for it: Vim reads your vimrc. Takes effect when Quill is next opened. Until then messages are written in Quill’s own editor.
@@ -48,7 +52,7 @@ expression: outline(&shown)
    spell_check "Spelling:": toggle "Check spelling as you type" = false
    undo_send_seconds "Undo send:": number = 30 from 0 to 4294967295 by 1, 0 places, seconds
      help: How long a sent message waits in the Outbox, where it can be taken back. 0 sends at once.
-   more: Rules and saved searches are set in the settings file. Hooks and templates are files beside it.
+   more: Saved searches are set in the settings file. Rules, hooks and templates are files beside it.
 == Keys (keys, keyboard)
    bindings "": list
      row "Next item or line": j, down [change]
@@ -127,6 +131,13 @@ expression: outline(&shown)
      row "Remove this account…": D [change]
      row "Install Command Line Tool": Z c [change]
      row "Stop Agents": Z a [change]
+     row "Rules On": Z t [change]
+     row "Run a Rule…": Z r [change]
+     row "Run All Rules…": Z R [change]
+     row "Run the Rule Shown": Z y [change]
+     row "New Rule from This Message…": Z n [change]
+     row "Edit Rules": Z e [change]
+     row "What Rules Did": Z l [change]
      row "Help for this context": ? [change]
      row "Keyboard shortcuts": K, f1 [change]
      action change "Change…", of a row
@@ -134,11 +145,11 @@ expression: outline(&shown)
      action reset_all "Reset All…", off
      empty: 
      help: The keys are the Mutt keys (General), with your own on top. A key changed here is written to keys.toml, beside the settings file, and holds at once. A key with ⌘ works in the app and not in a terminal, which keeps ⌘ for itself.
-   more: Rules and saved searches are set in the settings file. Hooks and templates are files beside it.
+   more: Saved searches are set in the settings file. Rules, hooks and templates are files beside it.
 == Privacy (privacy, hand.raised)
    remote_images "Remote pictures:": choice = never of ask "Ask for each message" | never "Never load them"
      help: Pictures and other content a message would fetch from the internet. Asked for, nothing is fetched until you say so for a message or for its sender.
-   more: Rules and saved searches are set in the settings file. Hooks and templates are files beside it.
+   more: Saved searches are set in the settings file. Rules, hooks and templates are files beside it.
 == Agents (agents, sparkles)
    commands "Shell commands:": toggle "Let quill’s commands work on the mail" = true
    mcp "MCP:": toggle "Serve agents over MCP while Quill is running" = false
@@ -154,8 +165,8 @@ expression: outline(&shown)
      action stop "Stop Agents"
      empty: Nothing has been changed from outside Quill’s window.
      help: What commands and agents changed last; quill log in a shell has all of it, and quill undo takes a change back. Stop Agents switches both ways in off at once and takes back their mail that has not gone. These settings stop an agent that has been misled. They are not a wall against a program that runs as you and means harm: keeping an eye on your agents is still yours to do.
-   more: Rules and saved searches are set in the settings file. Hooks and templates are files beside it.
+   more: Saved searches are set in the settings file. Rules, hooks and templates are files beside it.
 == Storage (storage, internaldrive)
    cache_gb "Keep up to:": number = 0.5 from 0 to any by 1, 2 places, GB of downloaded mail
      help: Past that the oldest downloaded copies are let go, and fetched again when next opened. 0 is no limit. Mail of a POP3 account is never cleared. Takes effect when Quill is next opened. Until then Quill keeps to 5 GB.
-   more: Rules and saved searches are set in the settings file. Hooks and templates are files beside it.
+   more: Saved searches are set in the settings file. Rules, hooks and templates are files beside it.

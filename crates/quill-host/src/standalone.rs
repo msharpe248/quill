@@ -117,6 +117,9 @@ impl Host for StandaloneHost {
             // Nor a window of keys: the list is drawn over the panes.
             | CoreToShell::KeysList(_)
             | CoreToShell::KeysShow(_)
+            // Nor is the rules' file opened from here: in a terminal the
+            // user is told where it is, and opens it as they open files.
+            | CoreToShell::RulesEdit(_)
             // Nor a window to close with Quill left running.
             | CoreToShell::WindowClose(_)
             | CoreToShell::SpellCheck(_)

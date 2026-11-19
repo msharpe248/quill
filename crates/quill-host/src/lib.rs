@@ -293,6 +293,14 @@ pub trait Host: Send + Sync {
         self.send(CoreToShell::KeysShow(NoParams {}));
     }
 
+    /// Opens the file the user's rules are written in, where the host
+    /// opens files: a shell does, by the settings folder it knows. No
+    /// path is given: a host opens nothing the core names outside the
+    /// folder of files the core wrote out for viewing.
+    fn edit_rules(&self) {
+        self.send(CoreToShell::RulesEdit(NoParams {}));
+    }
+
     /// Closes the host's window and leaves Quill running behind it. Only
     /// a shell has one: in a terminal closing Quill is quitting it, and
     /// this is never asked.

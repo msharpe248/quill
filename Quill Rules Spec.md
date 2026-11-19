@@ -1,6 +1,6 @@
 # Quill rules
 
-Proposed on 2026-11-18, from the owner's list and their answers the same day. Nothing here is built yet. What is settled is listed near the end, and what is still open after it. Once built, `DECISIONS.md` says what Quill does, and wins where the two differ.
+Agreed with the owner on 2026-11-18 and built the same day. What was decided on the way, and where what was built differs from this, is in `DECISIONS.md` under "Rules: a file of their own, tried before they are run". Where the two differ, `DECISIONS.md` says what Quill does.
 
 ## What it is for
 
@@ -173,7 +173,9 @@ Both take `--json`. Running and switching rules from a shell is an open question
 - A Rules menu among the app's main menus.
 - A rule that needs the body may hold a message's announcement for the few seconds the body takes.
 
-## Open questions
+## Open questions, as they were answered
+
+The owner said to build it as proposed (2026-11-18), which settled the first three as written here. The second was checked when building: Quill had not kept `List-Id`, so it is read when a message is downloaded, and mail downloaded before is gone back over in the background. The keys are under `Z`, in both presets: `Z t`, `Z r`, `Z R`, `Z y`, `Z n`, `Z e`, `Z l`.
 
 1. **Running rules from a shell.** `quill rules run` and `quill rules on|off` would be useful in scripts, but a shell command cannot tell the user from an agent, and "no agent touches rules" is a promise Quill makes. Proposed: only `list` and `test` from a shell, and running and switching in the window.
 2. **`list:` on mail already here.** Quill may not have kept `List-Id` for mail it synced before this. If not, `list:` matches new mail at once and older mail only once it has been fetched again. To be checked when building.

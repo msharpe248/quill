@@ -132,6 +132,8 @@ impl File {
             Change::AgentSendGap(seconds) => settings.agent.send_gap = seconds,
             Change::AgentHoldSends(on) => settings.agent.hold_sends = on,
             Change::AgentNotify(notify) => settings.agent.notify = notify,
+            Change::RulesEnabled(on) => settings.rules_enabled = on,
+            Change::RulesLookBack(age) => settings.rules_look_back = age,
         }
         Ok(())
     }
@@ -1072,7 +1074,11 @@ fn web_reading_is_switched_from_the_window_as_its_command_switches_it() {
     assert_eq!((pages(&window), closed(&window)), (1, 0));
     assert_eq!(
         window.harness.state.host_state(&window.harness.env).checked,
-        [CommandId::ViewSidebar, CommandId::ViewWebReading]
+        [
+            CommandId::ViewSidebar,
+            CommandId::ViewWebReading,
+            CommandId::RulesToggle
+        ]
     );
     assert!(!window.harness.screen().contains("[3]"));
 

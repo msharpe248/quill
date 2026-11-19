@@ -323,6 +323,12 @@ enum Command {
         #[command(subcommand)]
         action: SkillAction,
     },
+    /// The rules that file mail by themselves: list them, or say what one
+    /// would match. They are written in rules.toml, and run by Quill
+    Rules {
+        #[command(subcommand)]
+        action: RulesAction,
+    },
     /// Serve an agent's program over MCP, on standard input and output. It
     /// carries what is asked to the Quill that is running, and does
     /// nothing itself
@@ -367,6 +373,24 @@ enum ThemeAction {
         /// --ghostty` lists them), or the path of a theme file
         #[arg(value_name = "NAME-or-PATH")]
         what: String,
+        #[command(flatten)]
+        output: Output,
+    },
+}
+
+#[derive(Subcommand)]
+enum RulesAction {
+    /// List the rules in the order they are asked, what each does, and
+    /// which are switched off
+    List {
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Say what a rule would change in the inboxes, as far back as it
+    /// looks. Nothing is changed
+    Test {
+        /// The rule's name
+        name: String,
         #[command(flatten)]
         output: Output,
     },
@@ -945,6 +969,40 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             println!("{said}");
             Ok(())
         }
+        Command::Rules { action } => {
+            let (name, output) = match action {
+                RulesAction::List { output } => (None, output),
+                RulesAction::Test { name, output } => (Some(name), output),
+            };
+            let paths = Paths::resolve(output.dirs.config_dir, output.dirs.data_dir, |name| {
+                std::env::var_os(name)
+            })?;
+            let config = Config::load(&paths.config_file())
+                .map_err(|err| anyhow::anyhow!("{err}. The rules were not read"))?;
+            let loaded = rules::load(&config, &paths::rules_file_in(&paths.config_dir));
+            let Some(name) = name else {
+                rules::list(&mut std::io::stdout(), &loaded, output.json)?;
+                return Ok(());
+            };
+            if let Some(problem) = &loaded.problem {
+                eprintln!("quill: {problem}");
+            }
+            let database = paths.database();
+            anyhow::ensure!(
+                database.exists(),
+                "there is no mail here yet: {} has no mailbox",
+                paths.data_dir.display()
+            );
+            let mut store = Store::open(&database)
+                .with_context(|| format!("cannot open {}", database.display()))?;
+            rules::test(
+                &mut std::io::stdout(),
+                &mut store,
+                &loaded,
+                &name,
+                output.json,
+            )
+        }
         Command::Skill { action } => match action {
             SkillAction::Show => {
                 print!("{}", skill::SKILL);
@@ -1014,10 +1072,17 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 .with_context(|| format!("cannot create {}", paths.data_dir.display()))?;
             // And none may start while this one is at work.
             let _held = hold_mailbox(&paths.data_dir)?;
+            let rules = rules::load(&config, &paths::rules_file_in(&paths.config_dir));
+            if let Some(problem) = &rules.problem {
+                eprintln!("quill: {problem}");
+            }
             let fine = runtime.block_on(headless::sync(
                 &mut std::io::stdout(),
-                &config,
-                config_ok,
+                headless::SyncWith {
+                    config: &config,
+                    config_ok,
+                    rules: rules.set,
+                },
                 &paths.database(),
                 paths.data_dir.join("blobs"),
                 Arc::new(Remembered::new(Keychain::new())),
@@ -1118,7 +1183,7 @@ async fn tui(args: TuiArgs) -> anyhow::Result<()> {
             Some(paths.data_dir.join("blobs")),
             prepared.accounts,
             SyncOptions::default(),
-            rules::from_config(&loaded.config),
+            rules::load(&loaded.config, &paths::rules_file_in(&paths.config_dir)).set,
             events_tx,
         ));
         // Downloaded mail is kept within the room the config gives it.

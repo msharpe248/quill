@@ -152,6 +152,14 @@ pub fn may_run(config: &Config) -> anyhow::Result<()> {
     .into())
 }
 
+/// What `sync` goes by: the settings, whether they could be read as
+/// written, and the rules for the mail that arrives.
+pub struct SyncWith<'a> {
+    pub config: &'a Config,
+    pub config_ok: bool,
+    pub rules: quill_sync::RuleSet,
+}
+
 /// How long `sync` waits for the engine to say anything before giving up.
 const QUIET_LIMIT: Duration = Duration::from_secs(120);
 
@@ -160,8 +168,7 @@ const QUIET_LIMIT: Duration = Duration::from_secs(120);
 /// without a problem.
 pub async fn sync(
     out: &mut dyn Write,
-    config: &Config,
-    config_ok: bool,
+    with: SyncWith<'_>,
     database: &std::path::Path,
     blobs: std::path::PathBuf,
     secrets: Arc<dyn SecretStore>,
@@ -171,6 +178,11 @@ pub async fn sync(
         || Store::open(database).with_context(|| format!("cannot open {}", database.display()));
     let mut store = open()?;
     let before = count(&store)?;
+    let SyncWith {
+        config,
+        config_ok,
+        rules,
+    } = with;
     let prepared = crate::accounts::prepare(config, &mut store, &secrets, config_ok)?;
     // What is said about an account that will sync is a warning (it
     // connects without encryption); about one that will not, a problem.
@@ -197,7 +209,7 @@ pub async fn sync(
             interval: Duration::from_secs(24 * 60 * 60),
             ..SyncOptions::default()
         },
-        crate::rules::from_config(config),
+        rules,
         events_tx,
     );
     let mut sent = 0usize;
@@ -684,9 +696,20 @@ mod tests {
             );
             async move {
                 let mut out = Vec::new();
-                let fine = sync(&mut out, &config, true, &database, blobs, secrets, json)
-                    .await
-                    .unwrap();
+                let fine = sync(
+                    &mut out,
+                    SyncWith {
+                        config: &config,
+                        config_ok: true,
+                        rules: crate::rules::load(&config, std::path::Path::new("")).set,
+                    },
+                    &database,
+                    blobs,
+                    secrets,
+                    json,
+                )
+                .await
+                .unwrap();
                 (fine, String::from_utf8(out).unwrap())
             }
         };

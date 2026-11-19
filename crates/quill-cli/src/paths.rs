@@ -67,6 +67,11 @@ pub fn keys_file_in(config_dir: &Path) -> PathBuf {
     config_dir.join("keys.toml")
 }
 
+/// `rules.toml` in the config folder `config_dir`.
+pub fn rules_file_in(config_dir: &Path) -> PathBuf {
+    config_dir.join("rules.toml")
+}
+
 /// The folder of the user's own themes in the config folder `config_dir`.
 pub fn themes_dir_in(config_dir: &Path) -> PathBuf {
     config_dir.join("themes")

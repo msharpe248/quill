@@ -1177,7 +1177,8 @@ fn the_host_is_told_what_applies_where_the_focus_is() {
     assert_eq!(appearance, quill_core::config::Appearance::System);
     assert_eq!(context, Context::List);
     // Of what is switched on and off, only the accounts pane is on.
-    assert_eq!(checked, [CommandId::ViewSidebar]);
+    // And rules, which run unless they are switched off.
+    assert_eq!(checked, [CommandId::ViewSidebar, CommandId::RulesToggle]);
     assert_eq!((unread, title.as_str()), (12, "Inbox (unified)"));
     // The dark theme's own background and text.
     assert_eq!(

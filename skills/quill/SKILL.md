@@ -86,6 +86,8 @@ Words and `"exact phrases"` are looked for in the subject, the people and the te
 | `account:work` | of that account |
 | `thread:4127` | in the conversation that message is in |
 | `msgid:<id@example.com>` | with that Message-ID |
+| `body:unsubscribe` | with the word in the message's text, and nowhere else |
+| `list:builds.example.com` | that came through that mailing list (part of its `List-Id`) |
 | `-from:ana` `-is:starred` `-draft` | **not** so: a `-` before any word or filter |
 
 Everything given must match. There is no OR: run two searches. In a shell, put the whole search in one quoted argument, so that a `-` or a quote in it is never read as something else:

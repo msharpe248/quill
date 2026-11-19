@@ -52,7 +52,7 @@ import Testing
 
         let general = settings.panes[0]
         #expect(general.note == nil)
-        #expect(general.more == "Rules and saved searches are set in the settings file.")
+        #expect(general.more == "Saved searches are set in the settings file.")
         #expect(general.fields.map(\.id) == ["theme", "notifications", "nickname", "font"])
         // A font to choose, by its family's name.
         #expect(

@@ -354,6 +354,15 @@ const VIM: PresetTable = &[
     // settings off.
     (CommandId::AgentsStop, &["Z a"]),
     (CommandId::CommandLineInstall, &["Z c"]),
+    // Rules: two keys each, beside the others that are about Quill and
+    // not about the message under the cursor.
+    (CommandId::RulesToggle, &["Z t"]),
+    (CommandId::RulesRun, &["Z r"]),
+    (CommandId::RulesRunAll, &["Z R"]),
+    (CommandId::RulesApply, &["Z y"]),
+    (CommandId::RulesNew, &["Z n"]),
+    (CommandId::RulesEdit, &["Z e"]),
+    (CommandId::RulesLog, &["Z l"]),
     (CommandId::MessageCopy, &["C"]),
     (CommandId::MessagePutBack, &["P"]),
     (CommandId::FolderCreate, &["+"]),
@@ -440,6 +449,15 @@ const MUTT: PresetTable = &[
     // settings off.
     (CommandId::AgentsStop, &["Z a"]),
     (CommandId::CommandLineInstall, &["Z c"]),
+    // Rules: two keys each, beside the others that are about Quill and
+    // not about the message under the cursor.
+    (CommandId::RulesToggle, &["Z t"]),
+    (CommandId::RulesRun, &["Z r"]),
+    (CommandId::RulesRunAll, &["Z R"]),
+    (CommandId::RulesApply, &["Z y"]),
+    (CommandId::RulesNew, &["Z n"]),
+    (CommandId::RulesEdit, &["Z e"]),
+    (CommandId::RulesLog, &["Z l"]),
     (CommandId::MessageCopy, &["C"]),
     (CommandId::MessagePutBack, &["P"]),
     (CommandId::FolderCreate, &["+"]),

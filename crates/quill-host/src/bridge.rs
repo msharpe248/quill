@@ -105,6 +105,8 @@ pub enum CoreToShell {
     /// Bring up the window of keys, showing the latest `keys.list`.
     #[serde(rename = "keys.show")]
     KeysShow(NoParams),
+    #[serde(rename = "rules.edit")]
+    RulesEdit(NoParams),
     /// Close the main window and go on running behind it, as the
     /// window's own close button does: the user asked for that with a
     /// key.
@@ -210,6 +212,7 @@ pub enum Menu {
     View,
     Mailbox,
     Message,
+    Rules,
     Window,
     Help,
 }

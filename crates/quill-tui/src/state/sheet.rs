@@ -21,8 +21,8 @@ use quill_host::bridge::{
 };
 
 use super::{
-    Effects, Env, FolderPrompt, ON_THE_SERVER, ON_THIS_MAC, RemovePrompt, State, UnsubscribePrompt,
-    WhenFor, WhenPrompt,
+    Effects, Env, FolderPrompt, ON_THE_SERVER, ON_THIS_MAC, RemovePrompt, RuleAction, RuleField,
+    RulePrompt, State, UnsubscribePrompt, WhenFor, WhenPrompt,
 };
 use crate::command::{CommandId, Context};
 use crate::setup::{
@@ -69,6 +69,7 @@ fn asked_in_a_sheet(context: Context) -> bool {
             | Context::SignIn
             | Context::When
             | Context::NewFolder
+            | Context::NewRule
             | Context::RecordKeys
             | Context::EditTheme
             | Context::Unsubscribe
@@ -297,6 +298,102 @@ impl FolderPrompt {
     }
 }
 
+/// The step of the form for a new rule, and its fields.
+const NEW_RULE: &str = "new_rule";
+const RULE_NAME: &str = "name";
+const RULE_MATCH: &str = "match";
+const RULE_DOES: &str = "does";
+const RULE_FOLDER: &str = "folder";
+const RULE_ACCOUNT: &str = "account";
+
+impl RulePrompt {
+    /// The form as a host shows it: the rule's name, which mail it is
+    /// for, what to do with it, and the folder when it moves mail. The
+    /// words are the terminal's.
+    pub fn form(&self) -> Option<FormShow> {
+        let mut fields = vec![
+            typed(
+                RULE_NAME,
+                "Name:",
+                &self.name,
+                self.focus == RuleField::Name,
+                None,
+            ),
+            typed(
+                RULE_MATCH,
+                "Mail Matching:",
+                &self.matching,
+                self.focus == RuleField::Matching,
+                Some(
+                    "Written as a search is: from:ana subject:invoice body:unsubscribe. \
+                     Every word must match.",
+                ),
+            ),
+            FormField::Choice {
+                id: RULE_DOES.to_owned(),
+                label: "Do:".to_owned(),
+                value: self.action.id().to_owned(),
+                options: RuleAction::ALL
+                    .into_iter()
+                    .map(|action| FormOption {
+                        id: action.id().to_owned(),
+                        title: action.words().to_owned(),
+                    })
+                    .collect(),
+                focus: self.focus == RuleField::Action,
+                help: None,
+            },
+        ];
+        if self.action == RuleAction::Move {
+            fields.push(typed(
+                RULE_FOLDER,
+                "Folder:",
+                &self.folder,
+                self.focus == RuleField::Folder,
+                Some("A folder's name, or archive."),
+            ));
+        }
+        if let Some(account) = &self.account {
+            fields.push(shown(
+                RULE_ACCOUNT,
+                "For:",
+                format!("Mail in {}", text::sanitize_line(account)),
+            ));
+        }
+        FormShow::new(FormShowParams {
+            step: NEW_RULE.to_owned(),
+            title: "New Rule".to_owned(),
+            note: Some(
+                "Saving the rule writes it into rules.toml and shows what it would match. \
+                 Nothing is changed until you run it."
+                    .to_owned(),
+            ),
+            error: self.problem.as_deref().map(text::sanitize_line),
+            busy: self.busy.then(|| "Saving\u{2026}".to_owned()),
+            fields,
+            buttons: vec![
+                Press::Cancel.button(Some(FormRole::Cancel), true),
+                FormButton {
+                    id: CONFIRM.to_owned(),
+                    title: "Save".to_owned(),
+                    role: Some(FormRole::Default),
+                    enabled: !self.busy,
+                },
+            ],
+        })
+    }
+
+    /// Puts what the host's fields held into the form's own.
+    fn fill(&mut self, used: &FormUsed) {
+        put(&mut self.name, used.value(RULE_NAME));
+        put(&mut self.matching, used.value(RULE_MATCH));
+        put(&mut self.folder, used.value(RULE_FOLDER));
+        if let Some(action) = used.value(RULE_DOES).and_then(RuleAction::named) {
+            self.set_action(action);
+        }
+    }
+}
+
 impl WhenPrompt {
     /// The step of this question's form.
     fn step(&self) -> &'static str {
@@ -425,6 +522,7 @@ impl State {
             Context::SignIn => self.sign_in.as_ref()?.form(),
             Context::When => self.when.as_ref()?.form(),
             Context::NewFolder => self.new_folder.as_ref()?.form(),
+            Context::NewRule => self.new_rule.as_ref()?.form(),
             Context::RecordKeys => self.keys.as_ref()?.form(env),
             Context::EditTheme => self.theme_prompt.as_ref()?.form(),
             Context::Unsubscribe => self.unsubscribe.as_ref()?.form(),
@@ -475,6 +573,7 @@ impl State {
             }
             Context::When => self.answer_when_in_sheet(env, used, out),
             Context::NewFolder => self.answer_new_folder_in_sheet(env, used, out),
+            Context::NewRule => self.answer_new_rule_in_sheet(used, out),
             Context::RecordKeys => self.answer_keys_in_sheet(env, used, out),
             Context::EditTheme => self.answer_theme_in_sheet(env, used, out),
             Context::Unsubscribe => match used.button() {
@@ -570,6 +669,29 @@ impl State {
             Some(CONFIRM) => {
                 prompt.fill(used);
                 self.answer_new_folder(env, out);
+            }
+            Some(_) => {}
+            None => {
+                prompt.fill(used);
+                prompt.problem = None;
+            }
+        }
+    }
+
+    /// Takes what was done with the form for a new rule: what its fields
+    /// held goes into the form's own, and then the button does what its
+    /// key does. With no button, what the rule does was changed, and the
+    /// fields change with it.
+    fn answer_new_rule_in_sheet(&mut self, used: &FormUsed, out: &mut Effects) {
+        let Some(prompt) = &mut self.new_rule else {
+            return;
+        };
+        match used.button() {
+            // As `esc`: no rule was written.
+            Some(id) if id == Press::Cancel.id() => self.new_rule = None,
+            Some(CONFIRM) => {
+                prompt.fill(used);
+                self.answer_new_rule(out);
             }
             Some(_) => {}
             None => {

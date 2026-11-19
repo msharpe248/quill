@@ -28,6 +28,13 @@ pub struct Query {
     pub to: Vec<Term>,
     /// Words to find in the subject.
     pub subject: Vec<Term>,
+    /// Words to find in the message's text, and nowhere else (`body:`).
+    /// Found only once the message has been downloaded.
+    pub body: Vec<Term>,
+    /// The mailing list the message came through: part of its `List-Id`
+    /// (`list:builds.example.com`). Known once the message has been
+    /// downloaded.
+    pub list: Vec<String>,
     /// Only mail with files attached.
     pub has_attachment: bool,
     /// `Some(true)`: unread only. `Some(false)`: read only.
@@ -74,6 +81,9 @@ pub struct Negated {
     pub from: Vec<Term>,
     pub to: Vec<Term>,
     pub subject: Vec<Term>,
+    pub body: Vec<Term>,
+    /// Not through any of these lists.
+    pub list: Vec<String>,
     /// Only mail with no files attached.
     pub has_attachment: bool,
     /// Not in any of these places.
@@ -107,6 +117,18 @@ impl Query {
     /// Whether there is nothing to look for: an empty box, or only spaces.
     pub fn is_empty(&self) -> bool {
         *self == Self::default()
+    }
+
+    /// Whether what it asks can be told only of a message that has been
+    /// downloaded: words that may be in its text, or the list it came
+    /// through.
+    pub fn needs_body(&self) -> bool {
+        !(self.text.is_empty()
+            && self.body.is_empty()
+            && self.list.is_empty()
+            && self.not.text.is_empty()
+            && self.not.body.is_empty()
+            && self.not.list.is_empty())
     }
 }
 
@@ -169,6 +191,10 @@ pub fn parse(input: &str, day_start: impl Fn(i32, u32, u32) -> Option<i64>) -> Q
             "to" | "cc" => query.to.push(term(value, quoted)),
             "subject" if negated => query.not.subject.push(term(value, quoted)),
             "subject" => query.subject.push(term(value, quoted)),
+            "body" if negated => query.not.body.push(term(value, quoted)),
+            "body" => query.body.push(term(value, quoted)),
+            "list" if negated => query.not.list.push(lower.trim().to_owned()),
+            "list" => query.list.push(lower.trim().to_owned()),
             "has" if is_prefix_of(&lower, "attachment") || lower == "file" || lower == "files" => {
                 if negated {
                     query.not.has_attachment = true;
@@ -247,7 +273,7 @@ pub fn parse(input: &str, day_start: impl Fn(i32, u32, u32) -> Option<i64>) -> Q
 /// An age written `30d`, `2w`, `6m` or `1y`, or in hours as `12h`, in
 /// seconds. A month is thirty days and a year 365: this is for "older
 /// than about", not for a calendar.
-fn age(text: &str) -> Option<i64> {
+pub fn age(text: &str) -> Option<i64> {
     let (number, unit) = split_unit(text)?;
     let seconds: i64 = match unit {
         "h" => 60 * 60,
@@ -453,6 +479,25 @@ mod tests {
         assert_eq!(parse("\"-draft\" ", day).not, Negated::default());
         // In the middle of a word it is part of the word.
         assert_eq!(parse("e-mail ", day).text, [word("e-mail")]);
+    }
+
+    #[test]
+    fn the_body_and_the_list_have_filters_of_their_own() {
+        let query = parse(
+            "body:unsubscribe list:Builds.Example.com -body:invoice -list:announce ",
+            day,
+        );
+        assert_eq!(query.body.len(), 1);
+        assert_eq!(query.body[0].text, "unsubscribe");
+        assert_eq!(query.list, vec!["builds.example.com".to_owned()]);
+        assert_eq!(query.not.body[0].text, "invoice");
+        assert_eq!(query.not.list, vec!["announce".to_owned()]);
+        assert!(query.text.is_empty());
+        assert!(query.needs_body());
+        // Who it is from and its subject are known as it arrives.
+        assert!(!parse("from:ana subject:plan is:unread ", day).needs_body());
+        // A bare word may be in the text.
+        assert!(parse("from:ana roadmap ", day).needs_body());
     }
 
     #[test]

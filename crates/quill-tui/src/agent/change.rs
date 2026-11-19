@@ -550,12 +550,91 @@ fn folder_create(
 
 /// Takes back a change in the log: the one numbered `entry`, or the newest
 /// that can be.
+/// Puts messages back in the folders a change moved them out of. Those
+/// put back go in `back`, with the moves made in `operations`; those that
+/// are no longer where the change left them go in `gone`.
+fn undo_moves(
+    store: &mut Store,
+    items: &[Value],
+    now: i64,
+    back: &mut Vec<LocalMessageId>,
+    gone: &mut Vec<i64>,
+    operations: &mut Vec<quill_store::OperationId>,
+) -> Result<(), Refusal> {
+    for item in items {
+        let (Some(id), Some(from)) = (item["id"].as_i64(), item["from"].as_i64()) else {
+            continue;
+        };
+        let message = LocalMessageId(id);
+        match store.queue_move(message, LocalFolderId(from), now, now + UNDO_SECONDS)? {
+            Some(operation) => {
+                if item["trashed"].as_bool() == Some(true) {
+                    store.forget_trashed(message)?;
+                }
+                // A message put back out of the trash is in the
+                // trash again, with where it came from known.
+                if let Some(note) = item["note"].as_i64() {
+                    store.note_trashed(message, LocalFolderId(note), now)?;
+                }
+                operations.push(operation);
+                back.push(message);
+            }
+            None => gone.push(id),
+        }
+    }
+    Ok(())
+}
+
+/// Gives messages back the marks a change took or made. Returns whether
+/// anything was queued for a server.
+fn undo_marks(
+    store: &mut Store,
+    items: &[Value],
+    now: i64,
+    back: &mut Vec<LocalMessageId>,
+    gone: &mut Vec<i64>,
+) -> Result<bool, Refusal> {
+    let mut queued = false;
+    for item in items {
+        let (Some(id), Some(flags)) = (
+            item["id"].as_i64(),
+            item["flags"].as_str().and_then(flags_from),
+        ) else {
+            continue;
+        };
+        let message = LocalMessageId(id);
+        // Only the two marks that are given here are put back:
+        // whether it has been answered since is not undone.
+        match store.message_location(message)? {
+            Some(location) => {
+                let wanted = Flags {
+                    seen: flags.seen,
+                    flagged: flags.flagged,
+                    ..location.flags
+                };
+                if wanted != location.flags && store.queue_flags(message, wanted, now)? {
+                    queued = true;
+                }
+                back.push(message);
+            }
+            None => gone.push(id),
+        }
+    }
+    Ok(queued)
+}
+
 pub(crate) fn undo(
     store: &mut Store,
     _settings: &Settings,
     entry: Option<i64>,
     now: i64,
 ) -> Result<Done, Refusal> {
+    undo_entry(store, entry, now)
+}
+
+/// Takes back a change in the log: the one numbered `entry`, or the
+/// newest that can be. Whoever made it: an agent, a command, or a rule.
+pub(crate) fn undo_entry(store: &mut Store, entry: Option<i64>, now: i64) -> Result<Done, Refusal> {
     let found = match entry {
         Some(id) => store.agent_entry(id)?.ok_or_else(|| {
             Refusal::not_found(format!("There is no change numbered {id} in the log."))
@@ -590,55 +669,25 @@ pub(crate) fn undo(
     let mut queued = false;
     match data["op"].as_str() {
         Some("move") => {
-            for item in &items {
-                let (Some(id), Some(from)) = (item["id"].as_i64(), item["from"].as_i64()) else {
-                    continue;
-                };
-                let message = LocalMessageId(id);
-                match store.queue_move(message, LocalFolderId(from), now, now + UNDO_SECONDS)? {
-                    Some(operation) => {
-                        if item["trashed"].as_bool() == Some(true) {
-                            store.forget_trashed(message)?;
-                        }
-                        // A message put back out of the trash is in the
-                        // trash again, with where it came from known.
-                        if let Some(note) = item["note"].as_i64() {
-                            store.note_trashed(message, LocalFolderId(note), now)?;
-                        }
-                        operations.push(operation);
-                        back.push(message);
-                    }
-                    None => gone.push(id),
-                }
-            }
+            undo_moves(store, &items, now, &mut back, &mut gone, &mut operations)?;
             store.group_operations(&operations)?;
         }
         Some("mark") => {
-            for item in &items {
-                let (Some(id), Some(flags)) = (
-                    item["id"].as_i64(),
-                    item["flags"].as_str().and_then(flags_from),
-                ) else {
-                    continue;
-                };
-                let message = LocalMessageId(id);
-                // Only the two marks that are given here are put back:
-                // whether it has been answered since is not undone.
-                match store.message_location(message)? {
-                    Some(location) => {
-                        let wanted = Flags {
-                            seen: flags.seen,
-                            flagged: flags.flagged,
-                            ..location.flags
-                        };
-                        if wanted != location.flags && store.queue_flags(message, wanted, now)? {
-                            queued = true;
-                        }
-                        back.push(message);
-                    }
-                    None => gone.push(id),
-                }
-            }
+            queued = undo_marks(store, &items, now, &mut back, &mut gone)?;
+        }
+        // What a rule did: it may have filed mail and marked it too.
+        Some("rule") => {
+            let moved: Vec<Value> = data["moved"].as_array().cloned().unwrap_or_default();
+            let marked: Vec<Value> = data["marked"].as_array().cloned().unwrap_or_default();
+            undo_moves(store, &moved, now, &mut back, &mut gone, &mut operations)?;
+            store.group_operations(&operations)?;
+            queued = undo_marks(store, &marked, now, &mut back, &mut gone)?;
+            // A message both filed and marked is one message.
+            let mut seen = std::collections::HashSet::new();
+            back.retain(|id| seen.insert(*id));
+            gone.sort_unstable();
+            gone.dedup();
+            gone.retain(|id| !seen.contains(&LocalMessageId(*id)));
         }
         Some("snooze") => {
             for item in &items {

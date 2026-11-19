@@ -30,7 +30,7 @@ pub use compose::{
     BodyFormat, Outgoing, OutgoingAttachment, Warning, build, envelope, new_message_id, warnings,
 };
 pub use reply::{Draft, ReplyPosition, forward, reply};
-pub use unsubscribe::Unsubscribe;
+pub use unsubscribe::{Unsubscribe, list_id};
 
 use mail_parser::{MessageParser, PartKind};
 use quill_core::types::{Address, Headers};

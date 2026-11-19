@@ -39,7 +39,7 @@ private enum Examples {
                 "link.open.json", "notify.clear.json", "notify.post.json", "pane.close.json",
                 "pane.editor.json", "pane.play.json", "pane.preview.json",
                 "reading.close.json", "reading.place.json", "reading.scroll.json", "reading.show.json",
-                "settings.show.json", "spell.check.json",
+                "rules.edit.json", "settings.show.json", "spell.check.json",
                 "spell.suggest.json", "state.update.json", "themes.pick.json", "thumbnail.make.json",
                 "window.close.json",
             ])
@@ -123,10 +123,12 @@ private enum Examples {
             Issue.record("not a commands.list")
             return
         }
-        #expect(commands.count == 6)
+        #expect(commands.count == 7)
+        // Rules have a menu of their own.
+        #expect(commands[4].menu == .rules)
         // Closing and quitting are two commands, and neither is in a menu.
-        #expect(commands[4] == CommandInfo(name: "window.close", title: "Close", keys: ["q", "ctrl-c"]))
-        #expect(commands[5] == CommandInfo(name: "app.quit", title: "Quit", keys: ["Q"]))
+        #expect(commands[5] == CommandInfo(name: "window.close", title: "Close", keys: ["q", "ctrl-c"]))
+        #expect(commands[6] == CommandInfo(name: "app.quit", title: "Quit", keys: ["Q"]))
         #expect(commands[0] == CommandInfo(name: "nav.next", title: "Next item or line", keys: ["j", "down"]))
         #expect(commands[2].menu == .view)
         #expect(commands[2].symbol == "arrow.up.left.and.arrow.down.right")
@@ -365,6 +367,13 @@ private enum Examples {
         }
         #expect(throws: BridgeError.self) {
             try CoreToShell(line: #"{"jsonrpc":"2.0","method":"keys.show","params":{"front":true}}"#)
+        }
+        // Editing the rules is asked for with nothing said: no path.
+        #expect(try CoreToShell(line: examples["rules.edit.json"]!) == .rulesEdit)
+        #expect(CoreToShell.rulesEdit.line == #"{"jsonrpc":"2.0","method":"rules.edit","params":{}}"#)
+        #expect(throws: BridgeError.self) {
+            try CoreToShell(
+                line: #"{"jsonrpc":"2.0","method":"rules.edit","params":{"path":"/etc/hosts"}}"#)
         }
         // Closing the window is asked for the same way, with nothing said.
         #expect(try CoreToShell(line: examples["window.close.json"]!) == .windowClose)

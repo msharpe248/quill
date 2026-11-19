@@ -27,6 +27,34 @@ mod write;
 
 pub use write::stop;
 
+/// What taking a change back came to, for the UI to say.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TakenBack {
+    /// What to say of it.
+    pub said: String,
+    /// The user's undo would put it back as it was, for a while.
+    pub undoable: bool,
+    /// Something was queued for a server.
+    pub queued: bool,
+}
+
+/// Takes back the change in the log numbered `entry`, for the user: what
+/// a rule did, chosen from the list of what rules did. The same as
+/// `quill undo`, without a line of its own in the log.
+pub fn take_back(store: &mut Store, entry: i64, now: i64) -> Result<TakenBack, String> {
+    change::undo_entry(store, Some(entry), now)
+        .map(|done| TakenBack {
+            said: done
+                .lines
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "Taken back.".to_owned()),
+            undoable: done.undoable,
+            queued: done.queued,
+        })
+        .map_err(|refusal| refusal.message)
+}
+
 use std::path::PathBuf;
 
 use jiff::tz::TimeZone;

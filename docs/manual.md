@@ -20,7 +20,7 @@ Keys are written as Quill takes them: `c` is the C key, `C` is shift and C, `ctr
 - [Searching](#searching)
 - [Attachments and pictures](#attachments-and-pictures)
 - [Writing mail](#writing-mail)
-- [Rules for arriving mail](#rules-for-arriving-mail)
+- [Rules](#rules)
 - [Hooks](#hooks)
 - [From a shell](#from-a-shell)
 - [Agents](#agents)
@@ -207,6 +207,9 @@ Press `?` at any time for the keys that apply where you are, and `K` (or `f1`) f
 | `l` / `h` | In the accounts pane: show, hide an account's folders | `K` | Every key, and what it does |
 | `D` | Remove the account chosen in the accounts pane, after asking | `E` | Change the account chosen in the accounts pane: its servers and password |
 | `Z` `a` | Stop Agents: see "Agents" | `Z` `c` | Install the command line tool: see "The app" |
+| `Z` `t` | Rules on or off: see "Rules" | `Z` `r` / `Z` `R` | Run a rule, or all of them: shows what would change first |
+| `Z` `y` | Run the rule that is shown | `Z` `n` | A new rule from this message |
+| `Z` `e` | Edit the rules | `Z` `l` | What rules did, and taking one back |
 | `P` | Put back: in a Trash folder, the messages chosen; anywhere else, the one deleted last | `C` | Copy to a folder |
 | `+` | Make a folder, on the server or on this Mac | `_` | In the accounts pane: take away an empty folder of this Mac's |
 
@@ -380,9 +383,11 @@ Quill can be your default mail program: choose it in Mail, Settings, General, "D
 | `larger:5m` `smaller:100k` | bigger or smaller than that: `k`, `m`, `g`, or bytes |
 | `thread:4127` | in the conversation that message is in, by its id from `quill list` |
 | `msgid:<id@example.com>` | with that Message-ID |
+| `body:unsubscribe` | with the word in the message's text, and nowhere else |
+| `list:builds.example.com` | that came through that mailing list: any part of its `List-Id` |
 | `-from:ana` `-is:starred` `-draft` | **not** so: a `-` before any word or filter leaves out what it finds |
 
-Words match whatever their case or accents, and the word you are still typing matches words that start with it. A message's text is searchable once it has been downloaded; its subject and people are from the moment it is listed. The search runs against the mail on this Mac; asking the server as well is not built yet.
+Words match whatever their case or accents, and the word you are still typing matches words that start with it. A message's text is searchable once it has been downloaded, and so is the list it came through; its subject and people are from the moment it is listed. (Mail that was downloaded before Quill kept lists is asked which list it came through in the background, the first time a Quill that keeps them runs.) The search runs against the mail on this Mac; asking the server as well is not built yet.
 
 ### Saved searches
 
@@ -587,30 +592,85 @@ What the editor writes is the text and only the text: a line that looks like `To
 
 Send and Save in the menus and toolbar reach Vim: it does as it would for `:QuillSend` or `:QuillPostpone`. They do not reach nano, Pico or mg, which have to hand the text back first. `esc` in the fields asks the editor to save and close, in its own keys, and the text comes back into Quill's own editor.
 
-## Rules for arriving mail
+## Rules
 
-A rule does something with mail as it arrives in an inbox: files it, marks it, or keeps quiet about it. Rules are written in the config and asked in order.
+A rule does something with mail by itself: files it in a folder, deletes it, marks it, or keeps quiet about it. A rule says which mail it is for, in the search box's words, and what to do with it.
+
+Rules are written in a file of their own, `rules.toml`, beside `config.toml`. **Rules > Edit Rules** (`Z` `e`) opens it in the app, with examples in it the first time; in a terminal it says where the file is. Quill reads the file again whenever it is saved: there is nothing to restart.
 
 ```toml
 [[rule]]
-match = "from:buildbot"          # the search box's words
-move_to = "archive"              # a folder's name, or archive, trash, junk
+name = "Receipts"
+match = "from:orders@example.com subject:receipt"
+move_to = "Receipts"             # a folder's name, or archive, trash, junk
+
+[[rule]]
+name = "Build mail"
+match = ["from:buildbot", "list:builds.example.com"]   # either
+move_to = "archive"
 mark_read = true
 
 [[rule]]
-name = "Invoices"
-match = "subject:invoice has:attachment"
-account = "Work"                 # only this account's mail
-star = true
-
-[[rule]]
-match = "from:newsletter"
-notify = false                   # stays in the inbox, with no notification
+name = "Promotions"
+match = "body:unsubscribe from:deals"
+delete = true                    # to the Trash: Put Back returns it
+look_back = "1d"
+enabled = false                  # off, until it has been tried
 ```
 
-A rule needs `match` and at least one thing to do. Every rule that matches marks the message; the first that files it is the one that files it. Mail a rule files out of the inbox is not announced unless the rule says `notify = true`.
+| Key | Means |
+|---|---|
+| `name` | What the rule is called, in the list of rules, the log and notices. Needed, and no two the same |
+| `match` | Which mail, as it would be typed in the search box (see "Searching"). A list is any one of them |
+| `account` | Only this account's mail |
+| `move_to` | File it in this folder of its account: a folder's name, or `archive`, `trash`, `junk` |
+| `delete` | `true`: move it to the Trash. Not together with `move_to` |
+| `mark_read`, `star` | Mark it |
+| `notify` | `false`: no notification for it. `true`: one even though it was filed. Left out, mail a rule files out of the inbox is not announced and mail it leaves there is |
+| `enabled` | `false` switches this one rule off |
+| `look_back` | How far back it goes over mail already here: `1d`, `1w`, `30d`. Left out, the setting's |
 
-What a rule does is done on the server as well, the same way as when you do it yourself. Rules see who a message is from and to, its subject, its marks and whether it has attachments; the words of its body are not known when it arrives. They apply to mail arriving from now on, not to mail already there, and only while Quill is running or when `quill sync` runs.
+A rule needs a name, something to match and something to do. **A mistake anywhere in the file switches off every rule in it**, and Quill says which rule and what is wrong: half a set of rules is not what you wrote. Put it right and they run again, on the mail that came meanwhile too.
+
+Rules are asked in the order written. Every rule that matches makes its marks; the first that files or deletes a message is the one that does. What a rule does is done on the server as well, the same way as when you do it yourself.
+
+**Nothing a rule does is for good.** `delete` is a move to the account's Trash, and Put Back (`P`) returns the message to where it was. A rule cannot delete permanently, send or forward mail, or run a program. An account with no Trash folder has its mail left alone by a rule that deletes, and Quill says so.
+
+**What a rule can match.** Everything the search box can: who it is from and to, the subject, attachments, marks, size and age, and `-` for not. Two things are known only once a message has been downloaded: the words of its text (`body:`, and any bare word, which looks everywhere) and the list it came through (`list:`). When a rule that is on asks about either, Quill downloads each arriving message before the rules are asked and announces it after, which is a few seconds later than otherwise. A message over 5 MB is not downloaded for this: it is asked what can be told without it, and asked again when it has been downloaded for another reason. Words match as a search matches them, whole and whatever their case; there are no patterns.
+
+### When rules run
+
+- **As mail arrives** in an inbox, while Quill is running or `quill sync` is. Mail that came while Quill was closed is asked about when it is next fetched.
+- **Catching up, when they are switched on.** The mail in each inbox that the rules have not been asked about, as far back as each rule looks (a week, unless the rule or `look_back` under `[rules]` says), is put to them then. That is the mail that came while rules were off. If catching up would change more than 50 messages in an account, nothing is changed and Quill says how many: Run All Rules shows them first.
+- **By hand**, whenever you say: see below.
+
+**A message is asked about once.** Put a message a rule filed back in the inbox and it stays there; switch rules off and on again and nothing moves twice. For the same reason a rule you write today is for mail from today on: the mail already in the inbox was asked about by the rules there were. Running the rule by hand is how it is applied to that mail.
+
+Rules look at inboxes only, never at other folders or at mail you sent.
+
+### Trying a rule, and running it by hand
+
+**Rules > Run a Rule…** (`Z` `r`) lists the rules; choose one and the message list shows the mail it would change, in every account's inbox, as far back as the rule looks, with what it would do in the list's title: "Receipts would move 14 messages to Receipts". Nothing has changed. The messages can be opened and read. **Run the Rule Shown** (`Z` `y`) does it; `esc` leaves with nothing done. **Run All Rules…** (`Z` `R`) is the same for every rule that is switched on.
+
+A rule that is switched off can be tried and run this way, which is how to find out what a new one does before it is trusted. Running by hand goes over all the mail in the look-back, including what the rules were asked about before.
+
+`U` takes a run back while its ten seconds last, all of it as one.
+
+### A new rule from a message
+
+**Rules > New Rule from This Message…** (`Z` `n`) starts a rule for mail from whoever sent the message you are on: a name, what it matches (written as a search, and yours to change: add `subject:invoice`), and what to do with it: move it to a folder, delete it, or mark it read. With more than one account the rule is for the account the message is in, whose folder it names. Saving writes the rule at the end of `rules.toml`, leaving what is there as it is, and shows what the rule would match. Nothing is changed until you run it. In a terminal `tab` goes between the fields and `space` or the arrows change what the rule does; in the app it is a sheet.
+
+### The switch, and what rules did
+
+**Rules > Rules On** (`Z` `t`) switches every rule off and on; it is `enabled` under `[rules]` in `config.toml`, and in Settings > General with the look-back. Off, mail stays where it arrives. A rule can still be run by hand.
+
+What rules do is said in the bottom bar as it happens ("Rules filed 3."), and written in the same log as what is done from a shell, under the rule's name. **Rules > What Rules Did** (`Z` `l`) lists the last hundred of those; `enter` on one takes it back, however long ago it was. `quill log` shows them too, and `quill undo 57` takes one back by its number.
+
+From a shell, `quill rules list` says the rules in the order they are asked and which are off, and `quill rules test "Receipts"` what a rule would change, changing nothing. Rules are run and switched in Quill's window only.
+
+### Rules written in `config.toml`
+
+`[[rule]]` in `config.toml`, where rules used to be written, still works, and takes every key above; a rule there may go without a name and is called `rule 1`, `rule 2`. They are asked before the rules in `rules.toml`. Move them when it suits you: Quill does not move them for you.
 
 ## Hooks
 
@@ -668,6 +728,8 @@ quill folders --account work
 quill contacts ana
 quill status
 quill log                          # what was done this way, and by whom
+quill rules list                   # the rules that file mail by themselves
+quill rules test "Receipts"        # what one would change: nothing is changed
 
 echo "Running late." | quill send --to ana.ruiz@example.com --subject "Today"
 echo "Yes, Thursday." | quill draft reply 4127      # a reply, left in Drafts
@@ -815,6 +877,8 @@ In the app, Settings… in the Quill menu (`cmd-,`) opens a settings window. It 
 | | Show a notification when mail arrives | `notifications` under `[ui]` | At once |
 | | List the messages of a conversation together | `threads` under `[ui]` | At once |
 | | Read mail in a web pane beside the list | `web_reading` under `[ui]` | At once |
+| | Run rules on mail as it arrives | `enabled` under `[rules]` | At once; switching them on catches up |
+| | Look back: how far a rule goes over mail already here | `look_back` under `[rules]` | At once |
 | Appearance | Appearance: System, Light or Dark | `appearance` under `[ui]` | At once, the app's own windows included |
 | | Light theme | `theme_light` under `[ui]` | At once |
 | | Dark theme | `theme_dark` under `[ui]` | At once |
@@ -837,7 +901,7 @@ In the app, Settings… in the Quill menu (`cmd-,`) opens a settings window. It 
 
 The two that wait for the next start say so in the window, and say what Quill is going by until then.
 
-Everything else is set in the file, and the button at the foot of each pane opens it: rules, saved searches, an account's servers, name and signature, the panes' widths, the mouse; and beside it your keys (`keys.toml`), themes, templates and hooks. "Reveal Settings File in Finder", in the same menu, shows where the file is.
+Everything else is set in the file, and the button at the foot of each pane opens it: saved searches, an account's servers, name and signature, the panes' widths, the mouse; and beside it your rules (`rules.toml`), your keys (`keys.toml`), themes, templates and hooks. "Reveal Settings File in Finder", in the same menu, shows where the file is.
 
 The window shows what the file says. Edit the file by hand while it is open and the window catches up when you come back to it, and so does Quill, for the settings that take effect at once. If the file has a mistake in it, the window says so, offers to open the file, and changes nothing until the mistake is put right.
 

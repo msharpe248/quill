@@ -66,6 +66,10 @@ pub struct Settings {
     pub cache_gb: Number,
     /// What may be done to the mail from outside Quill's window.
     pub agent: AgentConfig,
+    /// Whether rules run by themselves.
+    pub rules_enabled: bool,
+    /// How far back a rule goes over mail already here, as written.
+    pub rules_look_back: String,
 }
 
 impl Settings {
@@ -90,6 +94,8 @@ impl Settings {
             // A config that was read has a number here.
             cache_gb: Number::new(config.storage.cache_gb).unwrap_or(Number::from(0)),
             agent: config.agent.clone(),
+            rules_enabled: config.ruling.enabled,
+            rules_look_back: config.ruling.look_back.trim().to_lowercase(),
         }
     }
 }
@@ -137,10 +143,12 @@ pub enum Setting {
     AgentSendGap,
     AgentHoldSends,
     AgentNotify,
+    RulesEnabled,
+    RulesLookBack,
 }
 
 impl Setting {
-    pub const ALL: [Setting; 26] = [
+    pub const ALL: [Setting; 28] = [
         Setting::Appearance,
         Setting::ThemeLight,
         Setting::ThemeDark,
@@ -167,6 +175,8 @@ impl Setting {
         Setting::AgentSendGap,
         Setting::AgentHoldSends,
         Setting::AgentNotify,
+        Setting::RulesEnabled,
+        Setting::RulesLookBack,
     ];
 
     /// The key the file has it under, in its section. It is also the
@@ -199,6 +209,8 @@ impl Setting {
             Setting::AgentSendGap => "send_gap",
             Setting::AgentHoldSends => "hold_sends",
             Setting::AgentNotify => "notify",
+            Setting::RulesEnabled => "enabled",
+            Setting::RulesLookBack => "look_back",
         }
     }
 
@@ -231,6 +243,7 @@ impl Setting {
             | Setting::AgentSendGap
             | Setting::AgentHoldSends
             | Setting::AgentNotify => "agent",
+            Setting::RulesEnabled | Setting::RulesLookBack => "rules",
         }
     }
 
@@ -242,9 +255,12 @@ impl Setting {
             | Setting::ThemeDark
             | Setting::Font
             | Setting::FontSize => Pane::Appearance,
-            Setting::Keymap | Setting::Notifications | Setting::Threads | Setting::WebReading => {
-                Pane::General
-            }
+            Setting::Keymap
+            | Setting::Notifications
+            | Setting::Threads
+            | Setting::WebReading
+            | Setting::RulesEnabled
+            | Setting::RulesLookBack => Pane::General,
             Setting::Editor
             | Setting::EditorPath
             | Setting::Format
@@ -401,6 +417,10 @@ pub enum Change {
     AgentSendGap(u32),
     AgentHoldSends(bool),
     AgentNotify(AgentNotify),
+    /// Whether rules run by themselves.
+    RulesEnabled(bool),
+    /// How far back a rule goes over mail already here: `1d`, `1w`.
+    RulesLookBack(String),
 }
 
 /// A setting's value as the file has it.
@@ -443,6 +463,8 @@ impl Change {
             Change::AgentSendGap(_) => Setting::AgentSendGap,
             Change::AgentHoldSends(_) => Setting::AgentHoldSends,
             Change::AgentNotify(_) => Setting::AgentNotify,
+            Change::RulesEnabled(_) => Setting::RulesEnabled,
+            Change::RulesLookBack(_) => Setting::RulesLookBack,
         }
     }
 
@@ -463,6 +485,7 @@ impl Change {
             Change::ReplyPosition(position) => Written::Word(position.as_str()),
             Change::RemoteImages(remote) => Written::Word(remote.as_str()),
             Change::AgentNotify(notify) => Written::Word(notify.as_str()),
+            Change::RulesLookBack(age) => Written::Word(age),
             Change::Notifications(on)
             | Change::Threads(on)
             | Change::WebReading(on)
@@ -473,7 +496,8 @@ impl Change {
             | Change::AgentDelete(on)
             | Change::AgentDraft(on)
             | Change::AgentSend(on)
-            | Change::AgentHoldSends(on) => Written::Flag(*on),
+            | Change::AgentHoldSends(on)
+            | Change::RulesEnabled(on) => Written::Flag(*on),
             Change::UndoSendSeconds(seconds) | Change::AgentSendGap(seconds) => {
                 Written::Whole(i64::from(*seconds))
             }
@@ -665,7 +689,7 @@ pub const EDIT: &str = "edit";
 
 /// Said at the foot of every pane, beside the button that opens the
 /// settings file.
-const MORE: &str = "Rules and saved searches are set in the settings file. Hooks and templates \
+const MORE: &str = "Saved searches are set in the settings file. Rules, hooks and templates \
                     are files beside it.";
 /// Said beside a setting that holds from the next start.
 const NEXT_START: &str = "Takes effect when Quill is next opened.";
@@ -1030,7 +1054,57 @@ fn general(read: &SettingsRead) -> Vec<FormField> {
             "Read mail in a web pane beside the list",
             settings.web_reading,
         ),
+        FormField::Toggle {
+            id: Setting::RulesEnabled.key().to_owned(),
+            label: "Rules:".to_owned(),
+            title: "Run rules on mail as it arrives".to_owned(),
+            value: settings.rules_enabled,
+            help: Some(
+                "Rules are written in rules.toml: Rules > Edit Rules opens it. Switching \
+                 them on catches up on the mail that came while they were off."
+                    .to_owned(),
+            ),
+        },
+        choice(
+            Setting::RulesLookBack,
+            "Look back:",
+            look_back_id(&settings.rules_look_back),
+            look_backs(&settings.rules_look_back),
+            Some(
+                "How far back a rule goes over mail already in the inbox, when rules \
+                 catch up or are run by hand. A rule can say otherwise for itself."
+                    .to_owned(),
+            ),
+        ),
     ]
+}
+
+/// The look-backs the window offers, with what the file has among them
+/// if it is none of these.
+const LOOK_BACKS: [(&str, &str); 5] = [
+    ("1d", "A day"),
+    ("3d", "3 days"),
+    ("1w", "A week"),
+    ("2w", "2 weeks"),
+    ("30d", "30 days"),
+];
+
+/// The name on the bridge of a look-back, from how it is written: a name
+/// there starts with a letter, and `1w` does not.
+fn look_back_id(written: &str) -> String {
+    format!("back_{written}")
+}
+
+fn look_backs(written: &str) -> Vec<FormOption> {
+    let mut options: Vec<FormOption> = LOOK_BACKS
+        .into_iter()
+        .map(|(written, title)| option(look_back_id(written), title))
+        .collect();
+    let id = look_back_id(written);
+    if !LOOK_BACKS.iter().any(|(known, _)| *known == written) && valid_form_id(&id) {
+        options.push(option(id, written));
+    }
+    options
 }
 
 /// The name of the list of commands and their keys, in its pane.
@@ -1700,6 +1774,11 @@ pub fn change(
                     .find(|notify| notify.as_str() == chosen)
                     .map(Change::AgentNotify)
                     .ok_or_else(not_one),
+                Setting::RulesLookBack => chosen
+                    .strip_prefix("back_")
+                    .filter(|age| quill_core::rules::look_back_seconds(age).is_some())
+                    .map(|age| Change::RulesLookBack(age.to_owned()))
+                    .ok_or_else(not_one),
                 _ => Err(not_one()),
             }
         }
@@ -1737,6 +1816,7 @@ pub fn change(
             Setting::AgentDraft => Ok(Change::AgentDraft(*on)),
             Setting::AgentSend => Ok(Change::AgentSend(*on)),
             Setting::AgentHoldSends => Ok(Change::AgentHoldSends(*on)),
+            Setting::RulesEnabled => Ok(Change::RulesEnabled(*on)),
             Setting::Notifications => Ok(Change::Notifications(*on)),
             Setting::Threads => Ok(Change::Threads(*on)),
             Setting::WebReading => Ok(Change::WebReading(*on)),
@@ -1956,6 +2036,8 @@ mod tests {
                 Setting::AgentSendGap => Change::AgentSendGap(60),
                 Setting::AgentHoldSends => Change::AgentHoldSends(true),
                 Setting::AgentNotify => Change::AgentNotify(AgentNotify::Sends),
+                Setting::RulesEnabled => Change::RulesEnabled(false),
+                Setting::RulesLookBack => Change::RulesLookBack("2w".to_owned()),
             };
             assert_eq!(change.setting(), setting);
         }

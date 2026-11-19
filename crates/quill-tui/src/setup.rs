@@ -311,6 +311,49 @@ pub enum AccountRequest {
     /// it, and read the settings afresh. Answered with
     /// [`AccountEvent::ThemesChanged`].
     Themes(crate::settings::ThemesChange),
+    /// Something about the rules: read them again, add one, or find their
+    /// file.
+    Rules(RulesAsk),
+}
+
+/// What the UI asks about the rules. The rules are files, and the UI
+/// reads none.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RulesAsk {
+    /// Read the rules again and say what they are. Answered with
+    /// [`AccountEvent::Rules`], as every change to them is, asked for or
+    /// not.
+    Read,
+    /// Add a rule at the end of `rules.toml`. Answered with
+    /// [`AccountEvent::RuleAdded`], and with the rules as they then are.
+    Add(NewRule),
+    /// Say where `rules.toml` is, having made it if it is not there, so
+    /// that it can be opened. Answered with [`AccountEvent::RulesFile`].
+    Open,
+}
+
+/// A rule made in the UI, to be written into `rules.toml`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct NewRule {
+    pub name: String,
+    /// Which mail it is for, in the search box's words.
+    pub matching: String,
+    /// Only this account's mail.
+    pub account: Option<String>,
+    /// File it in this folder.
+    pub move_to: Option<String>,
+    /// Move it to the trash.
+    pub delete: bool,
+    pub mark_read: bool,
+}
+
+/// The rules as they are now.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RulesNow {
+    pub set: std::sync::Arc<quill_sync::RuleSet>,
+    /// What is wrong with the rules as written, when something is. While
+    /// it is, none of the file's rules run.
+    pub problem: Option<String>,
 }
 
 /// A choice made in the UI that is kept between runs, in `config.toml`.
@@ -334,6 +377,8 @@ pub enum Preference {
     /// `commands` and `mcp` under `[agent]`, both off: the user stopped
     /// the agents.
     AgentsOff,
+    /// `enabled` under `[rules]`: whether rules run by themselves.
+    Rules(bool),
 }
 
 /// What goes with an account that is removed, beyond the copy of its mail:
@@ -421,6 +466,14 @@ pub enum AccountEvent {
     /// The command line is linked, with what to tell the user of it; or
     /// why it is not.
     CommandLinked(Result<String, String>),
+    /// The rules as they are now: read at the start, read again because
+    /// their file changed, or switched.
+    Rules(RulesNow),
+    /// A rule was added to `rules.toml`, by this name; or why it was not:
+    /// then the file is as it was.
+    RuleAdded(Result<String, String>),
+    /// Where `rules.toml` is, to open it; or why it could not be made.
+    RulesFile(Result<std::path::PathBuf, String>),
     /// The user's own keys were changed, or why they were not: then the
     /// file is as it was. With it, what the settings say now.
     KeysChanged {
@@ -1464,6 +1517,9 @@ impl Setup {
             | AccountEvent::EditAsked { .. }
             | AccountEvent::Remembered(_)
             | AccountEvent::CommandLinked(_)
+            | AccountEvent::Rules(_)
+            | AccountEvent::RuleAdded(_)
+            | AccountEvent::RulesFile(_)
             | AccountEvent::KeysChanged { .. }
             | AccountEvent::ThemesChanged { .. }
             | AccountEvent::Settings { .. } => (Vec::new(), Outcome::Open),

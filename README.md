@@ -28,7 +28,9 @@ The same program runs in a terminal of your own, over the same mailbox: `quill t
 
 **Write the way you write.** Quill's own editor writes Markdown, and has spell check, templates, addresses offered as you type and attachments by drag and drop. Or write in your own Vim, nano, pico or mg, with your own settings, right in the message's pane. A sent message can be taken back for a few seconds, or told to go later.
 
-**Stay on top of it.** Search with filters (`from:ana is:unread "exact phrase"`) and save the searches you repeat. Snooze a message until tomorrow morning. Group conversations. Select many and act once. Unsubscribe from a list with one key. Answer an invitation from the message. Rules file arriving mail before you see it, and `U` takes back what you just did.
+**Stay on top of it.** Search with filters (`from:ana is:unread "exact phrase"`) and save the searches you repeat. Snooze a message until tomorrow morning. Group conversations. Select many and act once. Unsubscribe from a list with one key. Answer an invitation from the message, and `U` takes back what you just did.
+
+**Mail that sorts itself.** Rules file, delete or mark mail as it arrives: a few plain lines each in a file of their own, matching who it is from, its subject, the words in it or the list it came through. Try a rule first and Quill shows the mail it would change before anything moves; a delete is only ever a move to the Trash; and everything a rule did is written down and can be taken back. One key switches them all off.
 
 **At home on a Mac.** New mail is pushed to Quill where the server can, and announced; the Dock shows what is unread; `mailto:` links open in Quill. Attachments open beside your mail in Quick Look, and sound and video play in a pane. It follows the Mac between light and dark, with a theme for each, and imports any theme made for Ghostty.
 

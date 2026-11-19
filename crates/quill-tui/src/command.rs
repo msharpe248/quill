@@ -25,6 +25,8 @@ pub enum Context {
     /// Naming a folder to make, and saying where: on the account's
     /// server, or on this Mac.
     NewFolder,
+    /// Writing a rule, started from a message.
+    NewRule,
     /// Pressing the key a command is to have, in the settings window of
     /// a host that has one.
     RecordKeys,
@@ -67,6 +69,7 @@ impl Context {
             Self::SignIn => "Signing in",
             Self::When => "Choosing a time",
             Self::NewFolder => "New folder",
+            Self::NewRule => "New rule",
             Self::RecordKeys => "Changing a key",
             Self::EditTheme => "Changing a theme",
             Self::Unsubscribe => "Unsubscribe",
@@ -95,6 +98,7 @@ const EVERYWHERE: &[Context] = &[
     Context::SignIn,
     Context::When,
     Context::NewFolder,
+    Context::NewRule,
     Context::RecordKeys,
     Context::EditTheme,
     Context::Unsubscribe,
@@ -238,6 +242,13 @@ pub enum CommandId {
     MailboxSync,
     AgentsStop,
     CommandLineInstall,
+    RulesToggle,
+    RulesRun,
+    RulesRunAll,
+    RulesApply,
+    RulesNew,
+    RulesEdit,
+    RulesLog,
     SidebarOpen,
     SidebarClose,
     HelpToggle,
@@ -280,6 +291,8 @@ pub enum Menu {
     View,
     Mailbox,
     Message,
+    /// Rules: a menu of their own, between Message and Help.
+    Rules,
     Help,
 }
 
@@ -377,6 +390,7 @@ impl Registry {
                         Context::Setup,
                         Context::When,
                         Context::NewFolder,
+                        Context::NewRule,
                         Context::Unsubscribe,
                         Context::Folders,
                         Context::Templates,
@@ -1007,6 +1021,66 @@ impl Registry {
                     Some(Menu::File),
                     PANES,
                 ),
+                // Rules, in a menu of their own. The switch first: its
+                // item is checked while rules run by themselves.
+                spec(
+                    RulesToggle,
+                    "rules.toggle",
+                    "Rules On",
+                    General,
+                    Some(Menu::Rules),
+                    PANES,
+                ),
+                spec(
+                    RulesRun,
+                    "rules.run",
+                    "Run a Rule\u{2026}",
+                    General,
+                    Some(Menu::Rules),
+                    PANES,
+                ),
+                spec(
+                    RulesRunAll,
+                    "rules.run_all",
+                    "Run All Rules\u{2026}",
+                    General,
+                    Some(Menu::Rules),
+                    PANES,
+                ),
+                // What the two above lead to: they show what would be
+                // matched, and this does it.
+                spec(
+                    RulesApply,
+                    "rules.apply",
+                    "Run the Rule Shown",
+                    General,
+                    Some(Menu::Rules),
+                    PANES,
+                ),
+                spec(
+                    RulesNew,
+                    "rules.new",
+                    "New Rule from This Message\u{2026}",
+                    General,
+                    Some(Menu::Rules),
+                    MESSAGE,
+                ),
+                spec(
+                    RulesEdit,
+                    "rules.edit",
+                    "Edit Rules",
+                    General,
+                    Some(Menu::Rules),
+                    PANES,
+                ),
+                spec(
+                    RulesLog,
+                    "rules.log",
+                    "What Rules Did",
+                    General,
+                    Some(Menu::Rules),
+                    PANES,
+                ),
                 with_symbol(
                     spec(
                         HelpToggle,
@@ -1085,6 +1159,9 @@ pub fn hints(context: Context) -> &'static [Hint] {
         hint(&[WindowClose], "quit"),
     ];
     const LIST: &[Hint] = &[
+        // First while a rule is being tried: it is what the list is
+        // showing, and what it is waiting for.
+        hint_while_enabled(&[RulesApply], "run the rule"),
         hint(&[NavNext, NavPrev], "move"),
         hint(&[NavOpen], "open"),
         hint(&[SearchStart], "search"),
@@ -1161,6 +1238,10 @@ pub fn hints(context: Context) -> &'static [Hint] {
     const SIGNING_IN: &[Hint] = &[hint(&[NavBack], "give up")];
     const WHEN: &[Hint] = &[hint(&[NavOpen], "set"), hint(&[NavBack], "cancel")];
     const NEW_FOLDER: &[Hint] = &[hint(&[NavOpen], "make it"), hint(&[NavBack], "cancel")];
+    const NEW_RULE: &[Hint] = &[
+        hint(&[NavOpen], "save and try it"),
+        hint(&[NavBack], "cancel"),
+    ];
     const RECORDING: &[Hint] = &[hint(&[NavBack], "cancel")];
     const FOLDERS: &[Hint] = &[hint(&[NavOpen], "move here"), hint(&[NavBack], "cancel")];
     const UNSUBSCRIBING: &[Hint] = &[hint(&[NavOpen], "go ahead"), hint(&[NavBack], "cancel")];
@@ -1196,6 +1277,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         Context::SignIn => SIGNING_IN,
         Context::When => WHEN,
         Context::NewFolder => NEW_FOLDER,
+        Context::NewRule => NEW_RULE,
         Context::RecordKeys | Context::EditTheme => RECORDING,
         Context::Links => LINKS,
         Context::Search => SEARCHING,

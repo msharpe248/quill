@@ -22,7 +22,10 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         .border_style(styles.border(true))
         .padding(Padding::horizontal(1))
         .title(Line::styled(
-            " Give this message to a program ",
+            match &picker.list {
+                Some(list) => list.title.as_str(),
+                None => " Give this message to a program ",
+            },
             styles.border(true),
         ));
     let inner = block.inner(area);
@@ -47,25 +50,40 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
     let rows = usize::from(inner.height - 1);
     if choices.is_empty() {
         if rows > 0 {
-            let none = Line::styled("  No hook matches.", styles.dim());
+            let words = match &picker.list {
+                Some(list) => format!("  {}", list.none),
+                None => "  No hook matches.".to_owned(),
+            };
+            let none = Line::styled(words, styles.dim());
             frame.render_widget(none, Rect::new(inner.x, inner.y + 1, inner.width, 1));
         }
         return;
     }
+    // A name, and beside it what choosing it means: a hook's program, or
+    // what a rule does.
     let visible = choices
         .iter()
-        .filter_map(|index| env.hooks.get(*index))
+        .filter_map(|index| match &picker.list {
+            Some(list) => list
+                .lines
+                .get(*index)
+                .map(|line| (line.name.clone(), line.detail.clone())),
+            None => env
+                .hooks
+                .get(*index)
+                .map(|hook| (hook.name.clone(), hook.shown())),
+        })
         .enumerate()
         .skip(picker.offset)
         .take(rows);
-    for (row, (index, hook)) in visible.enumerate() {
+    for (row, (index, (name, detail))) in visible.enumerate() {
         let rect = Rect::new(inner.x, inner.y + 1 + row as u16, inner.width, 1);
         let selected = index == picker.selected;
         let room = width.saturating_sub(2);
         // The name gives way to the program: what will run is always
         // said, as far as there is room for any of it.
-        let name = text::truncate(&hook.name, room.min(28));
-        let program = format!("  {}", hook.shown());
+        let name = text::truncate(&name, room.min(28));
+        let program = format!("  {detail}");
         let left = room.saturating_sub(text::width(&name));
         let line = Line::from(vec![
             Span::raw(if selected { "> " } else { "  " }),

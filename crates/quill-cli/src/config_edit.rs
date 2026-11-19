@@ -345,6 +345,12 @@ pub fn set_editor_tips(text: &str, on: bool) -> Result<String, String> {
     set_value(text, "compose", "editor_tips", Value::from(on))
 }
 
+/// `text` with `enabled` under `[rules]` set: whether rules run by
+/// themselves.
+pub fn set_rules_enabled(text: &str, on: bool) -> Result<String, String> {
+    set_value(text, "rules", "enabled", Value::from(on))
+}
+
 /// `text` with one setting given another value: what was changed in the
 /// app's settings window. The line is changed where it stands, with the
 /// comment on it kept; a setting the file does not have yet is added to

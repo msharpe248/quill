@@ -146,6 +146,27 @@ pub(crate) fn read(message: &mail_parser::Message<'_>) -> Option<Unsubscribe> {
     from_headers(&list, post.as_deref())
 }
 
+/// The mailing list a message came through, as its `List-Id` says: the
+/// header's value on one line, cleaned, and no longer than a list's name
+/// has any need to be. `None` for a message that names no list, or that
+/// cannot be read at all. Only the headers are read.
+pub fn list_id(raw: &[u8]) -> Option<String> {
+    /// A list's name and id are short; a longer value is someone trying
+    /// something.
+    const LONGEST: usize = 512;
+    let message = mail_parser::MessageParser::default().parse_headers(raw)?;
+    let value = message
+        .headers()
+        .iter()
+        .find(|header| header.name().as_str().eq_ignore_ascii_case("List-Id"))
+        .and_then(|header| raw.get(header.offset_start() as usize..header.offset_end() as usize))?;
+    let text = String::from_utf8_lossy(value);
+    let cleaned = crate::clean::header(&text);
+    let joined = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    let cut: String = joined.chars().take(LONGEST).collect();
+    (!cut.is_empty()).then_some(cut)
+}
+
 /// A `mailto:` address that names someone to write to.
 fn is_mail(address: &str) -> bool {
     parse_mailto(address).is_some_and(|mailto| {
@@ -514,5 +535,17 @@ mod tests {
             crate::parse(&raw, 0).unwrap().unsubscribe.unwrap().https,
             ["https://lists.example.com/u"]
         );
+    }
+    #[test]
+    fn the_list_a_message_came_through_is_read_from_its_headers() {
+        let raw = b"From: Builds <builds@example.com>\r\nList-Id: Build results\r\n <builds.example.com>\r\nSubject: ok\r\n\r\nList-Id: not this one\r\n";
+        assert_eq!(
+            list_id(raw).as_deref(),
+            Some("Build results <builds.example.com>")
+        );
+        assert_eq!(list_id(b"From: ana@example.com\r\n\r\nHello\r\n"), None);
+        // An escape in it does not reach a terminal.
+        let raw = b"List-Id: \x1b[31mred <l.example.com>\r\n\r\n";
+        assert!(!list_id(raw).unwrap().contains('\x1b'));
     }
 }

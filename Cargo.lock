@@ -2951,6 +2951,7 @@ dependencies = [
  "quill-core",
  "quill-mime",
  "quill-store",
+ "serde_json",
  "tempfile",
  "tokio",
 ]

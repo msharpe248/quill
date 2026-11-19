@@ -10,6 +10,7 @@ mod drafts;
 mod local;
 mod migrations;
 mod queue;
+mod rules;
 mod search;
 mod threads;
 

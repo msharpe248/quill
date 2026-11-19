@@ -12,7 +12,7 @@ Nothing here is a promise or a date.
 
 ## After that
 
-- Rules that do more, and that can be run over mail already here.
+- More for rules, which now file, delete and mark mail, look at what a message says, catch up, and are tried before they are run ([the manual](manual.md#rules); the design is in [Quill Rules Spec.md](../Quill%20Rules%20Spec.md)): rules kept on the server (Sieve, Gmail's filters), rules for folders other than the inbox, and a form to change any rule without opening the file.
 - Renaming and removing a server's folders, and folders inside folders.
 - Keys for making a pane wider or narrower.
 

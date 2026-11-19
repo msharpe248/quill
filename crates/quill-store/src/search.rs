@@ -129,6 +129,20 @@ impl Store {
             conditions.push(format!("trim(m.message_id, '<>') = {place}"));
         }
         let lower = |text: &str| Value::Text(text.trim().to_lowercase());
+        // The list a message came through is known once it is downloaded;
+        // one that is not yet is through no list anyone can name.
+        for list in &query.list {
+            let part = bind(lower(list), &mut values);
+            conditions.push(format!(
+                "m.list_id IS NOT NULL AND instr(lower(m.list_id), {part}) > 0"
+            ));
+        }
+        for list in &query.not.list {
+            let part = bind(lower(list), &mut values);
+            conditions.push(format!(
+                "(m.list_id IS NULL OR instr(lower(m.list_id), {part}) = 0)"
+            ));
+        }
         if let Some(account) = &query.account {
             let name = bind(lower(account), &mut values);
             conditions.push(format!("lower(a.name) = {name}"));
@@ -194,7 +208,8 @@ fn has_terms(query: &Query) -> bool {
     !(query.text.is_empty()
         && query.from.is_empty()
         && query.to.is_empty()
-        && query.subject.is_empty())
+        && query.subject.is_empty()
+        && query.body.is_empty())
 }
 
 /// The full-text expression for a query's words: every one must match, each
@@ -206,6 +221,7 @@ fn match_expression(query: &Query) -> Option<String> {
         (Some("sender"), &query.from),
         (Some("recipients"), &query.to),
         (Some("subject"), &query.subject),
+        (Some("body"), &query.body),
     ] {
         for term in terms {
             if let Some(quoted) = quoted(term) {
@@ -228,6 +244,7 @@ fn unwanted_expression(query: &Query) -> Option<String> {
         (Some("sender"), &query.not.from),
         (Some("recipients"), &query.not.to),
         (Some("subject"), &query.not.subject),
+        (Some("body"), &query.not.body),
     ] {
         for term in terms {
             if let Some(quoted) = quoted(term) {

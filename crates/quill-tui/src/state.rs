@@ -33,6 +33,7 @@ mod folders;
 mod keys;
 mod mouse;
 mod remove;
+mod rules;
 mod settings;
 mod sheet;
 mod themes;
@@ -41,12 +42,13 @@ use quill_host::bridge::{FormUsed, Number, SettingsUsed};
 pub use self::folders::{FolderPrompt, ON_THE_SERVER, ON_THIS_MAC};
 pub use self::keys::{KeysAsk, KeysHow, KeysPrompt};
 pub use self::remove::{REMOVING, RemovePrompt, YES as REMOVE_YES};
+pub use self::rules::{PickFor, PickLine, PickList, RuleAction, RuleField, RulePrompt, RuleTrial};
 pub use self::settings::SettingsWindow;
 pub use self::themes::{ThemeAsk, ThemePrompt};
 use crate::settings::Applied;
 
 use crate::setup::{
-    AccountEvent, AccountRequest, CertificatePrompt, Outcome, Preference, Setup, SignIn,
+    AccountEvent, AccountRequest, CertificatePrompt, Outcome, Preference, RulesAsk, Setup, SignIn,
     SignInStage,
 };
 use crate::template::{self, Template};
@@ -432,6 +434,9 @@ pub enum HostRequest {
     /// Open a file in the application the Mac opens its kind with. Only
     /// ever on the user's own key press.
     OpenFile(PathBuf),
+    /// Open the file the rules are written in, in a host that opens
+    /// files for editing. It knows which file: none is named.
+    EditRules,
     /// Tell the user about new mail. `actions` are a name, a title and
     /// whether using it should bring Quill forward; the name of the one
     /// chosen comes back in [`Action::Notification`].
@@ -851,6 +856,9 @@ pub struct HookPicker {
     /// How many hooks there are before any narrowing, which is how tall
     /// the box is.
     pub total: usize,
+    /// The same box with something else to choose from in it: the rules,
+    /// or what rules did. `None`: the hooks, and `message` is theirs.
+    pub list: Option<PickList>,
 }
 
 /// Where an editor that has a message's text goes on the terminal's
@@ -1084,6 +1092,9 @@ pub struct Search {
     pub found: Option<usize>,
     /// There are more than the list shows.
     pub more: bool,
+    /// Not a search at all: a rule being tried, and the list is what it
+    /// would change.
+    pub rule: Option<RuleTrial>,
 }
 
 /// A box asking for a time, and what the time is for.
@@ -1408,6 +1419,13 @@ pub struct State {
     /// The box asking what a new folder is to be called, and where it is
     /// to be.
     pub new_folder: Option<FolderPrompt>,
+    /// The form for a new rule, started from a message.
+    pub new_rule: Option<RulePrompt>,
+    /// The rules as they were last read. The engine runs them as mail
+    /// arrives; here they are listed, tried and run by hand.
+    pub rules: std::sync::Arc<quill_sync::RuleSet>,
+    /// What is wrong with the rules as written, as last said.
+    rules_problem: Option<String>,
     /// The question, in a host's sheet, about the keys of a command.
     pub keys: Option<KeysPrompt>,
     /// The question, in a host's sheet, about a theme: its colours and
@@ -1496,6 +1514,9 @@ impl State {
             settings: None,
             when: None,
             new_folder: None,
+            new_rule: None,
+            rules: std::sync::Arc::default(),
+            rules_problem: None,
             keys: None,
             theme_prompt: None,
             next_wake: None,
@@ -1538,6 +1559,9 @@ impl State {
         }
         if self.new_folder.is_some() {
             return Context::NewFolder;
+        }
+        if self.new_rule.is_some() {
+            return Context::NewRule;
         }
         if self.keys.is_some() {
             return Context::RecordKeys;
@@ -1720,6 +1744,16 @@ impl State {
                         picker.selected = 0;
                     }
                 }
+                Context::NewRule => {
+                    if let Some(prompt) = &mut self.new_rule
+                        && !prompt.busy
+                        && let Some(input) = prompt.typing()
+                    {
+                        // One line: a pasted line break is a space.
+                        input.insert(&text.replace(['\r', '\n'], " "));
+                        prompt.problem = None;
+                    }
+                }
                 Context::Templates => {
                     if let Some(picker) = &mut self.templates {
                         picker.filter.insert(&text);
@@ -1878,6 +1912,13 @@ impl State {
             }
             Context::NewFolder => {
                 if let Some(prompt) = &mut self.new_folder
+                    && prompt.key(chord)
+                {
+                    return;
+                }
+            }
+            Context::NewRule => {
+                if let Some(prompt) = &mut self.new_rule
                     && prompt.key(chord)
                 {
                     return;
@@ -2147,6 +2188,14 @@ impl State {
             CommandId::NavOpen if context == Context::NewFolder => {
                 self.answer_new_folder(env, out);
             }
+            CommandId::NavOpen if context == Context::NewRule => self.answer_new_rule(out),
+            CommandId::RulesToggle => self.toggle_rules(out),
+            CommandId::RulesRun => self.pick_rule(),
+            CommandId::RulesRunAll => self.try_rules(env, None, out),
+            CommandId::RulesApply => self.apply_rule(out),
+            CommandId::RulesNew => self.ask_new_rule(),
+            CommandId::RulesEdit => out.accounts.push(AccountRequest::Rules(RulesAsk::Open)),
+            CommandId::RulesLog => out.data.push(DataRequest::RulesLog),
             CommandId::SelectToggle => {
                 if self.list.range.is_some() {
                     // The range ends here, with everything in it selected.
@@ -2285,6 +2334,7 @@ impl State {
                         selected: 0,
                         offset: 0,
                         total: env.hooks.len(),
+                        list: None,
                     });
                 }
             }
@@ -2515,6 +2565,16 @@ impl State {
             CommandId::SearchStart => {
                 // Again, to change what is being searched for.
                 match &mut self.search {
+                    // A rule on show is not a search to change: it is
+                    // left for one.
+                    Some(search) if search.rule.is_some() => {
+                        *search = Search {
+                            typing: true,
+                            ..Search::default()
+                        };
+                        self.list = MessageList::default();
+                        self.list.loaded = true;
+                    }
                     Some(search) => search.typing = true,
                     None => {
                         self.search = Some(Search {
@@ -2680,6 +2740,11 @@ impl State {
                 .any(|id| DraftId::from_message_id(*id).is_none()),
             CommandId::NavOpen if context == Context::When => true,
             CommandId::NavOpen if context == Context::NewFolder => true,
+            CommandId::NavOpen if context == Context::NewRule => true,
+            CommandId::RulesRun => self.can_run_a_rule(),
+            CommandId::RulesRunAll => self.can_run_all_rules(),
+            CommandId::RulesApply => self.can_apply_rule(),
+            CommandId::RulesNew => self.can_start_rule(),
             CommandId::MessageCopy => self
                 .target_row()
                 .is_some_and(|row| DraftId::from_message_id(row.id).is_none()),
@@ -2814,6 +2879,7 @@ impl State {
                     || self.sign_in.is_some()
                     || self.when.is_some()
                     || self.new_folder.is_some()
+                    || self.new_rule.is_some()
                     || self.keys.is_some()
                     || self.theme_prompt.is_some()
                     || !self.certificates.is_empty()
@@ -2878,6 +2944,7 @@ impl State {
         match id {
             CommandId::ViewWebReading => self.web_reading,
             CommandId::ViewSidebar => !self.sidebar_hidden,
+            CommandId::RulesToggle => self.rules_on(),
             _ => false,
         }
     }
@@ -2911,6 +2978,7 @@ impl State {
                 | Context::SignIn
                 | Context::When
                 | Context::NewFolder
+                | Context::NewRule
                 | Context::RecordKeys
                 | Context::EditTheme
                 | Context::Unsubscribe
@@ -3107,6 +3175,8 @@ impl State {
             // Nothing was snoozed or sent.
         } else if self.new_folder.take().is_some() {
             // No folder was made.
+        } else if self.new_rule.take().is_some() {
+            // No rule was written.
         } else if self.keys.take().is_some() {
             // No key was changed.
         } else if self.theme_prompt.take().is_some() {
@@ -3631,6 +3701,17 @@ impl State {
     /// The hooks the picker offers, as places in `env.hooks`: those whose
     /// names what has been typed narrows to.
     pub fn hook_choices(&self, env: &Env, picker: &HookPicker) -> Vec<usize> {
+        // The same box with another list in it: its lines, narrowed the
+        // same way.
+        if let Some(list) = &picker.list {
+            return list
+                .lines
+                .iter()
+                .enumerate()
+                .filter(|(_, line)| template::narrows(picker.filter.text(), &line.name))
+                .map(|(index, _)| index)
+                .collect();
+        }
         env.hooks
             .iter()
             .enumerate()
@@ -3646,6 +3727,12 @@ impl State {
         let Some(picker) = self.hooks.take() else {
             return;
         };
+        if let Some(list) = &picker.list {
+            if let Some(index) = self.hook_choices(env, &picker).get(picker.selected) {
+                self.picked(env, list, *index, out);
+            }
+            return;
+        }
         let chosen = self
             .hook_choices(env, &picker)
             .get(picker.selected)
@@ -4262,6 +4349,18 @@ impl State {
                         text::sanitize_line(reason.trim_end_matches('.'))
                     )),
                 });
+                return;
+            }
+            AccountEvent::Rules(now) => {
+                self.on_rules(env, now, out);
+                return;
+            }
+            AccountEvent::RuleAdded(result) => {
+                self.on_rule_added(env, result, out);
+                return;
+            }
+            AccountEvent::RulesFile(result) => {
+                self.on_rules_file(env, result, out);
                 return;
             }
             AccountEvent::Remembered(result) => {
@@ -4898,6 +4997,7 @@ impl State {
             typing: false,
             found: None,
             more: false,
+            rule: None,
         });
         self.list = MessageList::default();
         if let Some(request) = self.search_request(env) {
@@ -5438,6 +5538,10 @@ impl State {
                 });
             }
             SyncEvent::Sent { .. } => self.flash = Some(("Sent.".to_owned(), false)),
+            SyncEvent::Ruled { said } => {
+                self.flash = Some((format!("{}.", text::sanitize_line(&said)), false));
+            }
+            SyncEvent::RulesWaiting { account, count } => self.on_rules_waiting(&account, count),
             SyncEvent::FolderMade { account, name } => {
                 self.notices.push_back(Notice::info(format!(
                     "Made the folder {} on {}'s server.",
@@ -5527,6 +5631,15 @@ impl State {
     /// The request that finds what is typed, or `None` when nothing is.
     fn search_request(&self, env: &Env) -> Option<DataRequest> {
         let text = self.search_text()?;
+        // A rule being tried is in the list as a search is, and is asked
+        // of the rules, not of the search.
+        if let Some(trial) = self.rule_trial() {
+            return Some(DataRequest::RulesTry {
+                text,
+                set: std::sync::Arc::clone(&self.rules),
+                which: trial.which.clone(),
+            });
+        }
         let tz = env.tz.clone();
         let query = quill_core::search::parse(&text, |year, month, day| {
             let date = jiff::civil::Date::new(
@@ -5541,6 +5654,30 @@ impl State {
             text,
             query: Box::new(query),
         })
+    }
+
+    /// Puts what a search found, or what a rule would change, in the
+    /// list.
+    fn show_found(&mut self, mut rows: Vec<MessageRow>, more: bool, out: &mut Effects) {
+        rows.iter_mut().for_each(sanitize_row);
+        // The message under the cursor stays under it if it is
+        // still found; otherwise the newest is.
+        let keep = self.list.rows.get(self.list.selected).map(|row| row.id);
+        self.list.selected = keep
+            .and_then(|id| rows.iter().position(|row| row.id == id))
+            .unwrap_or(0);
+        self.list.offset = 0;
+        if let Some(search) = &mut self.search {
+            search.found = Some(rows.len());
+            search.more = more;
+        }
+        // What a search finds is a list of messages, not of
+        // conversations.
+        self.list.follows.clear();
+        self.list.rows = rows;
+        self.list.loaded = true;
+        self.list.keep_listed_marks();
+        self.sync_reader(out);
     }
 
     /// Asks for what is typed to be found. With nothing typed there is
@@ -5628,35 +5765,42 @@ impl State {
                     }
                 }
             }
-            DataEvent::SearchLoaded {
+            DataEvent::SearchLoaded { text, rows, more } => {
+                // An answer for something typed over since is dropped,
+                // and so is one that comes while a rule has the list.
+                if self.search_text().as_deref() != Some(text.as_str())
+                    || self.rule_trial().is_some()
+                {
+                    return;
+                }
+                self.show_found(rows, more, out);
+            }
+            DataEvent::RulesTried {
                 text,
-                mut rows,
+                rows,
                 more,
+                says,
+                count,
             } => {
-                // An answer for something typed over since is dropped.
                 if self.search_text().as_deref() != Some(text.as_str()) {
                     return;
                 }
-                rows.iter_mut().for_each(sanitize_row);
-                // The message under the cursor stays under it if it is
-                // still found; otherwise the newest is.
-                let keep = self.list.rows.get(self.list.selected).map(|row| row.id);
-                self.list.selected = keep
-                    .and_then(|id| rows.iter().position(|row| row.id == id))
-                    .unwrap_or(0);
-                self.list.offset = 0;
-                if let Some(search) = &mut self.search {
-                    search.found = Some(rows.len());
-                    search.more = more;
+                match self.search.as_mut().and_then(|search| search.rule.as_mut()) {
+                    Some(trial) => {
+                        trial.says = Some(text::sanitize_line(&says));
+                        trial.count = count;
+                    }
+                    // The rule was left before the answer came.
+                    None => return,
                 }
-                // What a search finds is a list of messages, not of
-                // conversations.
-                self.list.follows.clear();
-                self.list.rows = rows;
-                self.list.loaded = true;
-                self.list.keep_listed_marks();
-                self.sync_reader(out);
+                self.show_found(rows, more, out);
             }
+            DataEvent::RulesRan {
+                said,
+                problems,
+                undoable,
+            } => self.on_rules_ran(&said, problems, undoable),
+            DataEvent::RulesLog(entries) => self.on_rules_log(env, entries),
             DataEvent::MessagesLoaded { mailbox, mut rows } => {
                 if mailbox != self.mailbox || self.search.is_some() {
                     // An answer for a mailbox the user has already left,

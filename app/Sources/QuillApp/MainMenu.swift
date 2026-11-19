@@ -88,6 +88,9 @@ enum MainMenu {
 
         commandMenu(.mailbox, title: "Mailbox", in: bar, commands: commands)
         commandMenu(.message, title: "Message", in: bar, commands: commands)
+        // Rules: the switch, running one, a new one. Everything in it is
+        // the core's.
+        commandMenu(.rules, title: "Rules", in: bar, commands: commands)
 
         // Window
         let window = submenu(of: bar, title: "Window")

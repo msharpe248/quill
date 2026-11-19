@@ -487,3 +487,103 @@ fn the_limit_keeps_the_newest() {
     );
     assert!(store.search(&parse("roadmap ", day), 0).unwrap().is_empty());
 }
+
+#[test]
+fn the_body_and_the_list_a_message_came_through_are_filters_of_their_own() {
+    let mut store = store();
+    // "breakouts" is in one message's body and in nothing's subject.
+    assert_eq!(find(&store, "body:breakouts "), ["Offsite agenda"]);
+    assert!(find(&store, "subject:breakouts ").is_empty());
+    assert!(find(&store, "breakouts -body:breakouts ").is_empty());
+    // "roadmap" is in a body whose subject does not have it, and
+    // `body:` looks only there.
+    assert!(find(&store, "body:roadmap ").contains(&"Trail run Saturday".to_owned()));
+    assert!(!find(&store, "subject:roadmap ").contains(&"Trail run Saturday".to_owned()));
+    // In the body and from someone: both must hold.
+    assert_eq!(find(&store, "body:breakouts from:sam "), ["Offsite agenda"]);
+    assert!(find(&store, "body:breakouts from:ana ").is_empty());
+
+    // No message has said which list it came through: none is found by
+    // one, and every one is found by not being from it.
+    assert!(find(&store, "list:builds ").is_empty());
+    let everything = find(&store, "after:2026-01-01 ").len();
+    assert_eq!(
+        find(&store, "after:2026-01-01 -list:builds ").len(),
+        everything
+    );
+
+    // One has, since it was downloaded: part of the id finds it,
+    // whatever the case, and nothing else does.
+    let offsite = store
+        .search(&parse("subject:offsite ", |_, _, _| None), 1)
+        .unwrap()[0]
+        .id;
+    store
+        .set_list_id(offsite, Some("Builds <Builds.Example.com>"))
+        .unwrap();
+    assert_eq!(find(&store, "list:builds.example.com "), ["Offsite agenda"]);
+    assert_eq!(find(&store, "list:BUILDS "), ["Offsite agenda"]);
+    assert!(find(&store, "list:announce ").is_empty());
+    assert_eq!(
+        find(&store, "after:2026-01-01 -list:builds ").len(),
+        everything - 1
+    );
+    // What is typed is a value: nothing in it is a pattern.
+    assert!(find(&store, "list:% ").is_empty());
+
+    // Looked for and found to have none, it is through no list.
+    store.set_list_id(offsite, None).unwrap();
+    assert!(find(&store, "list:builds ").is_empty());
+}
+
+#[test]
+fn the_rules_are_asked_about_inbox_mail_once() {
+    let mut store = store();
+    let account = store.accounts().unwrap()[0].id;
+    let all = store.inbox_mail(account, i64::MIN, true, 100).unwrap();
+    assert!(!all.is_empty());
+    // Only the inbox, newest first, and only as far back as asked.
+    let rows = store.message_rows(&all).unwrap();
+    let inbox = store
+        .folders()
+        .unwrap()
+        .into_iter()
+        .find(|folder| folder.account == account && folder.role == FolderRole::Inbox)
+        .unwrap()
+        .id;
+    assert!(rows.iter().all(|row| row.folder == inbox));
+    let dates: Vec<i64> = all
+        .iter()
+        .map(|id| rows.iter().find(|row| row.id == *id).unwrap().headers.date)
+        .collect();
+    assert!(dates.windows(2).all(|pair| pair[0] >= pair[1]));
+    let newest = dates[0];
+    assert_eq!(
+        store.inbox_mail(account, newest, true, 100).unwrap(),
+        all[..1]
+    );
+    assert_eq!(
+        store.inbox_mail(account, i64::MIN, true, 1).unwrap().len(),
+        1
+    );
+
+    // Asked about, they are not unasked any more, and are still mail.
+    store.mark_ruled(&all[..1], 500).unwrap();
+    assert_eq!(
+        store.inbox_mail(account, i64::MIN, true, 100).unwrap(),
+        all[1..]
+    );
+    assert_eq!(
+        store.inbox_mail(account, i64::MIN, false, 100).unwrap(),
+        all
+    );
+
+    // Which of them are downloaded, and which are worth downloading
+    // first.
+    let with = store.with_body(&all).unwrap();
+    let without = store.small_without_body(&all, 1_000).unwrap();
+    assert_eq!(with.len() + without.len(), all.len());
+    assert!(with.iter().all(|id| !without.contains(id)));
+    // Nothing is small enough for a limit of nothing.
+    assert!(store.small_without_body(&all, 0).unwrap().is_empty());
+}

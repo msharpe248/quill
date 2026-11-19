@@ -36,6 +36,7 @@
         { "$ref": "#/$defs/themes.pick" },
         { "$ref": "#/$defs/keys.list" },
         { "$ref": "#/$defs/keys.show" },
+        { "$ref": "#/$defs/rules.edit" },
         { "$ref": "#/$defs/window.close" }
       ]
     },
@@ -100,7 +101,7 @@
         },
         "menu": {
           "description": "The menu the command appears in. Absent for plain cursor movement, which has no menu item.",
-          "enum": ["app", "file", "edit", "view", "mailbox", "message", "window", "help"]
+          "enum": ["app", "file", "edit", "view", "mailbox", "message", "rules", "window", "help"]
         },
         "symbol": {
           "description": "An SF Symbol name. A command with one may be shown in the toolbar.",
@@ -1627,6 +1628,18 @@
       "properties": {
         "jsonrpc": { "const": "2.0" },
         "method": { "const": "keys.show" },
+        "params": { "type": "object", "additionalProperties": false }
+      }
+    },
+
+    "rules.edit": {
+      "description": "Core to shell. Open the file the user's rules are written in, rules.toml in the settings folder, in the application the Mac opens it with: the user asked to edit their rules (rules.edit, Edit Rules). The core has made the file if it was not there. The shell opens that one file, by the folder it already knows, and no other: the message names no path.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "rules.edit" },
         "params": { "type": "object", "additionalProperties": false }
       }
     },

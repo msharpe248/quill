@@ -46,14 +46,14 @@ expression: harness.screen()
 ┃                          ┃│                                       ┃   D                              Remove this account…        ┃                                                                   │
 ┃                          ┃│                                       ┃   Z c                            Install Command Line Tool   ┃                                                                   │
 ┃                          ┃│                                       ┃   Z a                            Stop Agents                 ┃                                                                   │
+┃                          ┃│                                       ┃   Z t                            Rules On                    ┃                                                                   │
+┃                          ┃│                                       ┃   Z r                            Run a Rule…                 ┃                                                                   │
+┃                          ┃│                                       ┃   Z R                            Run All Rules…              ┃                                                                   │
+┃                          ┃│                                       ┃   Z y                            Run the Rule Shown          ┃                                                                   │
+┃                          ┃│                                       ┃   Z e                            Edit Rules                  ┃                                                                   │
+┃                          ┃│                                       ┃   Z l                            What Rules Did              ┃                                                                   │
 ┃                          ┃│                                       ┃   ?                              Help for this context       ┃                                                                   │
 ┃                          ┃│                                       ┃   K, f1                          Keyboard shortcuts          ┃                                                                   │
-┃                          ┃│                                       ┃                                                              ┃                                                                   │
-┃                          ┃│                                       ┃                                                              ┃                                                                   │
-┃                          ┃│                                       ┃                                                              ┃                                                                   │
-┃                          ┃│                                       ┃                                                              ┃                                                                   │
-┃                          ┃│                                       ┃                                                              ┃                                                                   │
-┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │

@@ -223,6 +223,28 @@ pub enum DataRequest {
     /// The user stopped the agents: mail they sent that has not gone is
     /// taken back to Drafts.
     AgentsStop,
+    /// Say what rules would do with the mail in the inboxes, as far back
+    /// as they look: the rule called `which`, or every rule that is on.
+    /// Nothing is changed. `text` tells this answer from the answer to
+    /// what was asked before it. Answered with
+    /// [`DataEvent::RulesTried`].
+    RulesTry {
+        text: String,
+        set: std::sync::Arc<quill_sync::RuleSet>,
+        which: Option<String>,
+    },
+    /// Run rules on that mail now, by the user's hand: the rule called
+    /// `which`, or every rule that is on. Answered with
+    /// [`DataEvent::RulesRan`].
+    RulesRun {
+        set: std::sync::Arc<quill_sync::RuleSet>,
+        which: Option<String>,
+    },
+    /// What rules have done lately, from the log. Answered with
+    /// [`DataEvent::RulesLog`].
+    RulesLog,
+    /// Take back what a rule did: its line of the log, by number.
+    RulesUndo(i64),
     /// Something asked from outside Quill's window: by a command for a
     /// shell, or by an agent over MCP. Done here so that there is one
     /// writer, and answered with [`DataEvent::AgentDone`] under the same
@@ -238,6 +260,10 @@ pub enum DataRequest {
 /// How many of the last changes made from outside the window the
 /// settings window shows.
 const RECENT_CHANGES: usize = 8;
+/// How many of the log's changes are looked through for what rules did,
+/// and how many of those are shown.
+const RULES_LOG_LOOKS: usize = 500;
+const RULES_LOG_SHOWN: usize = 100;
 
 /// The most messages a search shows. Past this the thing to do is to say
 /// more of what is wanted.
@@ -375,6 +401,26 @@ pub enum DataEvent {
     },
     /// The answer to [`DataRequest::AgentLog`], newest first.
     AgentLog(Vec<quill_store::AgentEntry>),
+    /// What rules would change, newest first, and what they would do
+    /// with it, in words. `count` is how many messages in all; `more`
+    /// that there are more than the list shows.
+    RulesTried {
+        text: String,
+        rows: Vec<MessageRow>,
+        more: bool,
+        says: String,
+        count: usize,
+    },
+    /// Rules were run by hand: what they did, in a line, and what they
+    /// could not do. `undoable` says the undo command would take it
+    /// back.
+    RulesRan {
+        said: String,
+        problems: Vec<String>,
+        undoable: bool,
+    },
+    /// The answer to [`DataRequest::RulesLog`], newest first.
+    RulesLog(Vec<quill_store::AgentEntry>),
     /// What came of a [`DataRequest::Agent`].
     AgentDone {
         ticket: u64,
@@ -790,8 +836,78 @@ fn run(
             Err(why) => vec![flash(&why)],
         },
         DataRequest::Settle => vec![DataEvent::Settled],
-        DataRequest::AgentLog => vec![DataEvent::AgentLog(store.agent_log(RECENT_CHANGES, false)?)],
+        DataRequest::AgentLog => {
+            // What was done from outside the window: not what the
+            // user's own rules did, which the log keeps beside it.
+            let lines = store
+                .agent_log(RECENT_CHANGES * 8, false)?
+                .into_iter()
+                .filter(|entry| entry.way != quill_sync::rules::LOG_WAY)
+                .take(RECENT_CHANGES)
+                .collect();
+            vec![DataEvent::AgentLog(lines)]
+        }
         DataRequest::AgentsStop => crate::agent::stop(store, now())?,
+        DataRequest::RulesTry { text, set, which } => {
+            let at = now();
+            let hand = quill_sync::rules::by_hand(store, &set, which.as_deref(), true, at, at)?;
+            let count = hand.changed.len();
+            let shown: Vec<LocalMessageId> =
+                hand.changed.iter().copied().take(SEARCH_LIMIT).collect();
+            let mut rows = store.message_rows(&shown)?;
+            rows.sort_by_key(|row| std::cmp::Reverse((row.headers.date, row.id.0)));
+            vec![DataEvent::RulesTried {
+                text,
+                rows,
+                more: count > SEARCH_LIMIT,
+                says: hand.would(),
+                count,
+            }]
+        }
+        DataRequest::RulesRun { set, which } => {
+            let at = now();
+            let hand = quill_sync::rules::by_hand(
+                store,
+                &set,
+                which.as_deref(),
+                false,
+                at,
+                at + UNDO_SECONDS,
+            )?;
+            let mut events = vec![DataEvent::StoreChanged];
+            if hand.queued {
+                events.push(DataEvent::Queued);
+            }
+            events.push(DataEvent::RulesRan {
+                said: quill_sync::rules::said_by_hand(&hand),
+                undoable: !hand.operations.is_empty(),
+                problems: hand.problems,
+            });
+            events
+        }
+        DataRequest::RulesLog => {
+            let lines = store
+                .agent_log(RULES_LOG_LOOKS, false)?
+                .into_iter()
+                .filter(|entry| entry.way == quill_sync::rules::LOG_WAY)
+                .take(RULES_LOG_SHOWN)
+                .collect();
+            vec![DataEvent::RulesLog(lines)]
+        }
+        DataRequest::RulesUndo(entry) => match crate::agent::take_back(store, entry, now()) {
+            Ok(taken) => {
+                let mut events = vec![DataEvent::StoreChanged];
+                if taken.queued {
+                    events.push(DataEvent::Queued);
+                }
+                events.push(DataEvent::Flash {
+                    text: taken.said,
+                    undoable: taken.undoable,
+                });
+                events
+            }
+            Err(why) => vec![flash(&why)],
+        },
         DataRequest::Agent {
             ticket,
             caller,
