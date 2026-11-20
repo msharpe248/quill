@@ -132,6 +132,7 @@ pub fn load(paths: &crate::paths::Paths, mode: ColorMode, tz: TimeZone) -> Loade
         keys_window: false,
         window: false,
         web_reading: config.ui.web_reading,
+        dark_pages: config.ui.dark_pages,
         sidebar: config.ui.sidebar,
         editor_tips: config.compose.editor_tips,
         // What the sync engine is told once, as it starts.
@@ -494,6 +495,16 @@ mod tests {
         write(&dir, "config.toml", "[ui]\nsidebar = false\n");
         let loaded = load_from(&dir);
         assert!(!loaded.env.sidebar);
+        assert!(loaded.notices.is_empty(), "{:?}", loaded.notices);
+    }
+
+    #[test]
+    fn mail_in_the_web_pane_is_dark_with_quill_unless_the_config_says_not() {
+        let dir = TempDir::new().unwrap();
+        assert!(load_from(&dir).env.dark_pages);
+        write(&dir, "config.toml", "[ui]\ndark_pages = false\n");
+        let loaded = load_from(&dir);
+        assert!(!loaded.env.dark_pages);
         assert!(loaded.notices.is_empty(), "{:?}", loaded.notices);
     }
 

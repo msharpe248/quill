@@ -14,6 +14,7 @@
 
 pub mod clean;
 pub mod compose;
+mod dark;
 mod disguise;
 mod guard;
 pub mod html;

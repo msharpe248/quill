@@ -248,6 +248,7 @@ fn remember(config_file: &Path, preference: Preference) -> Result<(), String> {
     let after = match preference {
         Preference::WebReading(on) => config_edit::set_web_reading(&before, on)?,
         Preference::Sidebar(on) => config_edit::set_sidebar(&before, on)?,
+        Preference::DarkPages(on) => config_edit::set_dark_pages(&before, on)?,
         Preference::SidebarWidth(columns) => config_edit::set_sidebar_width(&before, columns)?,
         Preference::ReaderWidth(share) => config_edit::set_reader_width(&before, share)?,
         Preference::EditorTips(on) => config_edit::set_editor_tips(&before, on)?,
@@ -3259,6 +3260,19 @@ mod tests {
             assert!(config_text(&rig).contains(&format!("\nsidebar = {shown}\n")));
         }
         assert!(config_text(&rig).contains("theme = \"light\"   # easier on the eyes"));
+
+        // And whether mail in the web pane is shown dark while Quill is.
+        assert!(rig.config().ui.dark_pages);
+        for dark in [false, true] {
+            assert_eq!(
+                rig.service
+                    .handle(AccountRequest::Remember(Preference::DarkPages(dark)))
+                    .await,
+                AccountEvent::Remembered(Ok(()))
+            );
+            assert_eq!(rig.config().ui.dark_pages, dark);
+            assert!(config_text(&rig).contains(&format!("\ndark_pages = {dark}\n")));
+        }
 
         // And that an editor's keys have been explained, under the
         // section it belongs to.

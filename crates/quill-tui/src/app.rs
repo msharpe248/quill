@@ -1606,6 +1606,7 @@ mod tests {
             keys_window: false,
             window: false,
             web_reading: false,
+            dark_pages: true,
             sidebar: true,
             editor_tips: true,
             cache_gb: 5.0,

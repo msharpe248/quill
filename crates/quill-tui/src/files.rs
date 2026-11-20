@@ -319,12 +319,16 @@ pub struct WebPage {
 /// Writes a message's HTML, sanitized, as a page in a folder of its own,
 /// with the pictures the message carries for it beside it. A message with
 /// no HTML gets its plain text as a page. Nothing here fetches anything:
-/// whether the page may is decided now and written into it.
+/// whether the page may is decided now and written into it. So is whether
+/// it is dark: a page for a dark window has the message's own colours
+/// made ones for a dark page, and is written again when the window is
+/// light.
 pub fn web_page(
     store: &Store,
     files: &Files,
     message: LocalMessageId,
     remote: RemoteContent,
+    dark: bool,
 ) -> Result<WebPage, FileProblem> {
     let Some(view_dir) = &files.view_dir else {
         return Err(FileProblem(
@@ -374,6 +378,7 @@ pub fn web_page(
             remote,
             cid_file: &cid_file,
             title: &parsed.headers.subject,
+            dark,
         },
     );
 
@@ -454,6 +459,9 @@ fn own_page(page_dir: &Path, title: &str, html: &str) -> Result<WebPage, FilePro
             remote: false,
             cid_file: &no_parts,
             title,
+            // Quill's own words name no colours: they are light or dark
+            // as the window is, by themselves.
+            dark: false,
         },
     );
     private_dir(page_dir)?;

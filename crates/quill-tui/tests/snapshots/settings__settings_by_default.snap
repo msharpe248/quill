@@ -70,6 +70,7 @@ expression: outline(&window.shown())
      row "Zoom the focused pane": z, ctrl-z [change]
      row "Group or ungroup conversations": T [change]
      row "Web reading pane": w [change]
+     row "Dark backgrounds for messages": W [change]
      row "Mark read or unread": u [change]
      row "Star or unstar": s [change]
      row "Show as HTML or as plain text": t [change]

@@ -95,6 +95,31 @@ fn reading() -> Harness {
     harness
 }
 
+/// Each time the choice to show mail dark was sent to be kept.
+fn dark_remembered(harness: &Harness) -> Vec<bool> {
+    harness
+        .account_requests
+        .iter()
+        .filter_map(|request| match request {
+            AccountRequest::Remember(Preference::DarkPages(on)) => Some(*on),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The demo's newsletter, which paints itself white with dark text as
+/// most designed mail does, on show in the reading pane.
+fn the_newsletter(harness: &mut Harness) -> String {
+    for _ in 0..40 {
+        if harness.selected_subject() == "Issue 88: Parsing email is still hard" {
+            harness.settle();
+            return html(&showing(harness));
+        }
+        harness.keys("j");
+    }
+    panic!("the newsletter is not in the list");
+}
+
 fn remembered(harness: &Harness) -> Vec<bool> {
     harness
         .account_requests
@@ -132,7 +157,11 @@ fn in_a_terminal_there_is_no_web_reading_and_nothing_changes() {
         assert!(harness.host_requests.is_empty());
         assert_eq!(
             harness.state.host_state(&harness.env).checked,
-            [CommandId::ViewSidebar, CommandId::RulesToggle]
+            [
+                CommandId::ViewSidebar,
+                CommandId::ViewDarkPages,
+                CommandId::RulesToggle
+            ]
         );
         assert_eq!(harness.state.settle_due(), None);
 
@@ -166,7 +195,11 @@ fn in_the_app_it_is_off_until_it_is_switched_on_and_the_choice_is_remembered() {
     );
     assert_eq!(
         harness.state.host_state(&harness.env).checked,
-        [CommandId::ViewSidebar, CommandId::RulesToggle]
+        [
+            CommandId::ViewSidebar,
+            CommandId::ViewDarkPages,
+            CommandId::RulesToggle
+        ]
     );
     assert!(
         status(&harness).contains("w web/text"),
@@ -188,6 +221,7 @@ fn in_the_app_it_is_off_until_it_is_switched_on_and_the_choice_is_remembered() {
         [
             CommandId::ViewSidebar,
             CommandId::ViewWebReading,
+            CommandId::ViewDarkPages,
             CommandId::RulesToggle
         ]
     );
@@ -229,7 +263,11 @@ fn in_the_app_it_is_off_until_it_is_switched_on_and_the_choice_is_remembered() {
     );
     assert_eq!(
         harness.state.host_state(&harness.env).checked,
-        [CommandId::ViewSidebar, CommandId::RulesToggle]
+        [
+            CommandId::ViewSidebar,
+            CommandId::ViewDarkPages,
+            CommandId::RulesToggle
+        ]
     );
     let screen = harness.screen();
     assert!(screen.contains("[3] Reader"), "{screen}");
@@ -269,6 +307,7 @@ fn it_starts_on_when_the_config_says_so_and_shows_the_first_message_without_read
         [
             CommandId::ViewSidebar,
             CommandId::ViewWebReading,
+            CommandId::ViewDarkPages,
             CommandId::RulesToggle
         ]
     );
@@ -328,6 +367,9 @@ fn a_page_that_arrives_for_a_message_the_cursor_has_left_is_not_shown() {
         [DataRequest::WebPage {
             message: left,
             remote: RemoteContent::IfSenderAllowed,
+            // Nobody has said the Mac is light, and Quill is dark until
+            // somebody does.
+            dark: true,
             then: PageUse::Reading,
         }]
     );
@@ -1051,4 +1093,208 @@ fn screens_with_web_reading_on() {
             harness.screen()
         );
     }
+}
+
+#[test]
+fn while_quill_is_dark_a_message_that_paints_itself_white_is_shown_dark() {
+    let mut harness = reading();
+    // Nobody has said what the Mac looks like: Quill is dark until told.
+    assert!(harness.env.look.is_dark());
+    let page = the_newsletter(&mut harness);
+    // The page is dark, whatever window shows it, and the message's own
+    // colours are ones for a dark page: its white is the dark page's
+    // colour, its dark text light, its links and borders still their hue.
+    assert!(page.contains(":root{color-scheme:dark}"), "{page}");
+    assert!(
+        page.contains("body { background: #1e1e1e; color: #dddddd }"),
+        "{page}"
+    );
+    assert!(
+        !page.contains("#ffffff") && !page.contains("#222222"),
+        "{page}"
+    );
+    assert!(page.contains("h1 { color: #a8c7e4;"), "{page}");
+    // Nothing else of the page is another page for it.
+    assert!(page.contains("Content-Security-Policy"), "{page}");
+    assert!(page.contains("<h1>The Weekly Parser</h1>"), "{page}");
+
+    // The Mac goes light, and Quill with it: the page on show is made
+    // again, as it was sent.
+    let shown = pages(&harness).len();
+    harness.act(Action::SystemAppearance { dark: false });
+    assert!(!harness.env.look.is_dark());
+    assert_eq!(pages(&harness).len(), shown + 1);
+    let page = html(&showing(&harness));
+    assert!(page.contains(":root{color-scheme:light dark}"), "{page}");
+    assert!(
+        page.contains("body { background: #ffffff; color: #222222 }"),
+        "{page}"
+    );
+    // Told the same again, nothing is made again.
+    harness.act(Action::SystemAppearance { dark: false });
+    harness.settle();
+    assert_eq!(pages(&harness).len(), shown + 1);
+
+    // And dark again.
+    harness.act(Action::SystemAppearance { dark: true });
+    assert_eq!(pages(&harness).len(), shown + 2);
+    assert!(html(&showing(&harness)).contains("background: #1e1e1e"));
+    // The message is not read again, or otherwise: it was only shown.
+    assert_eq!(
+        harness.state.reading_asked(),
+        Some(&Shown::Page(selected(&harness)))
+    );
+}
+
+#[test]
+fn dark_messages_are_switched_off_and_on_and_the_choice_is_remembered() {
+    let mut harness = reading();
+    the_newsletter(&mut harness);
+    let shown = pages(&harness).len();
+    assert!(
+        harness
+            .state
+            .is_enabled(&harness.env, CommandId::ViewDarkPages)
+    );
+    assert!(harness.state.is_on(CommandId::ViewDarkPages));
+    assert!(dark_remembered(&harness).is_empty());
+
+    // Off: the message on show is made again in the colours it was sent
+    // with, on a page that is light or dark as its window is.
+    harness.keys("W");
+    assert!(!harness.state.is_on(CommandId::ViewDarkPages));
+    assert_eq!(dark_remembered(&harness), [false]);
+    assert_eq!(pages(&harness).len(), shown + 1);
+    let page = html(&showing(&harness));
+    assert!(
+        page.contains("body { background: #ffffff; color: #222222 }"),
+        "{page}"
+    );
+    assert!(page.contains(":root{color-scheme:light dark}"), "{page}");
+    assert!(
+        status(&harness).contains("Messages are shown in their own colours. W switches back."),
+        "{}",
+        status(&harness)
+    );
+    // And stays off for the next message, and for this one come back to.
+    harness.keys("k");
+    harness.settle();
+    harness.keys("j");
+    harness.settle();
+    assert!(html(&showing(&harness)).contains("background: #ffffff"));
+
+    // On again, from the menu as from the key.
+    let shown = pages(&harness).len();
+    harness.act(Action::Command(CommandId::ViewDarkPages));
+    assert!(harness.state.is_on(CommandId::ViewDarkPages));
+    assert_eq!(dark_remembered(&harness), [false, true]);
+    assert_eq!(pages(&harness).len(), shown + 1);
+    assert!(html(&showing(&harness)).contains("background: #1e1e1e"));
+    assert!(
+        status(&harness).contains("Messages are shown dark. W switches back."),
+        "{}",
+        status(&harness)
+    );
+}
+
+#[test]
+fn while_quill_is_light_the_switch_changes_nothing_on_show() {
+    let mut harness = reading();
+    harness.act(Action::SystemAppearance { dark: false });
+    let page = the_newsletter(&mut harness);
+    assert!(page.contains("background: #ffffff"), "{page}");
+    let shown = pages(&harness).len();
+    // Off and on: the page is the same page either way, and is not made
+    // again. What the switch will do is said.
+    harness.keys("W");
+    harness.settle();
+    assert_eq!(pages(&harness).len(), shown);
+    harness.keys("W");
+    harness.settle();
+    assert_eq!(pages(&harness).len(), shown);
+    assert_eq!(dark_remembered(&harness), [false, true]);
+    assert!(
+        status(&harness).contains("Messages are shown dark while Quill is dark."),
+        "{}",
+        status(&harness)
+    );
+}
+
+#[test]
+fn the_settings_holding_quill_light_or_dark_decide_it_whatever_the_mac_is() {
+    let mut harness = reading();
+    harness.env.look.appearance = quill_core::config::Appearance::Light;
+    harness.act(Action::SystemAppearance { dark: true });
+    let page = the_newsletter(&mut harness);
+    assert!(page.contains("background: #ffffff"), "{page}");
+
+    let mut harness = reading();
+    harness.env.look.appearance = quill_core::config::Appearance::Dark;
+    harness.act(Action::SystemAppearance { dark: false });
+    let page = the_newsletter(&mut harness);
+    assert!(page.contains("background: #1e1e1e"), "{page}");
+}
+
+#[test]
+fn a_config_that_says_no_dark_messages_starts_with_none() {
+    let mut harness = Harness::in_the_app(200, 60, true);
+    harness.env.dark_pages = false;
+    harness.settle();
+    let page = the_newsletter(&mut harness);
+    assert!(page.contains("background: #ffffff"), "{page}");
+    assert!(!harness.state.is_on(CommandId::ViewDarkPages));
+    // Switched, it is on, and that is what is kept.
+    harness.keys("W");
+    assert_eq!(dark_remembered(&harness), [true]);
+    assert!(html(&showing(&harness)).contains("background: #1e1e1e"));
+}
+
+#[test]
+fn the_page_for_the_browser_is_never_made_dark() {
+    // The browser is light or dark by itself, and the page with it.
+    let mut harness = reading();
+    the_newsletter(&mut harness);
+    harness.keys("B");
+    let opened = harness
+        .host_requests
+        .iter()
+        .rev()
+        .find_map(|request| match request {
+            HostRequest::OpenFile(path) => Some(path.clone()),
+            _ => None,
+        })
+        .expect("a page for the browser");
+    let page = std::fs::read_to_string(opened).unwrap();
+    assert!(page.contains(":root{color-scheme:light dark}"), "{page}");
+    assert!(page.contains("background: #ffffff"), "{page}");
+}
+
+#[test]
+fn quills_own_words_in_the_pane_are_not_made_again_for_another_look() {
+    let mut harness = reading();
+    // A plain message is still a message: its page is its text.
+    harness.keys("1 j j j j j j 2");
+    assert!(harness.state.list.rows.is_empty());
+    harness.settle();
+    let shown = pages(&harness).len();
+    harness.act(Action::SystemAppearance { dark: false });
+    harness.settle();
+    harness.keys("W");
+    harness.settle();
+    // "No message selected" is light or dark as the window is, by itself.
+    assert_eq!(pages(&harness).len(), shown);
+}
+
+#[test]
+fn in_a_terminal_there_are_no_dark_messages_to_switch() {
+    let mut harness = Harness::demo(200, 60);
+    assert!(
+        !harness
+            .state
+            .is_enabled(&harness.env, CommandId::ViewDarkPages)
+    );
+    let before = harness.screen();
+    harness.keys("W");
+    assert_eq!(harness.screen(), before);
+    assert!(harness.account_requests.is_empty());
 }

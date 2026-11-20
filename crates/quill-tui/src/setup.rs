@@ -363,6 +363,9 @@ pub enum Preference {
     WebReading(bool),
     /// `sidebar` under `[ui]`: whether the accounts pane is on show.
     Sidebar(bool),
+    /// `dark_pages` under `[ui]`: whether mail in the web pane is shown
+    /// dark while Quill is.
+    DarkPages(bool),
     /// `sidebar_width` under `[ui]`: how many columns the accounts pane
     /// has. `None`: as many as the window's width comes to, as when the
     /// file does not say.

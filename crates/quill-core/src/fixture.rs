@@ -258,7 +258,12 @@ const WORK: &[Seed] = &[
                Read the issue: https://example.com/issue-88\n\
                Unsubscribe: https://example.com/unsubscribe\n",
         html: Some(
-            "<html><body>\n\
+            "<html><head><style>\n\
+               body { background: #ffffff; color: #222222 }\n\
+               h1 { color: #1b3a57; border-bottom: 2px solid #dddddd }\n\
+               a { color: #0a58ca }\n\
+               code { background: #f0f0f0 }\n\
+               </style></head><body>\n\
                <div style=\"display:none\">Soft line breaks, bad headers and nested comments.</div>\n\
                <h1>The Weekly Parser</h1>\n\
                <p><em>Issue 88</em>: parsing email is still hard.</p>\n\

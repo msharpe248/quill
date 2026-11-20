@@ -32,6 +32,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::dark::{self, Role};
 use crate::html::MAX_HTML_BYTES;
 use crate::{clean, guard, links};
 
@@ -57,6 +58,11 @@ pub struct Options<'a> {
     pub cid_file: &'a dyn Fn(&str) -> Option<String>,
     /// The document's title (a subject line). Untrusted: escape it.
     pub title: &'a str,
+    /// The page is to be dark: the message's own colours are given the
+    /// lightness they would have had if it had been designed so (light
+    /// backgrounds dark, dark text light), and its pictures are left as
+    /// they are. See [`crate::dark`].
+    pub dark: bool,
 }
 
 /// Shown in place of a message too large to sanitize.
@@ -407,6 +413,14 @@ impl Rewriter<'_, '_> {
                     self.source_set(&value, &mut blocked)
                 }
                 "style" => self.css(&value, false),
+                "bgcolor" | "color" if self.options.dark => {
+                    let role = if *name == "color" {
+                        Role::Text
+                    } else {
+                        Role::Background
+                    };
+                    Some(dark::attribute(&value, role).unwrap_or_else(|| value.into_owned()))
+                }
                 name if PLAIN_ATTRIBUTES.contains(&name) => Some(value.into_owned()),
                 _ => None,
             };
@@ -618,6 +632,11 @@ impl Rewriter<'_, '_> {
         self.blocked += blocked;
         for id in inline {
             self.refer(id);
+        }
+        // Its colours, for a dark page: done last, to CSS already judged,
+        // and a colour is all that is put in a colour's place.
+        if self.options.dark {
+            return Some(dark::css(&out, block));
         }
         Some(out)
     }
@@ -885,9 +904,17 @@ const POLICY_REMOTE: &str = "default-src 'none'; img-src data: 'self' https: htt
                              media-src 'self' https: http:; font-src https: http:; \
                              style-src 'unsafe-inline'; form-action 'none'; base-uri 'none'";
 
+/// A page that is light or dark as the window showing it is: a message
+/// that names no colours of its own is drawn in the system's.
+const SCHEME_EITHER: &str = ":root{color-scheme:light dark}";
+
+/// A page made dark ([`Options::dark`]): dark wherever it is shown, since
+/// the message's colours in it are no longer ones for a light page.
+const SCHEME_DARK: &str = ":root{color-scheme:dark}";
+
 /// Quill's own styling, before the message's: the system font, a readable
-/// measure, light or dark with the system, and nothing wider than the pane.
-const BASE_STYLE: &str = ":root{color-scheme:light dark}\
+/// measure, and nothing wider than the pane.
+const BASE_STYLE: &str = "\
 body{margin:0 auto;padding:16px;max-width:52em;\
 font:15px/1.5 -apple-system,system-ui,sans-serif;overflow-wrap:break-word}\
 img,video{max-width:100%;height:auto}\
@@ -907,12 +934,17 @@ fn document(options: &Options<'_>, body: &str) -> String {
     };
     let title = clean::header(options.title);
     let title = escape(title.trim(), false);
+    let scheme = if options.dark {
+        SCHEME_DARK
+    } else {
+        SCHEME_EITHER
+    };
     format!(
         "<!doctype html>\n<html><head>\n<meta charset=\"utf-8\">\n\
          <meta http-equiv=\"Content-Security-Policy\" content=\"{policy}\">\n\
          <meta name=\"referrer\" content=\"no-referrer\">\n\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-         <title>{title}</title>\n<style>{BASE_STYLE}</style>\n</head><body>\n{body}\n</body></html>\n"
+         <title>{title}</title>\n<style>{scheme}{BASE_STYLE}</style>\n</head><body>\n{body}\n</body></html>\n"
     )
 }
 
@@ -938,6 +970,7 @@ mod tests {
             remote,
             cid_file: &no_parts,
             title: "A message",
+            dark: false,
         }
     }
 
@@ -1072,6 +1105,7 @@ mod tests {
             remote: false,
             cid_file: &no_parts,
             title: "Q4 <roadmap> & \u{1b}]0;pwned\u{7}plans\u{202e}",
+            dark: false,
         };
         let html = sanitize("<p>Hello.</p>", &options).html;
         assert!(html.starts_with("<!doctype html>\n<html><head>\n<meta charset=\"utf-8\">\n"));
@@ -1323,6 +1357,7 @@ mod tests {
             remote: false,
             cid_file: &files,
             title: "Report",
+            dark: false,
         };
         let sanitized = sanitize(
             "<img src=\"cid:logo@example.com\" alt=\"Logo\">\
@@ -1565,6 +1600,85 @@ mod tests {
         assert_eq!(body(&ordinary), ordinary);
     }
 
+    /// The sanitized body of a page made dark.
+    fn dark_body(html: &str) -> String {
+        let options = Options {
+            dark: true,
+            ..options(false)
+        };
+        body_of(&sanitize(html, &options).html).to_owned()
+    }
+
+    #[test]
+    fn a_dark_page_has_the_messages_colours_made_ones_for_a_dark_page() {
+        // Wherever a message names a colour: an old attribute, a `style`
+        // attribute, a style sheet.
+        assert_eq!(
+            dark_body(
+                "<style>.card { background: #FFFFFF; color: black }</style>\
+                 <table bgcolor=\"#ffffff\"><tr><td bgcolor=\"white\" style=\"color:#000000;border:1px solid #000\">\
+                 <font color=\"#333333\">Dear Robin</font></td></tr></table>"
+            ),
+            "<style>.card { background: #1e1e1e; color: #ffffff }</style>\
+             <table bgcolor=\"#1e1e1e\"><tbody><tr><td bgcolor=\"#1e1e1e\" style=\"color:#ffffff;border:1px solid #808080\">\
+             <font color=\"#cccccc\">Dear Robin</font></td></tr></tbody></table>"
+        );
+        // And the page is dark whatever shows it, and whatever the message
+        // says its scheme is.
+        let options = Options {
+            dark: true,
+            ..options(false)
+        };
+        let html = sanitize(
+            "<style>:root { color-scheme: light }</style><p>Hello.</p>",
+            &options,
+        )
+        .html;
+        assert!(
+            html.contains("<style>:root{color-scheme:dark}body{"),
+            "{html}"
+        );
+        assert!(
+            html.contains("<style>:root { color-scheme:dark}</style>"),
+            "{html}"
+        );
+        assert!(!html.contains("color-scheme:light"), "{html}");
+    }
+
+    #[test]
+    fn a_dark_page_differs_from_a_light_one_in_its_colours_and_nothing_else() {
+        // The same things are kept, left out and counted, and a colour
+        // that cannot be read is left as it was.
+        let message = "<style>p { color: #111; background: url(https://example.com/bg.png) white }</style>\
+                       <p style=\"color: var(--ink); background: url(cid:logo)\">\
+                       <img src=\"https://example.com/a.png\" alt=\"A chart\">\
+                       <img src=\"cid:logo\"><a href=\"https://example.com/\" style=\"color:blue\">Read</a></p>\
+                       <table bgcolor=\"not a colour\"><tr><td>x</td></tr></table>";
+        let logo = |id: &str| (id == "logo").then(|| "logo.png".to_owned());
+        let page = |remote: bool, dark: bool| {
+            sanitize(
+                message,
+                &Options {
+                    remote,
+                    cid_file: &logo,
+                    title: "A message",
+                    dark,
+                },
+            )
+        };
+        for remote in [false, true] {
+            let (light, dark) = (page(remote, false), page(remote, true));
+            assert_eq!((light.blocked, &light.inline), (dark.blocked, &dark.inline));
+            assert_safe(&dark.html, remote);
+            let expected = body_of(&light.html)
+                .replace("color: #111", "color: #eeeeee")
+                .replace(") white", ") #1e1e1e")
+                .replace("none white", "none #1e1e1e")
+                .replace("color:blue", "color:#0000ff");
+            assert_eq!(body_of(&dark.html), expected);
+        }
+    }
+
     /// A cheat sheet's worth of ways to get something past a sanitizer.
     const HOSTILE: &[&str] = &[
         "<script>steal()</script>",
@@ -1782,12 +1896,16 @@ mod tests {
         snippets.push("<table><tr><td>".repeat(200) + &HOSTILE.concat());
         snippets.push("<blockquote><ul><li>".repeat(200) + &HOSTILE.concat());
 
+        // Each for a page that may load and one that may not, light and
+        // dark: what a dark page changes is done to what has been judged.
+        let ways = [(false, false), (true, false), (false, true), (true, true)];
         for snippet in &snippets {
-            for remote in [false, true] {
+            for (remote, dark) in ways {
                 let options = Options {
                     remote,
                     cid_file: &logo,
                     title: snippet,
+                    dark,
                 };
                 let sanitized = sanitize(snippet, &options);
                 assert_safe(&sanitized.html, remote);

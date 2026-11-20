@@ -47,7 +47,7 @@ Either way, what may be done is yours to say (look, organize, delete to the tras
 
 ## A look around
 
-**Mail as it was sent.** Press `w` and the message opens in a web pane beside the list, with remote pictures left out until you ask for them.
+**Mail as it was sent.** Press `w` and the message opens in a web pane beside the list, with remote pictures left out until you ask for them. While Quill is dark the mail is too: its white backgrounds dark and its text light, its pictures untouched (`W` shows it as it was sent).
 
 ![Quill's window with the web reading pane: the inbox on the left, a newsletter shown as a web page on the right, and a bar offering to load its pictures](docs/images/quill-web-reading.png)
 

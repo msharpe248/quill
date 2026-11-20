@@ -311,6 +311,13 @@ pub fn set_sidebar(text: &str, on: bool) -> Result<String, String> {
     set_value(text, "ui", "sidebar", Value::from(on))
 }
 
+/// `text` with `dark_pages` under `[ui]` set: whether mail in the web pane
+/// is shown dark while Quill is. Written when the user switches it, like
+/// [`set_web_reading`].
+pub fn set_dark_pages(text: &str, on: bool) -> Result<String, String> {
+    set_value(text, "ui", "dark_pages", Value::from(on))
+}
+
 /// `text` with `sidebar_width` under `[ui]` set: how many columns the
 /// accounts pane has. Written when the user lets go of the pane's edge.
 /// `None` takes the line out, and the pane goes by the window's width

@@ -688,8 +688,11 @@ fn the_list_of_every_key_has_each_command_once_wherever_it_is_opened_from() {
             spec.name
         );
     }
-    assert_eq!(titles(false).len(), with.len() - 1);
+    // The two that are about the web pane are listed only where there is
+    // one.
+    assert_eq!(titles(false).len(), with.len() - 2);
     assert!(!titles(false).contains(&"Web reading pane"));
+    assert!(!titles(false).contains(&"Dark backgrounds for messages"));
 
     // In print: headings at the margin, keys set in and lined up.
     let text = all_text(&env.registry, &env.keymap, false);
@@ -1178,7 +1181,14 @@ fn the_host_is_told_what_applies_where_the_focus_is() {
     assert_eq!(context, Context::List);
     // Of what is switched on and off, only the accounts pane is on.
     // And rules, which run unless they are switched off.
-    assert_eq!(checked, [CommandId::ViewSidebar, CommandId::RulesToggle]);
+    assert_eq!(
+        checked,
+        [
+            CommandId::ViewSidebar,
+            CommandId::ViewDarkPages,
+            CommandId::RulesToggle
+        ]
+    );
     assert_eq!((unread, title.as_str()), (12, "Inbox (unified)"));
     // The dark theme's own background and text.
     assert_eq!(

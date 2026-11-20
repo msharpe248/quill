@@ -58,7 +58,10 @@ fn entry(keymap: &Keymap, spec: &CommandSpec) -> HelpLine {
 /// Web reading needs the host's web view pane. Where there is none, as in
 /// a terminal, its key does nothing and is not listed.
 fn listed(spec: &CommandSpec, web_pane: bool) -> bool {
-    spec.id != CommandId::ViewWebReading || web_pane
+    !matches!(
+        spec.id,
+        CommandId::ViewWebReading | CommandId::ViewDarkPages
+    ) || web_pane
 }
 
 /// The commands that apply in any of `contexts`, under a heading for each

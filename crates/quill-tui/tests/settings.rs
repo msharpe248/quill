@@ -1077,6 +1077,7 @@ fn web_reading_is_switched_from_the_window_as_its_command_switches_it() {
         [
             CommandId::ViewSidebar,
             CommandId::ViewWebReading,
+            CommandId::ViewDarkPages,
             CommandId::RulesToggle
         ]
     );

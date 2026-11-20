@@ -212,6 +212,7 @@ Press `?` at any time for the keys that apply where you are, and `K` (or `f1`) f
 | `Z` `e` | Edit the rules | `Z` `l` | What rules did, and taking one back |
 | `P` | Put back: in a Trash folder, the messages chosen; anywhere else, the one deleted last | `C` | Copy to a folder |
 | `+` | Make a folder, on the server or on this Mac | `_` | In the accounts pane: take away an empty folder of this Mac's |
+| `W` | In the web pane: mail dark while Quill is dark, or as it was sent (in the app) | | |
 
 `tab` keeps to the two panes of everyday use: from the list it goes to the message and from the message back to the list. `shift-tab` goes to the accounts from either, and from the accounts `tab` goes to the list and `shift-tab` to the message. (With the web reading pane on there is no message pane in the terminal to go to: `tab` does nothing from the list, and the keys for the message work from there.)
 
@@ -306,6 +307,10 @@ The keyboard stays with the list. `j` and `k` move; `space` and `ctrl-u` (the ke
 
 The page is the same cleaned copy `B` hands the browser, held to the same rules: no script runs, nothing is fetched, and remote pictures stay out until `i` or `I`. While any are left out, a bar above the page says how many, with **Load Pictures** and **Always from This Sender** buttons that do what the two keys do. A link clicked in it opens in your browser, if it is a web or mail address, and never in the pane.
 
+While Quill is dark, so is the mail. Most mail is designed for a white page and says so, and would be a bright sheet in a dark window; so the page is made with the message's own colours turned for a dark one: a light background becomes a dark one, dark text becomes light, and each keeps its hue, so a red warning is still red and a blue button still blue. Pictures are not touched. A background that is already dark and text that is already light are left exactly as they were, so mail designed dark stays as it was sent. When Quill goes light, with the Mac or in Settings, the message on show is made again as it was sent.
+
+`W` (View > Dark Backgrounds for Messages) switches that off and on. Off, a message has the colours it was sent with, whatever Quill looks like: for the odd message that reads worse turned dark (dark text set over a light picture is the usual one, since the picture stays), or for seeing a design as its sender made it. The choice is kept, as `dark_pages = false` under `[ui]` in `config.toml`. The page `B` opens in the browser is never changed this way: it is light or dark as the browser is.
+
 A message becomes read when you go to it and it has been shown: by moving to it, clicking it or pressing `enter`. The message the cursor merely starts on when a mailbox opens, or when a search finds something, is shown without being marked; so is one the wheel scrolls past, and so is any message while several are selected.
 
 The choice is kept. Switching writes it into `config.toml`, leaving the rest of the file as you wrote it:
@@ -313,13 +318,14 @@ The choice is kept. Switching writes it into `config.toml`, leaving the rest of 
 ```toml
 [ui]
 web_reading = true        # false, or left out: the text reader
+dark_pages = true         # or left out: mail is dark while Quill is. false: as it was sent
 ```
 
 The pane has the reader's place exactly: the accounts and the list are as wide with it as with the text reader, to the column, so nothing in them moves as you switch, and that stays so as the window is resized. (In a window too narrow for three panes there is no reader beside the list to stand in for; the pane then has the reader's share of the window, `reader_width`, and the list is drawn in the rest.) Drag the divider between the list and the pane to give either more room. It comes to rest on a whole column, stays there as the window is resized, and is remembered from one run to the next, in the app's own preferences and not in `config.toml`. Double-click the divider to put it back in the reader's place. A file being looked at, or a message being written in Vim, borrows the pane's place and gives it back as it was: dragging the divider meanwhile changes nothing about where the reading pane goes.
 
 `space` pages the message and stops at its end; it does not go on to the next message, as it does in Mail. A web view that runs no script cannot be asked how far it has scrolled, and this one runs none.
 
-There is one command for each way of seeing a message as a page: `w` for the pane, and `B` for the browser. (`v`, which used to show one message in a pane beside the text reader, is gone, with its mutt key `H`.) A terminal has no web view, so there `w` does nothing and the setting is ignored, and `B` opens the browser as it does in the app.
+There is one command for each way of seeing a message as a page: `w` for the pane, and `B` for the browser. (`v`, which used to show one message in a pane beside the text reader, is gone, with its mutt key `H`.) A terminal has no web view, so there `w` and `W` do nothing and their settings are ignored, and `B` opens the browser as it does in the app.
 
 ## Unsubscribing from a mailing list
 
@@ -948,6 +954,7 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `view.zoom` | Zoom the focused pane |
 | `view.threads` | List conversations together, or every message by itself |
 | `view.web_reading` | In the app, read in a web pane that follows the list, or in the text reader |
+| `view.dark_pages` | In the app's web pane, show mail dark while Quill is dark, or in the colours it was sent with |
 | `message.toggle_unread`, `message.toggle_star` | Change a message's flags |
 | `message.toggle_html` | Switch a message between its HTML and its plain text |
 | `message.open_link` | List the message's links, to open one in the browser |

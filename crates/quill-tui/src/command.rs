@@ -187,6 +187,7 @@ pub enum CommandId {
     ViewZoom,
     ViewThreads,
     ViewWebReading,
+    ViewDarkPages,
     MessageToggleUnread,
     MessageToggleStar,
     MessageToggleHtml,
@@ -500,6 +501,15 @@ impl Registry {
                         PANES,
                     ),
                     "sidebar.right",
+                ),
+                // Likewise: it is the web pane's mail that is dark or not.
+                spec(
+                    ViewDarkPages,
+                    "view.dark_pages",
+                    "Dark backgrounds for messages",
+                    Panes,
+                    Some(Menu::View),
+                    PANES,
                 ),
                 with_symbol(
                     spec(

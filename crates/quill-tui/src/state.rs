@@ -182,6 +182,9 @@ pub struct Env {
     /// Web reading is on as Quill starts: `web_reading` under `[ui]` in
     /// the config. It means nothing without [`Env::web_pane`].
     pub web_reading: bool,
+    /// Mail in the web pane is shown dark while Quill is, as Quill
+    /// starts: `dark_pages` under `[ui]` in the config.
+    pub dark_pages: bool,
     /// The accounts pane is on show as Quill starts: `sidebar` under
     /// `[ui]` in the config.
     pub sidebar: bool,
@@ -1264,6 +1267,8 @@ struct Follow {
     by_user: bool,
     /// What the pane was last asked to show.
     asked: Option<Shown>,
+    /// Whether the page last asked for was to be a dark one.
+    dark: bool,
     /// The target's page could not be made, and why: the reason is what
     /// the pane shows for it, and the page is not asked for again until
     /// the cursor has been elsewhere or the message is read afresh.
@@ -1374,6 +1379,16 @@ pub struct State {
     /// The user has switched web reading the other way from what the
     /// config says, in this run.
     web_flipped: bool,
+    /// Mail in the web pane is shown dark while Quill is dark: the config
+    /// and the user's switching in this run come out at on.
+    pub dark_pages: bool,
+    /// The user has switched that the other way from what the config
+    /// says, in this run.
+    dark_flipped: bool,
+    /// A page made now for the web pane is a dark one: Quill is dark, and
+    /// mail is shown dark while it is. Worked out as each update starts,
+    /// and again in the update that hears Quill has gone dark or light.
+    pages_dark: bool,
     /// The accounts pane is hidden: it has no columns beside the other
     /// panes, and is drawn over them while it has the keys. Worked out
     /// from the config and [`State::sidebar_flipped`] at every update.
@@ -1501,6 +1516,9 @@ impl State {
             form_hosted: false,
             web_reading: false,
             web_flipped: false,
+            dark_pages: true,
+            dark_flipped: false,
+            pages_dark: false,
             sidebar_hidden: false,
             sidebar_flipped: false,
             sidebar_width: None,
@@ -1624,6 +1642,8 @@ impl State {
         self.form_hosted = env.sheets;
         // And so is whether there is a pane to read mail in.
         self.web_reading = self.web_reading_wanted(env);
+        self.dark_pages = env.dark_pages != self.dark_flipped;
+        self.pages_dark = self.dark_pages && env.look.is_dark();
         self.sidebar_hidden = env.sidebar == self.sidebar_flipped;
         self.sidebar_width = self.sidebar_dragged.unwrap_or(env.sidebar_width);
         self.editor_tips = self.tips_asked.unwrap_or(env.editor_tips);
@@ -1732,6 +1752,9 @@ impl State {
             Action::SystemAppearance { dark } => {
                 if env.look.system_dark != Some(dark) {
                     out.system_dark = Some(dark);
+                    // The page on show is made again for the look Quill
+                    // is about to have.
+                    self.pages_dark = self.dark_pages && env.look.appearance.is_dark(Some(dark));
                 }
             }
             Action::ThemeImported(name) => self.on_theme_imported(env, name, &mut out),
@@ -2523,6 +2546,7 @@ impl State {
             CommandId::ViewSidebar => self.toggle_sidebar(env, out),
             CommandId::ViewZoom => self.zoomed = !self.zoomed,
             CommandId::ViewWebReading => self.toggle_web_reading(env, out),
+            CommandId::ViewDarkPages => self.toggle_dark_pages(env, out),
             CommandId::ViewThreads => {
                 self.ungrouped = !self.ungrouped;
                 self.flash = Some((
@@ -2845,7 +2869,7 @@ impl State {
             }
             // The versions are the text reader's to switch between.
             CommandId::MessageToggleHtml => !self.web_reading && self.reader.has_two_versions(),
-            CommandId::ViewWebReading => env.web_pane,
+            CommandId::ViewWebReading | CommandId::ViewDarkPages => env.web_pane,
             // There is no reader here to go to: the message is in the
             // host's pane, and the keys that work on it work from the list.
             CommandId::FocusReader => !self.web_reading,
@@ -2948,6 +2972,7 @@ impl State {
     pub fn is_on(&self, id: CommandId) -> bool {
         match id {
             CommandId::ViewWebReading => self.web_reading,
+            CommandId::ViewDarkPages => self.dark_pages,
             CommandId::ViewSidebar => !self.sidebar_hidden,
             CommandId::RulesToggle => self.rules_on(),
             _ => false,
@@ -5029,8 +5054,13 @@ impl State {
         out.data.push(DataRequest::WebPage {
             message,
             remote: self.remote_content(env),
+            // A page for the browser is light or dark as the browser is.
+            dark: then == PageUse::Reading && self.pages_dark,
             then,
         });
+        if then == PageUse::Reading {
+            self.follow.dark = self.pages_dark;
+        }
     }
 
     /// Whether the page of the message in the reader may load remote
@@ -5073,6 +5103,29 @@ impl State {
                 self.web_reading,
             )));
         self.web_reading_switched(env, out);
+    }
+
+    /// Switches between showing mail in the web pane dark while Quill is
+    /// dark and showing it in the colours it was sent with, and has the
+    /// choice remembered. The page on show is made again by
+    /// [`State::follow_selection`], which sees that it is not as asked.
+    fn toggle_dark_pages(&mut self, env: &Env, out: &mut Effects) {
+        self.dark_flipped = !self.dark_flipped;
+        self.dark_pages = env.dark_pages != self.dark_flipped;
+        self.pages_dark = self.dark_pages && env.look.is_dark();
+        out.accounts
+            .push(AccountRequest::Remember(Preference::DarkPages(
+                self.dark_pages,
+            )));
+        let key = env
+            .hint_key(CommandId::ViewDarkPages)
+            .map_or_else(String::new, |key| format!(" {key} switches back."));
+        let said = match (self.dark_pages, env.look.is_dark()) {
+            (true, true) => "Messages are shown dark.",
+            (true, false) => "Messages are shown dark while Quill is dark.",
+            (false, _) => "Messages are shown in their own colours.",
+        };
+        self.flash = Some((format!("{said}{key}"), false));
     }
 
     /// Hides the accounts pane or puts it back, and has the choice
@@ -5262,13 +5315,20 @@ impl State {
         let Some(wanted) = self.reading_wanted() else {
             return;
         };
-        if self.follow.asked.as_ref() == Some(&wanted) {
+        // Only a message's page is made differently for a dark window:
+        // Quill's own words are light or dark by themselves.
+        let dark = self.pages_dark && matches!(wanted, Shown::Page(_));
+        if self.follow.asked.as_ref() == Some(&wanted)
+            && (self.follow.dark == dark || !matches!(wanted, Shown::Page(_)))
+        {
             return;
         }
+        self.follow.dark = dark;
         match &wanted {
             Shown::Page(message) => out.data.push(DataRequest::WebPage {
                 message: *message,
                 remote: self.remote_content(env),
+                dark,
                 then: PageUse::Reading,
             }),
             Shown::Text(message) => {

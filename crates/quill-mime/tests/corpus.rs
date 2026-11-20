@@ -370,11 +370,13 @@ fn examine_html(what: &str, markup: &str, title: &str, files: &[String]) {
             .position(|known| known == id)
             .map(|at| format!("inline {at}.bin"))
     };
-    for remote in [false, true] {
+    // Light and dark: a dark page is the same page with other colours.
+    for (remote, dark) in [(false, false), (true, false), (false, true), (true, true)] {
         let options = Options {
             remote,
             cid_file: &file_for,
             title,
+            dark,
         };
         let sanitized = sanitize::sanitize(markup, &options);
         assert_sanitized(what, &sanitized, remote, files);
@@ -816,6 +818,7 @@ fn sanitized(parsed: &Parsed, remote: bool) -> (String, Sanitized) {
         remote,
         cid_file: &no_files,
         title: &parsed.headers.subject,
+        dark: false,
     };
     let result = sanitize::sanitize(parsed.html.as_deref().expect("an HTML body"), &options);
     let (_, rest) = result.html.split_once("<body>\n").expect("a body");
@@ -1196,6 +1199,7 @@ fn inline_pictures_are_found_by_content_id_and_pointed_at_files() {
         remote: false,
         cid_file: &file_for,
         title: &parsed.headers.subject,
+        dark: false,
     };
     let result = sanitize::sanitize(parsed.html.as_deref().expect("an HTML body"), &options);
     assert_eq!(result.inline, ["logo@example.com", "chart+q4@example.com"]);
@@ -1234,6 +1238,7 @@ fn inline_pictures_are_found_by_content_id_and_pointed_at_files() {
         remote: false,
         cid_file: &as_named,
         title: "",
+        dark: false,
     };
     let result = sanitize::sanitize(odd.html.as_deref().expect("an HTML body"), &options);
     assert!(result.html.contains("src=\"./..%2F..%2Fetc%2Fpasswd\""));

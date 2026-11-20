@@ -79,6 +79,9 @@ pub enum DataRequest {
     WebPage {
         message: LocalMessageId,
         remote: RemoteContent,
+        /// For a dark window: the message's own colours are made ones
+        /// for a dark page.
+        dark: bool,
         then: PageUse,
     },
     /// Write a message's text out as a page for the web reading pane:
@@ -700,8 +703,9 @@ fn run(
         DataRequest::WebPage {
             message,
             remote,
+            dark,
             then,
-        } => match files::web_page(store, files, message, remote) {
+        } => match files::web_page(store, files, message, remote, dark) {
             Ok(page) => vec![DataEvent::PageReady {
                 message,
                 page,

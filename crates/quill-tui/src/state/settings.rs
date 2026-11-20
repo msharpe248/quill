@@ -311,6 +311,8 @@ impl State {
                 compose.body.set_misspellings(Vec::new());
             }
         }
+        // Light or dark from now: the page on show is made again for it.
+        self.pages_dark = self.dark_pages && now.appearance.is_dark(env.look.system_dark);
         // Another look: everything is drawn again.
         if now.appearance != env.look.appearance
             || read.theme_light != env.look.light

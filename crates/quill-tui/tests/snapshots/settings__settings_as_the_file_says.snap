@@ -74,6 +74,7 @@ expression: outline(&shown)
      row "Zoom the focused pane": z, ctrl-z [change]
      row "Group or ungroup conversations": T [change]
      row "Web reading pane": w [change]
+     row "Dark backgrounds for messages": W [change]
      row "Mark read or unread": N [change]
      row "Star or unstar": F [change]
      row "Show as HTML or as plain text": t [change]

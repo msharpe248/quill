@@ -132,6 +132,11 @@ pub struct UiConfig {
     /// them when the keys are taken to it. Quill writes this itself when
     /// the user hides it or puts it back.
     pub sidebar: bool,
+    /// In the web pane, show mail dark while Quill is dark: a message's
+    /// light backgrounds dark and its dark text light, its pictures as
+    /// they are. Off, a message keeps the colours it was sent with. Quill
+    /// writes this itself when the user switches.
+    pub dark_pages: bool,
 }
 
 impl Default for UiConfig {
@@ -152,6 +157,7 @@ impl Default for UiConfig {
             threads: true,
             web_reading: false,
             sidebar: true,
+            dark_pages: true,
         }
     }
 }
