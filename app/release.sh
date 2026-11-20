@@ -115,6 +115,11 @@ fi
 
 echo "==> disk image"
 image
+if [ -n "${QUILL_SIGN_IDENTITY:-}" ]; then
+    # The image is signed as well as what is in it, so that it is known
+    # whose it is before it is opened.
+    codesign --force --sign "$QUILL_SIGN_IDENTITY" --timestamp "$dmg"
+fi
 if [ -n "${QUILL_NOTARY_PROFILE:-}" ]; then
     # The image is notarized in its own right, with the app inside it
     # already carrying its ticket.

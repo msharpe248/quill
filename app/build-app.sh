@@ -92,8 +92,16 @@ iconutil --convert icns --output "$out/Contents/Resources/Quill.icns" \
 echo "==> sign"
 # The hardened runtime, which a notarized build must have. No entitlements:
 # nothing here needs an exception to it.
-codesign --force --sign "$identity" --options runtime "$out/Contents/Helpers/quill"
-codesign --force --sign "$identity" --options runtime "$out"
+# A signature Apple is to notarize carries Apple's own timestamp, asked of
+# their server as it is made. An ad hoc one has nobody to vouch for, and
+# is made with no network at all.
+if [ "$identity" = "-" ]; then
+    stamp="--timestamp=none"
+else
+    stamp="--timestamp"
+fi
+codesign --force --sign "$identity" --options runtime "$stamp" "$out/Contents/Helpers/quill"
+codesign --force --sign "$identity" --options runtime "$stamp" "$out"
 codesign --verify --strict "$out"
 
 echo "$out"
