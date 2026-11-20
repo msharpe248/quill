@@ -312,3 +312,89 @@ fn beside_the_reading_pane_the_accounts_edge_moves_and_the_pane_stays_where_it_i
     let (_, _, message) = widths(&harness);
     assert_eq!(message, 147 - kept);
 }
+
+/// The app with the text reader on show, in a window of as many columns
+/// as the terminal has.
+fn in_a_window(width: u16) -> Harness {
+    let mut harness = Harness::in_the_app(width, 40, false);
+    harness.act(Action::WindowColumns(width));
+    harness
+}
+
+#[test]
+fn the_reading_pane_has_the_place_the_message_was_dragged_to() {
+    let mut harness = in_a_window(147);
+    let (accounts, list, message) = widths(&harness);
+    assert_eq!(accounts + list + message, 147);
+
+    // The message is given twenty columns more, read as text.
+    let edge = accounts + list;
+    drag(&mut harness, (edge, 10), edge - 20);
+    assert_eq!(widths(&harness), (accounts, list - 20, message + 20));
+
+    // The page has those columns, in the same run: the terminal keeps the
+    // accounts' and the list's as they were left.
+    harness.keys("w");
+    harness.settle();
+    let kept = harness.state.reading_place(&harness.env).unwrap();
+    assert_eq!(kept, accounts + list - 20);
+    harness.resize(kept, 40);
+    assert_eq!(widths(&harness), (accounts, list - 20, 0));
+
+    // And back as text nothing has moved.
+    harness.keys("w");
+    harness.resize(147, 40);
+    assert_eq!(widths(&harness), (accounts, list - 20, message + 20));
+}
+
+#[test]
+fn the_reading_pane_has_the_messages_place_beside_accounts_of_another_width() {
+    // The accounts made wider, read as text.
+    let mut harness = in_a_window(147);
+    let (accounts, _, message) = widths(&harness);
+    drag(&mut harness, (accounts, 10), accounts + 10);
+    let (wider, list, kept_message) = widths(&harness);
+    assert_eq!((wider, kept_message), (accounts + 10, message));
+    let kept_settings = remembered(&mut harness);
+
+    harness.keys("w");
+    harness.settle();
+    assert_eq!(
+        harness.state.reading_place(&harness.env),
+        Some(wider + list)
+    );
+
+    // The next run, with what was remembered in its config, comes to the
+    // same place: the accounts' own columns count there too.
+    let mut again = Harness::in_the_app(147, 40, true);
+    for preference in &kept_settings {
+        match *preference {
+            Preference::SidebarWidth(columns) => again.env.sidebar_width = columns,
+            Preference::ReaderWidth(Some(share)) => {
+                again.env.reader_width = f32::from(share) / 1000.0;
+            }
+            _ => {}
+        }
+    }
+    again.act(Action::WindowColumns(147));
+    again.settle();
+    assert_eq!(again.state.reading_place(&again.env), Some(wider + list));
+}
+
+#[test]
+fn a_narrow_window_gives_the_reading_pane_the_share_the_message_was_dragged_to() {
+    // Dragged in a wide window, then the window made too narrow for three
+    // panes: the page has the share the message was left with.
+    let mut harness = in_a_window(147);
+    let (accounts, list, _) = widths(&harness);
+    let edge = accounts + list;
+    drag(&mut harness, (edge, 10), edge - 20);
+    let share = harness.state.reader_share.unwrap();
+    assert!(share > 0.5, "{share}");
+
+    harness.keys("w");
+    harness.act(Action::WindowColumns(90));
+    harness.settle();
+    let page = (90.0 * share).round() as u16;
+    assert_eq!(harness.state.reading_place(&harness.env), Some(90 - page));
+}

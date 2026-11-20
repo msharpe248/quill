@@ -5221,11 +5221,14 @@ impl State {
     /// list's, so that the pane has the reader's place exactly. `None`
     /// while web reading is off or the host has not said how wide its
     /// window is.
+    ///
+    /// By the widths in force, as the panes are drawn by: an edge dragged
+    /// in this run counts, and so do the accounts' own columns.
     pub fn reading_place(&self, env: &Env) -> Option<u16> {
         let window = self.window_columns.filter(|_| self.web_reading)?;
         Some(layout::beside_reading(
             window,
-            env.reader_width,
+            layout::Split::of(self, env.reader_width),
             !self.sidebar_hidden,
         ))
     }
