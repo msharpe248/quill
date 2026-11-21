@@ -832,6 +832,8 @@ impl Io<'_> {
                 Context::When => bridge::Context::Folders,
                 // Another box to type in over the panes.
                 Context::NewFolder => bridge::Context::Folders,
+                // And the one an account's letter is typed in.
+                Context::AccountLetter => bridge::Context::Folders,
                 // And another: a rule being written.
                 Context::NewRule => bridge::Context::Folders,
                 // A question in the host's sheet, as a certificate is.

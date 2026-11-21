@@ -352,18 +352,21 @@ fn settings_read() -> Box<SettingsRead> {
                 kind: quill_core::config::AccountType::Graph,
                 address: "robin@example.com".to_owned(),
                 signs_in: true,
+                letter: None,
             },
             AccountLine {
                 name: "Personal".to_owned(),
                 kind: quill_core::config::AccountType::Imap,
                 address: "robin@example.org".to_owned(),
                 signs_in: false,
+                letter: None,
             },
             AccountLine {
                 name: "Old Mail".to_owned(),
                 kind: quill_core::config::AccountType::Pop3,
                 address: "robin@example.net".to_owned(),
                 signs_in: false,
+                letter: None,
             },
         ],
         themes: quill_tui::settings::ThemeLine::builtins(),
@@ -392,9 +395,9 @@ fn the_settings_window_has_an_edit_button_for_an_account_with_servers_of_its_own
     };
     // Only an account read over IMAP with a password has anything the
     // form can change.
-    assert_eq!(rows[0].actions, ["sign_in", "remove"]);
-    assert_eq!(rows[1].actions, ["edit", "remove"]);
-    assert_eq!(rows[2].actions, ["remove"]);
+    assert_eq!(rows[0].actions, ["sign_in", "letter", "remove"]);
+    assert_eq!(rows[1].actions, ["edit", "letter", "remove"]);
+    assert_eq!(rows[2].actions, ["letter", "remove"]);
     let edit = actions.iter().find(|action| action.id == "edit").unwrap();
     assert_eq!(
         (edit.title.as_str(), edit.row, edit.enabled),

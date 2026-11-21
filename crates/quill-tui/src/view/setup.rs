@@ -114,6 +114,18 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         }
         return;
     }
+    if let Some(prompt) = &state.letter_prompt {
+        let inner = dialog(frame, area, &format!(" {} ", prompt.title()), env);
+        let mut rows = Rows::new(frame, inner, env);
+        rows.field("Letter:", &prompt.input, true);
+        rows.blank();
+        if let Some(problem) = &prompt.problem {
+            rows.warning(problem);
+            rows.blank();
+        }
+        rows.text(&prompt.says());
+        return;
+    }
     if let Some(prompt) = &state.new_rule {
         use crate::state::{RuleAction, RuleField};
         let inner = dialog(frame, area, " New rule ", env);
@@ -242,6 +254,11 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
                     typing && at == ServerField::Type,
                 );
                 rows.field("Name:", &setup.name, typing && at == ServerField::Name);
+                rows.field(
+                    "Letter:",
+                    &setup.letter,
+                    typing && at == ServerField::Letter,
+                );
             }
             rows.field("Server:", &setup.host, typing && at == ServerField::Host);
             rows.field("Port:", &setup.port, typing && at == ServerField::Port);
@@ -304,6 +321,11 @@ fn microsoft(rows: &mut Rows<'_, '_>, setup: &Setup, typing: bool) {
         typing && at == ServerField::Type,
     );
     rows.field("Name:", &setup.name, typing && at == ServerField::Name);
+    rows.field(
+        "Letter:",
+        &setup.letter,
+        typing && at == ServerField::Letter,
+    );
     rows.pair("Address:", setup.address.text());
     // Signing in as Quill itself: nothing more to fill in.
     if setup.own_application {
@@ -337,6 +359,11 @@ fn google(rows: &mut Rows<'_, '_>, setup: &Setup, typing: bool) {
         typing && at == ServerField::Type,
     );
     rows.field("Name:", &setup.name, typing && at == ServerField::Name);
+    rows.field(
+        "Letter:",
+        &setup.letter,
+        typing && at == ServerField::Letter,
+    );
     rows.pair("Address:", setup.address.text());
     // Signing in as Quill itself: nothing more to fill in.
     if setup.own_google {

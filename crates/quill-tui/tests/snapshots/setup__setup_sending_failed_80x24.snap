@@ -9,15 +9,15 @@ expression: harness.screen()
 │ ┃                                                                          ┃0┃
 │ ┃ Type:      IMAP (password)                                               ┃i┃
 │ ┃ Name:      Example                                                       ┃i┃
-│ ┃ Server:    imap.example.com                                              ┃i┃
+│ ┃ Letter:                                                                  ┃i┃
+│ ┃ Server:    imap.example.com                                              ┃u┃
 │ ┃ Port:      993                                                           ┃u┃
-│ ┃ Security:  TLS                                                           ┃u┃
-│ ┃ Sign in:   robin@example.com                                             ┃d┃
-│ ┃                                                                          ┃e┃
+│ ┃ Security:  TLS                                                           ┃d┃
+│ ┃ Sign in:   robin@example.com                                             ┃e┃
+│ ┃                                                                          ┃n┃
 │ ┃ Send via:  smtp.example.com                                              ┃n┃
-│ ┃ Port:      465                                                           ┃n┃
-│ ┃ Security:  TLS                                                           ┃6┃
-│ ┃                                                                          ┃2┃
+│ ┃ Port:      465                                                           ┃6┃
+│ ┃ Security:  TLS                                                           ┃2┃
 │ ┃ Mail can be read, but not sent through smtp.example.com: Cannot reach    ┃5┃
 │ ┃ the server: connection refused. Correct it, or clear it to add the       ┃5┃
 │ ┃ account without sending.                                                 ┃ ┃

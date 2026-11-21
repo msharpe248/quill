@@ -1,0 +1,28 @@
+---
+source: crates/quill-tui/tests/letter.rs
+expression: harness.screen()
+---
+┏ [1] Accounts ━━┓┌ [2] Inbox (Work) - 8 unread ───────────────────────────────┐
+┃  Unified    12 ┃│> * @ Ana Ruiz        Q4 roadmap                       09:14│
+┃>┏ Letter for Work ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓1│
+┃ ┃ Letter:    7                                                             ┃i│
+┃ ┃                                                                          ┃i│
+┃ ┃ One letter or number. It marks this account’s mail where every account’s ┃u│
+┃ ┃ is listed together. Left empty, it is W, the first letter of the         ┃d│
+┃ ┃ account’s name.                                                          ┃e│
+┃ ┃                                                                          ┃n│
+┃ ┃                                                                          ┃6│
+┃ ┃                                                                          ┃2│
+┃ ┃                                                                          ┃5│
+┃ ┃                                                                          ┃ │
+┃ ┃                                                                          ┃ │
+┃ ┃                                                                          ┃ │
+┃ ┃                                                                          ┃ │
+┃ ┃                                                                          ┃ │
+┃ ┃                                                                          ┃ │
+┃ ┃                                                                          ┃ │
+┃ ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+┃                ┃│                                                            │
+┃                ┃│                                                            │
+┗━━━━━━━━━━━━━━━━┛└────────────────────────────────────────────────────────────┘
+ enter use it  esc cancel

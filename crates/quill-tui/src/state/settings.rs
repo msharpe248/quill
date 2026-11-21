@@ -67,6 +67,7 @@ impl State {
                         && self.sign_in.is_none(),
                     remove: self.can_remove_account(env),
                     edit: self.can_edit_account(env),
+                    letter: self.can_set_letter(env),
                     themes: self.themes_can_change(env),
                 },
                 &self.agent_recent,
@@ -192,6 +193,13 @@ impl State {
                             (true, settings::EDIT, Some(account)) if self.can_edit_account(env) => {
                                 let name = account.name.clone();
                                 self.ask_edit(env, &name, out);
+                            }
+                            // As the command does, for the account picked
+                            // in the window: the question, in the host's
+                            // sheet.
+                            (true, settings::LETTER, Some(account)) if self.can_set_letter(env) => {
+                                let (name, own) = (account.name.clone(), account.letter.clone());
+                                self.ask_letter(env, &name, own);
                             }
                             _ => {}
                         }

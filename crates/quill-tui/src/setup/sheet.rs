@@ -21,7 +21,7 @@ use quill_host::bridge::{
 };
 
 use super::{
-    ADDRESS_NOTE, AccountRequest, GOOGLE_NOTE, GOOGLE_OWN_NOTE, Kind, MICROSOFT_NOTE,
+    ADDRESS_NOTE, AccountRequest, GOOGLE_NOTE, GOOGLE_OWN_NOTE, Kind, LETTER_HELP, MICROSOFT_NOTE,
     MICROSOFT_OWN_NOTE, NO_ENCRYPTION, NO_SENDING, SECURITIES, ServerField, Setup, Step,
     UNREADABLE_CERTIFICATE, certificate_note, certificate_reason, grouped_fingerprint,
     security_label,
@@ -67,6 +67,7 @@ impl ServerField {
         match self {
             ServerField::Type => "type",
             ServerField::Name => "name",
+            ServerField::Letter => "letter",
             ServerField::Host => "host",
             ServerField::Port => "port",
             ServerField::Security => "security",
@@ -377,6 +378,12 @@ impl Setup {
                         at == ServerField::Type,
                     ));
                     fields.push(server(ServerField::Name, "Name:", &self.name, None));
+                    fields.push(server(
+                        ServerField::Letter,
+                        "Letter:",
+                        &self.letter,
+                        Some(LETTER_HELP),
+                    ));
                 }
                 match self.kind {
                     // Signing in as Quill itself: nothing more to fill in.
@@ -616,10 +623,11 @@ impl Setup {
                 // was shown neither its name nor its kind.
                 let editing = self.editing.is_some();
                 let value = |field: ServerField| match field {
-                    ServerField::Name | ServerField::Type if editing => None,
+                    ServerField::Name | ServerField::Type | ServerField::Letter if editing => None,
                     field => used.value(field.id()),
                 };
                 put(&mut self.name, value(ServerField::Name));
+                put(&mut self.letter, value(ServerField::Letter));
                 match self.kind {
                     Kind::Microsoft => {
                         put(&mut self.application, value(ServerField::Application));

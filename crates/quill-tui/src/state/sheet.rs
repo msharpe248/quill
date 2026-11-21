@@ -21,8 +21,8 @@ use quill_host::bridge::{
 };
 
 use super::{
-    EVERY_ACCOUNT, Effects, Env, FolderPrompt, ON_THE_SERVER, ON_THIS_MAC, RemovePrompt,
-    RuleAction, RuleField, RulePrompt, State, UnsubscribePrompt, WhenFor, WhenPrompt,
+    EVERY_ACCOUNT, Effects, Env, FolderPrompt, LetterPrompt, ON_THE_SERVER, ON_THIS_MAC,
+    RemovePrompt, RuleAction, RuleField, RulePrompt, State, UnsubscribePrompt, WhenFor, WhenPrompt,
 };
 use crate::command::{CommandId, Context};
 use crate::setup::{
@@ -42,6 +42,9 @@ const SEND_LATER: &str = "send_later";
 const UNSUBSCRIBE: &str = "unsubscribe";
 /// The step of the question about removing an account.
 const REMOVE_ACCOUNT: &str = "remove_account";
+/// The step of the question about an account's letter, and its field.
+const ACCOUNT_LETTER: &str = "account_letter";
+const LETTER: &str = "letter";
 /// What the step of a question about an existing account's certificate
 /// starts with. The rest is the certificate's own: see
 /// [`CertificatePrompt::step`].
@@ -69,6 +72,7 @@ fn asked_in_a_sheet(context: Context) -> bool {
             | Context::SignIn
             | Context::When
             | Context::NewFolder
+            | Context::AccountLetter
             | Context::NewRule
             | Context::RecordKeys
             | Context::EditTheme
@@ -593,6 +597,38 @@ impl UnsubscribePrompt {
     }
 }
 
+impl LetterPrompt {
+    /// The question as a host shows it: the letter to type, and under it
+    /// what the letter is for.
+    pub fn form(&self) -> Option<FormShow> {
+        FormShow::new(FormShowParams {
+            step: ACCOUNT_LETTER.to_owned(),
+            // As it is: the account's name is the user's, and is not
+            // given capitals it does not have.
+            title: self.title(),
+            note: None,
+            error: self.problem.as_deref().map(text::sanitize_line),
+            busy: None,
+            fields: vec![typed(
+                LETTER,
+                "Letter:",
+                &self.input,
+                true,
+                Some(&self.says()),
+            )],
+            buttons: vec![
+                Press::Cancel.button(Some(FormRole::Cancel), true),
+                FormButton {
+                    id: CONFIRM.to_owned(),
+                    title: "Use It".to_owned(),
+                    role: Some(FormRole::Default),
+                    enabled: true,
+                },
+            ],
+        })
+    }
+}
+
 impl RemovePrompt {
     /// The question as a host shows it: what is asked is its title, and
     /// under it what saying yes does, what it leaves alone, and each thing
@@ -641,6 +677,7 @@ impl State {
             Context::SignIn => self.sign_in.as_ref()?.form(),
             Context::When => self.when.as_ref()?.form(),
             Context::NewFolder => self.new_folder.as_ref()?.form(),
+            Context::AccountLetter => self.letter_prompt.as_ref()?.form(),
             Context::NewRule => self.new_rule.as_ref()?.form(),
             Context::RecordKeys => self.keys.as_ref()?.form(env),
             Context::EditTheme => self.theme_prompt.as_ref()?.form(),
@@ -692,6 +729,7 @@ impl State {
             }
             Context::When => self.answer_when_in_sheet(env, used, out),
             Context::NewFolder => self.answer_new_folder_in_sheet(env, used, out),
+            Context::AccountLetter => self.answer_letter_in_sheet(used, out),
             Context::NewRule => self.answer_new_rule_in_sheet(used, out),
             Context::RecordKeys => self.answer_keys_in_sheet(env, used, out),
             Context::EditTheme => self.answer_theme_in_sheet(env, used, out),
@@ -770,6 +808,28 @@ impl State {
                 // As typing does: what was wrong with the last time is no
                 // longer said of this one.
                 when.problem = None;
+            }
+        }
+    }
+
+    /// Takes what was done with the question about an account's letter:
+    /// what its field held goes into the question's own, and then the
+    /// button does what its key does.
+    fn answer_letter_in_sheet(&mut self, used: &FormUsed, out: &mut Effects) {
+        let Some(prompt) = &mut self.letter_prompt else {
+            return;
+        };
+        match used.button() {
+            // As `esc`: the letter is as it was.
+            Some(id) if id == Press::Cancel.id() => self.letter_prompt = None,
+            Some(CONFIRM) => {
+                put(&mut prompt.input, used.value(LETTER));
+                self.answer_letter(out);
+            }
+            Some(_) => {}
+            None => {
+                put(&mut prompt.input, used.value(LETTER));
+                prompt.problem = None;
             }
         }
     }

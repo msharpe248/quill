@@ -33,14 +33,15 @@ expression: outline(&shown)
    more: Saved searches are set in the settings file. Rules, hooks and templates are files beside it.
 == Accounts (accounts, at)
    accounts "": list
-     row "Work": Microsoft 365, robin@example.com. Signs in with Microsoft. [sign_in, remove]
-     row "Home": IMAP, robin@example.org. Signs in with a password. [edit, remove]
+     row "Work": Microsoft 365, robin@example.com. Signs in with Microsoft. Letter in lists: W. [sign_in, letter, remove]
+     row "Home": IMAP, robin@example.org. Signs in with a password. Letter in lists: H. [edit, letter, remove]
      action add "Add an Account…"
      action sign_in "Sign In…", of a row
      action edit "Edit…", of a row
+     action letter "Letter…", of a row
      action remove "Remove…", of a row
      empty: No accounts yet.
-     help: Edit… changes an account’s servers, the name it signs in with and its password. Removing an account takes it out of the settings file and the Keychain, and deletes the copy of its mail kept on this Mac. Mail on its server is not touched.
+     help: Edit… changes an account’s servers, the name it signs in with and its password. Letter… chooses the letter or number that marks its mail where every account’s is listed together. Removing an account takes it out of the settings file and the Keychain, and deletes the copy of its mail kept on this Mac. Mail on its server is not touched.
    more: Saved searches are set in the settings file. Rules, hooks and templates are files beside it.
 == Composing (composing, square.and.pencil)
    editor "Write in:": choice = nano of builtin "Quill’s own editor" | vim "Vim" | nano "nano" | pico "Pico" | mg "mg"
@@ -129,6 +130,7 @@ expression: outline(&shown)
      row "Add an account": A [change]
      row "Sign in to an account": S [change]
      row "Edit this account…": E [change]
+     row "Choose this account’s letter…": Y [change]
      row "Remove this account…": D [change]
      row "Install Command Line Tool": Z c [change]
      row "Stop Agents": Z a [change]

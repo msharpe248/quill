@@ -86,6 +86,8 @@ Optional keys inside `imap = { ... }`: `username`, when you do not sign in with 
 
 **Changing an account.** In the app, Settings > Accounts: pick the account and press Edit…. Anywhere, put the accounts pane on the account (or one of its folders) and press `E`, or choose "Edit this account…" from the palette or the File menu. The form that added the account opens with its settings in it: the server its mail is read from, the server it is sent through, how each is reached, and the name it signs in with. The account's name and address stay as they are. The password can be typed again or left empty, which keeps the one in the Keychain. The settings are tried before they are kept, as when the account was added, and the account then syncs afresh with them; mail that was waiting in the Outbox for the account goes at once. This is for an account read over IMAP with a password. One that signs in with Google or Microsoft has no servers or password of its own to change, and a POP3 or Exchange account is changed in the settings file.
 
+**An account's letter.** Where every account's mail is listed together (Unified, and a search made from there), each message has one letter before the sender, in the account's colour: which account it came to. It is the first letter of the account's name unless you choose another, which helps when your accounts are named by addresses that start alike. In the app, Settings > Accounts says each account's letter: pick the account and press Letter…. Anywhere, put the accounts pane on the account (or one of its folders) and press `Y`, or choose "Choose this account's letter…" from the palette or the File menu. Type one letter or number; left empty, it is the first letter of the name again. The form that adds an account has the same field, "Letter", under the name. It is kept as `letter` in the account's settings, and can be written there by hand.
+
 **Removing an account.** In the app, Settings > Accounts: pick the account and press Remove…. Anywhere, put the accounts pane on the account (or one of its folders) and press `D`, or choose "Remove this account…" from the palette or the File menu. Quill first says what goes with it and asks: the account is taken out of the settings file, its password or sign-in out of the Keychain, and the copy of its mail off this Mac. Mail on its server is not touched, and the account can be added again. Anything that exists only on this Mac is said before you answer: messages still in the Outbox, drafts, changes that have not reached the server, and for a POP3 account that the copy here may be the only one. In a terminal only `y` is a yes; in the app's sheet no button answers to `return`. It is not offered while a message is being written. Taking an `[[account]]` out of the file by hand still works: its mail goes when Quill is next opened, and its password stays until `quill account forget`, which has to be run first.
 
 A Keychain item belongs to the program that made it. Quill built from source is signed "ad hoc", with no identity, so to macOS every build is a different program: after a rebuild it asks whether the new `quill` or `Quill.app` may read each password the old one saved, and "Always Allow" settles it for that build only. Until you answer, Quill waits and no mail moves. Each saved password or sign-in is asked about once in a run, however many connections want it.
@@ -206,6 +208,7 @@ Press `?` at any time for the keys that apply where you are, and `K` (or `f1`) f
 | `y` / `n` | Accept, decline an invitation | `M` | Answer an invitation with maybe |
 | `l` / `h` | In the accounts pane: show, hide an account's folders | `K` | Every key, and what it does |
 | `D` | Remove the account chosen in the accounts pane, after asking | `E` | Change the account chosen in the accounts pane: its servers and password |
+| `Y` | Choose the letter that marks the chosen account's mail in lists | | |
 | `Z` `a` | Stop Agents: see "Agents" | `Z` `c` | Install the command line tool: see "The app" |
 | `Z` `t` | Rules on or off: see "Rules" | `Z` `r` / `Z` `R` | Run a rule, or all of them: shows what would change first |
 | `Z` `y` | Run the rule that is shown | `Z` `N` / `Z` `n` | A new rule; a new rule from this message |
@@ -465,6 +468,7 @@ type = "imap"
 address = "you@example.com"
 full_name = "Your Name"                 # optional: how your name appears on mail you send
 signature = "Your Name\nExample Ltd"    # optional: added to new messages
+letter = "p"                            # optional: marks its mail where every account's is listed; else the name's first letter
 imap = { host = "imap.example.com", port = 993, tls = "implicit" }
 smtp = { host = "smtp.example.com", port = 465, tls = "implicit" }
 ```
@@ -991,6 +995,7 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `account.add` | Add an account |
 | `account.sign_in` | Sign an account in to Microsoft or Google |
 | `account.edit` | Change the account chosen in the accounts pane: its servers, the name it signs in with and its password |
+| `account.letter` | Choose the letter or number that marks the mail of the account chosen in the accounts pane, where every account's is listed together |
 | `account.remove` | Remove the account chosen in the accounts pane, after asking |
 | `app.install_command_line` | Install Command Line Tool: link `quill` into a folder on your `PATH` |
 | `agents.stop` | Stop Agents: switch shell commands and MCP off at once, and take back their mail that has not gone |

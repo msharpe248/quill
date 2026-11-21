@@ -22,6 +22,7 @@ pub(crate) const MIGRATIONS: &[(u32, &str)] = &[
     (11, include_str!("../migrations/0011_local_folders.sql")),
     (12, include_str!("../migrations/0012_agent_log.sql")),
     (13, include_str!("../migrations/0013_rules.sql")),
+    (14, include_str!("../migrations/0014_account_letter.sql")),
 ];
 
 #[cfg(test)]

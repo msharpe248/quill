@@ -27,15 +27,15 @@ expression: harness.screen()
 │                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┃ Type:      IMAP (password)                                               ┃                                                             │
 │                          │┃                                 ┃ Name:      Example                                                       ┃                                                             │
+│                          │┃                                 ┃ Letter:                                                                  ┃                                                             │
 │                          │┃                                 ┃ Server:    imap.example.com                                              ┃                                                             │
 │                          │┃                                 ┃ Port:      993                                                           ┃                                                             │
-│                          │┃                                 ┃ Security:  ‹ TLS ›  ←/→ to change                                        ┃                                                             │
+│                          │┃                                 ┃ Security:  TLS                                                           ┃                                                             │
 │                          │┃                                 ┃ Sign in:   robin@example.com                                             ┃                                                             │
 │                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┃ Send via:  smtp.example.com                                              ┃                                                             │
 │                          │┃                                 ┃ Port:      465                                                           ┃                                                             │
 │                          │┃                                 ┃ Security:  TLS                                                           ┃                                                             │
-│                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┃                                                                          ┃                                                             │

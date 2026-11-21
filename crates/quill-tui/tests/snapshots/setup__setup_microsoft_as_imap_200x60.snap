@@ -28,6 +28,7 @@ expression: harness.screen()
 │                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┃ Type:      ‹ IMAP (password) ›  ←/→ to change                            ┃                                                             │
 │                          │┃                                 ┃ Name:      Example                                                       ┃                                                             │
+│                          │┃                                 ┃ Letter:                                                                  ┃                                                             │
 │                          │┃                                 ┃ Server:    outlook.office365.com                                         ┃                                                             │
 │                          │┃                                 ┃ Port:      993                                                           ┃                                                             │
 │                          │┃                                 ┃ Security:  TLS                                                           ┃                                                             │
@@ -38,7 +39,6 @@ expression: harness.screen()
 │                          │┃                                 ┃ Security:  STARTTLS                                                      ┃                                                             │
 │                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┃ Microsoft takes no password. Change Type to Microsoft.                   ┃                                                             │
-│                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛                                                             │
 │                          │┃                                                                                    ┃│                                                                                    │
 │                          │┃                                                                                    ┃│                                                                                    │

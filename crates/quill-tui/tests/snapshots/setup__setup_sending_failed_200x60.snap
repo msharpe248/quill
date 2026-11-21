@@ -27,6 +27,7 @@ expression: harness.screen()
 │                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┃ Type:      IMAP (password)                                               ┃                                                             │
 │                          │┃                                 ┃ Name:      Example                                                       ┃                                                             │
+│                          │┃                                 ┃ Letter:                                                                  ┃                                                             │
 │                          │┃                                 ┃ Server:    imap.example.com                                              ┃                                                             │
 │                          │┃                                 ┃ Port:      993                                                           ┃                                                             │
 │                          │┃                                 ┃ Security:  TLS                                                           ┃                                                             │
@@ -35,7 +36,6 @@ expression: harness.screen()
 │                          │┃                                 ┃ Send via:  smtp.example.com                                              ┃                                                             │
 │                          │┃                                 ┃ Port:      465                                                           ┃                                                             │
 │                          │┃                                 ┃ Security:  TLS                                                           ┃                                                             │
-│                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┃ Mail can be read, but not sent through smtp.example.com: Cannot reach    ┃                                                             │
 │                          │┃                                 ┃ the server: connection refused. Correct it, or clear it to add the       ┃                                                             │
 │                          │┃                                 ┃ account without sending.                                                 ┃                                                             │

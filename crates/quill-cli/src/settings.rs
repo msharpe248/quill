@@ -181,6 +181,7 @@ fn read(config_file: &Path) -> Result<SettingsRead, String> {
                 kind: account.kind,
                 address: account.address.clone(),
                 signs_in: oauth::wanted(account),
+                letter: account.letter.clone(),
             })
             .collect(),
         themes: setup::themes_in(dir)

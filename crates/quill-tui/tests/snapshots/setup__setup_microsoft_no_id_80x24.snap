@@ -10,16 +10,16 @@ expression: harness.screen()
 │ ┃                                                                          ┃i┃
 │ ┃ Type:           Microsoft (sign in)                                      ┃i┃
 │ ┃ Name:           Example                                                  ┃i┃
+│ ┃ Letter:                                                                  ┃u┃
 │ ┃ Address:        robin@example.com                                        ┃u┃
-│ ┃ Application id:                                                          ┃u┃
-│ ┃ Tenant:         example.com                                              ┃d┃
-│ ┃                                                                          ┃e┃
+│ ┃ Application id:                                                          ┃d┃
+│ ┃ Tenant:         example.com                                              ┃e┃
+│ ┃                                                                          ┃n┃
 │ ┃ Register Quill with Microsoft once to get the application id: see        ┃n┃
-│ ┃ docs/oauth.md. Tenant may be left empty.                                 ┃n┃
-│ ┃                                                                          ┃6┃
-│ ┃ Enter the application id: the Application (client) ID Microsoft shows    ┃2┃
+│ ┃ docs/oauth.md. Tenant may be left empty.                                 ┃6┃
+│ ┃                                                                          ┃2┃
+│ ┃ Enter the application id: the Application (client) ID Microsoft shows    ┃5┃
 │ ┃ for Quill.                                                               ┃5┃
-│ ┃                                                                          ┃5┃
 │ ┃                                                                          ┃ ┃
 │ ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ ┃
 │                │┃                                                            ┃

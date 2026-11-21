@@ -518,6 +518,20 @@ pub struct AccountLine {
     /// It signs in with its provider (Microsoft, Google) and not with a
     /// password.
     pub signs_in: bool,
+    /// The letter chosen to stand for it in lists: `letter` in its
+    /// settings. `None`: the first letter of its name.
+    pub letter: Option<String>,
+}
+
+impl AccountLine {
+    /// What stands for the account where mail of several is listed
+    /// together.
+    pub fn initial(&self) -> Option<char> {
+        self.letter
+            .as_deref()
+            .and_then(|letter| letter.chars().next())
+            .or_else(|| self.name.chars().next())
+    }
 }
 
 /// A theme there is to choose, as the window lists it.
@@ -665,6 +679,8 @@ pub struct Can {
     pub remove: bool,
     /// An account can be asked to be changed now.
     pub edit: bool,
+    /// An account's letter can be asked for now.
+    pub letter: bool,
     /// A theme can be changed or deleted now: the host asks in a sheet,
     /// and no such question is up.
     pub themes: bool,
@@ -686,6 +702,7 @@ pub const ADD: &str = "add";
 pub const SIGN_IN: &str = "sign_in";
 pub const REMOVE: &str = "remove";
 pub const EDIT: &str = "edit";
+pub const LETTER: &str = "letter";
 
 /// Said at the foot of every pane, beside the button that opens the
 /// settings file.
@@ -1248,22 +1265,29 @@ fn accounts(read: &SettingsRead, can: Can) -> Vec<FormField> {
             id: account_id(&account.name),
             title: text::sanitize_line(&account.name),
             detail: Some(format!(
-                "{}, {}. {}",
+                "{}, {}. {}{}",
                 kind_title(account.kind),
                 text::sanitize_line(&account.address),
                 match (account.signs_in, account.kind) {
                     (true, AccountType::Graph) => "Signs in with Microsoft.",
                     (true, _) => "Signs in with its provider.",
                     (false, _) => "Signs in with a password.",
+                },
+                // What marks its mail where every account's is listed.
+                match account.initial().filter(|letter| !letter.is_control()) {
+                    Some(letter) => format!(" Letter in lists: {letter}."),
+                    None => String::new(),
                 }
             )),
             // What the form can change is an account's servers and its
             // password: one that signs in with its provider has neither
-            // to show.
+            // to show. Any account has a letter to choose.
             actions: match (account.signs_in, account.kind) {
-                (true, _) => vec![SIGN_IN.to_owned(), REMOVE.to_owned()],
-                (false, AccountType::Imap) => vec![EDIT.to_owned(), REMOVE.to_owned()],
-                (false, _) => vec![REMOVE.to_owned()],
+                (true, _) => vec![SIGN_IN.to_owned(), LETTER.to_owned(), REMOVE.to_owned()],
+                (false, AccountType::Imap) => {
+                    vec![EDIT.to_owned(), LETTER.to_owned(), REMOVE.to_owned()]
+                }
+                (false, _) => vec![LETTER.to_owned(), REMOVE.to_owned()],
             },
         })
         .collect();
@@ -1291,6 +1315,12 @@ fn accounts(read: &SettingsRead, can: Can) -> Vec<FormField> {
                 enabled: can.accounts && can.edit,
             },
             FormAction {
+                id: LETTER.to_owned(),
+                title: "Letter\u{2026}".to_owned(),
+                row: true,
+                enabled: can.accounts && can.letter,
+            },
+            FormAction {
                 id: REMOVE.to_owned(),
                 title: "Remove\u{2026}".to_owned(),
                 row: true,
@@ -1301,9 +1331,10 @@ fn accounts(read: &SettingsRead, can: Can) -> Vec<FormField> {
         empty: Some("No accounts yet.".to_owned()),
         help: Some(
             "Edit\u{2026} changes an account\u{2019}s servers, the name it signs in with and its \
-             password. Removing an account takes it out of the settings file and the \
-             Keychain, and deletes the copy of its mail kept on this Mac. Mail on its \
-             server is not touched."
+             password. Letter\u{2026} chooses the letter or number that marks its mail where \
+             every account\u{2019}s is listed together. Removing an account takes it out of \
+             the settings file and the Keychain, and deletes the copy of its mail kept on \
+             this Mac. Mail on its server is not touched."
                 .to_owned(),
         ),
     }]

@@ -172,6 +172,7 @@ fn the_server_step_of_a_password_account_has_its_servers() {
         [
             "type",
             "name",
+            "letter",
             "host",
             "port",
             "security",
@@ -187,6 +188,7 @@ fn the_server_step_of_a_password_account_has_its_servers() {
         [
             "Type:",
             "Name:",
+            "Letter:",
             "Incoming Server:",
             "Port:",
             "Security:",
@@ -202,6 +204,7 @@ fn the_server_step_of_a_password_account_has_its_servers() {
         [
             Some("imap"),
             Some("Example"),
+            Some(""),
             Some("imap.example.com"),
             Some("993"),
             Some("tls"),
@@ -281,7 +284,7 @@ fn the_server_step_of_a_microsoft_account_has_no_servers() {
     );
     assert_eq!(
         ids(&shown),
-        ["type", "name", "address", "application", "tenant"]
+        ["type", "name", "letter", "address", "application", "tenant"]
     );
     assert_eq!(field(&shown, "type").value(), Some("microsoft"));
     // The address is shown, and is not there to be changed.
@@ -655,7 +658,14 @@ fn a_google_account_in_the_sheet_asks_for_its_application_or_for_nothing() {
     assert_eq!(shown.note(), None);
     assert_eq!(
         ids(&shown),
-        ["type", "name", "address", "google_client", "google_secret"]
+        [
+            "type",
+            "name",
+            "letter",
+            "address",
+            "google_client",
+            "google_secret"
+        ]
     );
     assert_eq!(field(&shown, "address").value(), Some("robin@gmail.com"));
     assert!(matches!(
@@ -707,7 +717,7 @@ fn a_google_account_in_the_sheet_asks_for_its_application_or_for_nothing() {
     // happens next.
     let setup = at_google(Some(("quill.apps.googleusercontent.com", None)), true);
     let shown = form(&setup);
-    assert_eq!(ids(&shown), ["type", "name", "address"]);
+    assert_eq!(ids(&shown), ["type", "name", "letter", "address"]);
     assert!(matches!(
         field(&shown, "address"),
         FormField::Static { help: Some(help), .. } if help == GOOGLE_OWN_NOTE
@@ -738,7 +748,7 @@ fn changing_the_type_swaps_the_fields_at_once() {
     let shown = form(&setup);
     assert_eq!(
         ids(&shown),
-        ["type", "name", "address", "application", "tenant"]
+        ["type", "name", "letter", "address", "application", "tenant"]
     );
     assert_eq!(shown.title(), "Add an Account: Microsoft");
     // What was typed is kept, and what was said of the old type is not.

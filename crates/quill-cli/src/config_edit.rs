@@ -178,6 +178,44 @@ pub fn change_account(
     checked(document.to_string())
 }
 
+/// `text` with `letter` as the letter of the account called `name`: what
+/// stands for it where mail of several accounts is listed together. With
+/// none, its `letter` is taken out, and the first letter of its name
+/// stands for it again. Everything else the account says stays.
+pub fn set_account_letter(text: &str, name: &str, letter: Option<char>) -> Result<String, String> {
+    let mut document: DocumentMut = text
+        .parse()
+        .map_err(|err| format!("config.toml cannot be read: {err}"))?;
+    let missing = || format!("there is no account called {name} in config.toml");
+    let accounts = document
+        .get_mut("account")
+        .ok_or_else(missing)?
+        .as_array_of_tables_mut()
+        .ok_or(
+            "the accounts in config.toml are not written as [[account]] sections, which is \
+             the only way Quill edits them: give the account its `letter` by hand",
+        )?;
+    let table = accounts
+        .iter_mut()
+        .find(|table| table.get("name").and_then(Item::as_str) == Some(name))
+        .ok_or_else(missing)?;
+    match letter {
+        Some(letter) => match table.get_mut("letter") {
+            // Changed where it is, so that a comment beside it stays.
+            Some(Item::Value(old)) => {
+                let decor = old.decor().clone();
+                *old = Value::from(letter.to_string());
+                *old.decor_mut() = decor;
+            }
+            _ => table["letter"] = value(letter.to_string()),
+        },
+        None => {
+            table.remove("letter");
+        }
+    }
+    checked(document.to_string())
+}
+
 /// Makes `account`'s server under `key` what `server` says, keeping
 /// whatever else is written of it.
 fn change_server(
@@ -1382,5 +1420,56 @@ mod tests {
         write(&path, "whole\n").unwrap();
         assert_eq!(mode(&path), 0o600);
         assert_eq!(fs::read_to_string(&path).unwrap(), "whole\n");
+    }
+
+    #[test]
+    fn an_accounts_letter_is_set_changed_and_taken_out_and_the_rest_is_left() {
+        let before = "# Mine\n[ui]\ntheme = \"light\"\n\n[[account]]\nname = \"robin@example.com\"   # work\n\
+                      type = \"imap\"\naddress = \"robin@example.com\"\n\
+                      imap = { host = \"mail.example.com\" }\n\n[[account]]\n\
+                      name = \"robin@example.org\"\ntype = \"imap\"\n\
+                      address = \"robin@example.org\"\nimap = { host = \"mail.example.org\" }\n";
+        let letters = |text: &str| -> Vec<Option<String>> {
+            Config::parse(text)
+                .unwrap()
+                .accounts
+                .iter()
+                .map(|account| account.letter.clone())
+                .collect()
+        };
+        // The second account's, and no other's.
+        let set = set_account_letter(before, "robin@example.org", Some('o')).unwrap();
+        assert_eq!(letters(&set), [None, Some("o".to_owned())]);
+        assert!(set.starts_with(before.trim_end()), "{set}");
+        assert!(set.ends_with("letter = \"o\"\n"), "{set}");
+
+        // Changed where it is written, with the comment beside it kept.
+        let noted = set.replace("letter = \"o\"\n", "letter = \"o\"  # after the @\n");
+        let changed = set_account_letter(&noted, "robin@example.org", Some('7')).unwrap();
+        assert!(
+            changed.ends_with("letter = \"7\"  # after the @\n"),
+            "{changed}"
+        );
+        // The same letter again writes the same file.
+        assert_eq!(
+            set_account_letter(&changed, "robin@example.org", Some('7')).unwrap(),
+            changed
+        );
+
+        // Taken out, the file is as it was before the account had one.
+        let gone = set_account_letter(&set, "robin@example.org", None).unwrap();
+        assert_eq!(gone, before);
+        // And an account that never had one is left exactly as it is.
+        assert_eq!(
+            set_account_letter(before, "robin@example.com", None).unwrap(),
+            before
+        );
+
+        // An account there is none of is refused, and so is a letter the
+        // file could not be read back with.
+        let missing = set_account_letter(before, "Nobody", Some('n')).unwrap_err();
+        assert!(missing.contains("no account called Nobody"), "{missing}");
+        assert!(set_account_letter("", "Nobody", Some('n')).is_err());
+        assert!(set_account_letter(before, "robin@example.com", Some('@')).is_err());
     }
 }

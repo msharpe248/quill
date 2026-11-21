@@ -422,6 +422,19 @@ impl Service {
                 let result = self.remove(&account).await;
                 AccountEvent::Removed { account, result }
             }
+            AccountRequest::Letter { account, letter } => {
+                let service = Arc::clone(self);
+                let name = account.clone();
+                // The config file and the store block.
+                let result = tokio::task::spawn_blocking(move || service.set_letter(&name, letter))
+                    .await
+                    .unwrap_or_else(|err| Err(err.to_string()));
+                AccountEvent::LetterSet {
+                    account,
+                    letter,
+                    result,
+                }
+            }
             AccountRequest::Unsubscribe { url } => {
                 let (host, result) = unsubscribe::one_click(&url).await;
                 AccountEvent::Unsubscribed { host, result }
@@ -783,11 +796,39 @@ impl Service {
     }
 
     fn register(&self, account: &AccountConfig) -> Result<LocalAccountId, String> {
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "the store is unavailable after an earlier failure".to_owned())?;
+        let id = store
+            .upsert_account(&account.name, &account.address, account.kind.as_str())
+            .map_err(|err| err.to_string())?;
+        // The store's copy of the letter the settings give the account.
+        store
+            .set_account_letter(&account.name, account.letter.as_deref())
+            .map_err(|err| err.to_string())?;
+        Ok(id)
+    }
+
+    /// Gives the account called `name` the letter that stands for it
+    /// where mail of several accounts is listed together, or with none
+    /// takes its own away: in the settings file first, and if that cannot
+    /// be written nothing else is done. Then in the store's copy, which
+    /// is what the list reads.
+    fn set_letter(&self, name: &str, letter: Option<char>) -> Result<(), String> {
+        let before = self.config_text()?;
+        let after = config_edit::set_account_letter(&before, name, letter)?;
+        if after != before {
+            config_edit::write(&self.config_file, &after)
+                .map_err(|err| format!("config.toml cannot be written: {err}"))?;
+        }
+        let letter = letter.map(String::from);
         self.store
             .lock()
             .map_err(|_| "the store is unavailable after an earlier failure".to_owned())?
-            .upsert_account(&account.name, &account.address, account.kind.as_str())
-            .map_err(|err| err.to_string())
+            .set_account_letter(name, letter.as_deref())
+            .map_err(|err| err.to_string())?;
+        Ok(())
     }
 
     /// Writes the account down and returns it ready to sync. Nothing is
@@ -2527,6 +2568,63 @@ mod tests {
                 }),
             },
         }
+    }
+
+    #[tokio::test]
+    async fn an_accounts_letter_is_written_in_its_settings_and_in_the_store() {
+        let rig = Rig::new();
+        let name = "robin@example.com";
+        let saved = rig.service.handle(google(name, name)).await;
+        assert_eq!(saved, AccountEvent::Saved(Ok(name.to_owned())));
+        let letters = |rig: &Rig| {
+            (
+                rig.config().accounts[0].letter.clone(),
+                rig.store.accounts().unwrap()[0].initial(),
+            )
+        };
+        assert_eq!(letters(&rig), (None, Some('r')));
+
+        let ask = |letter: Option<char>| AccountRequest::Letter {
+            account: name.to_owned(),
+            letter,
+        };
+        let done = |letter: Option<char>| AccountEvent::LetterSet {
+            account: name.to_owned(),
+            letter,
+            result: Ok(()),
+        };
+        assert_eq!(rig.service.handle(ask(Some('e'))).await, done(Some('e')));
+        assert_eq!(letters(&rig), (Some("e".to_owned()), Some('e')));
+        // The rest of the account is as it was written.
+        let text = config_text(&rig);
+        assert!(text.contains("letter = \"e\"\n"), "{text}");
+        assert!(text.contains("auth = \"oauth\""), "{text}");
+
+        // Another letter takes its place, and none takes it out of the
+        // file: the first of the name again.
+        assert_eq!(rig.service.handle(ask(Some('9'))).await, done(Some('9')));
+        assert_eq!(letters(&rig), (Some("9".to_owned()), Some('9')));
+        assert_eq!(rig.service.handle(ask(None)).await, done(None));
+        assert_eq!(letters(&rig), (None, Some('r')));
+        assert!(!config_text(&rig).contains("letter"));
+
+        // An account there is none of is said, and nothing is written.
+        let before = config_text(&rig);
+        match rig
+            .service
+            .handle(AccountRequest::Letter {
+                account: "Nobody".to_owned(),
+                letter: Some('n'),
+            })
+            .await
+        {
+            AccountEvent::LetterSet {
+                result: Err(reason),
+                ..
+            } => assert!(reason.contains("no account called Nobody"), "{reason}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(config_text(&rig), before);
     }
 
     #[tokio::test]

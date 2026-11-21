@@ -529,6 +529,11 @@ pub struct AccountConfig {
     /// Text added to the end of new mail from this account.
     #[serde(default)]
     pub signature: Option<String>,
+    /// The one letter or number that stands for this account where mail
+    /// of several accounts is listed together. Without it, the first
+    /// letter of the account's name does.
+    #[serde(default)]
+    pub letter: Option<String>,
     /// How the account proves who it is. A `graph` account always signs
     /// in with OAuth, whatever this says.
     #[serde(default)]
@@ -690,6 +695,15 @@ pub enum TlsMode {
     None,
 }
 
+/// The letter that `text` names for an account, where it names one: a
+/// single letter or number, and nothing else. What `letter` in an
+/// account may be, and what may be typed for it.
+pub fn account_letter(text: &str) -> Option<char> {
+    let mut letters = text.chars();
+    let letter = letters.next().filter(|letter| letter.is_alphanumeric())?;
+    letters.next().is_none().then_some(letter)
+}
+
 /// Why a config could not be used. The message fits on one line so it can be
 /// shown in the status bar.
 #[derive(Debug, thiserror::Error)]
@@ -785,6 +799,16 @@ impl Config {
                 return Err(ConfigError::Invalid(format!(
                     "compose.editor_path must be a whole path (\"/opt/homebrew/bin/nvim\", \
                      \"~/bin/vim\") or a program's name (\"nvim\"), got {path:?}"
+                )));
+            }
+        }
+        for account in &self.accounts {
+            if let Some(letter) = &account.letter
+                && account_letter(letter).is_none()
+            {
+                return Err(ConfigError::Invalid(format!(
+                    "the letter of the account {} must be one letter or number, got {letter:?}",
+                    account.name
                 )));
             }
         }
@@ -1168,6 +1192,31 @@ smtp = { host = "smtp.fastmail.com", port = 465, tls = "implicit" }
     fn reader_width_must_be_in_range() {
         let err = Config::parse("[ui]\nreader_width = 0.95\n").unwrap_err();
         assert!(matches!(err, ConfigError::Invalid(_)), "{err:?}");
+    }
+
+    #[test]
+    fn an_accounts_letter_is_one_letter_or_number() {
+        let with = |letter: &str| {
+            format!(
+                "[[account]]\nname = \"Work\"\ntype = \"imap\"\naddress = \"a@example.com\"\nletter = \"{letter}\"\n"
+            )
+        };
+        for letter in ["w", "W", "7", "é"] {
+            let config = Config::parse(&with(letter)).unwrap();
+            assert_eq!(config.accounts[0].letter.as_deref(), Some(letter));
+        }
+        for letter in ["", "ab", " ", "@", "w ", "\\t"] {
+            let err = Config::parse(&with(letter)).unwrap_err();
+            assert!(
+                matches!(err, ConfigError::Invalid(_)),
+                "{letter:?}: {err:?}"
+            );
+        }
+        // Left out, the account has none of its own.
+        let plain = "[[account]]\nname = \"Work\"\ntype = \"imap\"\naddress = \"a@example.com\"\n";
+        assert_eq!(Config::parse(plain).unwrap().accounts[0].letter, None);
+        assert_eq!(account_letter("g"), Some('g'));
+        assert_eq!(account_letter("gg"), None);
     }
 
     #[test]

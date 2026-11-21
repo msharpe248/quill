@@ -418,6 +418,7 @@ pub fn compute(state: &State, size: (u16, u16), reader_width: f32) -> Areas {
             || state.sign_in.is_some()
             || state.when.is_some()
             || state.new_folder.is_some()
+            || state.letter_prompt.is_some()
             || state.new_rule.is_some()
             || state.unsubscribe.is_some()
             || state.remove.is_some())

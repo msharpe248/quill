@@ -5,7 +5,7 @@
 //! is the cursor, `+` selected to be acted on with others, `*` unread, `!`
 //! starred, `@` has attachments.
 
-use quill_store::{Mailbox, MessageRow};
+use quill_store::{AccountRow, Mailbox, MessageRow};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
@@ -194,7 +194,7 @@ fn line<'a>(
         let index = state.account_index(message.account);
         let initial = index
             .and_then(|index| state.accounts.get(index))
-            .and_then(|account| account.name.chars().next())
+            .and_then(AccountRow::initial)
             .map_or_else(|| " ".to_owned(), |c| c.to_string());
         spans.push(Span::styled(
             text::fit(&initial, 1),

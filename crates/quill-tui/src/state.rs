@@ -31,6 +31,7 @@ use crate::palette::{self, Item, Palette, What};
 mod edit;
 mod folders;
 mod keys;
+mod letter;
 mod mouse;
 mod remove;
 mod rules;
@@ -41,6 +42,7 @@ use quill_host::bridge::{FormUsed, Number, SettingsUsed};
 
 pub use self::folders::{FolderPrompt, ON_THE_SERVER, ON_THIS_MAC};
 pub use self::keys::{KeysAsk, KeysHow, KeysPrompt};
+pub use self::letter::LetterPrompt;
 pub use self::remove::{REMOVING, RemovePrompt, YES as REMOVE_YES};
 pub use self::rules::{
     EVERY_ACCOUNT, PickFor, PickLine, PickList, RuleAccount, RuleAction, RuleField, RulePrompt,
@@ -1343,6 +1345,11 @@ pub struct State {
     pub unsubscribe: Option<UnsubscribePrompt>,
     /// The question to answer before an account is removed.
     pub remove: Option<RemovePrompt>,
+    /// The question of which letter stands for an account in lists.
+    pub letter_prompt: Option<LetterPrompt>,
+    /// The service was asked for a letter from that question, and has
+    /// not said yet: its answer is announced.
+    letter_asked: bool,
     /// The service has been asked what removing an account would lose,
     /// and has not said yet: the question follows its answer.
     remove_asked: bool,
@@ -1503,6 +1510,8 @@ impl State {
             spell: Spell::default(),
             unsubscribe: None,
             remove: None,
+            letter_prompt: None,
+            letter_asked: false,
             remove_asked: false,
             edit_asked: false,
             compose: None,
@@ -1580,6 +1589,9 @@ impl State {
         }
         if self.new_folder.is_some() {
             return Context::NewFolder;
+        }
+        if self.letter_prompt.is_some() {
+            return Context::AccountLetter;
         }
         if self.new_rule.is_some() {
             return Context::NewRule;
@@ -1943,6 +1955,13 @@ impl State {
                     return;
                 }
             }
+            Context::AccountLetter => {
+                if let Some(prompt) = &mut self.letter_prompt
+                    && prompt.key(chord)
+                {
+                    return;
+                }
+            }
             Context::NewRule => {
                 if let Some(prompt) = &mut self.new_rule
                     && prompt.key(chord)
@@ -2214,6 +2233,7 @@ impl State {
             CommandId::NavOpen if context == Context::NewFolder => {
                 self.answer_new_folder(env, out);
             }
+            CommandId::NavOpen if context == Context::AccountLetter => self.answer_letter(out),
             CommandId::NavOpen if context == Context::NewRule => self.answer_new_rule(out),
             CommandId::RulesToggle => self.toggle_rules(out),
             CommandId::RulesRun => self.pick_rule(),
@@ -2509,6 +2529,14 @@ impl State {
                     self.ask_edit(env, &name, out);
                 }
             }
+            CommandId::AccountLetter => {
+                if let Some((name, own)) = self
+                    .chosen_account()
+                    .map(|account| (account.name.clone(), account.letter.clone()))
+                {
+                    self.ask_letter(env, &name, own);
+                }
+            }
             CommandId::AccountSignIn => {
                 out.accounts.push(AccountRequest::SignIn {
                     account: self.current_account().map(|account| account.name.clone()),
@@ -2768,6 +2796,7 @@ impl State {
                 .any(|id| DraftId::from_message_id(*id).is_none()),
             CommandId::NavOpen if context == Context::When => true,
             CommandId::NavOpen if context == Context::NewFolder => true,
+            CommandId::NavOpen if context == Context::AccountLetter => true,
             CommandId::NavOpen if context == Context::NewRule => true,
             CommandId::RulesRun => self.can_run_a_rule(),
             CommandId::RulesRunAll => self.can_run_all_rules(),
@@ -2852,6 +2881,7 @@ impl State {
                 self.can_remove_account(env) && self.chosen_account().is_some()
             }
             CommandId::AccountEdit => self.can_edit_account(env) && self.chosen_account().is_some(),
+            CommandId::AccountLetter => self.can_set_letter(env) && self.chosen_account().is_some(),
             // Only where there is a server to ask: not the demo mailbox.
             CommandId::MailboxSync => env.accounts && !self.accounts.is_empty(),
             // Only on an account that is closed, and on an open one or
@@ -2908,6 +2938,7 @@ impl State {
                     || self.sign_in.is_some()
                     || self.when.is_some()
                     || self.new_folder.is_some()
+                    || self.letter_prompt.is_some()
                     || self.new_rule.is_some()
                     || self.keys.is_some()
                     || self.theme_prompt.is_some()
@@ -3008,6 +3039,7 @@ impl State {
                 | Context::SignIn
                 | Context::When
                 | Context::NewFolder
+                | Context::AccountLetter
                 | Context::NewRule
                 | Context::RecordKeys
                 | Context::EditTheme
@@ -3205,6 +3237,8 @@ impl State {
             // Nothing was snoozed or sent.
         } else if self.new_folder.take().is_some() {
             // No folder was made.
+        } else if self.letter_prompt.take().is_some() {
+            // The account's letter is as it was.
         } else if self.new_rule.take().is_some() {
             // No rule was written.
         } else if self.keys.take().is_some() {
@@ -4443,6 +4477,14 @@ impl State {
             }
             AccountEvent::EditAsked { account, found } => {
                 self.on_edit_asked(account, found);
+                return;
+            }
+            AccountEvent::LetterSet {
+                account,
+                letter,
+                result,
+            } => {
+                self.on_letter_set(&account, letter, result, out);
                 return;
             }
             AccountEvent::Unsubscribed { host, result } => {

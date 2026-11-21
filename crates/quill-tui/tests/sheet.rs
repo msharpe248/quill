@@ -210,6 +210,7 @@ fn a_password_account_is_added_from_the_sheet() {
         [
             "type",
             "name",
+            "letter",
             "host",
             "port",
             "security",
@@ -300,7 +301,7 @@ fn a_microsoft_account_goes_from_the_form_to_the_sign_in_in_the_same_sheet() {
     assert_eq!(shown.title(), "Add an Account: Microsoft");
     assert_eq!(
         ids(&shown),
-        ["type", "name", "address", "application", "tenant"]
+        ["type", "name", "letter", "address", "application", "tenant"]
     );
 
     press(
@@ -389,7 +390,7 @@ fn changing_the_type_in_the_sheet_changes_what_the_host_is_told_to_show() {
     assert_ne!(before, after);
     assert_eq!(
         ids(&after),
-        ["type", "name", "address", "application", "tenant"]
+        ["type", "name", "letter", "address", "application", "tenant"]
     );
     assert!(harness.account_requests.len() == 1);
     assert_eq!(

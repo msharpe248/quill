@@ -531,6 +531,12 @@ pub fn prepare(
         let id = store.upsert_account(name, &account.address, account.kind.as_str())?;
         accounts.push(sync_account(id, account, imap, secrets, tokens));
     }
+    // The letter that marks each account's mail in lists is the settings
+    // file's to say. The store has a copy, which is what the list reads:
+    // made here to agree with the file, a letter taken out of it included.
+    for account in &config.accounts {
+        store.set_account_letter(&account.name, account.letter.as_deref())?;
+    }
     // Mail that was waiting to be tried again is tried as Quill starts, by
     // every account that has a way to send: what it waited on may have
     // been put right since, such as a sending server given to the account
@@ -932,6 +938,28 @@ imap = { host = "mail.example.com", fingerprint = "12:34" }
         assert_eq!(store.accounts().unwrap().len(), 1);
         prepare(&Config::default(), &mut store, &secrets(), true).unwrap();
         assert!(store.accounts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn the_store_has_the_letter_the_settings_give_each_account() {
+        let mut store = Store::open_in_memory().unwrap();
+        let account = |letter: &str| {
+            format!(
+                "[[account]]\nname = \"robin@example.com\"\ntype = \"imap\"\naddress = \"robin@example.com\"\n{letter}imap = {{ host = \"127.0.0.1\", port = 1, tls = \"none\" }}\n"
+            )
+        };
+        let initial = |store: &Store| store.accounts().unwrap()[0].initial();
+        // None of its own: the first of its name.
+        prepare(&config(&account("")), &mut store, &secrets(), true).unwrap();
+        assert_eq!(initial(&store), Some('r'));
+        // One written in the file by hand is the store's by the next
+        // start.
+        let chosen = account("letter = \"e\"\n");
+        prepare(&config(&chosen), &mut store, &secrets(), true).unwrap();
+        assert_eq!(initial(&store), Some('e'));
+        // And taken out of the file, it is gone from the store.
+        prepare(&config(&account("")), &mut store, &secrets(), true).unwrap();
+        assert_eq!(initial(&store), Some('r'));
     }
 
     #[tokio::test]

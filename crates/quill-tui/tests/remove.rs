@@ -451,12 +451,14 @@ fn settings_read() -> Box<SettingsRead> {
                 kind: quill_core::config::AccountType::Graph,
                 address: "robin@example.com".to_owned(),
                 signs_in: true,
+                letter: None,
             },
             AccountLine {
                 name: "Personal".to_owned(),
                 kind: quill_core::config::AccountType::Imap,
                 address: "robin@example.org".to_owned(),
                 signs_in: false,
+                letter: None,
             },
         ],
         themes: quill_tui::settings::ThemeLine::builtins(),
@@ -495,8 +497,8 @@ fn the_settings_window_has_a_remove_button_for_the_account_picked() {
     let (rows, actions, help) = list(&harness);
     // Every account can be removed, whichever way it signs in, and the
     // button is one for the row picked.
-    assert_eq!(rows[0].actions, ["sign_in", "remove"]);
-    assert_eq!(rows[1].actions, ["edit", "remove"]);
+    assert_eq!(rows[0].actions, ["sign_in", "letter", "remove"]);
+    assert_eq!(rows[1].actions, ["edit", "letter", "remove"]);
     let remove = actions.iter().find(|action| action.id == "remove").unwrap();
     assert_eq!(
         (remove.title.as_str(), remove.row, remove.enabled),

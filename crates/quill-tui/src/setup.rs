@@ -285,6 +285,15 @@ pub enum AccountRequest {
     /// The user has just agreed to it. Answered with
     /// [`AccountEvent::Removed`].
     Remove { account: String },
+    /// Have this letter or number stand for the account called this where
+    /// mail of several accounts is listed together: `letter` in its
+    /// settings, and in the store's copy. `None`: the first letter of its
+    /// name again, and no `letter` in its settings. Answered with
+    /// [`AccountEvent::LetterSet`].
+    Letter {
+        account: String,
+        letter: Option<char>,
+    },
     /// Tell a mailing list's server to unsubscribe the user: one POST of
     /// `List-Unsubscribe=One-Click` to this `https` address (RFC 8058),
     /// which the user has just agreed to. Answered with
@@ -436,6 +445,12 @@ pub enum AccountEvent {
     /// The sign-in ended: kept, or why not.
     SignedIn {
         account: String,
+        result: Result<(), String>,
+    },
+    /// The account's letter is what was asked for, or why it is not.
+    LetterSet {
+        account: String,
+        letter: Option<char>,
         result: Result<(), String>,
     },
     /// The list's server at `host` took the request to unsubscribe, or why
@@ -608,6 +623,9 @@ pub enum ServerField {
     /// What kind of account this is. The fields after the name depend on it.
     Type,
     Name,
+    /// The letter or number that stands for the account where mail of
+    /// several accounts is listed together. Empty: the first of its name.
+    Letter,
     Host,
     Port,
     Security,
@@ -627,9 +645,10 @@ pub enum ServerField {
 }
 
 impl ServerField {
-    pub const ALL: [ServerField; 13] = [
+    pub const ALL: [ServerField; 14] = [
         ServerField::Type,
         ServerField::Name,
+        ServerField::Letter,
         ServerField::Host,
         ServerField::Port,
         ServerField::Security,
@@ -674,6 +693,9 @@ pub struct Setup {
     /// server that was found, and theirs to change.
     pub kind: Kind,
     pub name: LineInput,
+    /// The letter that is to stand for the account in lists, if the user
+    /// names one.
+    pub letter: LineInput,
     pub host: LineInput,
     pub port: LineInput,
     pub tls: TlsMode,
@@ -709,6 +731,24 @@ pub struct Setup {
     trusting: Trusting,
 }
 
+/// What is said of a letter that is not one.
+pub const LETTER_PROBLEM: &str = "The letter is one letter or number, or nothing.";
+
+/// The letter `typed` for an account: none, where nothing was, or the one
+/// letter or number typed, with the spaces about it passed over. Where it
+/// is anything else, what to say of it.
+pub fn typed_letter(typed: &str) -> Result<Option<char>, &'static str> {
+    match typed.trim() {
+        "" => Ok(None),
+        typed => quill_core::config::account_letter(typed)
+            .map(Some)
+            .ok_or(LETTER_PROBLEM),
+    }
+}
+/// What the letter is for, said beside its field.
+pub const LETTER_HELP: &str = "Marks this account\u{2019}s mail where every account\u{2019}s is \
+                               listed together. Left empty, the first letter of the name does.";
+
 /// What the form says where the password of an account being changed is
 /// asked for.
 pub const KEEP_PASSWORD: &str = "Leave it empty to keep the password Quill has.";
@@ -720,6 +760,7 @@ impl Default for Setup {
             address: LineInput::default(),
             kind: Kind::Imap,
             name: LineInput::default(),
+            letter: LineInput::default(),
             host: LineInput::default(),
             port: LineInput::default(),
             tls: TlsMode::Implicit,
@@ -863,8 +904,9 @@ impl Setup {
     /// chosen. A field that is not shown is not stopped at.
     pub fn shows(&self, field: ServerField) -> bool {
         match field {
-            // An account that is there keeps its kind and its name.
-            ServerField::Type | ServerField::Name => self.editing.is_none(),
+            // An account that is there keeps its kind and its name, and
+            // its letter is changed where the accounts are listed.
+            ServerField::Type | ServerField::Name | ServerField::Letter => self.editing.is_none(),
             ServerField::Host
             | ServerField::Port
             | ServerField::Security
@@ -895,6 +937,7 @@ impl Setup {
             Step::Certificate => None,
             Step::Server => match self.server_field() {
                 ServerField::Name => Some(&self.name),
+                ServerField::Letter => Some(&self.letter),
                 ServerField::Host => Some(&self.host),
                 ServerField::Port => Some(&self.port),
                 ServerField::Username => Some(&self.username),
@@ -919,6 +962,7 @@ impl Setup {
             Step::Certificate => None,
             Step::Server => match self.server_field() {
                 ServerField::Name => Some(&mut self.name),
+                ServerField::Letter => Some(&mut self.letter),
                 ServerField::Host => Some(&mut self.host),
                 ServerField::Port => Some(&mut self.port),
                 ServerField::Username => Some(&mut self.username),
@@ -1044,6 +1088,11 @@ impl Setup {
                 self.busy = Some(format!("Looking for the mail server of {domain}…"));
                 vec![AccountRequest::Discover { address }]
             }
+            Step::Server if self.editing.is_none() && self.chosen_letter().is_err() => {
+                self.field = ServerField::Letter.index();
+                self.error = self.chosen_letter().err().map(str::to_owned);
+                Vec::new()
+            }
             Step::Server if self.kind.signs_in() => match self.sign_in_draft() {
                 // No password to ask for and nothing to check with a
                 // server: the account is saved, and then signed in to.
@@ -1102,6 +1151,32 @@ impl Setup {
             Step::Certificate => self.reject_certificate(),
         }
         false
+    }
+
+    /// The letter typed for the account: none, where the field was left
+    /// empty, or the one letter or number it holds. Where it holds
+    /// anything else, what to say of it.
+    pub fn chosen_letter(&self) -> Result<Option<char>, &'static str> {
+        typed_letter(self.letter.text())
+    }
+
+    /// What the account being added will be called, as far as the fields
+    /// say: the name typed, or else the address.
+    pub fn name_to_be(&self) -> &str {
+        match self.name.text().trim() {
+            "" => self.address.text().trim(),
+            name => name,
+        }
+    }
+
+    /// The request that gives the account just saved the letter typed for
+    /// it, if one was.
+    fn letter_request(&self, account: &str) -> Option<AccountRequest> {
+        let letter = self.chosen_letter().ok().flatten()?;
+        Some(AccountRequest::Letter {
+            account: account.to_owned(),
+            letter: Some(letter),
+        })
     }
 
     /// The account as the fields describe it, or what is wrong with them.
@@ -1499,10 +1574,18 @@ impl Setup {
                         let sign_in = AccountRequest::SignIn {
                             account: Some(name.clone()),
                         };
-                        (vec![sign_in], Outcome::SigningIn(name))
+                        // The letter first: the sign-in waits on the user.
+                        let mut requests: Vec<_> = self.letter_request(&name).into_iter().collect();
+                        requests.push(sign_in);
+                        (requests, Outcome::SigningIn(name))
                     }
                     Ok(name) if self.editing.is_some() => (Vec::new(), Outcome::Changed(name)),
-                    Ok(name) => (Vec::new(), Outcome::Added(name)),
+                    // The account is there now, and can be given the
+                    // letter typed for it.
+                    Ok(name) => (
+                        self.letter_request(&name).into_iter().collect(),
+                        Outcome::Added(name),
+                    ),
                     Err(reason) => {
                         self.error = Some(format!("The account could not be saved: {reason}"));
                         (Vec::new(), Outcome::Open)
@@ -1518,6 +1601,7 @@ impl Setup {
             | AccountEvent::RemoveAsked { .. }
             | AccountEvent::Removed { .. }
             | AccountEvent::EditAsked { .. }
+            | AccountEvent::LetterSet { .. }
             | AccountEvent::Remembered(_)
             | AccountEvent::CommandLinked(_)
             | AccountEvent::Rules(_)
@@ -1747,6 +1831,7 @@ mod tests {
             [
                 ServerField::Type,
                 ServerField::Name,
+                ServerField::Letter,
                 ServerField::GoogleClient,
                 ServerField::GoogleSecret
             ]
@@ -1999,7 +2084,7 @@ mod tests {
 
         // The fields that follow are the type's own, and go round.
         let mut seen = Vec::new();
-        for _ in 0..4 {
+        for _ in 0..5 {
             keys(&mut setup, "tab");
             seen.push(setup.server_field());
         }
@@ -2007,6 +2092,7 @@ mod tests {
             seen,
             [
                 ServerField::Name,
+                ServerField::Letter,
                 ServerField::Application,
                 ServerField::Tenant,
                 ServerField::Type
@@ -2019,7 +2105,7 @@ mod tests {
 
         // Elsewhere the arrows are not the type's: in the name they move
         // the cursor, and the type stays.
-        keys(&mut setup, "shift-tab shift-tab");
+        keys(&mut setup, "shift-tab shift-tab shift-tab");
         assert_eq!(setup.server_field(), ServerField::Name);
         keys(&mut setup, "left right");
         assert_eq!(setup.kind, Kind::Microsoft);
@@ -2044,9 +2130,11 @@ mod tests {
         assert!(setup.own_application);
         assert!(!setup.shows(ServerField::Application));
         assert!(!setup.shows(ServerField::Tenant));
-        // The cursor is on the name, and tab goes round the two fields
+        // The cursor is on the name, and tab goes round the three fields
         // there are without stopping at one that is not shown.
         assert_eq!(setup.server_field(), ServerField::Name);
+        setup.move_field(true);
+        assert_eq!(setup.server_field(), ServerField::Letter);
         setup.move_field(true);
         assert_eq!(setup.server_field(), ServerField::Type);
         setup.move_field(true);
@@ -2438,7 +2526,7 @@ mod tests {
         setup.address.set("robin@example.com");
         setup.advance();
         setup.on_event(found("robin@example.com"));
-        keys(&mut setup, "tab tab tab");
+        keys(&mut setup, "tab tab tab tab");
         assert_eq!(setup.server_field(), ServerField::Security);
         keys(&mut setup, "right");
         assert_eq!((setup.tls, setup.port.text()), (TlsMode::Starttls, "143"));
@@ -2474,7 +2562,7 @@ mod tests {
         );
 
         // Past the reading server's fields to the sending server's.
-        keys(&mut setup, "tab tab tab tab tab");
+        keys(&mut setup, "tab tab tab tab tab tab");
         assert_eq!(setup.server_field(), ServerField::SmtpHost);
         keys(&mut setup, "tab tab");
         assert_eq!(setup.server_field(), ServerField::SmtpSecurity);

@@ -37,6 +37,8 @@ pub enum Context {
     Unsubscribe,
     /// Being asked before an account is removed.
     RemoveAccount,
+    /// Typing the letter that stands for an account in lists.
+    AccountLetter,
     /// Choosing a folder to move a message to. Typing narrows the list.
     Folders,
     /// Choosing a template to put into the message being written. Typing
@@ -74,6 +76,7 @@ impl Context {
             Self::EditTheme => "Changing a theme",
             Self::Unsubscribe => "Unsubscribe",
             Self::RemoveAccount => "Remove an account",
+            Self::AccountLetter => "An account\u{2019}s letter",
             Self::Folders => "Move to a folder",
             Self::Templates => "Insert a template",
             Self::Suggestions => "Spelling suggestions",
@@ -103,6 +106,7 @@ const EVERYWHERE: &[Context] = &[
     Context::EditTheme,
     Context::Unsubscribe,
     Context::RemoveAccount,
+    Context::AccountLetter,
     Context::Folders,
     Context::Templates,
     Context::Suggestions,
@@ -238,6 +242,7 @@ pub enum CommandId {
     AccountSignIn,
     AccountRemove,
     AccountEdit,
+    AccountLetter,
     FolderCreate,
     FolderRemove,
     MailboxSync,
@@ -393,6 +398,7 @@ impl Registry {
                         Context::When,
                         Context::NewFolder,
                         Context::NewRule,
+                        Context::AccountLetter,
                         Context::Unsubscribe,
                         Context::Folders,
                         Context::Templates,
@@ -1004,6 +1010,14 @@ impl Registry {
                     PANES,
                 ),
                 spec(
+                    AccountLetter,
+                    "account.letter",
+                    "Choose this account\u{2019}s letter\u{2026}",
+                    General,
+                    Some(Menu::File),
+                    PANES,
+                ),
+                spec(
                     AccountRemove,
                     "account.remove",
                     "Remove this account\u{2026}",
@@ -1259,6 +1273,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
     const SIGNING_IN: &[Hint] = &[hint(&[NavBack], "give up")];
     const WHEN: &[Hint] = &[hint(&[NavOpen], "set"), hint(&[NavBack], "cancel")];
     const NEW_FOLDER: &[Hint] = &[hint(&[NavOpen], "make it"), hint(&[NavBack], "cancel")];
+    const LETTER: &[Hint] = &[hint(&[NavOpen], "use it"), hint(&[NavBack], "cancel")];
     const NEW_RULE: &[Hint] = &[
         hint(&[NavOpen], "save and try it"),
         hint(&[NavBack], "cancel"),
@@ -1298,6 +1313,7 @@ pub fn hints(context: Context) -> &'static [Hint] {
         Context::SignIn => SIGNING_IN,
         Context::When => WHEN,
         Context::NewFolder => NEW_FOLDER,
+        Context::AccountLetter => LETTER,
         Context::NewRule => NEW_RULE,
         Context::RecordKeys | Context::EditTheme => RECORDING,
         Context::Links => LINKS,

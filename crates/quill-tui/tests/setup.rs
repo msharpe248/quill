@@ -350,7 +350,7 @@ fn a_gmail_account_can_sign_in_with_google_and_asks_for_no_password() {
     ] {
         assert!(!screen.contains(absent), "{absent}\n{screen}");
     }
-    harness.keys("tab tab");
+    harness.keys("tab tab tab");
     harness.type_text("123-abc.apps.googleusercontent.com");
     harness.keys("tab");
     harness.type_text("GOCSPX-not-a-real-one");
@@ -454,7 +454,7 @@ fn the_type_is_changed_in_the_form_and_a_microsoft_server_takes_no_password_acco
 
     // At one of Microsoft's servers a password account goes no further.
     let mut harness = at_microsoft(120, 30, None);
-    harness.keys("shift-tab shift-tab left enter");
+    harness.keys("shift-tab shift-tab shift-tab left enter");
     let setup = harness.state.setup.as_ref().unwrap();
     assert_eq!(setup.step, quill_tui::setup::Step::Server);
     let screen = harness.screen();
@@ -546,7 +546,7 @@ fn the_cursor_sits_in_the_field_being_typed_into() {
     let name_row = harness.cursor().unwrap().1;
     harness.keys("tab");
     assert_eq!(harness.cursor().unwrap().1, name_row + 1);
-    harness.keys("tab tab");
+    harness.keys("tab tab tab");
     assert_eq!(
         harness.cursor(),
         None,

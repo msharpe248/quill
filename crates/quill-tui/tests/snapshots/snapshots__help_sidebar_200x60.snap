@@ -43,6 +43,7 @@ expression: harness.screen()
 ┃                          ┃│                                       ┃   A                              Add an account              ┃                                                                   │
 ┃                          ┃│                                       ┃   S                              Sign in to an account       ┃                                                                   │
 ┃                          ┃│                                       ┃   E                              Edit this account…          ┃                                                                   │
+┃                          ┃│                                       ┃   Y                              Choose this account’s lett… ┃                                                                   │
 ┃                          ┃│                                       ┃   D                              Remove this account…        ┃                                                                   │
 ┃                          ┃│                                       ┃   Z c                            Install Command Line Tool   ┃                                                                   │
 ┃                          ┃│                                       ┃   Z a                            Stop Agents                 ┃                                                                   │
@@ -55,7 +56,6 @@ expression: harness.screen()
 ┃                          ┃│                                       ┃   Z l                            What Rules Did              ┃                                                                   │
 ┃                          ┃│                                       ┃   ?                              Help for this context       ┃                                                                   │
 ┃                          ┃│                                       ┃   K, f1                          Keyboard shortcuts          ┃                                                                   │
-┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │

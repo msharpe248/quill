@@ -28,6 +28,7 @@ expression: harness.screen()
 │                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┃ Type:           Microsoft (sign in)                                      ┃                                                             │
 │                          │┃                                 ┃ Name:           Example                                                  ┃                                                             │
+│                          │┃                                 ┃ Letter:                                                                  ┃                                                             │
 │                          │┃                                 ┃ Address:        robin@example.com                                        ┃                                                             │
 │                          │┃                                 ┃ Application id:                                                          ┃                                                             │
 │                          │┃                                 ┃ Tenant:         example.com                                              ┃                                                             │
@@ -37,7 +38,6 @@ expression: harness.screen()
 │                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┃ Enter the application id: the Application (client) ID Microsoft shows    ┃                                                             │
 │                          │┃                                 ┃ for Quill.                                                               ┃                                                             │
-│                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛                                                             │
 │                          │┃                                                                                    ┃│                                                                                    │

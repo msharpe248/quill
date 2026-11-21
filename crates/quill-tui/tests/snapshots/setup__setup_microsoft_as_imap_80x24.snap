@@ -10,17 +10,17 @@ expression: harness.screen()
 │ ┃                                                                          ┃i┃
 │ ┃ Type:      ‹ IMAP (password) ›  ←/→ to change                            ┃i┃
 │ ┃ Name:      Example                                                       ┃i┃
+│ ┃ Letter:                                                                  ┃u┃
 │ ┃ Server:    outlook.office365.com                                         ┃u┃
-│ ┃ Port:      993                                                           ┃u┃
-│ ┃ Security:  TLS                                                           ┃d┃
-│ ┃ Sign in:   robin@example.com                                             ┃e┃
+│ ┃ Port:      993                                                           ┃d┃
+│ ┃ Security:  TLS                                                           ┃e┃
+│ ┃ Sign in:   robin@example.com                                             ┃n┃
 │ ┃                                                                          ┃n┃
-│ ┃ Send via:  smtp.office365.com                                            ┃n┃
-│ ┃ Port:      587                                                           ┃6┃
-│ ┃ Security:  STARTTLS                                                      ┃2┃
+│ ┃ Send via:  smtp.office365.com                                            ┃6┃
+│ ┃ Port:      587                                                           ┃2┃
+│ ┃ Security:  STARTTLS                                                      ┃5┃
 │ ┃                                                                          ┃5┃
-│ ┃ Microsoft takes no password. Change Type to Microsoft.                   ┃5┃
-│ ┃                                                                          ┃ ┃
+│ ┃ Microsoft takes no password. Change Type to Microsoft.                   ┃ ┃
 │ ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ ┃
 │                │┃                                                            ┃
 │                │┃                                                            ┃

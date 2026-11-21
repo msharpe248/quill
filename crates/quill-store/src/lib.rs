@@ -71,6 +71,21 @@ pub struct AccountRow {
     pub name: String,
     pub address: String,
     pub kind: String,
+    /// The letter or number the user chose to stand for the account where
+    /// mail of several is listed together. `None`: the first letter of
+    /// its name.
+    pub letter: Option<String>,
+}
+
+impl AccountRow {
+    /// What stands for the account in a list of several accounts' mail:
+    /// the letter chosen for it, or else the first letter of its name.
+    pub fn initial(&self) -> Option<char> {
+        self.letter
+            .as_deref()
+            .and_then(|letter| letter.chars().next())
+            .or_else(|| self.name.chars().next())
+    }
 }
 
 /// What of an account's exists nowhere but in the store: lost for good if
@@ -524,16 +539,28 @@ impl Store {
     pub fn accounts(&self) -> Result<Vec<AccountRow>> {
         let mut statement = self
             .conn
-            .prepare("SELECT id, name, address, kind FROM accounts ORDER BY id")?;
+            .prepare("SELECT id, name, address, kind, letter FROM accounts ORDER BY id")?;
         let rows = statement.query_map([], |row| {
             Ok(AccountRow {
                 id: LocalAccountId(row.get(0)?),
                 name: row.get(1)?,
                 address: row.get(2)?,
                 kind: row.get(3)?,
+                letter: row.get(4)?,
             })
         })?;
         Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
+    /// Notes the letter that stands for the account called `name` where
+    /// mail of several accounts is listed together, or with `None` that
+    /// it has none of its own. Returns whether there is such an account.
+    pub fn set_account_letter(&mut self, name: &str, letter: Option<&str>) -> Result<bool> {
+        let changed = self.conn.execute(
+            "UPDATE accounts SET letter = ?2 WHERE name = ?1",
+            params![name, letter],
+        )?;
+        Ok(changed > 0)
     }
 
     /// The accounts whose folders are folded away in the accounts pane.
@@ -1094,6 +1121,33 @@ mod tests {
             Err(other) => panic!("unexpected error: {other:?}"),
             Ok(_) => panic!("a newer database must not open"),
         }
+    }
+
+    #[test]
+    fn an_account_is_stood_for_by_its_letter_or_else_its_names_first() {
+        let mut store = Store::open_in_memory().unwrap();
+        store
+            .upsert_account("work@example.com", "work@example.com", "demo")
+            .unwrap();
+        let initial = |store: &Store| store.accounts().unwrap()[0].initial();
+        assert_eq!(initial(&store), Some('w'));
+
+        assert!(
+            store
+                .set_account_letter("work@example.com", Some("7"))
+                .unwrap()
+        );
+        assert_eq!(initial(&store), Some('7'));
+        // Registered again, as it is every time Quill starts, it keeps it.
+        store
+            .upsert_account("work@example.com", "work@example.com", "demo")
+            .unwrap();
+        assert_eq!(initial(&store), Some('7'));
+
+        assert!(store.set_account_letter("work@example.com", None).unwrap());
+        assert_eq!(initial(&store), Some('w'));
+        // No such account: nothing is noted.
+        assert!(!store.set_account_letter("Nobody", Some("n")).unwrap());
     }
 
     #[test]

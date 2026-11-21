@@ -9,17 +9,17 @@ expression: harness.screen()
 │ ┃                                                                          ┃0┃
 │ ┃ Type:      IMAP (password)                                               ┃i┃
 │ ┃ Name:      Example                                                       ┃i┃
-│ ┃ Server:    imap.example.com                                              ┃i┃
-│ ┃ Port:      143                                                           ┃u┃
-│ ┃ Security:  ‹ None ›  ←/→ to change                                       ┃u┃
-│ ┃ Sign in:   robin@example.com                                             ┃d┃
-│ ┃                                                                          ┃e┃
+│ ┃ Letter:                                                                  ┃i┃
+│ ┃ Server:    imap.example.com                                              ┃u┃
+│ ┃ Port:      993                                                           ┃u┃
+│ ┃ Security:  TLS                                                           ┃d┃
+│ ┃ Sign in:   robin@example.com                                             ┃e┃
+│ ┃                                                                          ┃n┃
 │ ┃ Send via:  smtp.example.com                                              ┃n┃
-│ ┃ Port:      465                                                           ┃n┃
-│ ┃ Security:  TLS                                                           ┃6┃
-│ ┃                                                                          ┃2┃
-│ ┃ With no encryption, your password and mail cross the network readable by ┃5┃
-│ ┃ anyone on the way.                                                       ┃5┃
+│ ┃ Port:      465                                                           ┃6┃
+│ ┃ Security:  TLS                                                           ┃2┃
+│ ┃                                                                          ┃5┃
+│ ┃                                                                          ┃5┃
 │ ┃                                                                          ┃ ┃
 │ ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ ┃
 │                │┃                                                            ┃

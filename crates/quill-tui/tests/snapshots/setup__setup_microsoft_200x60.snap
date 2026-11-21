@@ -28,13 +28,13 @@ expression: harness.screen()
 │                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┃ Type:           Microsoft (sign in)                                      ┃                                                             │
 │                          │┃                                 ┃ Name:           Example                                                  ┃                                                             │
+│                          │┃                                 ┃ Letter:                                                                  ┃                                                             │
 │                          │┃                                 ┃ Address:        robin@example.com                                        ┃                                                             │
 │                          │┃                                 ┃ Application id:                                                          ┃                                                             │
 │                          │┃                                 ┃ Tenant:                                                                  ┃                                                             │
 │                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┃ Register Quill with Microsoft once to get the application id: see        ┃                                                             │
 │                          │┃                                 ┃ docs/oauth.md. Tenant may be left empty.                                 ┃                                                             │
-│                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┃                                                                          ┃                                                             │

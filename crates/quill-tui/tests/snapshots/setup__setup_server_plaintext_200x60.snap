@@ -27,17 +27,17 @@ expression: harness.screen()
 │                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┃ Type:      IMAP (password)                                               ┃                                                             │
 │                          │┃                                 ┃ Name:      Example                                                       ┃                                                             │
+│                          │┃                                 ┃ Letter:                                                                  ┃                                                             │
 │                          │┃                                 ┃ Server:    imap.example.com                                              ┃                                                             │
-│                          │┃                                 ┃ Port:      143                                                           ┃                                                             │
-│                          │┃                                 ┃ Security:  ‹ None ›  ←/→ to change                                       ┃                                                             │
+│                          │┃                                 ┃ Port:      993                                                           ┃                                                             │
+│                          │┃                                 ┃ Security:  TLS                                                           ┃                                                             │
 │                          │┃                                 ┃ Sign in:   robin@example.com                                             ┃                                                             │
 │                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┃ Send via:  smtp.example.com                                              ┃                                                             │
 │                          │┃                                 ┃ Port:      465                                                           ┃                                                             │
 │                          │┃                                 ┃ Security:  TLS                                                           ┃                                                             │
 │                          │┃                                 ┃                                                                          ┃                                                             │
-│                          │┃                                 ┃ With no encryption, your password and mail cross the network readable by ┃                                                             │
-│                          │┃                                 ┃ anyone on the way.                                                       ┃                                                             │
+│                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┃                                                                          ┃                                                             │
 │                          │┃                                 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛                                                             │
 │                          │┃                                                                                    ┃│                                                                                    │
