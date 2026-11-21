@@ -4,8 +4,8 @@ expression: harness.screen()
 ---
 ┏ [1] Accounts ━━┓┌ [2] Inbox (Work) - 8 unread ───────────────────────────────┐
 ┃  Unified    12 ┃│> * @ Ana Ruiz        Q4 roadmap                       09:14│
-┃> ▸ Work      8 ┃│      Build Bot       [quill] PR #42 passed            08:51│
-┃  ▾ Personal    ┃│  * @ Sam Lee         Photos from Sat                    Fri│
+┃> ▸ W Work    8 ┃│      Build Bot       [quill] PR #42 passed            08:51│
+┃  ▾ P Personal  ┃│  * @ Sam Lee         Photos from Sat                    Fri│
 ┃    Inbox     4 ┃│  *   Priya Nair      Re: Offsite agenda                 Fri│
 ┃    Drafts      ┃│  *!@ Tomás Ortega    Invoice 2026-114                   Thu│
 ┃    Sent        ┃│  *   陈静 Chen Jing  Design review notes 设计评审       Wed│

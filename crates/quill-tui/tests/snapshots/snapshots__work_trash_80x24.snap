@@ -4,13 +4,13 @@ expression: harness.screen()
 ---
 ┏ [1] Accounts ━━┓┌ [2] Work / Trash ──────────────────────────────────────────┐
 ┃  Unified    12 ┃│                                                            │
-┃  ▾ Work        ┃│                                                            │
+┃  ▾ W Work      ┃│                                                            │
 ┃    Inbox     8 ┃│                                                            │
 ┃    Drafts      ┃│                                                            │
 ┃    Sent        ┃│                                                            │
 ┃    Archive     ┃│                                                            │
 ┃>   Trash       ┃│                                                            │
-┃  ▾ Personal    ┃│                                                            │
+┃  ▾ P Personal  ┃│                                                            │
 ┃    Inbox     4 ┃│                                                            │
 ┃    Drafts      ┃│                                                            │
 ┃    Sent        ┃│                         No messages                        │

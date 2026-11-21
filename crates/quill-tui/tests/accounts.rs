@@ -93,13 +93,13 @@ fn every_account_starts_open_with_a_marker_that_says_so() {
         pane(&harness),
         [
             "> Unified    12",
-            "  ▾ Work",
+            "  ▾ W Work",
             "    Inbox     8",
             "    Drafts",
             "    Sent",
             "    Archive",
             "    Trash",
-            "  ▾ Personal",
+            "  ▾ P Personal",
             "    Inbox     4",
             "    Drafts",
             "    Sent",
@@ -140,8 +140,8 @@ fn an_account_is_closed_and_opened_with_the_keys() {
         pane(&harness),
         [
             "  Unified    12",
-            "> ▸ Work      8",
-            "  ▾ Personal",
+            "> ▸ W Work    8",
+            "  ▾ P Personal",
             "    Inbox     4",
             "    Drafts",
             "    Sent",
@@ -173,7 +173,7 @@ fn an_account_is_closed_and_opened_with_the_keys() {
     harness.keys("l");
     assert_eq!(
         pane(&harness)[1..4],
-        ["> ▾ Work", "    Inbox     8", "    Drafts"]
+        ["> ▾ W Work", "    Inbox     8", "    Drafts"]
     );
     assert!(harness.store.closed_accounts().unwrap().is_empty());
     // And by the arrows.
@@ -239,7 +239,7 @@ fn closing_from_a_folder_puts_the_cursor_on_the_account() {
     harness.keys("h");
     assert_eq!(harness.store.closed_accounts().unwrap(), [work]);
     assert!(
-        harness.screen().contains("> ▸ Work"),
+        harness.screen().contains("> ▸ W Work"),
         "{}",
         harness.screen()
     );
@@ -251,7 +251,7 @@ fn closing_from_a_folder_puts_the_cursor_on_the_account() {
     assert!(harness.state.list.loaded);
     // A reload leaves the cursor there, and the account closed.
     changed(&mut harness);
-    assert!(harness.screen().contains("> ▸ Work"));
+    assert!(harness.screen().contains("> ▸ W Work"));
     assert_eq!(harness.state.mailbox, Mailbox::Account(work));
 }
 
@@ -262,18 +262,18 @@ fn a_closed_account_shows_what_is_unread_in_its_inbox() {
     // Open, the count is on its inbox, the row below.
     assert_eq!(
         pane(&harness)[1..3],
-        ["> ▾ Work", "    Inbox               8"]
+        ["> ▾ W Work", "    Inbox               8"]
     );
     harness.keys("h");
-    assert_eq!(pane(&harness)[1], "> ▸ Work                8");
+    assert_eq!(pane(&harness)[1], "> ▸ W Work              8");
     // Together the accounts come to what Unified counts.
     harness.keys("j h");
     assert_eq!(
         pane(&harness),
         [
             "  Unified              12",
-            "  ▸ Work                8",
-            "> ▸ Personal            4",
+            "  ▸ W Work              8",
+            "> ▸ P Personal          4",
         ]
     );
 
@@ -286,8 +286,8 @@ fn a_closed_account_shows_what_is_unread_in_its_inbox() {
         pane(&harness),
         [
             "> Unified              11",
-            "  ▸ Work                7",
-            "  ▸ Personal            4",
+            "  ▸ W Work              7",
+            "  ▸ P Personal          4",
         ]
     );
     // With nothing unread there is no count, as on a folder.
@@ -303,7 +303,10 @@ fn a_closed_account_shows_what_is_unread_in_its_inbox() {
         harness.store.set_seen(id, true).unwrap();
     }
     changed(&mut harness);
-    assert_eq!(pane(&harness), ["> Unified", "  ▸ Work", "  ▸ Personal"]);
+    assert_eq!(
+        pane(&harness),
+        ["> Unified", "  ▸ W Work", "  ▸ P Personal"]
+    );
 }
 
 #[test]
@@ -385,6 +388,8 @@ fn how_the_accounts_were_left_is_kept_and_a_new_account_starts_open() {
     let mut harness = Harness::over_store(seeded(), 80, 24, false);
     let (_, personal) = accounts(&harness);
     harness.keys("1 G h");
+    // In a pane this narrow there is no room for the letter beside the
+    // whole name and the count, and it is only the name's first.
     assert_eq!(pane(&harness).last().unwrap(), "> ▸ Personal  4");
     drop(harness);
 
@@ -394,7 +399,7 @@ fn how_the_accounts_were_left_is_kept_and_a_new_account_starts_open() {
         pane(&harness),
         [
             "> Unified    12",
-            "  ▾ Work",
+            "  ▾ W Work",
             "    Inbox     8",
             "    Drafts",
             "    Sent",
@@ -433,16 +438,16 @@ fn how_the_accounts_were_left_is_kept_and_a_new_account_starts_open() {
     changed(&mut harness);
     assert_eq!(
         pane(&harness)[7..],
-        ["  ▸ Personal  4", "  ▾ Club", "    Inbox"]
+        ["  ▸ Personal  4", "  ▾ C Club", "    Inbox"]
     );
 
     // Opened again, that is kept too.
     harness.keys("1 G k k l");
-    assert!(harness.screen().contains("> ▾ Personal"));
+    assert!(harness.screen().contains("> ▾ P Personal"));
     drop(harness);
     let harness = Harness::over_store(Store::open(&path).unwrap(), 80, 24, false);
     assert!(harness.state.sidebar.closed.is_empty());
-    assert!(harness.screen().contains("  ▾ Personal"));
+    assert!(harness.screen().contains("  ▾ P Personal"));
 }
 
 #[test]
@@ -459,7 +464,7 @@ fn an_answer_from_before_an_account_was_closed_does_not_open_it_again() {
         harness.act(Action::Data(event));
     }
     assert!(
-        harness.screen().contains("> ▸ Work"),
+        harness.screen().contains("> ▸ W Work"),
         "{}",
         harness.screen()
     );
@@ -471,11 +476,11 @@ fn the_marker_is_clicked_to_open_and_close_and_the_name_to_choose() {
     let mut harness = Harness::demo(200, 60);
     let (work, personal) = accounts(&harness);
     // The marker itself.
-    let marker = find(&harness, "▾ Work");
+    let marker = find(&harness, "▾ W Work");
     click(&mut harness, marker);
     assert_eq!(harness.store.closed_accounts().unwrap(), [work]);
     assert!(
-        harness.screen().contains("  ▸ Work"),
+        harness.screen().contains("  ▸ W Work"),
         "{}",
         harness.screen()
     );
@@ -489,13 +494,19 @@ fn the_marker_is_clicked_to_open_and_close_and_the_name_to_choose() {
     click(&mut harness, (marker.0 + 1, marker.1));
     assert_eq!(harness.store.closed_accounts().unwrap(), [work]);
 
-    // The name chooses the account and leaves it as it is.
+    // The name chooses the account and leaves it as it is, and so does
+    // the account's letter before it.
     let name = find(&harness, "Work");
-    assert_eq!(name, (marker.0 + 2, marker.1));
+    assert_eq!(name, (marker.0 + 4, marker.1));
+    click(&mut harness, (marker.0 + 2, marker.1));
+    assert_eq!(harness.state.mailbox, Mailbox::Account(work));
+    assert_eq!(harness.store.closed_accounts().unwrap(), [work]);
+    harness.keys("k");
+    assert_eq!(harness.state.mailbox, Mailbox::Unified);
     click(&mut harness, name);
     assert_eq!(harness.state.mailbox, Mailbox::Account(work));
     assert_eq!(harness.store.closed_accounts().unwrap(), [work]);
-    assert!(harness.screen().contains("> ▸ Work"));
+    assert!(harness.screen().contains("> ▸ W Work"));
     // A second click on it goes to its mail, as on any mailbox.
     click(&mut harness, name);
     assert_eq!(harness.state.focus, Pane::List);
@@ -507,11 +518,11 @@ fn the_marker_is_clicked_to_open_and_close_and_the_name_to_choose() {
     assert_eq!(harness.state.mailbox_title(), "Personal / Sent");
     // Closing the account the cursor is in, by its marker, takes the
     // cursor to the account.
-    let marker = find(&harness, "▾ Personal");
+    let marker = find(&harness, "▾ P Personal");
     click(&mut harness, marker);
     assert_eq!(harness.store.closed_accounts().unwrap(), [work, personal]);
     assert_eq!(harness.state.mailbox, Mailbox::Account(personal));
-    assert!(harness.screen().contains("> ▸ Personal"));
+    assert!(harness.screen().contains("> ▸ P Personal"));
     // Under the last row there is nothing to click.
     click(&mut harness, (marker.0, marker.1 + 1));
     click(&mut harness, (marker.0 + 4, marker.1 + 3));
@@ -672,7 +683,7 @@ fn the_palette_goes_to_a_folder_of_a_closed_account_by_opening_it() {
     let (_, personal) = accounts(&harness);
     harness.keys("1 G h g g");
     assert_eq!(harness.store.closed_accounts().unwrap(), [personal]);
-    assert!(harness.screen().contains("  ▸ Personal"));
+    assert!(harness.screen().contains("  ▸ P Personal"));
 
     // Its folders are still offered by name.
     harness.keys(":");
@@ -690,7 +701,7 @@ fn the_palette_goes_to_a_folder_of_a_closed_account_by_opening_it() {
     // The account was opened for it, the cursor is on the folder, and
     // that is how it is kept.
     assert!(
-        harness.screen().contains("  ▾ Personal"),
+        harness.screen().contains("  ▾ P Personal"),
         "{}",
         harness.screen()
     );
@@ -719,7 +730,7 @@ fn leaving_a_search_for_a_folder_closed_meanwhile_opens_its_account() {
     harness.keys("1 j j j j G");
     assert!(harness.screen().contains("Search: from:ana"));
     // Work is closed by its marker while the cursor is elsewhere.
-    let marker = find(&harness, "▾ Work");
+    let marker = find(&harness, "▾ W Work");
     click(&mut harness, marker);
     assert_eq!(harness.store.closed_accounts().unwrap(), [work]);
     assert!(harness.screen().contains("Search: from:ana"));
@@ -729,7 +740,7 @@ fn leaving_a_search_for_a_folder_closed_meanwhile_opens_its_account() {
     assert!(!harness.screen().contains("Search: from:ana"));
     assert_eq!(harness.state.mailbox_title(), "Work / Sent");
     assert!(
-        harness.screen().contains("  ▾ Work"),
+        harness.screen().contains("  ▾ W Work"),
         "{}",
         harness.screen()
     );
@@ -750,8 +761,8 @@ fn a_long_pane_scrolls_by_the_rows_that_are_shown() {
         pane(&harness),
         [
             "  Unified    12",
-            "> ▸ Work      8",
-            "  ▾ Personal",
+            "> ▸ W Work    8",
+            "  ▾ P Personal",
             "    Inbox     4",
             "    Drafts",
             "    Sent",
@@ -763,7 +774,7 @@ fn a_long_pane_scrolls_by_the_rows_that_are_shown() {
     assert_eq!(pane(&harness).first().unwrap(), "  Unified    12");
     assert_eq!(pane(&harness).last().unwrap(), ">   Trash");
     // A click lands on the row that is drawn there.
-    let marker = find(&harness, "▾ Personal");
+    let marker = find(&harness, "▾ P Personal");
     click(&mut harness, (marker.0 + 2, marker.1));
     assert_eq!(harness.state.mailbox_title(), "Inbox (Personal)");
     assert!(harness.state.sidebar.closed.len() == 1);
@@ -775,12 +786,12 @@ fn under_60_columns_the_overlay_opens_and_closes_accounts_too() {
     let (work, _) = accounts(&harness);
     harness.keys("1 j h");
     assert!(
-        harness.screen().contains("> ▸ Work"),
+        harness.screen().contains("> ▸ W Work"),
         "{}",
         harness.screen()
     );
     assert_eq!(harness.store.closed_accounts().unwrap(), [work]);
-    let marker = find(&harness, "▸ Work");
+    let marker = find(&harness, "▸ W Work");
     click(&mut harness, marker);
     assert!(harness.store.closed_accounts().unwrap().is_empty());
     // `enter` goes to the account's mail and puts the overlay away.
@@ -798,14 +809,14 @@ fn with_web_reading_on_the_accounts_pane_is_the_same() {
     harness.keys("1 j j j h");
     assert_eq!(harness.store.closed_accounts().unwrap(), [work]);
     assert!(
-        harness.screen().contains("> ▸ Work"),
+        harness.screen().contains("> ▸ W Work"),
         "{}",
         harness.screen()
     );
     assert!(harness.row_with("[2]").contains("Inbox (Work)"));
     // No reader is drawn: the accounts and the list are.
     assert!(!harness.screen().contains("[3] Reader"));
-    let marker = find(&harness, "▸ Work");
+    let marker = find(&harness, "▸ W Work");
     click(&mut harness, marker);
     assert!(harness.store.closed_accounts().unwrap().is_empty());
     let name = find(&harness, "Personal");

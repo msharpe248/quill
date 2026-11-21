@@ -500,9 +500,16 @@ fn folder(
         .collect();
     // A folder's own name first: someone with a folder called "Archive"
     // that is not the archive means that one.
+    // By the whole name Google's own folders have on its servers too:
+    // a rule written when they were shown so still means the folder.
     let by_name = folders
         .iter()
-        .find(|folder| !only_role && folder.name.to_lowercase() == wanted);
+        .find(|folder| !only_role && folder.name.to_lowercase() == wanted)
+        .or_else(|| {
+            folders.iter().find(|folder| {
+                !only_role && quill_core::providers::names_folder(&wanted, &folder.name)
+            })
+        });
     Ok(by_name
         .or_else(|| {
             folders

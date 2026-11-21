@@ -185,10 +185,36 @@ pub(crate) fn folders(listed: &[Listed<'_>]) -> Vec<(String, FolderRole)> {
         })
         .collect();
 
+    // Google's own folders are listed inside `[Gmail]`, which is where
+    // Google keeps them and not something the user named: it is left out
+    // of the names shown, as the inbox's prefix is. Not where that would
+    // give two folders one name.
+    let short: Vec<Option<String>> = shown
+        .iter()
+        .map(|(name, _, _)| {
+            let short = quill_core::providers::google_folder(name)?;
+            let taken = shown
+                .iter()
+                .filter(|(other, _, _)| other != name)
+                .any(|(other, _, _)| {
+                    quill_core::providers::google_folder(other)
+                        .unwrap_or(other)
+                        .to_lowercase()
+                        == short.to_lowercase()
+                });
+            (!taken).then(|| short.to_owned())
+        })
+        .collect();
+    let shown = shown
+        .into_iter()
+        .zip(short)
+        .map(|((name, declared, guessed), short)| (short.unwrap_or(name), declared, guessed));
+
     // What the server declares always stands. A guess from a name stands only
     // where the server declared no folder for that role, and only for the
     // first such name: one "Junk" beside a declared junk folder, or a "Spam"
     // beside a "Junk", is an ordinary folder.
+    let shown: Vec<(String, Option<FolderRole>, FolderRole)> = shown.collect();
     let mut taken: Vec<FolderRole> = shown
         .iter()
         .filter_map(|(_, declared, _)| *declared)
@@ -452,6 +478,71 @@ mod tests {
                 ("Projects/Sent".to_owned(), FolderRole::Other),
                 ("Entwürfe".to_owned(), FolderRole::Other),
             ]
+        );
+    }
+
+    #[test]
+    fn googles_own_folders_are_named_without_the_place_google_keeps_them() {
+        let all = [NameAttribute::All];
+        let drafts = [NameAttribute::Drafts];
+        let sent = [NameAttribute::Sent];
+        let junk = [NameAttribute::Junk];
+        let trash = [NameAttribute::Trash];
+        let noselect = [NameAttribute::NoSelect];
+        let listed = [
+            listed("INBOX", "/", &[]),
+            listed("Notes", "/", &[]),
+            listed("Receipts/2026", "/", &[]),
+            listed("[Gmail]", "/", &noselect),
+            listed("[Gmail]/All Mail", "/", &all),
+            listed("[Gmail]/Drafts", "/", &drafts),
+            listed("[Gmail]/Important", "/", &[]),
+            listed("[Gmail]/Sent Mail", "/", &sent),
+            listed("[Gmail]/Spam", "/", &junk),
+            listed("[Gmail]/Starred", "/", &[]),
+            listed("[Gmail]/Trash", "/", &trash),
+        ];
+        assert_eq!(
+            folders(&listed),
+            [
+                ("Inbox".to_owned(), FolderRole::Inbox),
+                ("Notes".to_owned(), FolderRole::Other),
+                ("Receipts/2026".to_owned(), FolderRole::Other),
+                // The place itself holds no mail, and is not one of the
+                // folders in it.
+                ("[Gmail]".to_owned(), FolderRole::Other),
+                ("All Mail".to_owned(), FolderRole::Archive),
+                ("Drafts".to_owned(), FolderRole::Drafts),
+                ("Important".to_owned(), FolderRole::Other),
+                ("Sent Mail".to_owned(), FolderRole::Sent),
+                ("Spam".to_owned(), FolderRole::Junk),
+                ("Starred".to_owned(), FolderRole::Other),
+                ("Trash".to_owned(), FolderRole::Trash),
+            ]
+        );
+
+        // As Google names the place in some countries, and in a name that
+        // is not ASCII.
+        assert_eq!(
+            plain(&["INBOX", "[Google Mail]/Bin", "[Gmail]/Entw&APw-rfe"], "/")
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect::<Vec<_>>(),
+            ["Inbox", "Bin", "Entwürfe"]
+        );
+
+        // A folder of the user's with the same name keeps its own, and
+        // Google's keeps the whole of its: two folders are never shown
+        // alike.
+        assert_eq!(
+            plain(
+                &["INBOX", "Important", "[Gmail]/Important", "[Gmail]/Starred"],
+                "/"
+            )
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>(),
+            ["Inbox", "Important", "[Gmail]/Important", "Starred"]
         );
     }
 

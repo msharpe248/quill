@@ -4,13 +4,13 @@ expression: harness.screen()
 ---
 ┌ [1] Accounts ──┐┏ [3] Reader ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 │> Unified    12 │┃ From:    Ana Ruiz <ana.ruiz@example.com>                   ┃
-│  ▾ Work        │┃ To:      Robin Vale <robin@example.com>                    ┃
+│  ▾ W Work      │┃ To:      Robin Vale <robin@example.com>                    ┃
 │    Inbox     8 │┃ Date:    Sat 14 Nov 2026 09:31                             ┃
 │    Drafts      │┃ Subject: Offsite                                           ┃
 │    Sent        │┃ Attach:  attachment-2.ics (589 bytes)  (a lists them)      ┃
 │    Archive     │┃                                                            ┃
 │    Trash       │┃ ── Invitation ──────────────────────────────────────────── ┃
-│  ▾ Personal    │┃ What:    Offsite, day one                                  ┃
+│  ▾ P Personal  │┃ What:    Offsite, day one                                  ┃
 │    Inbox     4 │┃ When:    Fri 20 Nov 2026 09:00 to 16:00                    ┃
 │    Drafts      │┃ Where:   Room 4; second floor                              ┃
 │    Sent        │┃ Host:    Ana Ruiz <ana.ruiz@example.com>                   ┃

@@ -4,13 +4,13 @@ expression: harness.screen()
 ---
 ┏ [1] Accounts ━━┓┌ [2] Work / Sent ───────────────────────────────────────────┐
 ┃  Unified    12 ┃│>   @ To: Priya Nair  Offsite agenda                     Fri│
-┃  ▾ Work        ┃│    @ To: Omar Haddad Contract redlines               Nov 05│
+┃  ▾ W Work      ┃│    @ To: Omar Haddad Contract redlines               Nov 05│
 ┃    Inbox     8 ┃│                                                            │
 ┃    Drafts      ┃│                                                            │
 ┃>   Sent        ┃│                                                            │
 ┃    Archive     ┃│                                                            │
 ┃    Trash       ┃│                                                            │
-┃  ▾ Personal    ┃│                                                            │
+┃  ▾ P Personal  ┃│                                                            │
 ┃    Inbox     4 ┃│                                                            │
 ┃    Drafts      ┃│                                                            │
 ┃    Sent        ┃│                                                            │

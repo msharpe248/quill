@@ -26,7 +26,7 @@ fn on_work(width: u16, height: u16) -> Harness {
     let mut harness = Harness::with_accounts(width, height);
     harness.keys("1 j");
     assert!(
-        harness.screen().contains("> ▾ Work"),
+        harness.screen().contains("> ▾ W Work"),
         "{}",
         harness.screen()
     );
@@ -207,8 +207,8 @@ fn when_it_has_gone_the_ui_lets_go_of_it() {
     // The accounts pane and the list are what the store now has: the
     // other account, and every inbox that is left.
     let screen = harness.screen();
-    assert!(!screen.contains("▾ Work"), "{screen}");
-    assert!(screen.contains("▾ Personal"), "{screen}");
+    assert!(!screen.contains("▾ W Work"), "{screen}");
+    assert!(screen.contains("▾ P Personal"), "{screen}");
     assert!(screen.contains("Removed Work."), "{screen}");
     assert_eq!(harness.state.mailbox_title(), "Inbox (unified)");
     assert_eq!(harness.state.accounts.len(), 1);

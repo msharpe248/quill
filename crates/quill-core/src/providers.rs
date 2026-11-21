@@ -143,6 +143,31 @@ pub fn signs_in_with_google(host: &str) -> bool {
         .any(|domain| host.ends_with(&format!(".{domain}")))
 }
 
+/// The name of one of Google's own folders without the place Google keeps
+/// them in: `Sent Mail` for `[Gmail]/Sent Mail`. `None` for any other name.
+///
+/// Gmail lists its own folders (All Mail, Sent Mail, Drafts, Spam, Trash,
+/// Important, Starred) inside one called `[Gmail]`, or `[Google Mail]` in
+/// some countries. That is where Google keeps them, not something the
+/// user named, so it is left out of the names shown; a folder is still
+/// found by its whole name, which is how it may be written in a rule or a
+/// search made before.
+pub fn google_folder(name: &str) -> Option<&str> {
+    ["[Gmail]/", "[Google Mail]/"].iter().find_map(|prefix| {
+        let head = name.get(..prefix.len())?;
+        let rest = &name[prefix.len()..];
+        (head.eq_ignore_ascii_case(prefix) && !rest.is_empty()).then_some(rest)
+    })
+}
+
+/// Whether `wanted`, as a user wrote it, names the folder shown as
+/// `name`: by that name, or by the whole name Google's own folders have
+/// on its servers. Capitals do not count.
+pub fn names_folder(wanted: &str, name: &str) -> bool {
+    let same = |wanted: &str| wanted.to_lowercase() == name.to_lowercase();
+    same(wanted) || google_folder(wanted).is_some_and(same)
+}
+
 /// What to know about the password a known provider's server takes, by
 /// the server's name: that the user's normal password is not it, and where
 /// the one that is comes from. `None` for a server Quill does not know, and
@@ -194,6 +219,41 @@ pub fn by_mail_exchanger(exchanger: &str) -> Option<&'static Provider> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn googles_own_folders_are_known_by_the_place_they_are_kept_in() {
+        for (whole, short) in [
+            ("[Gmail]/Sent Mail", "Sent Mail"),
+            ("[Gmail]/All Mail", "All Mail"),
+            ("[gmail]/trash", "trash"),
+            ("[Google Mail]/Bin", "Bin"),
+            ("[Gmail]/Lists/Rust", "Lists/Rust"),
+        ] {
+            assert_eq!(google_folder(whole), Some(short), "{whole}");
+        }
+        for other in [
+            "",
+            "Sent Mail",
+            "[Gmail]",
+            "[Gmail]/",
+            "Gmail/Sent Mail",
+            "Work/[Gmail]/Sent Mail",
+            "[Gmailx]/Sent",
+            "[Gm\u{e4}il]/Sent",
+        ] {
+            assert_eq!(google_folder(other), None, "{other:?}");
+        }
+
+        // A folder is named by what it is shown as, or by its whole name
+        // on Google's servers, and capitals do not count.
+        assert!(names_folder("Sent Mail", "Sent Mail"));
+        assert!(names_folder("sent mail", "Sent Mail"));
+        assert!(names_folder("[Gmail]/Sent Mail", "Sent Mail"));
+        assert!(names_folder("[gmail]/sent mail", "Sent Mail"));
+        assert!(!names_folder("[Gmail]/Sent", "Sent Mail"));
+        assert!(!names_folder("Sent Mail", "[Gmail]/Sent Mail"));
+        assert!(!names_folder("", "Sent Mail"));
+    }
 
     #[test]
     fn googles_mail_servers_are_known_by_name() {

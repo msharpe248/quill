@@ -27,7 +27,7 @@ fn on_work(width: u16, height: u16) -> Harness {
     let mut harness = Harness::with_accounts(width, height);
     harness.keys("1 j");
     assert!(
-        harness.screen().contains("> ▾ Work"),
+        harness.screen().contains("> ▾ W Work"),
         "{}",
         harness.screen()
     );
@@ -546,4 +546,36 @@ fn snapshot_of_the_question_in_a_terminal() {
     harness.keys("Y");
     harness.type_text("7");
     insta::assert_snapshot!("letter_question_80x24", harness.screen());
+}
+
+#[test]
+fn the_accounts_pane_says_each_accounts_letter_before_its_name() {
+    let mut harness = on_work(120, 40);
+    let screen = harness.screen();
+    assert!(screen.contains("> ▾ W Work"), "{screen}");
+    assert!(screen.contains("  ▾ P Personal"), "{screen}");
+    // A letter that is chosen is the one said, as soon as it is.
+    set(&mut harness, "Work", Some('7'));
+    let screen = harness.screen();
+    assert!(screen.contains("> ▾ 7 Work"), "{screen}");
+    assert!(screen.contains("  ▾ P Personal"), "{screen}");
+
+    // In a pane too narrow for the letter, the whole name and the count,
+    // a letter that is only the name's first gives way to the name.
+    let mut harness = Harness::with_accounts(80, 24);
+    harness.keys("1 G h");
+    let last = |harness: &Harness| {
+        let screen = harness.screen();
+        let row = screen
+            .lines()
+            .find(|line| line.contains("▸"))
+            .unwrap_or_else(|| panic!("no closed account\n{screen}"))
+            .to_owned();
+        row.split(['│', '┃']).nth(1).unwrap().trim_end().to_owned()
+    };
+    assert_eq!(last(&harness), "> ▸ Personal  4");
+    // One the user chose says what the name does not, and is shown: the
+    // name has what is left.
+    set(&mut harness, "Personal", Some('x'));
+    assert_eq!(last(&harness), "> ▸ x Person… 4");
 }

@@ -4,13 +4,13 @@ expression: harness.screen()
 ---
 ┌ [1] Accounts ────────────┐┌ [2] Inbox (unified) - 11 unread ───────────────────────────────────────────────────┐┏ [3] Reader ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ attachment ┓
 │> Unified              11 ││>   @ W Ana Ruiz              Q4 roadmap                                       09:14│┃ From:    Ana Ruiz <ana.ruiz@example.com>                                           ┃
-│  ▾ Work                  ││      W Build Bot             [quill] PR #42 passed                            08:51│┃ To:      Robin Vale <robin@example.com>                                            ┃
+│  ▾ W Work                ││      W Build Bot             [quill] PR #42 passed                            08:51│┃ To:      Robin Vale <robin@example.com>                                            ┃
 │    Inbox               7 ││  *   P Peter Vale            Sunday dinner                                    08:35│┃ Date:    Sat 14 Nov 2026 09:14                                                     ┃
 │    Drafts                ││  *   P Maya Okafor           Trail run Saturday                               04:30│┃ Subject: Q4 roadmap                                                                ┃
 │    Sent                  ││  * @ W Sam Lee               Photos from Sat                                    Fri│┃ Attach:  roadmap.pdf (937 bytes)  (a lists them)                                   ┃
 │    Archive               ││  *   P Riverside Library     Your hold is ready                                 Fri│┃                                                                                    ┃
 │    Trash                 ││  *   W Priya Nair            Re: Offsite agenda                                 Fri│┃ Hi Robin,                                                                          ┃
-│  ▾ Personal              ││  *!@ W Tomás Ortega          Invoice 2026-114                                   Thu│┃                                                                                    ┃
+│  ▾ P Personal            ││  *!@ W Tomás Ortega          Invoice 2026-114                                   Thu│┃                                                                                    ┃
 │    Inbox               4 ││      P Jo Park               Re: Book club pick                                 Thu│┃ Here is the draft roadmap for Q4. The short version: we ship the sync rewrite in   ┃
 │    Drafts                ││  *   W 陈静 Chen Jing        Design review notes 设计评审                       Wed│┃ October, spend November on search, and keep December for whatever the first two    ┃
 │    Sent                  ││      W IT Helpdesk           Scheduled maintenance Sunday                       Tue│┃ months break.                                                                      ┃

@@ -100,7 +100,7 @@ fn the_sidebar_is_clicked_through_to_a_mailbox() {
     click_on(&mut harness, "Personal");
     assert_eq!(harness.state.focus, Pane::Sidebar);
     assert!(harness.row_with("[2]").contains("Inbox (Personal)"));
-    assert!(harness.screen().contains("> ▾ Personal"));
+    assert!(harness.screen().contains("> ▾ P Personal"));
     // Nothing was closed by it.
     assert!(harness.state.sidebar.closed.is_empty());
 }

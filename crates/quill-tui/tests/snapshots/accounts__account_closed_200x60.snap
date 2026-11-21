@@ -4,8 +4,8 @@ expression: harness.screen()
 ---
 ┏ [1] Accounts ━━━━━━━━━━━━┓┌ [2] Inbox (Work) - 8 unread ───────────────────────────────────────────────────────┐┌ [3] Reader ──────────────────────────────────────────────────── unread, attachment ┐
 ┃  Unified              12 ┃│> * @ Ana Ruiz              Q4 roadmap                                         09:14││ From:    Ana Ruiz <ana.ruiz@example.com>                                           │
-┃> ▸ Work                8 ┃│      Build Bot             [quill] PR #42 passed                              08:51││ To:      Robin Vale <robin@example.com>                                            │
-┃  ▾ Personal              ┃│  * @ Sam Lee               Photos from Sat                                      Fri││ Date:    Sat 14 Nov 2026 09:14                                                     │
+┃> ▸ W Work              8 ┃│      Build Bot             [quill] PR #42 passed                              08:51││ To:      Robin Vale <robin@example.com>                                            │
+┃  ▾ P Personal            ┃│  * @ Sam Lee               Photos from Sat                                      Fri││ Date:    Sat 14 Nov 2026 09:14                                                     │
 ┃    Inbox               4 ┃│  *   Priya Nair            Re: Offsite agenda                                   Fri││ Subject: Q4 roadmap                                                                │
 ┃    Drafts                ┃│  *!@ Tomás Ortega          Invoice 2026-114                                     Thu││ Attach:  roadmap.pdf (937 bytes)  (a lists them)                                   │
 ┃    Sent                  ┃│  *   陈静 Chen Jing        Design review notes 设计评审                         Wed││                                                                                    │

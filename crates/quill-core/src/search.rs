@@ -232,7 +232,13 @@ pub fn parse(input: &str, day_start: impl Fn(i32, u32, u32) -> Option<i64>) -> Q
                 None => as_word(&mut query, false),
             },
             "in" => {
-                let place = match value.split_once('/') {
+                // The whole name of one of Google's own folders has a
+                // slash in it that is not after an account's name: it
+                // names the folder, in whichever account has it.
+                let split = value
+                    .split_once('/')
+                    .filter(|_| crate::providers::google_folder(value.trim()).is_none());
+                let place = match split {
                     Some((account, folder)) => Place {
                         account: Some(account.trim().to_owned()).filter(|name| !name.is_empty()),
                         folder: Some(folder.trim().to_owned()).filter(|name| !name.is_empty()),

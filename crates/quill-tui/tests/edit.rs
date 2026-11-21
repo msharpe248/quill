@@ -29,7 +29,7 @@ fn on_work(width: u16, height: u16) -> Harness {
     let mut harness = Harness::with_accounts(width, height);
     harness.keys("1 j");
     assert!(
-        harness.screen().contains("> ▾ Work"),
+        harness.screen().contains("> ▾ W Work"),
         "{}",
         harness.screen()
     );

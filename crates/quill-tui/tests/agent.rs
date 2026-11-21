@@ -410,6 +410,15 @@ fn mail_is_moved_by_a_search_and_put_back_by_undo() {
     assert_eq!(dry["changed"], json!(0));
     assert_eq!(dry["would_change"], json!(wanted));
     assert_eq!(dry["log"], Value::Null);
+    // A folder is found by the whole name one of Google's own has on
+    // Google's servers too, which is how it was shown once.
+    let whole = ask(
+        &mut store,
+        &settings(),
+        "move",
+        json!({ "where": "in:work/inbox from:ana", "to": "[Gmail]/Archive", "dry_run": true }),
+    );
+    assert_eq!(whole["would_change"], json!(wanted));
     let still = ask(
         &mut store,
         &settings(),

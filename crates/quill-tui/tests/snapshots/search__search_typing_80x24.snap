@@ -4,13 +4,13 @@ expression: harness.screen()
 ---
 ┌ [1] Accounts ──┐┏ [2] Search: from:ana road - 1 found ━━━━━━━━━━━━━━━━━━━━━━━┓
 │> Unified    12 │┃> * @ W Ana Ruiz        Q4 roadmap                     09:14┃
-│  ▾ Work        │┃                                                            ┃
+│  ▾ W Work      │┃                                                            ┃
 │    Inbox     8 │┃                                                            ┃
 │    Drafts      │┃                                                            ┃
 │    Sent        │┃                                                            ┃
 │    Archive     │┃                                                            ┃
 │    Trash       │┃                                                            ┃
-│  ▾ Personal    │┃                                                            ┃
+│  ▾ P Personal  │┃                                                            ┃
 │    Inbox     4 │┃                                                            ┃
 │    Drafts      │┃                                                            ┃
 │    Sent        │┃                                                            ┃

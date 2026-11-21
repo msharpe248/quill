@@ -153,12 +153,21 @@ impl Store {
         }
         // A folder is named by its name or by what it is for: `in:sent`
         // finds the Sent folder whatever the server calls it.
+        // One of Google's own folders is found by the whole name it has on
+        // Google's servers as well (`[Gmail]/Sent Mail`), which is how it
+        // was shown once and may be written in a search kept since.
+        let short = |text: &str, values: &mut Vec<Value>| {
+            quill_core::providers::google_folder(text.trim())
+                .map(|short| bind(lower(short), values))
+                .map_or_else(String::new, |short| format!(" OR lower(f.name) = {short}"))
+        };
         let placed = |place: &quill_core::search::Place, values: &mut Vec<Value>| {
             let mut all = Vec::new();
             if let Some(either) = &place.either {
                 let name = bind(lower(either), values);
+                let short = short(either, values);
                 all.push(format!(
-                    "(lower(a.name) = {name} OR lower(f.name) = {name} OR f.role = {name})"
+                    "(lower(a.name) = {name} OR lower(f.name) = {name} OR f.role = {name}{short})"
                 ));
             }
             if let Some(account) = &place.account {
@@ -167,7 +176,10 @@ impl Store {
             }
             if let Some(folder) = &place.folder {
                 let name = bind(lower(folder), values);
-                all.push(format!("(lower(f.name) = {name} OR f.role = {name})"));
+                let short = short(folder, values);
+                all.push(format!(
+                    "(lower(f.name) = {name} OR f.role = {name}{short})"
+                ));
             }
             all
         };

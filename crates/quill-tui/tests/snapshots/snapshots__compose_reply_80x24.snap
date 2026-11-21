@@ -4,13 +4,13 @@ expression: harness.screen()
 ---
 ┌ [1] Accounts ──┐┏ [3] Reply ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 │> Unified    12 │┃ From:    robin@example.com  (Work) ▾                       ┃
-│  ▾ Work        │┃ To:      Ana Ruiz <ana.ruiz@example.com>                   ┃
+│  ▾ W Work      │┃ To:      Ana Ruiz <ana.ruiz@example.com>                   ┃
 │    Inbox     8 │┃ Cc:                                                        ┃
 │    Drafts      │┃ Subject: Re: Q4 roadmap                                    ┃
 │    Sent        │┃ ────────────────────────────────────────────────────────── ┃
 │    Archive     │┃                                                            ┃
 │    Trash       │┃                                                            ┃
-│  ▾ Personal    │┃ On Sat 14 Nov 2026 09:14, Ana Ruiz wrote:                  ┃
+│  ▾ P Personal  │┃ On Sat 14 Nov 2026 09:14, Ana Ruiz wrote:                  ┃
 │    Inbox     4 │┃ > Hi Robin,                                                ┃
 │    Drafts      │┃ >                                                          ┃
 │    Sent        │┃ > Here is the draft roadmap for Q4. The short version: we  ┃

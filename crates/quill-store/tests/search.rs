@@ -309,6 +309,19 @@ fn states_dates_and_places_narrow_without_any_word() {
     assert_eq!(find(&store, "in:personal "), ["Trail run Saturday"]);
     assert_eq!(find(&store, "in:sent "), ["Re: Q4 roadmap"]);
     assert_eq!(find(&store, "in:\"sent items\""), ["Re: Q4 roadmap"]);
+    // And by the whole name one of Google's own folders has on Google's
+    // servers, which it was shown by once: a search kept since then
+    // still finds it.
+    assert_eq!(
+        find(&store, "in:\"[Gmail]/sent items\""),
+        ["Re: Q4 roadmap"]
+    );
+    assert_eq!(
+        find(&store, "in:\"work/[Gmail]/Sent Items\""),
+        ["Re: Q4 roadmap"]
+    );
+    assert!(find(&store, "in:\"[Gmail]/nowhere\"").is_empty());
+    assert!(find(&store, "in:\"work/[Gmail]/nowhere\"").is_empty());
     assert_eq!(find(&store, "in:work/inbox roadmap "), ["Q4 roadmap"]);
     assert_eq!(
         find(&store, "in:inbox roadmap "),

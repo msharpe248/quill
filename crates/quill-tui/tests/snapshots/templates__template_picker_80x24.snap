@@ -4,13 +4,13 @@ expression: harness.screen()
 ---
 ┌ [1] Accounts ──┐┏ [3] New message ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 │> Unified    12 │┃ From:    Robin Vale <robin@example.com>  (Work) ▾          ┃
-│  ▾ Work        │┃ To:                                                        ┃
+│  ▾ W Work      │┃ To:                                                        ┃
 │    Inbox     8 │┃ Cc:                                                        ┃
 │    Drafts      │┃ Subject:                                                   ┃
 │    Sent        │┃ ────────────────────────────────────────────────────────── ┃
 │    Archive     │┃                                                            ┃
 │    Trash       │┃                                                            ┃
-│  ▾ Perso┏ Insert a template ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓         ┃
+│  ▾ P Per┏ Insert a template ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓         ┃
 │    Inbox┃ / o                                                      ┃         ┃
 │    Draft┃ > Meeting follow-up  Following up on {{topic}}           ┃         ┃
 │    Sent ┃   Out of office                                          ┃         ┃

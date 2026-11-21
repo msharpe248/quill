@@ -13,7 +13,7 @@ use crate::{layout, text};
 const COUNT_WIDTH: usize = 5;
 
 /// What stands before an account's name: whether its folders are on show.
-/// A click on it, or anywhere left of the name, opens and closes.
+/// A click on it, or anywhere left of it, opens and closes.
 const OPEN: &str = "▾ ";
 const CLOSED: &str = "▸ ";
 
@@ -74,9 +74,6 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
             } => {
                 let open = state.sidebar.is_open(*id);
                 let marker = Span::styled(if open { OPEN } else { CLOSED }, styles.dim());
-                // What the name may take: the row, less the cursor, the
-                // marker and the margin on the right.
-                let room = width.saturating_sub(usize::from(layout::SIDEBAR_MARKER_CELLS) + 1);
                 // Open, its unread mail is counted on its inbox, the row
                 // below. Closed, this row is where the count is: in the
                 // column of the others, and the name has what is left.
@@ -85,14 +82,38 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
                 } else {
                     unread.to_string()
                 };
-                let name_room = if count.is_empty() {
-                    room
-                } else {
-                    room.saturating_sub(count.len() + 1)
+                // The letter that marks the account's mail where every
+                // account's is listed together, before its name: which
+                // letter in that list is which account.
+                let initial = state
+                    .accounts
+                    .get(*position)
+                    .and_then(|account| account.initial())
+                    .filter(|letter| !letter.is_control());
+                let mut letter = initial.map_or_else(String::new, |letter| format!("{letter} "));
+                // What the name and the count may take: the row, less
+                // the cursor, the marker and the margin on the right;
+                // and of that, what the name may.
+                let room = width.saturating_sub(usize::from(layout::SIDEBAR_MARKER_CELLS) + 1);
+                let beside = |letter: &str| {
+                    let taken = if count.is_empty() { 0 } else { count.len() + 1 };
+                    room.saturating_sub(text::width(letter) + taken)
                 };
+                // A letter that is only the first of the name says nothing
+                // the name does not: where it would cut a name short that
+                // has room without it, the name has the room. A letter the
+                // user chose is always shown.
+                let named = text::width(name);
+                if initial == name.chars().next() && named > beside(&letter) && named <= beside("")
+                {
+                    letter.clear();
+                }
+                let room = room.saturating_sub(text::width(&letter));
+                let name_room = beside(&letter);
                 Line::from(vec![
                     Span::raw(cursor),
                     marker,
+                    Span::styled(letter, styles.account(*position)),
                     Span::styled(text::fit(name, name_room), styles.account(*position)),
                     Span::styled(text::fit_right(&count, room - name_room), styles.unread()),
                 ])

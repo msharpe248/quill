@@ -103,6 +103,11 @@ fn folder_named<'a>(names: &'a Names, account: LocalAccountId, to: &str) -> Opti
     // else is the account's archive.
     of_account()
         .find(|folder| folder.name.eq_ignore_ascii_case(wanted))
+        // Or the whole name one of Google's own folders has on its
+        // servers, which is how it was shown once.
+        .or_else(|| {
+            of_account().find(|folder| quill_core::providers::names_folder(wanted, &folder.name))
+        })
         .or_else(|| {
             of_account().find(|folder| {
                 folder.role != FolderRole::Other

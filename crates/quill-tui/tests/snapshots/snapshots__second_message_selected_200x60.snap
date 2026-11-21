@@ -4,13 +4,13 @@ expression: harness.screen()
 ---
 ┌ [1] Accounts ────────────┐┏ [2] Inbox (unified) - 12 unread ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓┌ [3] Reader ────────────────────────────────────────────────────────────────────────┐
 │> Unified              12 │┃  * @ W Ana Ruiz              Q4 roadmap                                       09:14┃│ From:    Build Bot <ci@example.com>                                                │
-│  ▾ Work                  │┃>     W Build Bot             [quill] PR #42 passed                            08:51┃│ To:      Robin Vale <robin@example.com>                                            │
+│  ▾ W Work                │┃>     W Build Bot             [quill] PR #42 passed                            08:51┃│ To:      Robin Vale <robin@example.com>                                            │
 │    Inbox               8 │┃  *   P Peter Vale            Sunday dinner                                    08:35┃│ Date:    Sat 14 Nov 2026 08:51                                                     │
 │    Drafts                │┃  *   P Maya Okafor           Trail run Saturday                               04:30┃│ Subject: [quill] PR #42 passed                                                     │
 │    Sent                  │┃  * @ W Sam Lee               Photos from Sat                                    Fri┃│                                                                                    │
 │    Archive               │┃  *   P Riverside Library     Your hold is ready                                 Fri┃│ All 214 checks passed for PR #42 (store: forward-only migrations).                 │
 │    Trash                 │┃  *   W Priya Nair            Re: Offsite agenda                                 Fri┃│                                                                                    │
-│  ▾ Personal              │┃  *!@ W Tomás Ortega          Invoice 2026-114                                   Thu┃│ fmt      ok                                                                        │
+│  ▾ P Personal            │┃  *!@ W Tomás Ortega          Invoice 2026-114                                   Thu┃│ fmt      ok                                                                        │
 │    Inbox               4 │┃      P Jo Park               Re: Book club pick                                 Thu┃│ clippy   ok                                                                        │
 │    Drafts                │┃  *   W 陈静 Chen Jing        Design review notes 设计评审                       Wed┃│ test     ok   (212 passed, 2 ignored)                                              │
 │    Sent                  │┃      W IT Helpdesk           Scheduled maintenance Sunday                       Tue┃│ deny     ok                                                                        │
