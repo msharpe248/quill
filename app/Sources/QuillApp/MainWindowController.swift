@@ -42,12 +42,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     /// How many pages the reading pane has been asked to show.
     private(set) var readingRequests = 0
     /// How many columns the core says the terminal keeps beside the
-    /// reading pane, once it has said.
-    private(set) var readingColumnsAsked: Int?
-    /// Where the user left the divider between the terminal and the
-    /// reading pane. A scripted run keeps it for the run only, and reads
-    /// and writes nothing of the user's.
-    let dividerMemory: any DividerMemory
+    /// reading pane, and for a window of how many, once it has said. The
+    /// divider goes by nothing else: one the user drags is told to the
+    /// core, whose edge it is.
+    private(set) var readingAsked: ReadingDivider.Asked?
+    /// The place and the window's columns the core was last asked to say
+    /// the place again for: once for each, so that two sides that never
+    /// agree do not ask each other for ever.
+    private var askedAgainFor: (asked: ReadingDivider.Asked, window: Int)?
     /// The columns the core was last told the window has room for.
     private(set) var windowColumnsSent: Int?
 
@@ -252,8 +254,14 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         self.options = options
         surface = makeTerminalSurface()
         terminalStack = TerminalStack(terminal: surface.view)
-        dividerMemory =
-            options.isScripted ? TransientDividerMemory() : DefaultsDividerMemory(defaults: .standard)
+        // An older Quill kept a place of its own for the reading pane's
+        // divider, which stood in place of the core's and so could leave
+        // the page and the message read as text with different widths.
+        // It is not read any more, and not left lying. A scripted run
+        // touches nothing of the user's.
+        if !options.isScripted {
+            UserDefaults.standard.removeObject(forKey: ReadingDivider.formerDefaultsKey)
+        }
         settingsPaneMemory =
             options.isScripted ? TransientSettingsPaneMemory() : DefaultsSettingsPaneMemory(defaults: .standard)
         let support =
@@ -548,7 +556,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         case .readingClose:
             closeReading()
         case let .readingPlace(place):
-            readingColumnsAsked = place.columns
+            readingAsked = ReadingDivider.Asked(columns: place.columns, window: place.window)
+            askAgainIfThePlaceIsForAnotherWindow()
             placeReadingDivider()
         case let .editorPlace(place):
             editorPlace = place
@@ -1053,22 +1062,44 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     /// Tells the core how many columns the window has room for, when that
     /// has changed. The core lays out by it while the reading pane has
     /// part of the window, and says where the pane goes.
-    private func reportWindowColumns() {
-        guard let bridge, let columns = windowColumns, columns != windowColumnsSent,
+    private func reportWindowColumns(again: Bool = false) {
+        guard let bridge, let columns = windowColumns, again || columns != windowColumnsSent,
             let resized = WindowResized(columns: columns)
         else { return }
         windowColumnsSent = columns
         bridge.send(.windowResized(resized))
     }
 
+    /// The core said where the reading pane goes for a window of another
+    /// width than the window has, though it has been told the width the
+    /// window has: it is told again, and answers with the place for that.
+    /// A width it has not been told yet is on its way, and the place for
+    /// it will follow by itself.
+    private func askAgainIfThePlaceIsForAnotherWindow() {
+        guard let asked = readingAsked, let window = windowColumns, asked.window != window,
+            windowColumnsSent == window
+        else { return }
+        if let before = askedAgainFor, before.asked == asked, before.window == window {
+            return
+        }
+        askedAgainFor = (asked, window)
+        reportWindowColumns(again: true)
+    }
+
+    /// How many columns the core says the terminal keeps beside the
+    /// reading pane, once it has said.
+    var readingColumnsAsked: Int? { readingAsked?.columns }
+
+    /// How many columns the window had room for when the core said so.
+    var readingWindowAsked: Int? { readingAsked?.window }
+
     /// The width the terminal has beside the reading pane: that of the
-    /// columns the user left it, or else of those the core says. Half the
-    /// window until the terminal has been measured.
+    /// columns the core says. Half the window until the terminal has been
+    /// measured.
     private var readingTerminalWidth: CGFloat {
         guard let cells else { return (splitView.bounds.width / 2).rounded() }
         return ReadingDivider.terminalWidth(
-            remembered: dividerMemory.columns, asked: readingColumnsAsked, width: splitView.bounds.width,
-            divider: splitView.dividerThickness, cells: cells)
+            asked: readingAsked, width: splitView.bounds.width, divider: splitView.dividerThickness, cells: cells)
     }
 
     /// Puts the divider where the reading pane's goes, if the reading pane
@@ -1083,24 +1114,30 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         }
     }
 
-    /// The user dragged the divider and let go. Beside the reading pane,
-    /// that is where it stays, in this run and the next: on the nearest
-    /// whole column. Beside any other pane it is that pane's for as long
-    /// as it is open, and nothing is remembered.
+    /// The user dragged the divider and let go. Beside the reading pane
+    /// it is the edge of the message, which is the core's: the core is
+    /// told the nearest whole column, keeps it for the message read as
+    /// text and for the next run, and says where the pane goes. Until it
+    /// has, the divider rests on that column. Beside any other pane it is
+    /// that pane's for as long as it is open, and nobody is told.
     private func dividerMoved() {
-        guard isReadingPane, let cells else { return }
-        dividerMemory.columns = ReadingDivider.columns(
+        guard isReadingPane, let cells, let window = windowColumns else { return }
+        let columns = ReadingDivider.columns(
             draggedTo: terminalStack.frame.width, width: splitView.bounds.width,
             divider: splitView.dividerThickness, cells: cells)
+        readingAsked = ReadingDivider.Asked(columns: columns, window: window)
+        if let dragged = ReadingDragged(columns: columns) {
+            bridge?.send(.readingDragged(dragged))
+        }
         placeReadingDivider()
     }
 
-    /// The user double-clicked the divider: it goes back to where the core
-    /// says, the reader's place exactly, and nothing is remembered.
+    /// The user double-clicked the divider: the core is asked to put the
+    /// message's edge back where Quill has it by itself, and says where
+    /// that leaves the pane.
     private func dividerReset() {
         guard isReadingPane else { return }
-        dividerMemory.columns = nil
-        placeReadingDivider()
+        bridge?.send(.readingDragged(.back))
     }
 
     /// Puts a reading pane that has loaded its page where the reading pane

@@ -243,6 +243,35 @@ impl State {
         }
     }
 
+    /// The divider between the terminal and the host's reading pane was
+    /// dragged to where the terminal keeps `columns` columns, or with
+    /// none was put back. It is the reader's edge, in the host's window:
+    /// the message has the share that leaves the terminal those columns,
+    /// read as a page or as text, in this run and the next.
+    pub(super) fn reading_dragged(&mut self, env: &Env, columns: Option<u16>, out: &mut Effects) {
+        if !self.web_reading {
+            return;
+        }
+        let Some(columns) = columns else {
+            self.reset_divider(Divider::Reader, out);
+            return;
+        };
+        let Some(window) = self.window_columns else {
+            return;
+        };
+        let share = layout::dragged_beside_reading(
+            window,
+            Split::of(self, env.reader_width),
+            !self.sidebar_hidden,
+            columns,
+        );
+        self.reader_share = Some(share);
+        out.accounts
+            .push(AccountRequest::Remember(Preference::ReaderWidth(Some(
+                (share * 1000.0).round() as u16,
+            ))));
+    }
+
     /// Puts an edge back where Quill has it when nobody has moved it, and
     /// has the setting taken out of the config.
     fn reset_divider(&mut self, divider: Divider, out: &mut Effects) {

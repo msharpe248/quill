@@ -101,6 +101,8 @@ public enum ShellToCore: Equatable, Sendable {
     /// How many columns the terminal would have with the window to itself,
     /// whenever that changes.
     case windowResized(WindowResized)
+    /// The user moved the divider beside the reading pane, or put it back.
+    case readingDragged(ReadingDragged)
     /// The answer to `spellCheck`.
     case spellChecked(SpellChecked)
     /// The answer to `spellSuggest`.
@@ -506,18 +508,47 @@ public struct ReadingShow: Equatable, Sendable, Codable {
 /// The reading pane's place in the window, said in the terminal's own
 /// measure: the terminal keeps `columns` columns and the reading pane has
 /// the rest. The shell turns columns into points; why it is this many is
-/// the core's business.
+/// the core's business. `window` is how many columns the whole window had
+/// room for when the core worked it out: a place for a window of another
+/// width than the window has now is not one to go by.
 public struct ReadingPlace: Equatable, Sendable, Codable {
     public var columns: Int
+    public var window: Int
 
     /// How many columns a terminal can have.
     public static let range = 1...65535
 
-    /// `nil` unless it is a number of columns a terminal can have.
+    /// `nil` unless each is a number of columns a terminal can have, and
+    /// the terminal keeps no more than the window has.
+    public init?(columns: Int, window: Int) {
+        guard Self.range.contains(columns), Self.range.contains(window), columns <= window else { return nil }
+        self.columns = columns
+        self.window = window
+    }
+
+    static let allowedKeys: Set<String> = ["columns", "window"]
+}
+
+/// The user moved the divider between the terminal and the reading pane
+/// and let go with the terminal keeping `columns` columns; or, with none,
+/// double-clicked it, to have it back where Quill puts it by itself. The
+/// edge is the core's: it answers with `readingPlace`.
+public struct ReadingDragged: Equatable, Sendable {
+    public let columns: Int?
+
+    /// Dragged to where the terminal keeps this many columns. `nil`
+    /// unless it is a number of columns a terminal can have.
     public init?(columns: Int) {
-        guard Self.range.contains(columns) else { return nil }
+        guard ReadingPlace.range.contains(columns) else { return nil }
         self.columns = columns
     }
+
+    private init() {
+        columns = nil
+    }
+
+    /// Put back where Quill has it by itself.
+    public static let back = ReadingDragged()
 
     static let allowedKeys: Set<String> = ["columns"]
 }

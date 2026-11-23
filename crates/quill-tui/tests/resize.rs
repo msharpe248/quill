@@ -313,6 +313,103 @@ fn beside_the_reading_pane_the_accounts_edge_moves_and_the_pane_stays_where_it_i
     assert_eq!(message, 147 - kept);
 }
 
+#[test]
+fn the_dividers_beside_the_page_and_beside_the_text_are_one_edge() {
+    // The window of the report: 283 columns, the accounts dragged to 39
+    // of them, and the message with 128.
+    let mut harness = Harness::in_the_app(283, 40, true);
+    harness.env.sidebar_width = Some(39);
+    harness.env.reader_width = 0.525;
+    harness.act(Action::WindowColumns(283));
+    harness.settle();
+    let place = |harness: &Harness| harness.state.reading_place(&harness.env).unwrap();
+    assert_eq!(place(&harness), 155);
+    harness.resize(155, 40);
+    assert_eq!(widths(&harness), (39, 116, 0));
+
+    // The divider beside the page is dragged ten columns to the right,
+    // in the host's window: the terminal is to keep 165.
+    harness.act(Action::ReadingDragged(Some(165)));
+    assert_eq!(place(&harness), 165);
+    harness.resize(165, 40);
+    assert_eq!(widths(&harness), (39, 126, 0));
+    // Kept for the next run, as the message's share.
+    let kept = remembered(&mut harness);
+    assert!(
+        matches!(kept.as_slice(), [Preference::ReaderWidth(Some(share))] if (480..=487).contains(share)),
+        "{kept:?}"
+    );
+
+    // Read as text, the message is where the page was: the list did not
+    // move, and nor did the edge.
+    harness.keys("w");
+    harness.resize(283, 40);
+    assert_eq!(widths(&harness), (39, 126, 118));
+    // And as a page again.
+    harness.keys("w");
+    harness.settle();
+    assert_eq!(place(&harness), 165);
+
+    // The next run starts with it there, either way.
+    let mut again = started_again(283, 40, &kept);
+    again.env.sidebar_width = Some(39);
+    again.act(Action::ClockTick(common::NOW));
+    assert_eq!(widths(&again), (39, 126, 118));
+
+    // A double click on the divider beside the page puts the edge back
+    // where Quill has it by itself, for both.
+    remembered(&mut harness);
+    harness.act(Action::ReadingDragged(None));
+    assert_eq!(remembered(&mut harness), [Preference::ReaderWidth(None)]);
+    let usual = place(&harness);
+    assert_eq!(usual, 39 + 122);
+    harness.keys("w");
+    harness.resize(283, 40);
+    assert_eq!(widths(&harness), (39, 122, 122));
+}
+
+#[test]
+fn a_divider_dragged_beside_the_page_leaves_every_pane_room() {
+    let mut harness = Harness::in_the_app(147, 40, true);
+    harness.act(Action::WindowColumns(147));
+    harness.settle();
+    let place = |harness: &Harness| harness.state.reading_place(&harness.env).unwrap();
+    let (accounts, _, _) = {
+        harness.resize(place(&harness), 40);
+        widths(&harness)
+    };
+    // All the way left, and all the way right: the list and the message
+    // each keep their least, and the share is one the config can hold.
+    for asked in [1, accounts, 146, 147, u16::MAX] {
+        harness.act(Action::ReadingDragged(Some(asked)));
+        let kept = place(&harness);
+        // Twenty columns is the least a pane is drawn in.
+        assert!(kept >= accounts + 20, "{asked}: {kept}");
+        assert!(147 - kept >= 20, "{asked}: {kept}");
+        for preference in remembered(&mut harness) {
+            match preference {
+                Preference::ReaderWidth(Some(share)) => assert!((200..=800).contains(&share)),
+                other => panic!("{other:?}"),
+            }
+        }
+    }
+
+    // With the accounts hidden the terminal keeps the list alone, and a
+    // drag is of the list's columns.
+    harness.act(Action::ReadingDragged(None));
+    harness.keys("\\");
+    let before = place(&harness);
+    harness.act(Action::ReadingDragged(Some(before + 7)));
+    assert_eq!(place(&harness), before + 7);
+
+    // Nothing is dragged beside a page that is not there.
+    let mut harness = in_a_window(147);
+    let was = widths(&harness);
+    harness.act(Action::ReadingDragged(Some(60)));
+    assert_eq!(widths(&harness), was);
+    assert!(remembered(&mut harness).is_empty());
+}
+
 /// The app with the text reader on show, in a window of as many columns
 /// as the terminal has.
 fn in_a_window(width: u16) -> Harness {

@@ -204,6 +204,15 @@ private struct ColumnsParams: Codable {
     var columns: Int
 }
 
+private struct PlaceParams: Codable {
+    var columns: Int
+    var window: Int
+}
+
+private struct DraggedParams: Codable {
+    var columns: Int?
+}
+
 private struct EditorPlaceParams: Codable {
     struct Cells: Codable {
         var column: Int
@@ -1019,9 +1028,10 @@ public extension CoreToShell {
             try envelope.requireOnly([])
             self = .readingClose
         case "reading.place":
-            let params = try envelope.decode(ColumnsParams.self, allowing: ReadingPlace.allowedKeys)
-            guard let place = ReadingPlace(columns: params.columns) else {
-                throw BridgeError.malformed("reading.place: columns must be from 1 to 65535")
+            let params = try envelope.decode(PlaceParams.self, allowing: ReadingPlace.allowedKeys)
+            guard let place = ReadingPlace(columns: params.columns, window: params.window) else {
+                throw BridgeError.malformed(
+                    "reading.place: columns and window must be from 1 to 65535, and columns no more than window")
             }
             self = .readingPlace(place)
         case "editor.place":
@@ -1170,6 +1180,18 @@ public extension ShellToCore {
                 throw BridgeError.malformed("window.resized: columns must be from 1 to 65535")
             }
             self = .windowResized(resized)
+        case "reading.dragged":
+            let params = try envelope.decode(DraggedParams.self, allowing: ReadingDragged.allowedKeys)
+            // Said as nothing is not the same as not said.
+            try envelope.requireNotNull("columns")
+            guard let columns = params.columns else {
+                self = .readingDragged(.back)
+                break
+            }
+            guard let dragged = ReadingDragged(columns: columns) else {
+                throw BridgeError.malformed("reading.dragged: columns must be from 1 to 65535")
+            }
+            self = .readingDragged(dragged)
         case "spell.checked":
             let params = try envelope.decode(SpellCheckedParams.self, allowing: SpellChecked.allowedKeys)
             // Each word is checked as strictly as the message itself.
@@ -1251,6 +1273,8 @@ public extension ShellToCore {
             encodeLine(method: "url.open", params: open)
         case let .windowResized(resized):
             encodeLine(method: "window.resized", params: resized)
+        case let .readingDragged(dragged):
+            encodeLine(method: "reading.dragged", params: DraggedParams(columns: dragged.columns))
         case let .spellChecked(checked):
             encodeLine(method: "spell.checked", params: checked)
         case let .spellSuggested(suggested):

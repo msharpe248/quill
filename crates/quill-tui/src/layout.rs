@@ -163,6 +163,37 @@ pub fn beside_reading(window: u16, split: impl Into<Split>, accounts: bool) -> u
     }
 }
 
+/// The reader's share once the divider beside the host's reading pane has
+/// been dragged to where the terminal keeps `columns` columns, as nearly
+/// as every pane's least width allows: what [`beside_reading`] is undone
+/// by, so that the pane stays where it was let go, and the reader is
+/// there too when the message is read as text.
+pub fn dragged_beside_reading(
+    window: u16,
+    split: impl Into<Split>,
+    accounts: bool,
+    columns: u16,
+) -> f32 {
+    let split = split.into();
+    if window >= WIDE_COLUMNS {
+        let sidebar = wide_sidebar(window, split);
+        let rest = window - sidebar;
+        // What the terminal keeps is the list, and the accounts with it
+        // when they are on show.
+        let list = if accounts {
+            columns.saturating_sub(sidebar)
+        } else {
+            columns
+        };
+        let most = rest.saturating_sub(MIN_PANE).max(MIN_PANE);
+        let reader = rest.saturating_sub(list).clamp(MIN_PANE, most);
+        kept_share(f32::from(reader) / f32::from(rest))
+    } else {
+        let reader = window.saturating_sub(columns);
+        kept_share(f32::from(reader) / f32::from(window.max(1)))
+    }
+}
+
 /// Where the accounts and the list go while the message is in the host's
 /// reading pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -904,6 +935,54 @@ mod tests {
         // Half of eighty columns each, by default.
         assert_eq!(beside_reading(80, 0.5, true), 40);
         assert_eq!(beside_reading(99, 0.5, true), 49);
+    }
+
+    #[test]
+    fn a_divider_dragged_beside_the_page_stays_where_it_was_let_go() {
+        // Wherever it is let go, in a window of any width, with the
+        // accounts on show or hidden and as wide as they may be: the
+        // share that is kept gives that place back, wherever the place
+        // leaves every pane its least.
+        for window in [80_u16, 99, 100, 147, 200, 283, 400] {
+            for sidebar in [None, Some(20), Some(39)] {
+                for accounts in [true, false] {
+                    let split = Split {
+                        reader: 0.5,
+                        sidebar,
+                    };
+                    let (first, last) = if window >= WIDE_COLUMNS {
+                        let own = wide_sidebar(window, split);
+                        let aside = if accounts { own } else { 0 };
+                        (aside + MIN_PANE, aside + (window - own) - MIN_PANE)
+                    } else {
+                        // Never fewer than the fewest a terminal is
+                        // drawn in.
+                        (
+                            ((f32::from(window) * 0.2).ceil() as u16 + 1).max(MIN_SIZE.0),
+                            (f32::from(window) * 0.8) as u16 - 1,
+                        )
+                    };
+                    for columns in first..=last {
+                        let share = dragged_beside_reading(window, split, accounts, columns);
+                        assert!((READER_LEAST..=READER_MOST).contains(&share));
+                        let kept = beside_reading(
+                            window,
+                            Split {
+                                reader: share,
+                                sidebar,
+                            },
+                            accounts,
+                        );
+                        // A share the config's bounds cut short is as
+                        // near as the edge can be; any other is the
+                        // column itself.
+                        if share > READER_LEAST && share < READER_MOST {
+                            assert_eq!(kept, columns, "{window} {sidebar:?} {accounts} {columns}");
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

@@ -153,6 +153,10 @@ pub enum ShellToCore {
     /// itself, whenever that changes.
     #[serde(rename = "window.resized")]
     WindowResized(WindowResized),
+    /// The user moved the divider beside the reading pane, or put it
+    /// back.
+    #[serde(rename = "reading.dragged")]
+    ReadingDragged(ReadingDragged),
     /// The settings window was opened: it wants `settings.show`.
     #[serde(rename = "settings.opened")]
     SettingsOpened(NoParams),
@@ -792,21 +796,124 @@ pub struct ReadingScroll {
 /// the rest of the window. The core works this out from the columns the
 /// whole window has room for (`window.resized`), so that the panes it
 /// draws are as wide beside the reading pane as they are beside its own
-/// reader.
+/// reader. `window` is that number as the core had it: a place worked out
+/// for a window of another width than the window has now is not one to
+/// go by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "ColumnsParams", into = "ColumnsParams")]
+#[serde(try_from = "PlaceParams", into = "PlaceParams")]
 pub struct ReadingPlace {
     columns: u16,
+    window: u16,
 }
 
 impl ReadingPlace {
-    /// `None` for no columns at all: a terminal is never that narrow.
-    pub fn new(columns: u16) -> Option<Self> {
-        (columns > 0).then_some(Self { columns })
+    /// `None` for no columns at all (a terminal is never that narrow), and
+    /// for more columns than the window has.
+    pub fn new(columns: u16, window: u16) -> Option<Self> {
+        (columns > 0 && columns <= window).then_some(Self { columns, window })
     }
 
     pub fn columns(self) -> u16 {
         self.columns
+    }
+
+    /// The columns the whole window had room for when this was worked
+    /// out.
+    pub fn window(self) -> u16 {
+        self.window
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PlaceParams {
+    columns: u16,
+    window: u16,
+}
+
+impl TryFrom<PlaceParams> for ReadingPlace {
+    type Error = String;
+
+    fn try_from(params: PlaceParams) -> Result<Self, Self::Error> {
+        Self::new(params.columns, params.window)
+            .ok_or_else(|| "columns must be at least 1 and no more than window".to_owned())
+    }
+}
+
+impl From<ReadingPlace> for PlaceParams {
+    fn from(place: ReadingPlace) -> Self {
+        Self {
+            columns: place.columns,
+            window: place.window,
+        }
+    }
+}
+
+/// The user moved the divider between the terminal and the reading pane
+/// and let go of it with the terminal keeping `columns` columns; or, with
+/// none, double-clicked it, to have it back where Quill puts it by
+/// itself. The edge is the core's, the same one as its own reader's: the
+/// core works out what the panes come to, remembers it, and answers with
+/// `reading.place`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "DraggedParams", into = "DraggedParams")]
+pub struct ReadingDragged {
+    columns: Option<u16>,
+}
+
+impl ReadingDragged {
+    /// Dragged to where the terminal keeps `columns` columns. `None` for
+    /// no columns at all.
+    pub fn to(columns: u16) -> Option<Self> {
+        (columns > 0).then_some(Self {
+            columns: Some(columns),
+        })
+    }
+
+    /// Put back where Quill has it by itself.
+    pub fn back() -> Self {
+        Self { columns: None }
+    }
+
+    pub fn columns(self) -> Option<u16> {
+        self.columns
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DraggedParams {
+    /// Said as nothing is not the same as not said: `null` is refused.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "said"
+    )]
+    columns: Option<u16>,
+}
+
+/// A number that is there: for a field that may be left out and may not
+/// be `null`.
+fn said<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<u16>, D::Error> {
+    u16::deserialize(deserializer).map(Some)
+}
+
+impl TryFrom<DraggedParams> for ReadingDragged {
+    type Error = String;
+
+    fn try_from(params: DraggedParams) -> Result<Self, Self::Error> {
+        match params.columns {
+            Some(0) => Err("columns must be at least 1".to_owned()),
+            columns => Ok(Self { columns }),
+        }
+    }
+}
+
+impl From<ReadingDragged> for DraggedParams {
+    fn from(dragged: ReadingDragged) -> Self {
+        Self {
+            columns: dragged.columns,
+        }
     }
 }
 
@@ -923,22 +1030,6 @@ impl WindowResized {
 #[serde(deny_unknown_fields)]
 struct ColumnsParams {
     columns: u16,
-}
-
-impl TryFrom<ColumnsParams> for ReadingPlace {
-    type Error = String;
-
-    fn try_from(params: ColumnsParams) -> Result<Self, Self::Error> {
-        Self::new(params.columns).ok_or_else(|| "columns must be at least 1".to_owned())
-    }
-}
-
-impl From<ReadingPlace> for ColumnsParams {
-    fn from(place: ReadingPlace) -> Self {
-        Self {
-            columns: place.columns,
-        }
-    }
 }
 
 impl TryFrom<ColumnsParams> for WindowResized {
@@ -3124,13 +3215,15 @@ mod tests {
 
     #[test]
     fn the_place_of_the_reading_pane_is_a_whole_number_of_columns_both_ways() {
-        assert!(ReadingPlace::new(0).is_none() && WindowResized::new(0).is_none());
-        let place = ReadingPlace::new(78).unwrap();
-        assert_eq!(place.columns(), 78);
+        assert!(ReadingPlace::new(0, 147).is_none() && WindowResized::new(0).is_none());
+        // The terminal never keeps more columns than the window has.
+        assert!(ReadingPlace::new(148, 147).is_none());
+        let place = ReadingPlace::new(78, 147).unwrap();
+        assert_eq!((place.columns(), place.window()), (78, 147));
         let line = encode(&CoreToShell::ReadingPlace(place)).unwrap();
         assert_eq!(
             line,
-            r#"{"jsonrpc":"2.0","method":"reading.place","params":{"columns":78}}"#
+            r#"{"jsonrpc":"2.0","method":"reading.place","params":{"columns":78,"window":147}}"#
         );
         assert_eq!(
             decode::<CoreToShell>(&line).unwrap(),
@@ -3153,6 +3246,54 @@ mod tests {
             let line = format!(r#"{{"jsonrpc":"2.0","method":"reading.place","params":{bad}}}"#);
             assert!(decode::<CoreToShell>(&line).is_err(), "{bad}");
             let line = format!(r#"{{"jsonrpc":"2.0","method":"window.resized","params":{bad}}}"#);
+            assert!(decode::<ShellToCore>(&line).is_err(), "{bad}");
+        }
+        for bad in [
+            r#"{"columns":78}"#,
+            r#"{"window":147}"#,
+            r#"{"columns":0,"window":147}"#,
+            r#"{"columns":148,"window":147}"#,
+            r#"{"columns":78,"window":0}"#,
+            r#"{"columns":78,"window":147.5}"#,
+        ] {
+            let line = format!(r#"{{"jsonrpc":"2.0","method":"reading.place","params":{bad}}}"#);
+            assert!(decode::<CoreToShell>(&line).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_divider_dragged_beside_the_reading_pane_is_columns_or_put_back() {
+        assert!(ReadingDragged::to(0).is_none());
+        let dragged = ReadingDragged::to(90).unwrap();
+        let line = encode(&ShellToCore::ReadingDragged(dragged)).unwrap();
+        assert_eq!(
+            line,
+            r#"{"jsonrpc":"2.0","method":"reading.dragged","params":{"columns":90}}"#
+        );
+        assert_eq!(
+            decode::<ShellToCore>(&line).unwrap(),
+            ShellToCore::ReadingDragged(dragged)
+        );
+        let line = encode(&ShellToCore::ReadingDragged(ReadingDragged::back())).unwrap();
+        assert_eq!(
+            line,
+            r#"{"jsonrpc":"2.0","method":"reading.dragged","params":{}}"#
+        );
+        let back = decode::<ShellToCore>(&line).unwrap();
+        assert!(
+            matches!(back, ShellToCore::ReadingDragged(dragged) if dragged.columns().is_none())
+        );
+        for bad in [
+            r#"{"columns":0}"#,
+            r#"{"columns":-3}"#,
+            r#"{"columns":90.5}"#,
+            r#"{"columns":"90"}"#,
+            r#"{"columns":65536}"#,
+            r#"{"columns":90,"points":720}"#,
+            r#"{"points":720}"#,
+            r#"{"columns":null}"#,
+        ] {
+            let line = format!(r#"{{"jsonrpc":"2.0","method":"reading.dragged","params":{bad}}}"#);
             assert!(decode::<ShellToCore>(&line).is_err(), "{bad}");
         }
     }

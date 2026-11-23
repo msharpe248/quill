@@ -58,7 +58,8 @@ private enum Examples {
             examples.map(\.name) == [
                 "app.will_quit.json", "appearance.changed.json", "command.run.json", "editor.exited.json",
                 "files.dropped.json",
-                "files.saved.json", "form.used.json", "notify.used.json", "settings.closed.json",
+                "files.saved.json", "form.used.json", "notify.used.json", "reading.dragged.json",
+                "settings.closed.json",
                 "settings.opened.json", "settings.used.json", "spell.checked.json",
                 "spell.suggested.json", "themes.imported.json", "thumbnail.made.json", "url.open.json",
                 "window.resized.json",
@@ -107,7 +108,8 @@ private enum Examples {
             "theme-imported-with-a-hidden-name.json", "theme-imported-under-a-toml-name.json",
             "settings-button-with-nothing-on-it.json", "form-button-field-in-a-sheet.json",
             "editor-place-with-the-keys-and-nowhere-to-be.json", "editor-place-with-no-rows.json",
-            "key-line-that-says-nothing.json",
+            "key-line-that-says-nothing.json", "reading-place-with-no-window.json",
+            "reading-dragged-to-no-columns.json",
         ] {
             #expect(examples.contains { $0.name == name }, "\(name) is missing")
         }
@@ -386,7 +388,8 @@ private enum Examples {
     @Test func thePlaceOfTheReadingPaneIsAWholeNumberOfColumnsBothWays() throws {
         let examples = try Dictionary(uniqueKeysWithValues: Examples.load("core-to-shell").map { ($0.name, $0.text) })
         #expect(
-            try CoreToShell(line: examples["reading.place.json"]!) == .readingPlace(ReadingPlace(columns: 78)!))
+            try CoreToShell(line: examples["reading.place.json"]!)
+                == .readingPlace(ReadingPlace(columns: 78, window: 147)!))
         let answers = try Dictionary(uniqueKeysWithValues: Examples.load("shell-to-core").map { ($0.name, $0.text) })
         #expect(
             try ShellToCore(line: answers["window.resized.json"]!)
@@ -396,8 +399,11 @@ private enum Examples {
                 == #"{"jsonrpc":"2.0","method":"window.resized","params":{"columns":147}}"#)
 
         // Neither can be built holding what the other side would refuse.
-        #expect(ReadingPlace(columns: 0) == nil && ReadingPlace(columns: -3) == nil)
-        #expect(ReadingPlace(columns: 65535) != nil && ReadingPlace(columns: 65536) == nil)
+        #expect(ReadingPlace(columns: 0, window: 147) == nil && ReadingPlace(columns: -3, window: 147) == nil)
+        #expect(ReadingPlace(columns: 65535, window: 65535) != nil)
+        #expect(ReadingPlace(columns: 65536, window: 65536) == nil)
+        // The terminal never keeps more columns than the window has.
+        #expect(ReadingPlace(columns: 148, window: 147) == nil && ReadingPlace(columns: 78, window: 0) == nil)
         #expect(WindowResized(columns: 0) == nil && WindowResized(columns: 65536) == nil)
         #expect(WindowResized(columns: 1) != nil)
         for bad in [
@@ -407,6 +413,36 @@ private enum Examples {
             #expect(throws: BridgeError.self, "\(bad)") { try CoreToShell(line: place) }
             let resized = #"{"jsonrpc":"2.0","method":"window.resized","params":\#(bad)}"#
             #expect(throws: BridgeError.self, "\(bad)") { try ShellToCore(line: resized) }
+        }
+        for bad in [
+            #"{"columns":78}"#, #"{"window":147}"#, #"{"columns":148,"window":147}"#,
+            #"{"columns":78,"window":0}"#, #"{"columns":78,"window":147.5}"#,
+        ] {
+            let place = #"{"jsonrpc":"2.0","method":"reading.place","params":\#(bad)}"#
+            #expect(throws: BridgeError.self, "\(bad)") { try CoreToShell(line: place) }
+        }
+    }
+
+    @Test func aDividerDraggedBesideTheReadingPaneIsColumnsOrPutBack() throws {
+        let examples = try Dictionary(uniqueKeysWithValues: Examples.load("shell-to-core").map { ($0.name, $0.text) })
+        #expect(
+            try ShellToCore(line: examples["reading.dragged.json"]!)
+                == .readingDragged(ReadingDragged(columns: 90)!))
+        #expect(
+            try ShellToCore(line: #"{"jsonrpc":"2.0","method":"reading.dragged","params":{}}"#)
+                == .readingDragged(.back))
+        #expect(
+            ShellToCore.readingDragged(ReadingDragged(columns: 90)!).line
+                == #"{"jsonrpc":"2.0","method":"reading.dragged","params":{"columns":90}}"#)
+        #expect(
+            ShellToCore.readingDragged(.back).line == #"{"jsonrpc":"2.0","method":"reading.dragged","params":{}}"#)
+        #expect(ReadingDragged(columns: 0) == nil && ReadingDragged(columns: 65536) == nil)
+        for bad in [
+            #"{"columns":0}"#, #"{"columns":90.5}"#, #"{"columns":"90"}"#, #"{"columns":null}"#,
+            #"{"columns":90,"points":720}"#, #"{"points":720}"#,
+        ] {
+            let dragged = #"{"jsonrpc":"2.0","method":"reading.dragged","params":\#(bad)}"#
+            #expect(throws: BridgeError.self, "\(bad)") { try ShellToCore(line: dragged) }
         }
     }
 

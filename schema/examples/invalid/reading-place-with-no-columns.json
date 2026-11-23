@@ -1,1 +1,1 @@
-{ "jsonrpc": "2.0", "method": "reading.place", "params": { "columns": 0 } }
+{ "jsonrpc": "2.0", "method": "reading.place", "params": { "columns": 0, "window": 147 } }

@@ -347,6 +347,11 @@ pub enum Action {
     /// terminal would have with the window to itself. The layout goes by
     /// it while the host's reading pane has part of the window.
     WindowColumns(u16),
+    /// The user moved the divider between the terminal and the host's
+    /// reading pane to where the terminal keeps this many columns; with
+    /// none, they put it back where Quill has it by itself. It is the
+    /// edge of the reader, dragged in the host's window.
+    ReadingDragged(Option<u16>),
     /// The user opened, closed or did something in the host's settings
     /// window.
     Settings(SettingsAct),
@@ -394,6 +399,9 @@ pub struct Effects {
     /// Agents are stopped: the run loop switches both ways in off in
     /// [`Env`] and hangs up on whoever is connected.
     pub agents_stopped: bool,
+    /// The host asked where its reading pane goes: it is told again,
+    /// though the place is what it was.
+    pub place_again: bool,
 }
 
 impl Effects {
@@ -406,6 +414,7 @@ impl Effects {
             && self.system_dark.is_none()
             && self.trying.is_none()
             && !self.agents_stopped
+            && !self.place_again
     }
 }
 
@@ -1730,9 +1739,14 @@ impl State {
                 self.follow.settled = true;
             }
             Action::WindowColumns(columns) => {
+                // Told again what it was told before, the host is asking
+                // where its pane goes: it is answered, and nothing drawn
+                // here changes.
                 changed = self.window_columns != Some(columns);
                 self.window_columns = Some(columns);
+                out.place_again = !changed;
             }
+            Action::ReadingDragged(columns) => self.reading_dragged(env, columns, &mut out),
             Action::HookDone { name, outcome } => {
                 self.hook_running = None;
                 let said = outcome.said(&name);

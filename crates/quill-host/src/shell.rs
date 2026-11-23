@@ -174,6 +174,9 @@ fn read_loop(stream: UnixStream, events: UnboundedSender<HostEvent>) {
             },
             Ok(ShellToCore::FormUsed(used)) => HostEvent::FormUsed(used),
             Ok(ShellToCore::WindowResized(resized)) => HostEvent::WindowColumns(resized.columns()),
+            Ok(ShellToCore::ReadingDragged(dragged)) => {
+                HostEvent::ReadingDragged(dragged.columns())
+            }
             Ok(ShellToCore::SettingsOpened(_)) => HostEvent::SettingsOpened,
             Ok(ShellToCore::SettingsClosed(_)) => HostEvent::SettingsClosed,
             Ok(ShellToCore::SettingsUsed(used)) => HostEvent::SettingsUsed(used),
@@ -383,13 +386,13 @@ mod tests {
         ));
         host.reading_close();
         assert!(matches!(sent(&mut shell), CoreToShell::ReadingClose(_)));
-        host.reading_place(78);
+        host.reading_place(78, 147);
         assert!(matches!(
             sent(&mut shell),
-            CoreToShell::ReadingPlace(place) if place.columns() == 78
+            CoreToShell::ReadingPlace(place) if place.columns() == 78 && place.window() == 147
         ));
         // No columns is no place, and is not said.
-        host.reading_place(0);
+        host.reading_place(0, 147);
         // What is said above the page is made to fit; the page is shown.
         let mut header = vec!["line\u{7}".to_owned(); 9];
         header.insert(0, String::new());

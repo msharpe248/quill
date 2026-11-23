@@ -46,29 +46,56 @@ public struct CellMeasure: Equatable, Sendable {
 ///
 /// The place is a number of columns for the terminal to keep. The core
 /// says how many (the accounts' and the list's, so that the pane has the
-/// reader's place exactly); a place the user dragged the divider to stands
-/// instead of that until they put it back. Nothing here knows why the core
-/// says what it says.
+/// reader's place exactly), and for a window of how many columns it
+/// worked that out. Nothing else says: a divider the user drags is told
+/// to the core, whose edge it is, and stays where the core then says.
+/// Nothing here knows why the core says what it says.
 public enum ReadingDivider {
+    /// What the core said: the terminal keeps `columns` columns, in a
+    /// window with room for `window` of them.
+    public struct Asked: Equatable, Sendable {
+        public var columns: Int
+        public var window: Int
+
+        public init(columns: Int, window: Int) {
+            self.columns = columns
+            self.window = window
+        }
+    }
+
     /// The fewest columns the terminal is left with.
     public static let fewestColumns = 24
     /// The least width the reading pane is left with, in points.
     public static let narrowestPane: CGFloat = 200
 
+    /// Whether what the core said was worked out for the window as it is
+    /// now: for as many columns as `width` has room for.
+    public static func isCurrent(_ asked: Asked?, width: CGFloat, cells: CellMeasure) -> Bool {
+        asked?.window == cells.columns(inWidth: width)
+    }
+
     /// How many columns the terminal keeps beside the reading pane.
     ///
+    /// What the core said for a window of another width is not gone by as
+    /// it stands: until the core has said again, the terminal keeps the
+    /// same share of the window as it is now.
+    ///
     /// - Parameters:
-    ///   - remembered: Where the user left the divider, if they moved it.
     ///   - asked: What the core said, if it has.
     ///   - width: The width there is for the terminal, the divider and the
     ///     pane together.
     ///   - divider: The divider's own thickness.
-    public static func columns(
-        remembered: Int?, asked: Int?, width: CGFloat, divider: CGFloat, cells: CellMeasure
-    ) -> Int {
+    public static func columns(asked: Asked?, width: CGFloat, divider: CGFloat, cells: CellMeasure) -> Int {
         let window = cells.columns(inWidth: width)
-        // Before the core has said: half the window each.
-        let wanted = remembered ?? asked ?? window / 2
+        let wanted: Int
+        if let asked, asked.window == window {
+            wanted = asked.columns
+        } else if let asked, asked.window > 0 {
+            wanted = Int((Double(asked.columns) * Double(window) / Double(asked.window)).rounded())
+        } else {
+            // Before the core has said: half the window each.
+            wanted = window / 2
+        }
         return held(wanted, width: width, divider: divider, cells: cells)
     }
 
@@ -92,59 +119,11 @@ public enum ReadingDivider {
     }
 
     /// The width to give the terminal for it to have that many columns.
-    public static func terminalWidth(
-        remembered: Int?, asked: Int?, width: CGFloat, divider: CGFloat, cells: CellMeasure
-    ) -> CGFloat {
-        cells.width(
-            forColumns: columns(remembered: remembered, asked: asked, width: width, divider: divider, cells: cells))
-    }
-}
-
-/// Where the user left the divider between the terminal and the reading
-/// pane: how many columns the terminal keeps. `nil` while they have not
-/// moved it, or have put it back.
-///
-/// It is how the window was left, not a setting, and it is counted in the
-/// shell's own measure, so the shell keeps it, as it keeps the window's
-/// size.
-public protocol DividerMemory: AnyObject {
-    var columns: Int? { get set }
-}
-
-/// Kept in the app's defaults, from one run to the next.
-public final class DefaultsDividerMemory: DividerMemory {
-    public static let key = "ReadingPaneTerminalColumns"
-
-    private let defaults: UserDefaults
-
-    public init(defaults: UserDefaults) {
-        self.defaults = defaults
+    public static func terminalWidth(asked: Asked?, width: CGFloat, divider: CGFloat, cells: CellMeasure) -> CGFloat {
+        cells.width(forColumns: columns(asked: asked, width: width, divider: divider, cells: cells))
     }
 
-    public var columns: Int? {
-        get {
-            // Anything there that is not a number of columns is nothing.
-            guard let stored = defaults.object(forKey: Self.key) as? Int, (1...65535).contains(stored) else {
-                return nil
-            }
-            return stored
-        }
-        set {
-            if let newValue, (1...65535).contains(newValue) {
-                defaults.set(newValue, forKey: Self.key)
-            } else {
-                defaults.removeObject(forKey: Self.key)
-            }
-        }
-    }
-}
-
-/// Kept for the run and no longer: for a scripted run, which must leave
-/// the user's own defaults as they were, and read nothing from them.
-public final class TransientDividerMemory: DividerMemory {
-    public var columns: Int?
-
-    public init(columns: Int? = nil) {
-        self.columns = columns
-    }
+    /// Where an older Quill kept a place of the shell's own for the
+    /// divider. Nothing reads it now: it is taken out of the defaults.
+    public static let formerDefaultsKey = "ReadingPaneTerminalColumns"
 }

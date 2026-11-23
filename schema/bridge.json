@@ -53,6 +53,7 @@
         { "$ref": "#/$defs/editor.exited" },
         { "$ref": "#/$defs/form.used" },
         { "$ref": "#/$defs/window.resized" },
+        { "$ref": "#/$defs/reading.dragged" },
         { "$ref": "#/$defs/settings.opened" },
         { "$ref": "#/$defs/settings.closed" },
         { "$ref": "#/$defs/settings.used" },
@@ -381,7 +382,7 @@
     },
 
     "reading.place": {
-      "description": "Core to shell. Where the reading pane stands, said in the terminal's own measure: while the reading pane is beside the terminal, the terminal keeps `columns` columns and the reading pane has the rest of the window. The core works it out from window.resized, so that what it draws is as wide beside the reading pane as beside its own reader, and sends it whenever web reading is on and the number changes. The shell turns columns into points with the width of a terminal cell, and may put the divider elsewhere when the user has dragged it. It says nothing about any other pane.",
+      "description": "Core to shell. Where the reading pane stands, said in the terminal's own measure: while the reading pane is beside the terminal, the terminal keeps `columns` columns and the reading pane has the rest of the window. The core works it out from window.resized, so that what it draws is as wide beside the reading pane as beside its own reader, and sends it whenever web reading is on and either number changes. `window` is the columns the whole window had room for when the core worked this out: the shell goes by a place only while that is what the window has room for now, and otherwise says window.resized again and waits for the place that answers it. The shell turns columns into points with the width of a terminal cell, and keeps no place of its own: a divider the user drags is said with reading.dragged, and stays where the core then says. It says nothing about any other pane.",
       "type": "object",
       "required": ["jsonrpc", "method", "params"],
       "additionalProperties": false,
@@ -390,11 +391,17 @@
         "method": { "const": "reading.place" },
         "params": {
           "type": "object",
-          "required": ["columns"],
+          "required": ["columns", "window"],
           "additionalProperties": false,
           "properties": {
             "columns": {
-              "description": "How many columns the terminal keeps.",
+              "description": "How many columns the terminal keeps. Never more than `window`.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "window": {
+              "description": "How many columns the whole window had room for when this was worked out.",
               "type": "integer",
               "minimum": 1,
               "maximum": 65535
@@ -1374,6 +1381,29 @@
           "additionalProperties": false,
           "properties": {
             "columns": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            }
+          }
+        }
+      }
+    },
+
+    "reading.dragged": {
+      "description": "Shell to core. The user moved the divider between the terminal and the reading pane and let go of it with the terminal keeping `columns` columns (the nearest whole column to where they let go); or, with no `columns`, double-clicked it, to have it back where Quill puts it by itself. The edge is the same one as the edge of the core's own reader: the core works out what share of the window the message has, keeps it for the next run, draws its own reader by it when web reading is off, and answers with reading.place, which may be another number where the one asked for leaves a pane too narrow. The shell remembers nothing of where the divider was.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "reading.dragged" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "columns": {
+              "description": "How many columns the terminal keeps. Absent: put the divider back.",
               "type": "integer",
               "minimum": 1,
               "maximum": 65535

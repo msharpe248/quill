@@ -46,17 +46,22 @@ import Testing
         #expect(odd.columns(inWidth: 428) == 57 && odd.columns(inWidth: 427) == 56)
     }
 
+    /// What the core says for a window of this width: asked afresh, for
+    /// the window as it is.
+    static func said(_ width: CGFloat, _ cells: CellMeasure) -> ReadingDivider.Asked {
+        let window = cells.columns(inWidth: width)
+        return ReadingDivider.Asked(columns: asked(window: window), window: window)
+    }
+
     @Test func theTerminalIsGivenExactlyTheColumnsTheCoreAsksAtEveryWindowWidth() {
         for cells in Self.measures {
             for points in stride(from: 700, through: 3000, by: 37) {
                 let width = CGFloat(points)
-                let window = cells.columns(inWidth: width)
-                let asked = Self.asked(window: window)
-                let terminal = ReadingDivider.terminalWidth(
-                    remembered: nil, asked: asked, width: width, divider: 1, cells: cells)
+                let said = Self.said(width, cells)
+                let terminal = ReadingDivider.terminalWidth(asked: said, width: width, divider: 1, cells: cells)
                 // The terminal view, that wide, has those columns: what
                 // the core draws in them is as wide as it said.
-                #expect(cells.columns(inWidth: terminal) == asked, "\(cells) \(points)")
+                #expect(cells.columns(inWidth: terminal) == said.columns, "\(cells) \(points)")
                 // And the pane has the rest, and room.
                 #expect(width - 1 - terminal >= ReadingDivider.narrowestPane, "\(cells) \(points)")
             }
@@ -74,13 +79,13 @@ import Testing
                 // With the terminal alone in the window, its columns are
                 // the window's: what the core is told, and answers for.
                 let window = cells.columns(inWidth: terminal)
-                terminal = ReadingDivider.terminalWidth(
-                    remembered: nil, asked: Self.asked(window: window), width: width, divider: 1, cells: cells)
+                let said = ReadingDivider.Asked(columns: Self.asked(window: window), window: window)
+                terminal = ReadingDivider.terminalWidth(asked: said, width: width, divider: 1, cells: cells)
                 seen.insert(terminal)
                 // With the pane up the window's columns are still those,
                 // though the terminal has fewer.
                 #expect(cells.columns(inWidth: width) == window)
-                #expect(cells.columns(inWidth: terminal) == Self.asked(window: window))
+                #expect(cells.columns(inWidth: terminal) == said.columns)
                 // Off again: the terminal has the whole window back.
                 terminal = width
             }
@@ -88,9 +93,7 @@ import Testing
 
             // The window is resized with the pane up, and brought back.
             let place: (CGFloat) -> Int = { width in
-                let window = cells.columns(inWidth: width)
-                return ReadingDivider.columns(
-                    remembered: nil, asked: Self.asked(window: window), width: width, divider: 1, cells: cells)
+                ReadingDivider.columns(asked: Self.said(width, cells), width: width, divider: 1, cells: cells)
             }
             let first = place(1180)
             for other in [1400, 900, 2200, 1181, 1179] as [CGFloat] {
@@ -102,34 +105,34 @@ import Testing
 
     @Test func untilTheCoreHasSaidTheTerminalHasHalfTheWindow() {
         let cells = CellMeasure(cellWidthPixels: 16, scale: 2)!
-        #expect(ReadingDivider.columns(remembered: nil, asked: nil, width: 1180, divider: 1, cells: cells) == 73)
+        #expect(ReadingDivider.columns(asked: nil, width: 1180, divider: 1, cells: cells) == 73)
     }
 
-    @Test func whereTheUserLeftTheDividerStandsInsteadUntilItIsPutBack() {
+    @Test func aPlaceSaidForAWindowOfAnotherWidthIsNotGoneByAsItStands() {
+        // Nine pixels to a cell: 2548 points have room for 283 columns.
+        let cells = CellMeasure(cellWidthPixels: 9, scale: 1)!
+        let now = ReadingDivider.Asked(columns: 155, window: 283)
+        #expect(ReadingDivider.isCurrent(now, width: 2548, cells: cells))
+        #expect(ReadingDivider.columns(asked: now, width: 2548, divider: 1, cells: cells) == 155)
+
+        // The same words for a window that had room for 304: ten columns
+        // too many for this one, if they were gone by. Until the core
+        // says again, the terminal keeps the same share of this window.
+        let stale = ReadingDivider.Asked(columns: 165, window: 304)
+        #expect(!ReadingDivider.isCurrent(stale, width: 2548, cells: cells))
+        #expect(ReadingDivider.columns(asked: stale, width: 2548, divider: 1, cells: cells) == 154)
+        #expect(!ReadingDivider.isCurrent(nil, width: 2548, cells: cells))
+    }
+
+    @Test func aDividerLetGoOfRestsOnTheNearestColumn() {
         let cells = CellMeasure(cellWidthPixels: 16, scale: 2)!
-        let memory = TransientDividerMemory()
-        let place = {
-            ReadingDivider.columns(remembered: memory.columns, asked: 85, width: 1180, divider: 1, cells: cells)
-        }
-        #expect(place() == 85)
-
-        // Dragged, and let go between two columns: it rests on the nearer.
-        memory.columns = ReadingDivider.columns(draggedTo: 563, width: 1180, divider: 1, cells: cells)
-        #expect(memory.columns == 70)
-        #expect(place() == 70)
-        #expect(
-            ReadingDivider.terminalWidth(remembered: memory.columns, asked: 85, width: 1180, divider: 1, cells: cells)
-                == 560)
+        // Let go between two columns: it rests on the nearer, and that is
+        // the number the core is told.
+        #expect(ReadingDivider.columns(draggedTo: 563, width: 1180, divider: 1, cells: cells) == 70)
         #expect(ReadingDivider.columns(draggedTo: 565, width: 1180, divider: 1, cells: cells) == 71)
-
-        // Whatever the core says afterwards, as the window is resized.
-        let wider = ReadingDivider.columns(
-            remembered: memory.columns, asked: 99, width: 1400, divider: 1, cells: cells)
-        #expect(wider == 70)
-
-        // Put back: where the core says again.
-        memory.columns = nil
-        #expect(place() == 85)
+        // Once the core has said so, that is where it stands.
+        let said = ReadingDivider.Asked(columns: 70, window: cells.columns(inWidth: 1180))
+        #expect(ReadingDivider.terminalWidth(asked: said, width: 1180, divider: 1, cells: cells) == 560)
     }
 
     @Test func neitherSideIsLeftWithoutRoom() {
@@ -140,64 +143,16 @@ import Testing
         #expect(most == 122)
         #expect(1180 - 1 - cells.width(forColumns: most) >= ReadingDivider.narrowestPane)
 
-        // A place remembered from a wide window, in a narrow one: held to
-        // what fits, and not forgotten.
-        let memory = TransientDividerMemory(columns: 110)
-        let narrow = ReadingDivider.columns(
-            remembered: memory.columns, asked: 30, width: 600, divider: 1, cells: cells)
-        #expect(narrow == 49)
-        #expect(memory.columns == 110)
-        #expect(
-            ReadingDivider.columns(remembered: memory.columns, asked: 85, width: 1400, divider: 1, cells: cells) == 110)
-
+        let said: (Int, CGFloat) -> ReadingDivider.Asked = { columns, width in
+            ReadingDivider.Asked(columns: columns, window: cells.columns(inWidth: width))
+        }
+        // More than fits beside the pane: held to what does.
+        #expect(ReadingDivider.columns(asked: said(110, 600), width: 600, divider: 1, cells: cells) == 49)
         // A window with room for only one of the two keeps a terminal that
         // can be drawn in.
-        #expect(ReadingDivider.columns(remembered: nil, asked: 24, width: 380, divider: 1, cells: cells) == 24)
+        #expect(ReadingDivider.columns(asked: said(24, 380), width: 380, divider: 1, cells: cells) == 24)
         // And one narrower than that gives the terminal what there is.
-        #expect(ReadingDivider.columns(remembered: nil, asked: 24, width: 160, divider: 1, cells: cells) == 20)
-        #expect(ReadingDivider.columns(remembered: nil, asked: 24, width: 0, divider: 1, cells: cells) == 1)
-    }
-
-    @Test func theDividerIsRememberedFromOneRunToTheNextAndForgottenWhenPutBack() throws {
-        // Defaults of the test's own, removed with it: never the app's.
-        let suite = "dev.quill.tests.divider-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-
-        #expect(DefaultsDividerMemory(defaults: defaults).columns == nil)
-        DefaultsDividerMemory(defaults: defaults).columns = 70
-        // Another run: another object over the same defaults.
-        #expect(DefaultsDividerMemory(defaults: defaults).columns == 70)
-        #expect(defaults.integer(forKey: DefaultsDividerMemory.key) == 70)
-
-        // Put back: nothing is left behind.
-        DefaultsDividerMemory(defaults: defaults).columns = nil
-        #expect(DefaultsDividerMemory(defaults: defaults).columns == nil)
-        #expect(defaults.object(forKey: DefaultsDividerMemory.key) == nil)
-
-        // What is not a number of columns is not remembered, and what is
-        // found there that is not one is nothing.
-        let memory = DefaultsDividerMemory(defaults: defaults)
-        memory.columns = 0
-        #expect(defaults.object(forKey: DefaultsDividerMemory.key) == nil)
-        for junk in ["seventy", -5, 0, 70000, 70.5, [70]] as [Any] {
-            defaults.set(junk, forKey: DefaultsDividerMemory.key)
-            #expect(memory.columns == nil, "\(junk)")
-        }
-    }
-
-    @Test func aScriptedRunsDividerIsKeptNowhere() throws {
-        let suite = "dev.quill.tests.divider-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        DefaultsDividerMemory(defaults: defaults).columns = 70
-
-        // It starts with none, whatever the defaults hold, and what it is
-        // given goes no further.
-        let transient = TransientDividerMemory()
-        #expect(transient.columns == nil)
-        transient.columns = 90
-        #expect(transient.columns == 90)
-        #expect(DefaultsDividerMemory(defaults: defaults).columns == 70)
+        #expect(ReadingDivider.columns(asked: said(24, 160), width: 160, divider: 1, cells: cells) == 20)
+        #expect(ReadingDivider.columns(asked: said(24, 0), width: 0, divider: 1, cells: cells) == 1)
     }
 }

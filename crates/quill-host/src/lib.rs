@@ -60,6 +60,10 @@ pub enum HostEvent {
     /// to itself: what there is room for, whatever stands beside the
     /// terminal now.
     WindowColumns(u16),
+    /// The user moved the divider beside the reading pane to where the
+    /// terminal keeps this many columns; with none, they put it back
+    /// where Quill has it by itself.
+    ReadingDragged(Option<u16>),
     /// The user opened the host's settings window: it wants to be told
     /// what to show ([`Host::show_settings`]).
     SettingsOpened,
@@ -239,9 +243,10 @@ pub trait Host: Send + Sync {
     }
 
     /// Says where the reading pane stands: the terminal keeps `columns`
-    /// columns, and the pane has the rest of the window.
-    fn reading_place(&self, columns: u16) {
-        if let Some(place) = bridge::ReadingPlace::new(columns) {
+    /// columns, and the pane has the rest of the window, which has room
+    /// for `window` columns in all.
+    fn reading_place(&self, columns: u16, window: u16) {
+        if let Some(place) = bridge::ReadingPlace::new(columns, window) {
             self.send(CoreToShell::ReadingPlace(place));
         }
     }

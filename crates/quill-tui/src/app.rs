@@ -218,7 +218,7 @@ struct Io<'a> {
     /// count of answers it was owed then.
     last_settings: Option<(u64, bridge::SettingsShow)>,
     /// The place the host was last told its reading pane has.
-    last_place: Option<u16>,
+    last_place: Option<(u16, u16)>,
     /// Where the host was last told the editor that has a message's text
     /// goes.
     last_editor: Option<crate::state::EditorSpot>,
@@ -890,14 +890,17 @@ impl Io<'_> {
     }
 
     /// Tells the host where its reading pane stands, when that has
-    /// changed: how many columns the terminal keeps beside it.
+    /// changed: how many columns the terminal keeps beside it, and how
+    /// many the window had room for when that was worked out, so that
+    /// the host can tell a place for the window as it is from one for the
+    /// window as it was.
     fn mirror_place(&mut self, state: &State, env: &Env) {
-        let current = state.reading_place(env);
+        let current = state.reading_place(env).zip(state.window_columns);
         if current == self.last_place {
             return;
         }
-        if let Some(columns) = current {
-            self.host.reading_place(columns);
+        if let Some((columns, window)) = current {
+            self.host.reading_place(columns, window);
         }
         self.last_place = current;
     }
@@ -1266,6 +1269,7 @@ async fn event_loop(
                 }
                 HostEvent::FormUsed(used) => Some(Action::FormUsed(used)),
                 HostEvent::WindowColumns(columns) => Some(Action::WindowColumns(columns)),
+                HostEvent::ReadingDragged(columns) => Some(Action::ReadingDragged(columns)),
                 HostEvent::SettingsOpened => Some(Action::Settings(SettingsAct::Opened)),
                 HostEvent::SettingsClosed => Some(Action::Settings(SettingsAct::Closed)),
                 HostEvent::SettingsUsed(used) => Some(Action::Settings(SettingsAct::Used(used))),
@@ -1337,6 +1341,11 @@ async fn event_loop(
                 env.look.trying = trying;
                 env.restyle();
                 state.dirty = true;
+            }
+            // The host asked where its reading pane goes: what it was
+            // last told is forgotten, so that it is told again.
+            if std::mem::take(&mut effects.place_again) {
+                io.last_place = None;
             }
             io.perform(effects);
             if state.web_reading != web {

@@ -736,10 +736,10 @@ enum DebugScript {
         let room = controller.windowColumns.map(String.init) ?? "unknown"
         let told = controller.windowColumnsSent.map(String.init) ?? "nothing"
         lines.append("window columns: \(room) (core told \(told))")
-        // reading place: core says 85 columns, divider left at none
+        // reading place: core says 85 columns of a window of 147
         let asked = controller.readingColumnsAsked.map { "\($0) columns" } ?? "nothing"
-        let left = controller.dividerMemory.columns.map { "\($0) columns" } ?? "none"
-        lines.append("reading place: core says \(asked), divider left at \(left)")
+        let window = controller.readingWindowAsked.map { " of a window of \($0)" } ?? ""
+        lines.append("reading place: core says \(asked)\(window)")
         // boxes: 24 61 62
         lines.append("boxes: \(boxWidths(in: controller.terminalText).map(String.init).joined(separator: " "))")
         // reading: off
