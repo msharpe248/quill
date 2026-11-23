@@ -10,6 +10,7 @@
 //! theme and key files and hands their contents in.
 
 pub mod agent;
+pub mod anchored;
 pub mod app;
 pub mod command;
 pub mod compose;

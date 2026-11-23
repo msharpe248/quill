@@ -20,7 +20,6 @@ use quill_host::{Attached, Host, HostEvent};
 use quill_media::kitty;
 use quill_store::Store;
 use quill_sync::{SyncEvent, SyncHandle, SyncRequest};
-use ratatui::DefaultTerminal;
 use ratatui::backend::IntoCrossterm;
 use ratatui::crossterm::cursor::MoveTo;
 use ratatui::crossterm::event::{Event, EventStream, MouseButton, MouseEventKind};
@@ -1125,7 +1124,7 @@ struct Inbound {
 }
 
 async fn event_loop(
-    terminal: &mut DefaultTerminal,
+    terminal: &mut terminal::Screen,
     env: &mut Env,
     notices: Vec<Notice>,
     io: &mut Io<'_>,
@@ -1428,7 +1427,7 @@ async fn editor_ended(away: &mut Option<EditorWait>) -> io::Result<ExitStatus> {
 /// through a shell. Everything else Quill does carries on meanwhile: mail
 /// is fetched and sent; only the screen and the keys are Vim's.
 fn run_editor(
-    terminal: &mut DefaultTerminal,
+    terminal: &mut terminal::Screen,
     env: &Env,
     io: &mut Io<'_>,
     input: &mut Option<EventStream>,
@@ -1470,7 +1469,7 @@ fn run_editor(
 /// Takes the terminal over again after Vim, as at the start: the same
 /// modes, an empty screen, and a frame with nothing in it, so that the
 /// next draw writes everything.
-fn retake(mouse: bool) -> io::Result<DefaultTerminal> {
+fn retake(mouse: bool) -> io::Result<terminal::Screen> {
     let terminal = terminal::enter(mouse)?;
     // Asked of the terminal directly: nothing here waits on an answer
     // from it.

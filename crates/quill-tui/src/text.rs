@@ -27,8 +27,14 @@ fn strip(input: &str, multiline: bool) -> String {
     let mut chars = input.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
-            '\n' if multiline => out.push('\n'),
-            '\n' => out.push(' '),
+            // The line and paragraph separators end a line as a line feed
+            // does, and no terminal is to be left to decide what they are.
+            '\n' | '\u{2028}' | '\u{2029}' if multiline => out.push('\n'),
+            '\n' | '\u{2028}' | '\u{2029}' => out.push(' '),
+            // A soft hyphen marks where a word may be broken and shows as
+            // nothing unless it is. Nothing here breaks words there, and
+            // terminals do not agree whether it takes a cell.
+            '\u{ad}' => {}
             '\t' if multiline => out.push_str("    "),
             '\t' => out.push(' '),
             '\u{1b}' => match chars.peek().copied() {
@@ -310,6 +316,23 @@ mod tests {
     fn ordinary_unicode_passes_through() {
         let text = "Tomás 陈静 🎉 — “quoted”";
         assert_eq!(sanitize_line(text), text);
+    }
+
+    #[test]
+    fn a_soft_hyphen_is_left_out_and_the_joiners_of_emoji_and_scripts_are_kept() {
+        assert_eq!(
+            sanitize_line("Robin\u{ad}, your order"),
+            "Robin, your order"
+        );
+        assert_eq!(sanitize_body("co\u{ad}operate\n"), "cooperate\n");
+        let joined = "👩\u{200d}💻 ❤\u{fe0f} می\u{200c}خواهم";
+        assert_eq!(sanitize_line(joined), joined);
+    }
+
+    #[test]
+    fn the_unicode_line_separators_break_a_line_as_a_line_feed_does() {
+        assert_eq!(sanitize_line("a\u{2028}b\u{2029}c"), "a b c");
+        assert_eq!(sanitize_body("a\u{2028}b\u{2029}c"), "a\nb\nc");
     }
 
     #[test]

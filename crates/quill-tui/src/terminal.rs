@@ -6,12 +6,11 @@
 //! the PTY, sets raw mode before it starts the core, and the core accepts a
 //! terminal that is already raw.
 
-use std::io::{self, stdin, stdout};
+use std::io::{self, Stdout, stdin, stdout};
 use std::panic;
 use std::sync::Once;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use ratatui::DefaultTerminal;
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::event::{
@@ -25,6 +24,12 @@ use ratatui::crossterm::terminal::{
 };
 use rustix::termios::LocalModes;
 
+use crate::anchored::Anchored;
+
+/// The terminal Quill draws on: the real one, through a backend that does
+/// not take its word for how wide a character is.
+pub type Screen = Terminal<Anchored<CrosstermBackend<Stdout>>>;
+
 /// We switched raw mode on, so we switch it off.
 static OWNS_RAW_MODE: AtomicBool = AtomicBool::new(false);
 static ENHANCED_KEYBOARD: AtomicBool = AtomicBool::new(false);
@@ -35,7 +40,7 @@ static PANIC_HOOK: Once = Once::new();
 
 /// Raw mode, the alternate screen and, where offered, the Kitty keyboard
 /// protocol. Undo with [`leave`]; a panic undoes it too.
-pub fn enter(mouse: bool) -> io::Result<DefaultTerminal> {
+pub fn enter(mouse: bool) -> io::Result<Screen> {
     let owns_raw_mode = match enable_raw_mode() {
         Ok(()) => true,
         Err(_) if host_made_it_raw() => false,
@@ -75,7 +80,7 @@ pub fn enter(mouse: bool) -> io::Result<DefaultTerminal> {
             execute!(stdout(), EnableMouseCapture)?;
             MOUSE.store(true, Ordering::SeqCst);
         }
-        Terminal::new(CrosstermBackend::new(stdout()))
+        Terminal::new(Anchored::new(CrosstermBackend::new(stdout())))
     })();
     if result.is_err() {
         leave();
