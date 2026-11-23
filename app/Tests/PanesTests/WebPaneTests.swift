@@ -303,6 +303,9 @@ struct WebPaneTests {
         #expect(settled == 1)
         #expect(pane.document == file)
         // Held to the same rules as any page: no script, nothing remote.
+        // The title is the web view's to read off the page, which it may
+        // do a moment after it says the page has loaded.
+        try await wait(for: "the page's title") { pane.webView.title?.isEmpty == false }
         #expect(pane.webView.title == "before")
         #expect(!pane.allowsRemoteContent)
         #expect(pane.summary == "remote content blocked, loaded")
