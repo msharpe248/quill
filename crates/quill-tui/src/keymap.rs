@@ -367,6 +367,10 @@ const VIM: PresetTable = &[
     (CommandId::RulesEdit, &["Z e"]),
     (CommandId::RulesLog, &["Z l"]),
     (CommandId::MessageCopy, &["C"]),
+    (CommandId::MessageCopyText, &["cmd-C", "ctrl-y"]),
+    // Not cmd-s: that is the draft's while a message is written, and a
+    // menu item that is switched off still takes its key.
+    (CommandId::MessageSave, &["cmd-S", "ctrl-s"]),
     (CommandId::MessagePutBack, &["P"]),
     (CommandId::FolderCreate, &["+"]),
     (CommandId::FolderRemove, &["_"]),
@@ -465,6 +469,10 @@ const MUTT: PresetTable = &[
     (CommandId::RulesEdit, &["Z e"]),
     (CommandId::RulesLog, &["Z l"]),
     (CommandId::MessageCopy, &["C"]),
+    (CommandId::MessageCopyText, &["cmd-C", "ctrl-y"]),
+    // Not cmd-s: that is the draft's while a message is written, and a
+    // menu item that is switched off still takes its key.
+    (CommandId::MessageSave, &["cmd-S", "ctrl-s"]),
     (CommandId::MessagePutBack, &["P"]),
     (CommandId::FolderCreate, &["+"]),
     (CommandId::FolderRemove, &["_"]),

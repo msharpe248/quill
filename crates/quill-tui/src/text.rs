@@ -138,6 +138,74 @@ pub fn clip(text: &str, max: usize) -> &str {
     text
 }
 
+/// The part of `text` that lies in the cells from `from` up to `to`: every
+/// grapheme cluster with a cell there, whole, and what takes no cell with
+/// the one it follows. What a selection made by the cell holds of a line.
+pub fn cells(text: &str, from: usize, to: usize) -> &str {
+    let mut used = 0;
+    let mut start = None;
+    let mut end = 0;
+    for (at, grapheme) in text.grapheme_indices(true) {
+        let w = width(grapheme);
+        let inside = if w == 0 {
+            // It goes with what it follows.
+            start.is_some() && end == at
+        } else {
+            used < to && used + w > from
+        };
+        if inside {
+            start.get_or_insert(at);
+            end = at + grapheme.len();
+        }
+        used += w;
+    }
+    start.map_or("", |start| &text[start..end])
+}
+
+/// `text` in the pieces the cells from `from` up to `to` cut it into: what
+/// comes before them, what begins in them, and what comes after. The
+/// pieces put together are the text; one with nothing in it is left out.
+pub fn pieces(text: &str, from: usize, to: usize) -> Vec<&str> {
+    let mut used = 0;
+    let (mut first, mut second) = (text.len(), text.len());
+    for (at, grapheme) in text.grapheme_indices(true) {
+        let w = width(grapheme);
+        if w > 0 && used >= from && first == text.len() {
+            first = at;
+        }
+        if w > 0 && used >= to && second == text.len() {
+            second = at;
+        }
+        used += w;
+    }
+    let first = first.min(second);
+    [&text[..first], &text[first..second], &text[second..]]
+        .into_iter()
+        .filter(|piece| !piece.is_empty())
+        .collect()
+}
+
+/// The cells of the word at cell `at` of `text`: from its first up to the
+/// one after its last. A word is a run of what is not a space, or, where
+/// `at` is a space, the run of spaces. `None` past the end of the text.
+pub fn word_cells(text: &str, at: usize) -> Option<(usize, usize)> {
+    let mut used = 0;
+    // Each run: where it starts, where it ends, whether it is spaces.
+    let mut runs: Vec<(usize, usize, bool)> = Vec::new();
+    for grapheme in text.graphemes(true) {
+        let w = width(grapheme);
+        let space = grapheme.chars().all(char::is_whitespace);
+        match runs.last_mut() {
+            Some((_, end, was)) if *was == space || w == 0 => *end = used + w,
+            _ => runs.push((used, used + w, space)),
+        }
+        used += w;
+    }
+    runs.into_iter()
+        .find(|(start, end, _)| (*start..*end).contains(&at))
+        .map(|(start, end, _)| (start, end))
+}
+
 /// Truncates then pads with spaces on the right to exactly `cells` cells.
 pub fn fit(text: &str, cells: usize) -> String {
     let mut out = truncate(text, cells);
@@ -327,6 +395,47 @@ mod tests {
         assert_eq!(sanitize_body("co\u{ad}operate\n"), "cooperate\n");
         let joined = "👩\u{200d}💻 ❤\u{fe0f} می\u{200c}خواهم";
         assert_eq!(sanitize_line(joined), joined);
+    }
+
+    #[test]
+    fn the_cells_of_a_line_are_whole_characters_however_wide() {
+        assert_eq!(cells("hello world", 6, 11), "world");
+        assert_eq!(cells("hello world", 0, 5), "hello");
+        assert_eq!(cells("hello", 3, 900), "lo");
+        assert_eq!(cells("hello", 9, 12), "");
+        assert_eq!(cells("hello", 2, 2), "");
+        // A wide character with either of its cells taken is taken whole.
+        assert_eq!(cells("a日本b", 1, 2), "日");
+        assert_eq!(cells("a日本b", 2, 4), "日本");
+        // What takes no cell goes with what it follows.
+        assert_eq!(cells("cafe\u{301} au", 3, 4), "e\u{301}");
+        assert_eq!(cells("cafe\u{301} au", 4, 5), " ");
+    }
+
+    #[test]
+    fn a_line_is_cut_into_pieces_that_put_together_are_the_line() {
+        assert_eq!(pieces("abcdefgh", 2, 5), ["ab", "cde", "fgh"]);
+        assert_eq!(pieces("abcdefgh", 0, 3), ["abc", "defgh"]);
+        assert_eq!(pieces("abcdefgh", 5, 900), ["abcde", "fgh"]);
+        assert_eq!(pieces("abcdefgh", 0, 0), ["abcdefgh"]);
+        assert_eq!(pieces("abcdefgh", 20, 30), ["abcdefgh"]);
+        assert_eq!(pieces("abcdefgh", 0, 900), ["abcdefgh"]);
+        assert_eq!(pieces("a日本b", 2, 3), ["a日", "本b"]);
+        assert!(pieces("", 0, 4).is_empty());
+    }
+
+    #[test]
+    fn a_word_is_a_run_of_what_is_not_a_space() {
+        let line = "write to pat@example.com  today";
+        assert_eq!(word_cells(line, 0), Some((0, 5)));
+        assert_eq!(word_cells(line, 4), Some((0, 5)));
+        assert_eq!(word_cells(line, 5), Some((5, 6)));
+        assert_eq!(word_cells(line, 12), Some((9, 24)));
+        assert_eq!(word_cells(line, 24), Some((24, 26)));
+        assert_eq!(word_cells(line, 30), Some((26, 31)));
+        assert_eq!(word_cells(line, 31), None);
+        assert_eq!(word_cells("日本 語", 3), Some((0, 4)));
+        assert_eq!(word_cells("", 0), None);
     }
 
     #[test]

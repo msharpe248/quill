@@ -638,8 +638,12 @@ enum DebugScript {
         if chord.key.count == 1, chord.key != chord.key.lowercased() {
             flags.insert(.shift)
         }
-        let plain = characters[chord.key] ?? chord.key.lowercased()
-        let typed = flags.contains(.shift) ? plain.uppercased() : plain
+        let unshifted = characters[chord.key] ?? chord.key.lowercased()
+        let shifted = flags.contains(.shift) ? unshifted.uppercased() : unshifted
+        // With cmd held a keyboard says the letter was typed without its
+        // shift, and gives the shift in what the key is but for the other
+        // modifiers: which is what a menu's key is matched against.
+        let (typed, plain) = flags.contains(.command) ? (unshifted, shifted) : (shifted, unshifted)
         for type in [NSEvent.EventType.keyDown, .keyUp] {
             guard
                 let event = NSEvent.keyEvent(

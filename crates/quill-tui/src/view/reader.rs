@@ -1,6 +1,5 @@
 //! The reader: a message's headers, then its body, wrapped to the pane.
 
-use quill_core::types::Address;
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -8,14 +7,10 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Padding;
 
 use super::{ImagePlacement, LinkPlacement, pane_block, placeholder};
-use crate::invite::CardRow;
 use crate::layout;
-use crate::state::{Body, Env, Pane, Showing, State};
+use crate::state::{Body, Env, HeadRow, LABEL_WIDTH, Pane, Part, Showing, State};
 use crate::text;
 use crate::theme::Styles;
-
-/// The width of the longest label and its gap: `Subject: `.
-const LABEL_WIDTH: usize = 9;
 
 /// Draws the reader. Returns the image to place over it, if the message
 /// shows one and the terminal can draw it, and adds the link text it drew
@@ -59,7 +54,6 @@ pub fn render(
         );
     }
 
-    let has_cc = !row.headers.cc.is_empty();
     let image_rows = state.reader_image_rows(env, area);
     let viewport = layout::reader_body_height(area, state.reader_header_rows(), image_rows);
     let total = state.reader.lines.len();
@@ -83,76 +77,54 @@ pub fn render(
     frame.render_widget(block, area);
 
     let width = usize::from(inner.width);
-    let mut headers = vec![
-        ("From:", join(&row.headers.from)),
-        ("To:", join(&row.headers.to)),
-    ];
-    if has_cc {
-        headers.push(("Cc:", join(&row.headers.cc)));
-    }
-    headers.push(("Date:", text::long_date(row.headers.date, &env.tz)));
-    headers.push(("Subject:", row.headers.subject.clone()));
-    // The files, by name, as many as fit; the list has them all.
-    let files = state.reader.files();
-    if !files.is_empty() {
-        let key = env
-            .hint_key(crate::command::CommandId::MessageAttachments)
-            .map_or_else(String::new, |key| format!("  ({key} lists them)"));
-        let named = files
-            .iter()
-            .map(|file| format!("{} ({})", file.name, text::file_size(file.size)))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let room = width.saturating_sub(LABEL_WIDTH + text::width(&key));
-        headers.push(("Attach:", format!("{}{key}", text::truncate(&named, room))));
-    }
+    let selection = state.reader.selection;
+    // What is selected of a row is drawn as selected, as far as the row
+    // has words.
+    let mark = |frame: &mut Frame, part: Part, row: usize, y: u16, words: usize| {
+        let Some((from, to)) = selection.and_then(|selection| selection.columns(part, row)) else {
+            return;
+        };
+        let to = to.min(words).min(width);
+        if from < to {
+            let rect = Rect::new(inner.x + from as u16, y, (to - from) as u16, 1);
+            frame.buffer_mut().set_style(rect, styles.selected(true));
+        }
+    };
 
+    // The rows above the text: the fields, and under them, each after a
+    // blank line, what is still to come of the message and the
+    // invitation it carries.
     let mut y = inner.y;
     let bottom = inner.y + inner.height;
-    for (label, value) in headers {
+    for (index, head) in state.reader_head(env, width).iter().enumerate() {
         if y >= bottom {
             return None;
         }
-        let value_style = if label == "Subject:" {
-            styles.text().add_modifier(Modifier::BOLD)
-        } else {
-            styles.text()
+        let line = match head {
+            HeadRow::Field {
+                label,
+                value,
+                strong,
+            } => Line::from(vec![
+                Span::styled(text::fit(label, LABEL_WIDTH), styles.dim()),
+                Span::styled(
+                    value.as_str(),
+                    if *strong {
+                        styles.text().add_modifier(Modifier::BOLD)
+                    } else {
+                        styles.text()
+                    },
+                ),
+            ]),
+            HeadRow::Blank => Line::default(),
+            HeadRow::Note(words) | HeadRow::Rule(words) => {
+                Line::styled(words.as_str(), styles.dim())
+            }
+            HeadRow::Ask(words) => Line::styled(words.as_str(), styles.accent()),
         };
-        let line = Line::from(vec![
-            Span::styled(text::fit(label, LABEL_WIDTH), styles.dim()),
-            Span::styled(
-                text::truncate(&value, width.saturating_sub(LABEL_WIDTH)),
-                value_style,
-            ),
-        ]);
         frame.render_widget(line, Rect::new(inner.x, y, inner.width, 1));
+        mark(frame, Part::Head, index, y, text::width(&head.text()));
         y += 1;
-    }
-    // Under the fields, each after a blank line: what is still to come of
-    // the message, and the invitation it carries.
-    if !state.reader.note.is_empty() {
-        y += 1;
-        for note in &state.reader.note {
-            if y >= bottom {
-                return None;
-            }
-            let line = Line::styled(text::truncate(note, width), styles.dim());
-            frame.render_widget(line, Rect::new(inner.x, y, inner.width, 1));
-            y += 1;
-        }
-    }
-    if !state.reader.card.is_empty() {
-        y += 1;
-        for row in &state.reader.card {
-            if y >= bottom {
-                return None;
-            }
-            frame.render_widget(
-                card_line(row, width, styles),
-                Rect::new(inner.x, y, inner.width, 1),
-            );
-            y += 1;
-        }
     }
     // A blank line between the headers and what follows.
     y += 1;
@@ -215,6 +187,14 @@ pub fn render(
                 // A line wider than the pane, such as a long address in the
                 // list of links, is clipped at its edge.
                 frame.render_widget(Line::from(spans), rect);
+                let words: usize = line.spans.iter().map(|span| text::width(&span.text)).sum();
+                mark(
+                    frame,
+                    Part::Body,
+                    state.reader.scroll + offset,
+                    rect.y,
+                    words,
+                );
 
                 // Where the link text landed, for the run loop to mark.
                 let mut column = 0;
@@ -224,23 +204,38 @@ pub fn render(
                         break;
                     }
                     if span.style.link {
-                        let x = inner.x + column as u16;
-                        let drawn = frame
-                            .buffer_mut()
-                            .cell((x, rect.y))
-                            .map(ratatui::buffer::Cell::style);
-                        if let Some(style) = drawn {
-                            links.push(LinkPlacement {
-                                x,
-                                y: rect.y,
-                                text: text::clip(&span.text, room).to_owned(),
-                                style,
-                                url: span
-                                    .link
-                                    .and_then(|index| state.reader.links.get(index))
-                                    .filter(|url| quill_mime::links::is_openable(url))
-                                    .cloned(),
+                        let url = span
+                            .link
+                            .and_then(|index| state.reader.links.get(index))
+                            .filter(|url| quill_mime::links::is_openable(url));
+                        // A link partly selected is marked in pieces: each
+                        // is written again in the one style its first cell
+                        // was drawn in.
+                        let chosen = selection
+                            .and_then(|selection| {
+                                selection.columns(Part::Body, state.reader.scroll + offset)
+                            })
+                            .map_or((0, 0), |(from, to)| {
+                                (from.saturating_sub(column), to.saturating_sub(column))
                             });
+                        let shown = text::clip(&span.text, room);
+                        let mut at = column;
+                        for piece in text::pieces(shown, chosen.0, chosen.1) {
+                            let x = inner.x + at as u16;
+                            let drawn = frame
+                                .buffer_mut()
+                                .cell((x, rect.y))
+                                .map(ratatui::buffer::Cell::style);
+                            if let Some(style) = drawn {
+                                links.push(LinkPlacement {
+                                    x,
+                                    y: rect.y,
+                                    text: piece.to_owned(),
+                                    style,
+                                    url: url.cloned(),
+                                });
+                            }
+                            at += text::width(piece);
                         }
                     }
                     column += text::width(&span.text);
@@ -249,33 +244,6 @@ pub fn render(
         }
     }
     image
-}
-
-/// One row of an invitation's card, cut to the pane. Its words were made
-/// safe to draw when the card was made.
-fn card_line(row: &CardRow, width: usize, styles: &Styles) -> Line<'static> {
-    match row {
-        CardRow::Title(kind) => {
-            let title = text::truncate(&format!("── {kind} "), width);
-            let rule = "─".repeat(width.saturating_sub(text::width(&title)));
-            Line::styled(format!("{title}{rule}"), styles.dim())
-        }
-        CardRow::Field { label, text } => {
-            let value = if *label == "What:" {
-                styles.text().add_modifier(Modifier::BOLD)
-            } else {
-                styles.text()
-            };
-            Line::from(vec![
-                Span::styled(text::fit(label, LABEL_WIDTH), styles.dim()),
-                Span::styled(
-                    text::truncate(text, width.saturating_sub(LABEL_WIDTH)),
-                    value,
-                ),
-            ])
-        }
-        CardRow::Note(words) => Line::styled(text::truncate(words, width), styles.accent()),
-    }
 }
 
 /// How a piece of a message body is drawn. Every distinction is carried by
@@ -302,12 +270,4 @@ fn body_style(style: quill_mime::html::Style, styles: &Styles) -> Style {
         drawn = drawn.add_modifier(Modifier::UNDERLINED);
     }
     drawn
-}
-
-fn join(addresses: &[Address]) -> String {
-    addresses
-        .iter()
-        .map(Address::to_string)
-        .collect::<Vec<_>>()
-        .join(", ")
 }

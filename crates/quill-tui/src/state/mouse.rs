@@ -1,6 +1,7 @@
 //! The mouse: a click focuses and selects, a second click on what is
-//! selected opens it, the wheel scrolls what is under the pointer, and
-//! the edge between two panes can be dragged.
+//! selected opens it, the wheel scrolls what is under the pointer, the
+//! edge between two panes can be dragged, and the words of the message on
+//! show can be dragged over to select them (`select.rs`).
 //!
 //! But for the dragging, nothing here does anything the keyboard cannot:
 //! a click ends in the same selection or the same command a key would
@@ -10,12 +11,12 @@
 use quill_core::types::LocalAccountId;
 use ratatui::layout::{Position, Rect};
 
-use super::{Effects, Env, HostRequest, Motion, Notice, Pane, State, step};
+use super::{Effects, Env, Motion, Pane, State, step};
 use crate::command::CommandId;
 use crate::compose::Field;
+use crate::layout;
 use crate::layout::{Divider, Split};
 use crate::setup::{AccountRequest, Preference};
-use crate::{layout, text};
 
 /// What the mouse did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,7 +63,7 @@ const WHEEL_ROWS: usize = 3;
 /// the link: its words, and what is set beside them for finding it by (its
 /// number, its line in the list of links). The warning under a link that
 /// is not what it says belongs to the link too, and is only to be read.
-fn opens_on_click(style: quill_mime::html::Style) -> bool {
+pub(super) fn opens_on_click(style: quill_mime::html::Style) -> bool {
     style.link || style.dim
 }
 
@@ -73,15 +74,27 @@ impl State {
         match mouse.kind {
             MouseKind::Release => {
                 self.let_go_of_divider(out);
+                self.let_go_in_reader(out);
                 return;
             }
             MouseKind::Drag if self.resizing.is_some() => {
                 self.drag_divider(env, mouse.column);
                 return;
             }
+            // The button went down on the message's words and has not
+            // been let go: they are being selected, wherever the pointer
+            // has been taken to since.
+            MouseKind::Drag if self.held.is_some() => {
+                self.drag_in_reader(env, mouse.column, mouse.row);
+                return;
+            }
             // A press with an edge still in hand: its letting go never
-            // arrived. Where it was left is kept all the same.
-            MouseKind::Press => self.let_go_of_divider(out),
+            // arrived. Where it was left is kept all the same. A press
+            // in the reader whose letting go never arrived was no click.
+            MouseKind::Press => {
+                self.let_go_of_divider(out);
+                self.held = None;
+            }
             MouseKind::Drag | MouseKind::WheelUp | MouseKind::WheelDown => {}
         }
         let areas = layout::compute(self, self.size, env.reader_width);
@@ -569,48 +582,18 @@ impl State {
             return;
         }
         self.set_focus(Pane::Reader);
-        let header = self.reader_header_rows() as u16;
         let fields = self.reader_field_rows() as u16;
         let top = rect.y + 1;
         // The line naming the files opens their list.
         if !self.reader.files().is_empty() && mouse.row == top + fields - 1 {
+            self.reader.selection = None;
             self.run(env, CommandId::MessageAttachments, out);
             return;
         }
-        // A link in the text opens, as it would from the list of links:
-        // clicked on its words, on the number after them, or on its line
-        // in the list at the foot of the message.
-        let picture = self.reader_image_rows(env, rect) as u16;
-        let body_top = top + header + 1 + if picture > 0 { picture + 1 } else { 0 };
-        let Some(row) = mouse.row.checked_sub(body_top) else {
-            return;
-        };
-        let Some(column) = mouse.column.checked_sub(rect.x + 2) else {
-            return;
-        };
-        let Some(line) = self.reader.lines.get(self.reader.scroll + usize::from(row)) else {
-            return;
-        };
-        let mut start = 0;
-        let mut link = None;
-        for span in &line.spans {
-            let end = start + text::width(&span.text);
-            if (start..end).contains(&usize::from(column)) {
-                link = span.link.filter(|_| opens_on_click(span.style));
-                break;
-            }
-            start = end;
-        }
-        let Some(url) = link.and_then(|index| self.reader.links.get(index)) else {
-            return;
-        };
-        if quill_mime::links::is_openable(url) {
-            out.host.push(HostRequest::OpenUrl(url.clone()));
-        } else {
-            self.notices.push_back(Notice::error(
-                "Quill only opens web (http, https) and mail (mailto) links. This is not one.",
-            ));
-        }
+        // Anywhere else on the message it is the start of a click or of
+        // a selection: a link opens when the button is let go where it
+        // went down, and not before.
+        self.press_in_reader(env, rect, mouse.column, mouse.row);
     }
 }
 

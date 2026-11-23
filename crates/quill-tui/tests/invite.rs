@@ -251,11 +251,13 @@ fn the_card_takes_its_rows_from_the_text_and_the_text_still_scrolls() {
         .find(|(_, line)| line.contains("https://example.com/agenda"))
         .unwrap();
     let column = line.chars().take_while(|c| *c != 'h').count() + 4;
-    harness.act(Action::Mouse(Mouse {
-        kind: MouseKind::Press,
-        column: column as u16,
-        row: row as u16,
-    }));
+    for kind in [MouseKind::Press, MouseKind::Release] {
+        harness.act(Action::Mouse(Mouse {
+            kind,
+            column: column as u16,
+            row: row as u16,
+        }));
+    }
     assert_eq!(
         harness.host_requests,
         [HostRequest::OpenUrl(

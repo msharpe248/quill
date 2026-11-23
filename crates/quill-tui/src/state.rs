@@ -35,6 +35,8 @@ mod letter;
 mod mouse;
 mod remove;
 mod rules;
+mod save;
+mod select;
 mod settings;
 mod sheet;
 mod themes;
@@ -61,6 +63,8 @@ use crate::theme::{Look, Styles, Theme};
 use crate::vim::{self, ExternalEditor, Verdict};
 use crate::{text, view};
 pub use mouse::{Mouse, MouseKind, Resizing};
+pub use save::SaveKind;
+pub use select::{Clicked, HeadRow, Held, LABEL_WIDTH, Part, Selection, Spot};
 
 /// What a notification about one message is called: this and the message's
 /// id in the store.
@@ -1188,6 +1192,8 @@ pub struct Reader {
     /// line while it is being fetched, and up to three when it could not
     /// be, so that the reason can be read.
     pub note: Vec<String>,
+    /// What of the message is selected, to copy.
+    pub selection: Option<Selection>,
 }
 
 impl Reader {
@@ -1421,6 +1427,11 @@ pub struct State {
     /// The edge last pressed and let go of without moving it, and when: a
     /// second press on it straight away puts it back where Quill has it.
     divider_pressed: Option<(layout::Divider, i64)>,
+    /// The main button is down in the reader: a click or a selection, not
+    /// yet known which.
+    held: Option<Held>,
+    /// The last press in the reader, for a double click to be told by.
+    clicked: Option<Clicked>,
     /// What an editor's keys do is said above it. Worked out from the
     /// config and [`State::tips_asked`] at every update.
     pub editor_tips: bool,
@@ -1535,6 +1546,8 @@ impl State {
             reader_share: None,
             resizing: None,
             divider_pressed: None,
+            held: None,
+            clicked: None,
             editor_tips: false,
             tips_asked: None,
             tips_seen: false,
@@ -2457,6 +2470,14 @@ impl State {
             }
             // From the app's Edit menu, which takes these keys before the
             // editor can. Typed in a terminal they reach the editor itself.
+            // With no message being written they are the reader's: what
+            // was selected in it with the mouse.
+            CommandId::EditCopy if self.compose.is_none() => {
+                self.copy_selection(env, out);
+            }
+            CommandId::EditSelectAll if self.compose.is_none() => self.select_all_of_message(env),
+            CommandId::MessageCopyText => self.copy_message_text(env, out),
+            CommandId::MessageSave => self.ask_save_as(env),
             CommandId::EditCopy => {
                 if let Some(text) = self
                     .compose
@@ -2852,6 +2873,14 @@ impl State {
                     })
             }
             CommandId::MessageUnsubscribe => self.unsubscribe_offer(env, context).is_some(),
+            // With no message being written, the reader's selection.
+            CommandId::EditCopy if self.compose.is_none() => self.selected_text(env).is_some(),
+            CommandId::EditSelectAll if self.compose.is_none() => {
+                context == Context::Reader && self.reader_text_on_show(env)
+            }
+            CommandId::MessageCopyText | CommandId::MessageSave => {
+                self.message_to_save(context).is_some()
+            }
             // Only where the body's own selection is the one meant.
             CommandId::EditCopy | CommandId::EditCut => {
                 self.compose.as_ref().is_some_and(|compose| {
@@ -6295,6 +6324,9 @@ impl State {
                 self.reader.lines = lines;
                 self.reader.links = links;
                 self.reader.wrap_width = Some(width);
+                // A selection names cells of the lines as they were.
+                self.reader.selection = None;
+                self.held = None;
             }
             let viewport = layout::reader_body_height(
                 rect,

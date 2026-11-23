@@ -66,6 +66,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         // buttons of its own: the keys that work it here are not what is
         // pressed there.
         &[]
+    } else if state.saving_as() {
+        command::hints_saving_as()
     } else {
         command::hints(state.context())
     };

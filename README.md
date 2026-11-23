@@ -24,7 +24,7 @@ The same program runs in a terminal of your own, over the same mailbox: `quill t
 
 **Your mail is on your Mac.** Quill keeps a copy of your mail on your own disk, so opening a message and searching years of them are quick, and work with no connection. What you do offline is carried out when you are back. Folders can live "On This Mac" alone, off the server altogether.
 
-**Mail as text, or as it was sent.** Read in the terminal, where HTML mail is laid out as clean styled text, or flip to a web reading pane (`w`) that shows the message as its sender made it. Either way remote pictures stay unloaded until you ask, so nobody learns that you opened their mail.
+**Mail as text, or as it was sent.** Read in the terminal, where HTML mail is laid out as clean styled text, or flip to a web reading pane (`w`) that shows the message as its sender made it. Either way remote pictures stay unloaded until you ask, so nobody learns that you opened their mail. Drag over a message's words to copy them, or save the message as text, as a web page or as a `.eml` file any mail program opens.
 
 **Write the way you write.** Quill's own editor writes Markdown, and has spell check, templates, addresses offered as you type and attachments by drag and drop. Or write in your own Vim, nano, pico or mg, with your own settings, right in the message's pane. A sent message can be taken back for a few seconds, or told to go later.
 

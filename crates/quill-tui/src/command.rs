@@ -200,6 +200,8 @@ pub enum CommandId {
     MessageDelete,
     MessageMove,
     MessageCopy,
+    MessageCopyText,
+    MessageSave,
     MessagePutBack,
     MessageSnooze,
     SelectToggle,
@@ -602,6 +604,22 @@ impl Registry {
                     Some(Menu::Message),
                     MESSAGE,
                 ),
+                spec(
+                    MessageCopyText,
+                    "message.copy_text",
+                    "Copy the message's text",
+                    Message,
+                    Some(Menu::Message),
+                    MESSAGE,
+                ),
+                spec(
+                    MessageSave,
+                    "message.save",
+                    "Save as a file…",
+                    Message,
+                    Some(Menu::Message),
+                    MESSAGE,
+                ),
                 with_symbol(
                     spec(
                         MessagePutBack,
@@ -946,14 +964,16 @@ impl Registry {
                 ),
                 // The three below have no menu items of their own. The app's
                 // Copy, Cut and Select All run them while they are enabled,
-                // and act on the terminal's own selection otherwise.
+                // and act on the terminal's own selection otherwise. Copy
+                // and Select All are the reader's too: the words of the
+                // message on show, selected with the mouse.
                 spec(
                     EditCopy,
                     "edit.copy",
-                    "Copy what is selected in the message being written",
+                    "Copy what is selected",
                     General,
                     None,
-                    COMPOSE,
+                    PANES_AND_COMPOSE,
                 ),
                 spec(
                     EditCut,
@@ -966,10 +986,10 @@ impl Registry {
                 spec(
                     EditSelectAll,
                     "edit.select_all",
-                    "Select all of the message being written",
+                    "Select all of the message",
                     General,
                     None,
-                    COMPOSE,
+                    &[Context::Compose, Context::Reader],
                 ),
                 spec(
                     EditUndo,
@@ -1325,6 +1345,26 @@ pub fn hints(context: Context) -> &'static [Hint] {
         Context::Reader => READER,
         Context::Help => HELP,
     }
+}
+
+/// The hints the status bar shows over the kinds of file a message can be
+/// saved as: the list is the one hooks and rules are chosen from, and
+/// choosing here runs nothing.
+pub fn hints_saving_as() -> &'static [Hint] {
+    use CommandId::*;
+    const SAVING_AS: &[Hint] = &[
+        Hint {
+            commands: &[NavOpen],
+            label: "save",
+            only_enabled: false,
+        },
+        Hint {
+            commands: &[NavBack],
+            label: "cancel",
+            only_enabled: false,
+        },
+    ];
+    SAVING_AS
 }
 
 /// The hints the status bar shows while the message being written is in

@@ -19,6 +19,7 @@ Keys are written as Quill takes them: `c` is the C key, `C` is shift and C, `ctr
 - [New mail, and mail links](#new-mail-and-mail-links)
 - [Searching](#searching)
 - [Attachments and pictures](#attachments-and-pictures)
+- [Copying from a message, and saving one as a file](#copying-from-a-message-and-saving-one-as-a-file)
 - [Writing mail](#writing-mail)
 - [Rules](#rules)
 - [Hooks](#hooks)
@@ -215,7 +216,8 @@ Press `?` at any time for the keys that apply where you are, and `K` (or `f1`) f
 | `Z` `e` | Edit the rules | `Z` `l` | What rules did, and taking one back |
 | `P` | Put back: in a Trash folder, the messages chosen; anywhere else, the one deleted last | `C` | Copy to a folder |
 | `+` | Make a folder, on the server or on this Mac | `_` | In the accounts pane: take away an empty folder of this Mac's |
-| `W` | In the web pane: mail dark while Quill is dark, or as it was sent (in the app) | | |
+| `W` | In the web pane: mail dark while Quill is dark, or as it was sent (in the app) | `ctrl-y` | Copy what is selected in the message, or with nothing selected the whole message as text |
+| `ctrl-s` | Save the message as a file: text, a web page, or the message itself | | |
 
 `tab` keeps to the two panes of everyday use: from the list it goes to the message and from the message back to the list. `shift-tab` goes to the accounts from either, and from the accounts `tab` goes to the list and `shift-tab` to the message. (With the web reading pane on there is no message pane in the terminal to go to: `tab` does nothing from the list, and the keys for the message work from there.)
 
@@ -235,9 +237,9 @@ Gmail lists its own folders (All Mail, Sent Mail, Drafts, Spam, Trash, Important
 
 `:` or `ctrl-k` opens the command palette: type a few letters of a command or a mailbox and press `enter`. Each command is listed with its key.
 
-The mouse works too. A click selects, a second click on what is selected opens it, and the wheel scrolls whatever is under the pointer. In the accounts pane a click on the mark before an account's name shows or hides its folders. A link in a message opens in your browser when clicked: on its words, on the number after them, or on its line in the list of links under the message. The line naming a message's files can be clicked too, and in a message being written a click places the cursor and a drag selects.
+The mouse works too. A click selects, a second click on what is selected opens it, and the wheel scrolls whatever is under the pointer. In the accounts pane a click on the mark before an account's name shows or hides its folders. A link in a message opens in your browser when clicked: on its words, on the number after them, or on its line in the list of links under the message. The line naming a message's files can be clicked too, and in a message being written a click places the cursor and a drag selects. In a message being read a drag selects its words, to copy: see "Copying from a message, and saving one as a file".
 
-The edges between the panes can be dragged: the one between the accounts and the list, and the one between the list and the message. Press on the line between two panes and move; the edge is drawn brighter while you have it. Moving the accounts' edge takes from the list or gives to it, and the message keeps its width. No pane is made too narrow to use. Where an edge is left is kept, as `sidebar_width` (the accounts' columns, 12 to 60) and `reader_width` (the message's share of what is right of the accounts, 0.2 to 0.8) under `[ui]`, and a double click on an edge puts it back where Quill has it by itself. With web reading on, the edge between the list and the page is the window's own divider, which is dragged and double-clicked the same way. While Quill has the mouse, selecting text the terminal's own way needs `shift` held; `mouse = false` under `[ui]` gives the mouse back to the terminal.
+The edges between the panes can be dragged: the one between the accounts and the list, and the one between the list and the message. Press on the line between two panes and move; the edge is drawn brighter while you have it. Moving the accounts' edge takes from the list or gives to it, and the message keeps its width. No pane is made too narrow to use. Where an edge is left is kept, as `sidebar_width` (the accounts' columns, 12 to 60) and `reader_width` (the message's share of what is right of the accounts, 0.2 to 0.8) under `[ui]`, and a double click on an edge puts it back where Quill has it by itself. With web reading on, the edge between the list and the page is the window's own divider, which is dragged and double-clicked the same way. While Quill has the mouse, selecting text the terminal's own way (anything on the screen, across the panes) needs `shift` held; `mouse = false` under `[ui]` gives the mouse back to the terminal.
 
 In the message list, `>` marks the cursor, `+` a selected message, `*` an unread one, `r` one you have answered, `!` a starred one and `@` one with attachments.
 
@@ -430,6 +432,33 @@ A message's files are named in its header, and `a` lists them with what each is 
 The first picture among a message's files is drawn above its text, in the app and in terminals that draw pictures (Ghostty, Kitty). In the app that includes kinds only macOS can read: a HEIC photo, the first page of a PDF, a frame of a video.
 
 Files are written to a private folder that is removed when Quill quits, under names cleaned of anything that could place them elsewhere or disguise what they are, and marked as downloaded, so macOS checks them before running anything. Nothing is opened until you press a key for it.
+
+## Copying from a message, and saving one as a file
+
+In the text reader, drag over the words of a message to select them. A double click selects a word and a triple click the line. Dragging past the top or the foot of the pane brings more of the text into it, and what is selected stays with its words when the text is scrolled. The fields above the text (who it is from, the subject and the rest) can be selected the same way; a selection is of the fields or of the text, not both at once. A click anywhere in the message lets the selection go, and so does anything that lays the text out again: another message, a pane made wider or narrower, the other version of the message.
+
+A link is opened by a click, which is the button let go where it went down. A drag that begins on a link selects its words and opens nothing.
+
+| Key | Action |
+|---|---|
+| `cmd-c`, Edit > Copy (in the app) | Copy what is selected |
+| `cmd-a`, Edit > Select All (in the app, with the keys in the message) | Select the whole message: its fields and its text |
+| `ctrl-y` (`cmd-shift-c` in the app, and Message > Copy the Message's Text) | Copy what is selected, or with nothing selected the whole message. This is the key for a terminal, where `cmd` never arrives |
+| `ctrl-s` (`cmd-shift-s` in the app, and Message > Save As a File…) | Save the message as a file |
+
+What is copied is what is drawn, a row of the pane to a line. The whole message is copied with its fields in full, however little of them the pane had room for, then its text as the pane has it. In a terminal the copy goes to the clipboard through the terminal (OSC 52), which the terminals Quill is meant for allow. With the web reading pane on, the page is selected and copied the Mac's own way, and `ctrl-y` copies the whole message as text.
+
+Saving lists three kinds of file to choose from, with `↑`, `↓` and `enter`, or by typing a few letters of one:
+
+| Kind | What the file is |
+|---|---|
+| Text (`.txt`) | The fields, then what the message says as plain text, in lines of 80 columns at most, whatever size the window is. The version on show is the one saved: its plain text, or its HTML as text with its links listed under it |
+| Web page (`.html`) | The message as it looks, in one file that needs nothing beside it: the pictures it carries are inside the page, and who it is from, the date and the subject are said above it. It is the page the web reading pane shows, made safe the same way: nothing in it runs, and remote pictures are left out unless you have let this message or its sender load them |
+| Message file (`.eml`) | The message itself, exactly as it was sent, with every attachment. Mail, Outlook, Thunderbird and most other mail programs open it |
+
+The app then asks where to put the file; in a terminal it goes to Downloads, never over a file already there. The file is named for the subject, cleaned of anything that could place it elsewhere or disguise what it is. Only mail that has been downloaded can be saved as a web page or a message file, and a message still being written is saved as a draft instead (`ctrl-s` there).
+
+There is no Outlook `.msg`: that is a format of Outlook's own for Windows, and Outlook opens `.eml`.
 
 ## Writing mail
 
@@ -966,6 +995,8 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `message.open_link` | List the message's links, to open one in the browser |
 | `message.archive`, `message.delete`, `message.move` | File the message, or every selected one |
 | `message.copy` | Put a second copy of the message, or of every selected one, into another folder of its account |
+| `message.copy_text` | Copy what is selected in the message being read, or with nothing selected the whole message as text |
+| `message.save` | Save the message as a file: text, a web page, or the message itself |
 | `message.put_back` | In a Trash folder, put the messages chosen back where they were deleted from; anywhere else, the one deleted last |
 | `folder.create` | Make a folder for the account chosen: on its server, or on this Mac |
 | `folder.remove` | Take away the empty folder of this Mac's that the accounts pane is on |
@@ -993,7 +1024,7 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `message.hook` | List your hooks, to give the message to one of them |
 | `invite.accept`, `invite.decline`, `invite.tentative` | Answer the invitation the message carries: yes, no or maybe |
 | `attachment.save`, `attachment.open` | Save the chosen attachment, or open it in its application |
-| `edit.copy`, `edit.cut`, `edit.select_all` | The app's Edit menu, while a message is being written |
+| `edit.copy`, `edit.cut`, `edit.select_all` | The app's Edit menu: for the message being written, and Copy and Select All for the message being read |
 | `account.add` | Add an account |
 | `account.sign_in` | Sign an account in to Microsoft or Google |
 | `account.edit` | Change the account chosen in the accounts pane: its servers, the name it signs in with and its password |

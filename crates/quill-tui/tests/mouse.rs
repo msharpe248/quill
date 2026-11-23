@@ -32,8 +32,10 @@ fn mouse(harness: &mut Harness, kind: MouseKind, (column, row): (u16, u16)) {
     harness.act(Action::Mouse(Mouse { kind, column, row }));
 }
 
+/// A click: the button down and let go in one place.
 fn click(harness: &mut Harness, at: (u16, u16)) {
     mouse(harness, MouseKind::Press, at);
+    mouse(harness, MouseKind::Release, at);
 }
 
 fn click_on(harness: &mut Harness, needle: &str) {

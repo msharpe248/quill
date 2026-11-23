@@ -65,6 +65,8 @@ pub enum PickFor {
     /// Takes back what a rule did: the log's line of this number, for
     /// each line of the list.
     TakeBack(Vec<i64>),
+    /// Saves this message as the kind of file the line names.
+    SaveAs(LocalMessageId),
 }
 
 /// What a new rule does with the mail it matches.
@@ -588,7 +590,7 @@ impl State {
         });
     }
 
-    fn open_pick_list(&mut self, list: PickList) {
+    pub(super) fn open_pick_list(&mut self, list: PickList) {
         self.hooks = Some(HookPicker {
             message: LocalMessageId(0),
             filter: LineInput::default(),
@@ -612,6 +614,11 @@ impl State {
             PickFor::TakeBack(entries) => {
                 if let Some(entry) = entries.get(index) {
                     out.data.push(DataRequest::RulesUndo(*entry));
+                }
+            }
+            PickFor::SaveAs(message) => {
+                if let Some(kind) = super::SaveKind::ALL.get(index) {
+                    self.save_as(env, *message, *kind, out);
                 }
             }
         }

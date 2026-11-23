@@ -185,6 +185,16 @@ pub enum DataRequest {
         message: LocalMessageId,
         part: u32,
     },
+    /// Write a message out as a file of its own, named for `subject`:
+    /// made ready for the host to ask where it goes (`ask`, answered as
+    /// [`DataEvent::Extracted`] to be saved), or put in the Downloads
+    /// folder.
+    SaveMessage {
+        message: LocalMessageId,
+        subject: String,
+        what: files::SaveAs,
+        ask: bool,
+    },
     /// Write the message being written out as a draft file for Vim, in a
     /// folder of its own. `plugin`: put a copy of Quill's Vim plugin
     /// beside it, for a Vim that is not Quill's own. `share`: all of the
@@ -811,6 +821,22 @@ fn run(
                 Err(problem) => vec![flash(&problem.0)],
             }
         }
+        DataRequest::SaveMessage {
+            message,
+            subject,
+            what,
+            ask,
+        } => match files::save_message(store, files, message, &subject, what, ask) {
+            Ok(files::SavedMessage::Ready(file)) => vec![DataEvent::Extracted {
+                files: vec![file],
+                index: 0,
+                then: FileUse::Save,
+            }],
+            Ok(files::SavedMessage::InDownloads(name)) => {
+                vec![flash(&format!("Saved {name} in Downloads."))]
+            }
+            Err(problem) => vec![flash(&problem.0)],
+        },
         DataRequest::EditOut {
             account,
             content,
