@@ -9,9 +9,19 @@
 //! The writer is composing mail, not a web page. HTML they type is shown as
 //! they typed it, never passed through, and a line break they typed is a
 //! line break in the result.
+//!
+//! Only what the writer wrote is Markdown. A message they are answering or
+//! passing on is somebody else's words, which were never written as
+//! Markdown for this message and are not read as it: a line that begins
+//! with `>`, and everything after the line a forward puts above the
+//! original ([`FORWARDED`]). Those go out as the text they are, a quote
+//! behind its bar, so that an asterisk or an underscore in them is an
+//! asterisk or an underscore to whoever reads the reply.
 
 use pulldown_cmark::{Alignment, Event, LinkType, Options, Parser, Tag, TagEnd};
 use quill_core::links::is_openable;
+
+use crate::reply::FORWARDED;
 
 /// Quoted text: a bar down the left, as mail programs draw it. No colours
 /// beyond the bar, so it reads the same on a dark background.
@@ -21,6 +31,11 @@ const QUOTE_STYLE: &str = "margin:0 0 1em 0;padding:0 0 0 1ex;border-left:2px so
 const CODE_STYLE: &str = "white-space:pre-wrap;font-family:monospace";
 const TABLE_STYLE: &str = "border-collapse:collapse";
 const CELL_STYLE: &str = "border:1px solid #cccccc;padding:2px 6px";
+
+/// How deep quotes are drawn one inside another. A quote deeper than this
+/// is drawn at this depth: nobody reads a bar for each of a hundred
+/// answers, and no message gets to ask for a thousand.
+const DEEPEST_QUOTE: usize = 12;
 
 /// The HTML for a message body written as Markdown: a whole document, with
 /// `\n` line endings.
@@ -32,14 +47,194 @@ pub fn to_html(markdown: &str) -> String {
     writer
         .out
         .push_str("<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n</head>\n<body>\n");
-    // Tables are the one extension: they cannot be mistaken for anything
-    // else. Strikethrough is left off because "~5 or ~10 minutes" is
-    // ordinary prose.
-    for event in Parser::new_ext(markdown, Options::ENABLE_TABLES) {
-        writer.event(event);
+    for piece in pieces(markdown) {
+        match piece {
+            Piece::Written(text) => {
+                // Tables are the one extension: they cannot be mistaken
+                // for anything else. Strikethrough is left off because
+                // "~5 or ~10 minutes" is ordinary prose.
+                for event in Parser::new_ext(text, Options::ENABLE_TABLES) {
+                    writer.event(event);
+                }
+            }
+            Piece::Quoted(lines) => quoted(&mut writer.out, &lines),
+            Piece::Passed(lines) => as_text(&mut writer.out, &lines),
+        }
     }
     writer.out.push_str("</body>\n</html>\n");
     writer.out
+}
+
+/// A run of lines of a message body, by whose words they are.
+enum Piece<'a> {
+    /// The writer's own: Markdown.
+    Written(&'a str),
+    /// Lines that begin with `>`: a message being answered, as text.
+    Quoted(Vec<&'a str>),
+    /// Lines after a forward's own line: a message passed on, as text.
+    Passed(Vec<&'a str>),
+}
+
+/// `body` as runs of lines, each the writer's own, quoted, or passed on.
+///
+/// A line that begins with `>` inside a code block the writer fenced is
+/// code, as they meant it.
+fn pieces(body: &str) -> Vec<Piece<'_>> {
+    let mut pieces: Vec<Piece<'_>> = Vec::new();
+    // Where the run of the writer's own lines now being gathered began.
+    let mut written: Option<usize> = None;
+    let mut fence: Option<char> = None;
+    let mut passed = false;
+    let mut at = 0;
+    for line in body.split_inclusive('\n') {
+        let start = at;
+        at += line.len();
+        let words = line.trim_end_matches(['\n', '\r']);
+        let quote = fence.is_none() && is_quote(words);
+        if !passed && !quote {
+            if fence.is_none() && words.trim_end() == FORWARDED {
+                passed = true;
+            } else {
+                if let Some(mark) = fence_mark(words) {
+                    fence = match fence {
+                        None => Some(mark),
+                        Some(open) if open == mark => None,
+                        open => open,
+                    };
+                }
+                written.get_or_insert(start);
+                continue;
+            }
+        }
+        if let Some(from) = written.take() {
+            pieces.push(Piece::Written(&body[from..start]));
+        }
+        match (quote, pieces.last_mut()) {
+            (true, Some(Piece::Quoted(lines))) | (false, Some(Piece::Passed(lines))) => {
+                lines.push(words);
+            }
+            (true, _) => pieces.push(Piece::Quoted(vec![words])),
+            (false, _) => pieces.push(Piece::Passed(vec![words])),
+        }
+    }
+    if let Some(from) = written {
+        pieces.push(Piece::Written(&body[from..]));
+    }
+    pieces
+}
+
+/// Whether a line is a quoted one: `>` first, after no more than the three
+/// spaces Markdown allows before it.
+fn is_quote(line: &str) -> bool {
+    let indent = line.bytes().take_while(|byte| *byte == b' ').count();
+    indent <= 3 && line[indent..].starts_with('>')
+}
+
+/// The character a line opens or closes a fenced code block with, if it
+/// is a fence.
+fn fence_mark(line: &str) -> Option<char> {
+    let indent = line.bytes().take_while(|byte| *byte == b' ').count();
+    let rest = &line[indent..];
+    if indent > 3 {
+        None
+    } else if rest.starts_with("```") {
+        Some('`')
+    } else if rest.starts_with("~~~") {
+        Some('~')
+    } else {
+        None
+    }
+}
+
+/// How deep a quoted line is, and its words: `>> older` is 2 and "older".
+fn quote_line(line: &str) -> (usize, &str) {
+    let mut rest = line.trim_start_matches(' ');
+    let mut depth = 0;
+    loop {
+        if let Some(after) = rest.strip_prefix('>') {
+            depth += 1;
+            rest = after;
+        } else if let Some(after) = rest
+            .strip_prefix(' ')
+            .filter(|after| after.starts_with('>'))
+        {
+            // "> > older", as some programs write it.
+            rest = after;
+        } else {
+            break;
+        }
+    }
+    (depth, rest.strip_prefix(' ').unwrap_or(rest).trim_end())
+}
+
+/// Quoted lines as text behind their bars, one bar for each level.
+fn quoted(out: &mut String, lines: &[&str]) {
+    // Marks with nothing quoted after any of them are not a quote: they
+    // are the characters the writer typed.
+    if lines.iter().all(|line| quote_line(line).1.is_empty()) {
+        as_text(out, lines);
+        return;
+    }
+    let mut depth = 0;
+    let mut paragraph = Paragraph::default();
+    for line in lines {
+        let (wanted, words) = quote_line(line);
+        let wanted = wanted.min(DEEPEST_QUOTE);
+        if wanted != depth {
+            paragraph.close(out);
+        }
+        while depth < wanted {
+            out.push_str("<blockquote style=\"");
+            out.push_str(QUOTE_STYLE);
+            out.push_str("\">\n");
+            depth += 1;
+        }
+        while depth > wanted {
+            out.push_str("</blockquote>\n");
+            depth -= 1;
+        }
+        paragraph.line(out, words);
+    }
+    paragraph.close(out);
+    for _ in 0..depth {
+        out.push_str("</blockquote>\n");
+    }
+}
+
+/// Lines as the text they are: a paragraph for each run of them, and a
+/// line break where there was one.
+fn as_text(out: &mut String, lines: &[&str]) {
+    let mut paragraph = Paragraph::default();
+    for line in lines {
+        paragraph.line(out, line.trim_end());
+    }
+    paragraph.close(out);
+}
+
+/// A paragraph of text that is not Markdown, a line at a time.
+#[derive(Default)]
+struct Paragraph {
+    open: bool,
+}
+
+impl Paragraph {
+    /// One more line of it. An empty line ends it.
+    fn line(&mut self, out: &mut String, words: &str) {
+        if words.is_empty() {
+            self.close(out);
+            return;
+        }
+        out.push_str(if self.open { "<br>\n" } else { "<p>" });
+        self.open = true;
+        escape_into(out, words);
+    }
+
+    fn close(&mut self, out: &mut String) {
+        if self.open {
+            out.push_str("</p>\n");
+            self.open = false;
+        }
+    }
 }
 
 #[derive(Default)]
@@ -382,6 +577,99 @@ mod tests {
         assert!(html.contains("border-left"), "{html}");
         assert!(html.contains("first<br>\nsecond"), "{html}");
         assert!(html.starts_with("<p>On Saturday, Ana wrote:</p>\n<blockquote"));
+    }
+
+    #[test]
+    fn a_message_being_answered_is_text_and_only_the_answer_is_markdown() {
+        let html = body(
+            "Yes, **Thursday** works.\n\n\
+             On Saturday, Ana wrote:\n\
+             > Is *Thursday* ok for the snake_case_name review?\n\
+             > # not a heading\n\
+             >     not code\n\
+             > 1. not a list\n\
+             > See <https://example.com/a> and <b>this</b>.\n\
+             >\n\
+             > A second paragraph.\n",
+        );
+        // The answer is Markdown.
+        assert!(html.starts_with("<p>Yes, <strong>Thursday</strong> works.</p>\n"));
+        // What is answered is not: its marks are the characters they were.
+        let quote = &html[html.find("<blockquote").unwrap()..];
+        assert!(quote.contains("<p>Is *Thursday* ok for the snake_case_name review?<br>\n"));
+        assert!(quote.contains("# not a heading<br>\n"), "{quote}");
+        assert!(quote.contains("    not code<br>\n"), "{quote}");
+        assert!(quote.contains("1. not a list<br>\n"), "{quote}");
+        assert!(
+            quote.contains("See &lt;https://example.com/a&gt; and &lt;b&gt;this&lt;/b&gt;.</p>\n"),
+            "{quote}"
+        );
+        assert!(quote.contains("<p>A second paragraph.</p>\n"), "{quote}");
+        for tag in ["<em>", "<h1>", "<pre", "<ol", "<li>", "<a ", "<code>"] {
+            assert!(!quote.contains(tag), "{tag} in {quote}");
+        }
+        assert_eq!(html.matches("<blockquote").count(), 1);
+    }
+
+    #[test]
+    fn an_answer_written_under_a_quote_is_not_part_of_it() {
+        let html = body("On Saturday, Ana wrote:\n> Is it *done*?\nIt is *done*.\n");
+        assert!(
+            html.ends_with("<p>Is it *done*?</p>\n</blockquote>\n<p>It is <em>done</em>.</p>\n"),
+            "{html}"
+        );
+    }
+
+    #[test]
+    fn quotes_written_other_ways_are_as_deep_as_they_say() {
+        let html = body("> one\n> > two\n>>> three\n> one again\n   > indented\n");
+        assert_eq!(html.matches("<blockquote style=\"").count(), 3);
+        assert_eq!(html.matches("</blockquote>").count(), 3);
+        assert!(html.contains("<p>two</p>"), "{html}");
+        assert!(html.contains("<p>three</p>"), "{html}");
+        assert!(html.contains("<p>one again<br>\nindented</p>"), "{html}");
+        // A mark with nothing after it quotes nothing.
+        assert_eq!(body("a\n>\n"), "<p>a</p>\n<p>&gt;</p>\n");
+        // A thousand levels are drawn as a dozen.
+        let deep = body(&format!("{} x\n", ">".repeat(1_000)));
+        assert_eq!(deep.matches("<blockquote").count(), DEEPEST_QUOTE);
+        assert_eq!(deep.matches("</blockquote>").count(), DEEPEST_QUOTE);
+    }
+
+    #[test]
+    fn a_message_passed_on_is_text_from_the_line_that_says_so() {
+        let html = body(&format!(
+            "FYI, see the **second** point.\n\n\
+             {FORWARDED}\n\
+             From: Ana Ruiz <ana.ruiz@example.com>\n\
+             Subject: The *plan*\n\n\
+             # Not a heading\n\
+             - not a list\n\
+             > She quoted *this*.\n\
+             And a _last_ line.\n"
+        ));
+        assert!(html.starts_with("<p>FYI, see the <strong>second</strong> point.</p>\n"));
+        let passed = &html[html.find("<p>--------").unwrap()..];
+        assert!(passed.starts_with(&format!(
+            "<p>{FORWARDED}<br>\nFrom: Ana Ruiz &lt;ana.ruiz@example.com&gt;<br>\n\
+             Subject: The *plan*</p>\n<p># Not a heading<br>\n- not a list</p>\n"
+        )));
+        // A quote inside it keeps its bar, and is text too.
+        assert!(passed.contains("<p>She quoted *this*.</p>\n</blockquote>\n"));
+        assert!(passed.ends_with("<p>And a _last_ line.</p>\n"), "{passed}");
+        for tag in ["<em>", "<h1>", "<ul>", "<a ", "<strong>"] {
+            assert!(!passed.contains(tag), "{tag} in {passed}");
+        }
+    }
+
+    #[test]
+    fn a_quote_mark_inside_fenced_code_is_code() {
+        let html = body("```\n> not a quote\n```\n> a quote\n");
+        assert!(html.contains("<code>&gt; not a quote\n</code>"), "{html}");
+        assert_eq!(html.matches("<blockquote").count(), 1);
+        // The line that says a message is passed on is code there too.
+        let html = body(&format!("~~~\n{FORWARDED}\n~~~\n**after**\n"));
+        assert!(html.ends_with("<p><strong>after</strong></p>\n"), "{html}");
     }
 
     #[test]

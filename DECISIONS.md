@@ -1519,3 +1519,15 @@ Asked for by the owner: text in the text reader could not be selected and copied
 - **Not `cmd-s`** for saving: that is the draft's while a message is written, both would be in the menus, and a menu item that is switched off still takes its key. `cmd-shift-s` is the Mac's Save As, which is what this is.
 - **Not done:** selecting with the keyboard; a selection across the fields and the text; a drag that keeps scrolling while the pointer is held still outside the pane (the text follows the pointer's moves); words by double click and drag. Nothing for agents or the shell: `quill read` already prints a message.
 - **Seen in a check build** of the app with the demo mailbox: see the report of the day. Held by tests in `tests/reading_text.rs`.
+
+### Only what the writer wrote is Markdown (2026-11-22)
+
+Asked by the owner: mail received is not read as Markdown, which is right, but is a message read as Markdown when it is quoted in a reply? It was: the whole body went through the Markdown reader for the HTML version, the quoted lines with it, so a sender's `*`, `_`, `#` or indented line came out as emphasis, a heading or code in the answer.
+
+- **The rule is the owner's**: a line that begins with `>` is not Markdown, and nor is anything after the line a forward puts above the original (`reply::FORWARDED`; a forward does not quote with `>`). In the HTML version those are the text they are: quoted lines behind a bar for each level, twelve at the most, and a forwarded message as paragraphs with their line breaks. A quote inside a forwarded message keeps its bar. The plain-text part was never changed by any of this.
+- **Done where the HTML is made** (`quill-mime/src/markdown.rs`, `pieces`), by cutting the body into runs of lines before any of it is read: nothing is escaped into the text the user edits, so what they see and what the plain part says stay what they typed.
+- **A line under a quote is the writer's.** Markdown itself would have taken an unmarked line straight after a quote into the quote; cut this way it is its own paragraph.
+- **Inside a code block the writer fenced, `>` is code**, and so is the forward's line.
+- **What it costs:** a quote the writer types with `>` is text too, since nothing tells it from one that was answered. Marks with nothing after them (`>` alone) quote nothing and are sent as typed.
+- **The editor draws it as it is sent**: quoted lines were already one colour, and a forwarded message is no longer coloured as Markdown.
+- **Not verified** in another mail program: held by tests of the HTML made.

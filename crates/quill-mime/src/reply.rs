@@ -12,6 +12,11 @@ use quill_core::types::Address;
 
 use crate::Parsed;
 
+/// The line a forward puts above the message it passes on. What follows
+/// it in a message being sent is somebody else's words, and is never read
+/// as Markdown ([`crate::markdown::to_html`]).
+pub const FORWARDED: &str = "-------- Forwarded message --------";
+
 /// Where the user starts typing in a reply (`compose.reply_position`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplyPosition {
@@ -138,7 +143,7 @@ pub fn forward(original: &Parsed, date_line: &str) -> Draft {
             .join(", ")
     };
 
-    let mut body = String::from("\n\n-------- Forwarded message --------\n");
+    let mut body = format!("\n\n{FORWARDED}\n");
     for (name, value) in [
         ("From", list(&headers.from)),
         ("Date", one_line(date_line)),

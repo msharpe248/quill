@@ -468,6 +468,25 @@ fn marks(line: &str, fenced: bool) -> Vec<Mark> {
     inline_marks(line)
 }
 
+/// Whether a line is the one a forward puts above the message it passes
+/// on.
+fn is_forward_line(line: &str) -> bool {
+    line.trim_end() == quill_mime::reply::FORWARDED
+}
+
+/// The marks of a line of a message passed on: a quotation is one still,
+/// and nothing else in it is Markdown, as nothing else in it is sent as
+/// Markdown.
+fn passed_on_marks(line: &str) -> Vec<Mark> {
+    match quote_prefix(line) {
+        (0, _) => Vec::new(),
+        (level, _) => vec![Mark {
+            range: 0..line.len(),
+            kind: SpanKind::Quote(level),
+        }],
+    }
+}
+
 /// Finds the next closing delimiter, remembering the last answer. A line of
 /// a thousand unmatched asterisks is then still read once, not a thousand
 /// times.
@@ -1556,11 +1575,15 @@ impl BuiltinEditor {
         let mut index = 0;
         let mut above = 0;
         let mut fence = 0;
+        // Whether a forward's own line is above: what follows it is the
+        // message passed on, which is sent as the text it is.
+        let mut passed = false;
         while let Some(line) = self.lines.get(index) {
             if above + line.rows() > self.top {
                 break;
             }
             above += line.rows();
+            passed |= fence == 0 && line.fence == 0 && is_forward_line(&line.text);
             fence = fence_after(fence, line.fence);
             index += 1;
         }
@@ -1574,7 +1597,12 @@ impl BuiltinEditor {
             };
             let fenced = fence != 0 || line.fence != 0;
             fence = fence_after(fence, line.fence);
-            let marks = marks(&line.text, fenced);
+            passed |= !fenced && is_forward_line(&line.text);
+            let marks = if passed {
+                passed_on_marks(&line.text)
+            } else {
+                marks(&line.text, fenced)
+            };
             let chosen = selection.and_then(|(start, end)| {
                 if index < start.line || index > end.line {
                     return None;
@@ -3133,6 +3161,45 @@ mod tests {
         let view = editor.view(40, 3);
         assert_eq!(rows(&view)[0], "let x = **1**;");
         assert_eq!(kinds(&view, 0), [("let x = **1**;", SpanKind::Code)]);
+    }
+
+    #[test]
+    fn a_message_passed_on_is_not_drawn_as_markdown() {
+        let source = "See the **second** point.\n\
+                      \n\
+                      -------- Forwarded message --------\n\
+                      Subject: The *plan*\n\
+                      # Not a heading\n\
+                      > quoted *text*\n\
+                      `not code` and **not strong**";
+        let mut editor = BuiltinEditor::new(source);
+        let view = editor.view(60, 20);
+        // What the writer wrote is Markdown.
+        assert!(
+            kinds(&view, 0)
+                .iter()
+                .any(|(_, kind)| *kind == SpanKind::Strong)
+        );
+        // From the forward's own line on, only a quotation is marked.
+        for row in [2, 3, 4, 6] {
+            let spans = kinds(&view, row);
+            assert!(
+                spans.iter().all(|(_, kind)| *kind == SpanKind::Text),
+                "row {row}: {spans:?}"
+            );
+        }
+        assert_eq!(kinds(&view, 5), [("> quoted *text*", SpanKind::Quote(1))]);
+        assert_eq!(editor.text(), source);
+
+        // With that line above the view it still holds.
+        press(&mut editor, "cmd-down");
+        let view = editor.view(60, 2);
+        assert_eq!(rows(&view)[1], "`not code` and **not strong**");
+        assert!(
+            kinds(&view, 1)
+                .iter()
+                .all(|(_, kind)| *kind == SpanKind::Text)
+        );
     }
 
     #[test]
