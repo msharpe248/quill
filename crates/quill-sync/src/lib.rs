@@ -107,6 +107,11 @@ pub struct SyncOptions {
     pub prefetch_days: i64,
     /// The most bodies one pass downloads ahead.
     pub prefetch_limit: usize,
+    /// How long one pass may stay with a single long piece of work (a
+    /// large folder synced for the first time, bodies downloaded ahead)
+    /// before it goes round to look at the inbox and the other folders
+    /// again. The work is taken up where it was left.
+    pub turn: Duration,
 }
 
 impl Default for SyncOptions {
@@ -116,6 +121,7 @@ impl Default for SyncOptions {
             retry: Duration::from_secs(30),
             prefetch_days: 30,
             prefetch_limit: 2000,
+            turn: Duration::from_secs(60),
         }
     }
 }
@@ -511,6 +517,56 @@ impl Running {
     }
 }
 
+/// How a pass that did not fail ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pass {
+    /// Everything there was to do is done.
+    Done,
+    /// It left long work where it stood, to look at the folders again.
+    Unfinished,
+}
+
+/// How long a pass may stay with one long piece of work before it goes
+/// round, and whether a look has been asked for meanwhile.
+struct Turn<'a> {
+    wake: &'a Notify,
+    length: Duration,
+    /// When the piece of work in hand began.
+    began: tokio::time::Instant,
+    /// A look was asked for during this pass. It stays asked for: every
+    /// long piece of work after it is left as soon as it can be.
+    asked: bool,
+}
+
+impl<'a> Turn<'a> {
+    fn new(wake: &'a Notify, length: Duration) -> Self {
+        Self {
+            wake,
+            length,
+            began: tokio::time::Instant::now(),
+            asked: false,
+        }
+    }
+
+    /// A long piece of work begins: its turn is counted from here.
+    fn begin(&mut self) {
+        self.began = tokio::time::Instant::now();
+    }
+
+    /// Whether the work in hand should be left for the next pass.
+    async fn is_over(&mut self) -> bool {
+        if !self.asked {
+            // Finding out takes the wake, which is the loop's to wait on.
+            // `Engine::pass` gives it back where the loop would wait.
+            let waiting = self.wake.notified();
+            if tokio::time::timeout(Duration::ZERO, waiting).await.is_ok() {
+                self.asked = true;
+            }
+        }
+        self.asked || self.began.elapsed() >= self.length
+    }
+}
+
 /// Why a step of syncing failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Failure {
@@ -711,14 +767,22 @@ impl Engine {
                 account: account.id,
                 active: true,
             });
-            let outcome = self.pass(account).await;
+            let outcome = self.pass(running).await;
             self.emit(SyncEvent::Syncing {
                 account: account.id,
                 active: false,
             });
-            match outcome {
-                Ok(()) => last_problem = None,
-                Err(failure) => {
+            // A pass that left work for the next one goes round at once:
+            // it stopped to look at the folders again, not to rest.
+            let unfinished = matches!(outcome, Ok((Pass::Unfinished, _)));
+            // What went wrong: all of it, or one folder of it.
+            let failure = match outcome {
+                Ok((_, refused)) => refused,
+                Err(failure) => Some(failure),
+            };
+            match failure {
+                None => last_problem = None,
+                Some(failure) => {
                     if last_problem.as_ref() != Some(&failure) {
                         self.emit(match failure.clone() {
                             Failure::Message(message) => SyncEvent::Problem {
@@ -735,6 +799,9 @@ impl Engine {
                     last_problem = Some(failure);
                 }
             }
+            if unfinished {
+                continue;
+            }
             tokio::select! {
                 () = tokio::time::sleep(self.options.interval) => {}
                 () = running.wake.notified() => {}
@@ -743,7 +810,39 @@ impl Engine {
     }
 
     /// One pass over an account: its folders, their messages, recent bodies.
-    async fn pass(&self, account: &SyncAccount) -> Result<(), Failure> {
+    ///
+    /// A pass is how the inbox and every other folder come to be looked
+    /// at, so it must not be long in coming round. Two pieces of its work
+    /// can be long: a large folder synced for the first time, and bodies
+    /// downloaded ahead. Each is left where it stands when it has had its
+    /// turn, or as soon as a look is asked for (by the user, or by the
+    /// server saying something changed), and the pass that follows at once
+    /// takes it up again.
+    ///
+    /// A pass that got to its end says how it ended, and which folder the
+    /// server would not give, if one: that is trouble to tell of, and no
+    /// reason to stop.
+    async fn pass(&self, running: &Running) -> Result<(Pass, Option<Failure>), Failure> {
+        let mut turn = Turn::new(&running.wake, self.options.turn);
+        let outcome = self.pass_in_turn(&running.account, &mut turn).await;
+        // A look asked for while the pass ran was taken from the loop, to
+        // learn of it. A pass that left work goes round at once anyway;
+        // any other gives the asking back, so the loop does not wait.
+        if turn.asked && !matches!(outcome, Ok((Pass::Unfinished, _))) {
+            running.wake.notify_one();
+        }
+        outcome
+    }
+
+    async fn pass_in_turn(
+        &self,
+        account: &SyncAccount,
+        turn: &mut Turn<'_>,
+    ) -> Result<(Pass, Option<Failure>), Failure> {
+        // A folder the server would not give. The folders after it are
+        // still looked at, and it is said when the pass is over.
+        let mut refused: Option<Failure> = None;
+        let mut unfinished = false;
         // A server with no folders of its own (POP3) only hands mail over:
         // it is kept here, in folders that exist only here.
         let keeps_here = !account.backend.capabilities().folders;
@@ -800,14 +899,26 @@ impl Engine {
             }
             // What a folder holds when it is first synced is not news.
             let mut first_look = None;
+            // The inbox is always brought in whole: what it holds at its
+            // first sync is not news only while that sync is one pass's.
+            // So is a server's only folder, whose mail is kept here.
+            let may_be_left = role != FolderRole::Inbox && !keeps_here;
+            turn.begin();
             loop {
                 let cursor = self.db(move |store| store.sync_cursor(local)).await?;
                 let first_look = *first_look.get_or_insert(cursor.is_none());
-                let mut delta = account
-                    .backend
-                    .sync_folder(&remote, cursor)
-                    .await
-                    .map_err(|err| Failure::from_backend(err, Some(&remote.0)))?;
+                let mut delta = match account.backend.sync_folder(&remote, cursor).await {
+                    Ok(delta) => delta,
+                    // The server answers, and will not give this folder:
+                    // no reason to leave the ones after it unlooked at.
+                    Err(err @ (Error::NotFound(_) | Error::Backend(_) | Error::Unsupported(_)))
+                        if role != FolderRole::Inbox =>
+                    {
+                        refused.get_or_insert(Failure::from_backend(err, Some(&remote.0)));
+                        break;
+                    }
+                    Err(err) => return Err(Failure::from_backend(err, Some(&remote.0))),
+                };
                 let has_more = delta.has_more;
                 let mut changed = false;
                 if keeps_here {
@@ -893,6 +1004,10 @@ impl Engine {
                 if !has_more {
                     break;
                 }
+                if may_be_left && turn.is_over().await {
+                    unfinished = true;
+                    break;
+                }
             }
         }
 
@@ -914,7 +1029,8 @@ impl Engine {
                 }
             }
             kept?;
-            return Ok(self.catch_up(account_id, &account.name).await?);
+            self.catch_up(account_id, &account.name).await?;
+            return Ok((Pass::Done, refused));
         }
 
         // Recent mail should read offline, so fetch its bodies ahead.
@@ -923,18 +1039,37 @@ impl Engine {
         let wanted = self
             .db(move |store| store.messages_without_body(account_id, since, limit))
             .await?;
+        let mut left = wanted.len();
+        let mut downloaded = false;
+        turn.begin();
         for id in wanted {
             match self.fetch_body(id).await {
-                Ok(()) => {}
+                Ok(()) => downloaded = true,
                 // A message that vanished meanwhile is no reason to stop.
                 Err(FetchFailure::Gone) => {}
                 Err(FetchFailure::Other(message)) => return Err(message.into()),
+            }
+            left -= 1;
+            // After a body and not before: every pass tries one at least,
+            // however often a look is asked for.
+            if left > 0 && turn.is_over().await {
+                // Going round at once is for work that is getting
+                // somewhere. A pass that could download nothing waits its
+                // interval like any other.
+                unfinished |= downloaded;
+                break;
             }
         }
         // Mail in the inbox the rules have not been asked about: what
         // came while they were off, and what a folder held when it was
         // first synced.
-        Ok(self.catch_up(account_id, &account.name).await?)
+        self.catch_up(account_id, &account.name).await?;
+        let pass = if unfinished {
+            Pass::Unfinished
+        } else {
+            Pass::Done
+        };
+        Ok((pass, refused))
     }
 
     /// The rules the engine has now.

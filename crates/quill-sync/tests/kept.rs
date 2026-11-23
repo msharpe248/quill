@@ -235,6 +235,7 @@ impl Rig {
                 retry: Duration::from_secs(1),
                 prefetch_days: 30,
                 prefetch_limit: 100,
+                turn: Duration::from_secs(60),
             },
             events_tx,
         );

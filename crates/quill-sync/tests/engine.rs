@@ -55,6 +55,14 @@ struct Server {
     watch_failures: usize,
     /// Whoever is listening now.
     listeners: Vec<Sender<RemoteEvent>>,
+    /// The folders asked about, in the order they were.
+    synced: Vec<String>,
+    /// A folder the server will not give, though it lists it.
+    refused: Option<String>,
+    /// Downloads wait for a permit each, while set.
+    download_gate: Option<Arc<tokio::sync::Semaphore>>,
+    /// How many downloads have been asked for.
+    downloads: usize,
 }
 
 /// A sender that keeps what it was given, or refuses as told.
@@ -173,7 +181,12 @@ impl Backend for MemoryBackend {
         cursor: Option<SyncCursor>,
     ) -> Result<SyncDelta> {
         self.check()?;
-        let server = self.0.lock().unwrap();
+        let mut server = self.0.lock().unwrap();
+        server.synced.push(folder.0.clone());
+        if server.refused.as_deref() == Some(folder.0.as_str()) {
+            return Err(Error::Backend("NO not just now".to_owned()));
+        }
+        let server = server;
         let mail = server
             .folders
             .get(&folder.0)
@@ -233,6 +246,14 @@ impl Backend for MemoryBackend {
 
     async fn fetch_raw(&self, id: &RemoteId) -> Result<Bytes> {
         self.check()?;
+        let gate = {
+            let mut server = self.0.lock().unwrap();
+            server.downloads += 1;
+            server.download_gate.clone()
+        };
+        if let Some(gate) = gate {
+            gate.acquire().await.unwrap().forget();
+        }
         let server = self.0.lock().unwrap();
         let mail = server
             .folders
@@ -406,6 +427,7 @@ impl Rig {
                 retry: Duration::from_secs(1),
                 prefetch_days: 30,
                 prefetch_limit: 100,
+                turn: Duration::from_secs(60),
             },
         )
     }
@@ -806,6 +828,7 @@ async fn the_interval_drives_passes_without_being_asked() {
             interval: Duration::from_millis(50),
             prefetch_days: 30,
             prefetch_limit: 10,
+            turn: Duration::from_secs(60),
         },
     );
     rig.pass().await;
@@ -884,6 +907,7 @@ async fn a_server_that_cannot_push_is_asked_once() {
             interval: Duration::from_millis(30),
             prefetch_days: 30,
             prefetch_limit: 10,
+            turn: Duration::from_secs(60),
         },
     );
     for _ in 0..3 {
@@ -977,6 +1001,7 @@ fn hour_long() -> SyncOptions {
         retry: Duration::from_secs(1),
         prefetch_days: 30,
         prefetch_limit: 100,
+        turn: Duration::from_secs(60),
     }
 }
 
@@ -1199,6 +1224,7 @@ async fn dropping_the_handle_stops_the_engine() {
             interval: Duration::from_millis(20),
             prefetch_days: 30,
             prefetch_limit: 10,
+            turn: Duration::from_secs(60),
         },
     );
     rig.pass().await;
@@ -2528,4 +2554,157 @@ async fn rules_with_a_mistake_in_them_leave_mail_to_be_asked_about_when_put_righ
     })
     .await;
     assert_eq!(said, "Rules filed 1");
+}
+
+/// How many messages of `folder` have been downloaded.
+fn downloaded(rig: &Rig, folder: &str) -> usize {
+    let folder = rig.folder(folder);
+    rig.store
+        .messages(Mailbox::Folder(folder))
+        .unwrap()
+        .into_iter()
+        .filter(|row| rig.store.body(row.id).unwrap().is_some())
+        .count()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_look_asked_for_while_bodies_download_does_not_wait_for_them_all() {
+    let backend = MemoryBackend::new(100);
+    for n in 1..=5 {
+        backend.add(
+            "INBOX",
+            &format!("{n}"),
+            &format!("Message {n}"),
+            NOW_ISH + n,
+        );
+    }
+    // The first download goes through and the second waits: the pass is
+    // held in the middle of downloading, as a slow server holds it.
+    let gate = Arc::new(tokio::sync::Semaphore::new(1));
+    backend.with(|server| server.download_gate = Some(Arc::clone(&gate)));
+    let mut rig = Rig::start(backend);
+    for _ in 0..500 {
+        if rig.backend.with(|server| server.downloads) >= 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(rig.backend.with(|server| server.downloads), 2);
+
+    // Mail arrives and a look is asked for, with three bodies still to come.
+    rig.backend.add("INBOX", "6", "Late", NOW_ISH + 6);
+    assert!(rig.handle.send(SyncRequest::SyncNow));
+    gate.add_permits(100);
+
+    // The pass ends with the download it had in hand, and the next one,
+    // which nothing more asks for, has the new mail and the rest.
+    rig.pass().await;
+    assert_eq!(rig.backend.with(|server| server.downloads), 2);
+    rig.pass().await;
+    assert_eq!(
+        rig.subjects("INBOX").first().map(String::as_str),
+        Some("Late")
+    );
+    assert_eq!(downloaded(&rig, "INBOX"), 6);
+    assert_eq!(rig.backend.with(|server| server.downloads), 6);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_large_folder_met_for_the_first_time_is_left_between_batches_to_look_at_the_inbox() {
+    let backend = MemoryBackend::new(2);
+    // Old mail: nothing is downloaded ahead, so only the folders are at work.
+    for n in 1..=5 {
+        backend.add("INBOX", &format!("i{n}"), &format!("Inbox {n}"), 1000 + n);
+    }
+    for n in 1..=6 {
+        backend.add("Archive", &format!("a{n}"), &format!("Filed {n}"), 1000 + n);
+    }
+    // No time at all for long work: every pass leaves it at the first chance.
+    let mut rig = Rig::start_with(
+        backend,
+        SyncOptions {
+            interval: Duration::from_secs(3600),
+            retry: Duration::from_secs(1),
+            prefetch_days: 30,
+            prefetch_limit: 100,
+            turn: Duration::ZERO,
+        },
+    );
+
+    // The inbox comes whole in the first pass, whatever the time allowed:
+    // what it held before Quill knew it is not news, and is not announced.
+    let mut events = rig.pass().await;
+    assert_eq!(changed(&events), 1 + 3 + 1, "{events:?}");
+    // The passes after it follow at once, unasked, a batch of the archive each.
+    events.extend(rig.pass().await);
+    events.extend(rig.pass().await);
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, SyncEvent::Arrived { .. })),
+        "{events:?}"
+    );
+    assert_eq!(rig.subjects("INBOX").len(), 5);
+    assert_eq!(rig.subjects("Archive").len(), 6);
+    assert_eq!(
+        rig.backend.with(|server| server.synced.clone()),
+        [
+            "INBOX", "INBOX", "INBOX", "Archive", "INBOX", "Archive", "INBOX", "Archive"
+        ]
+    );
+    // And with nothing left to do, the engine rests.
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), rig.events.recv())
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_folder_the_server_will_not_give_does_not_stop_the_folders_after_it() {
+    let backend = MemoryBackend::new(100);
+    backend.add("INBOX", "1", "Kept", NOW_ISH);
+    backend.add("Broken", "2", "Out of reach", NOW_ISH);
+    backend.add("Trash", "3", "Thrown away", NOW_ISH);
+    backend.with(|server| server.refused = Some("Broken".to_owned()));
+    let mut rig = Rig::start(backend);
+
+    // The trash is read all the same, and the trouble is said when the
+    // pass is over, with the folder's name.
+    rig.pass().await;
+    assert_eq!(rig.subjects("Trash"), ["Thrown away"]);
+    assert_eq!(downloaded(&rig, "Trash"), 1);
+    match rig.next().await {
+        SyncEvent::Problem { message, .. } => assert!(message.contains("Broken"), "{message}"),
+        other => panic!("{other:?}"),
+    }
+
+    // And it goes on being read, with the same trouble said once only.
+    rig.backend
+        .add("Trash", "4", "Thrown away since", NOW_ISH + 1);
+    rig.sync_now().await;
+    assert_eq!(rig.subjects("Trash"), ["Thrown away since", "Thrown away"]);
+
+    // When the server gives the folder again, it is read.
+    rig.backend.with(|server| server.refused = None);
+    let events = rig.sync_now().await;
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, SyncEvent::Problem { .. })),
+        "{events:?}"
+    );
+    assert_eq!(rig.subjects("Broken"), ["Out of reach"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_inbox_the_server_will_not_give_stops_the_pass_as_before() {
+    let backend = MemoryBackend::new(100);
+    backend.add("INBOX", "1", "Kept", NOW_ISH);
+    backend.add("Trash", "3", "Thrown away", NOW_ISH);
+    backend.with(|server| server.refused = Some("INBOX".to_owned()));
+    let mut rig = Rig::start(backend);
+    rig.pass().await;
+    assert!(matches!(rig.next().await, SyncEvent::Problem { .. }));
+    assert_eq!(rig.backend.with(|server| server.synced.clone()), ["INBOX"]);
 }
