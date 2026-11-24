@@ -28,6 +28,8 @@ struct Mail {
     date: i64,
     flags: Flags,
     body: String,
+    /// Its `Message-ID`, when the server's listing is to say one.
+    header: Option<String>,
 }
 
 #[derive(Default)]
@@ -113,8 +115,24 @@ impl MemoryBackend {
                     date,
                     flags: Flags::default(),
                     body: format!("Body of {subject}."),
+                    header: None,
                 },
             );
+    }
+
+    /// A message the listing gives a `Message-ID` for: the same one in
+    /// two folders is one message kept twice.
+    fn add_with_header(&self, folder: &str, id: &str, subject: &str, date: i64, header: &str) {
+        self.add(folder, id, subject, date);
+        self.with(|server| {
+            if let Some(mail) = server
+                .folders
+                .get_mut(folder)
+                .and_then(|mail| mail.get_mut(id))
+            {
+                mail.header = Some(header.to_owned());
+            }
+        });
     }
 
     fn with<T>(&self, change: impl FnOnce(&mut Server) -> T) -> T {
@@ -206,7 +224,7 @@ impl Backend for MemoryBackend {
             RemoteMessage {
                 id: RemoteId(id.clone()),
                 headers: Headers {
-                    message_id: None,
+                    message_id: item.header.clone(),
                     subject: item.subject.clone(),
                     from: vec![Address::new("Ana Ruiz", "ana.ruiz@example.com")],
                     to: Vec::new(),
@@ -296,6 +314,7 @@ impl Backend for MemoryBackend {
                         date: mail.date,
                         flags: mail.flags,
                         body: mail.body.clone(),
+                        header: mail.header.clone(),
                     });
                 if let Some(mail) = found {
                     server
@@ -384,6 +403,7 @@ impl Backend for MemoryBackend {
                 date: NOW_ISH,
                 flags,
                 body: text,
+                header: None,
             },
         );
         Ok(Some(RemoteId(id)))
@@ -2707,4 +2727,183 @@ async fn an_inbox_the_server_will_not_give_stops_the_pass_as_before() {
     rig.pass().await;
     assert!(matches!(rig.next().await, SyncEvent::Problem { .. }));
     assert_eq!(rig.backend.with(|server| server.synced.clone()), ["INBOX"]);
+}
+
+impl Rig {
+    /// Waits until the message has been downloaded.
+    async fn downloaded(&self, id: LocalMessageId) {
+        for _ in 0..500 {
+            if self.store.body(id).unwrap().is_some() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("{id:?} was not downloaded");
+    }
+
+    /// Waits until the server has been asked for this many downloads.
+    async fn asked_for(&self, downloads: usize) {
+        for _ in 0..500 {
+            if self.backend.with(|server| server.downloads) >= downloads {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("the server was not asked for {downloads} downloads");
+    }
+}
+
+const LONG_AGO: i64 = 1000;
+
+#[tokio::test(flavor = "multi_thread")]
+async fn mail_near_the_cursor_is_downloaded_however_old_it_is() {
+    let backend = MemoryBackend::new(100);
+    for (id, subject) in [("1", "First"), ("2", "Second"), ("3", "Third")] {
+        backend.add("INBOX", id, subject, LONG_AGO);
+    }
+    let mut rig = Rig::start(backend);
+    rig.pass().await;
+    let (first, second, third) = (rig.local("First"), rig.local("Second"), rig.local("Third"));
+    // Too old to have been downloaded ahead by the pass.
+    assert_eq!(rig.backend.with(|server| server.downloads), 0);
+
+    // One that is not a message at all is passed over.
+    let near = vec![second, LocalMessageId(9999), first];
+    assert!(rig.handle.send(SyncRequest::FetchNear(near)));
+    rig.downloaded(second).await;
+    rig.downloaded(first).await;
+    assert_eq!(rig.store.body(third).unwrap(), None);
+    assert_eq!(rig.backend.with(|server| server.downloads), 2);
+
+    // Asked again, what is here is not downloaded again.
+    rig.handle
+        .send(SyncRequest::FetchNear(vec![first, second, third]));
+    rig.downloaded(third).await;
+    assert_eq!(rig.backend.with(|server| server.downloads), 3);
+    // And nobody was told: nobody was reading them.
+    assert!(rig.events.try_recv().is_err());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_cursor_that_moves_on_takes_the_downloading_with_it() {
+    let backend = MemoryBackend::new(100);
+    for (id, subject) in [("1", "First"), ("2", "Second"), ("3", "Third")] {
+        backend.add("INBOX", id, subject, LONG_AGO);
+    }
+    let rig = {
+        let mut rig = Rig::start(backend);
+        rig.pass().await;
+        rig
+    };
+    let (first, second, third) = (rig.local("First"), rig.local("Second"), rig.local("Third"));
+
+    // The cursor passed over the first on its way: it never rested there.
+    rig.handle.send(SyncRequest::FetchNear(vec![first]));
+    rig.handle.send(SyncRequest::FetchNear(vec![second, third]));
+    rig.downloaded(second).await;
+    rig.downloaded(third).await;
+    assert_eq!(rig.store.body(first).unwrap(), None);
+    assert_eq!(rig.backend.with(|server| server.downloads), 2);
+
+    // And one that moves on while a message is coming leaves the rest.
+    for (id, subject) in [("4", "Fourth"), ("5", "Fifth"), ("6", "Sixth")] {
+        rig.backend.add("INBOX", id, subject, LONG_AGO);
+    }
+    let mut rig = rig;
+    rig.sync_now().await;
+    let (fourth, fifth, sixth) = (rig.local("Fourth"), rig.local("Fifth"), rig.local("Sixth"));
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    rig.backend
+        .with(|server| server.download_gate = Some(Arc::clone(&gate)));
+    rig.handle.send(SyncRequest::FetchNear(vec![fourth, fifth]));
+    rig.asked_for(3).await;
+    rig.handle.send(SyncRequest::FetchNear(vec![sixth]));
+    gate.add_permits(10);
+    rig.downloaded(fourth).await;
+    rig.downloaded(sixth).await;
+    assert_eq!(rig.store.body(fifth).unwrap(), None);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_message_opened_while_it_is_on_its_way_is_downloaded_once() {
+    let backend = MemoryBackend::new(100);
+    backend.add("INBOX", "1", "Old", LONG_AGO);
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    backend.with(|server| server.download_gate = Some(Arc::clone(&gate)));
+    let mut rig = Rig::start(backend);
+    rig.pass().await;
+    let id = rig.local("Old");
+
+    rig.handle.send(SyncRequest::FetchNear(vec![id]));
+    rig.asked_for(1).await;
+    // The user opens it before it has landed.
+    rig.handle.send(SyncRequest::FetchBody(id));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    gate.add_permits(10);
+    assert_eq!(rig.next().await, SyncEvent::BodyReady(id));
+    assert_eq!(rig.backend.with(|server| server.downloads), 1);
+    assert!(rig.store.body(id).unwrap().is_some());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_server_that_cannot_be_asked_is_left_alone_for_a_while() {
+    let backend = MemoryBackend::new(100);
+    backend.add("INBOX", "1", "First", LONG_AGO);
+    backend.add("INBOX", "2", "Second", LONG_AGO);
+    let mut rig = Rig::start(backend);
+    rig.pass().await;
+    let (first, second) = (rig.local("First"), rig.local("Second"));
+
+    rig.backend
+        .with(|server| server.down = Some("no route to host".to_owned()));
+    rig.handle.send(SyncRequest::FetchNear(vec![first, second]));
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    // Nobody was reading them, so nobody is told.
+    assert!(rig.events.try_recv().is_err());
+
+    // The server is back, and the cursor moves: nothing near it is asked
+    // for yet.
+    rig.backend.with(|server| server.down = None);
+    rig.handle.send(SyncRequest::FetchNear(vec![second]));
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    assert_eq!(rig.backend.with(|server| server.downloads), 0);
+    // A message that is opened is asked for at once, all the same.
+    rig.handle.send(SyncRequest::FetchBody(second));
+    assert_eq!(rig.next().await, SyncEvent::BodyReady(second));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_message_kept_in_two_folders_is_downloaded_once() {
+    let backend = MemoryBackend::new(100);
+    backend.add_with_header("INBOX", "1", "Twice", NOW_ISH, "<twice@example.com>");
+    backend.add_with_header("All Mail", "2", "Twice", NOW_ISH, "<twice@example.com>");
+    // The same id on a message that is not the same length is another
+    // message, and so is one with no id to go by.
+    backend.add_with_header(
+        "All Mail",
+        "3",
+        "Twice, but longer",
+        NOW_ISH,
+        "<twice@example.com>",
+    );
+    backend.add("INBOX", "4", "Plain", NOW_ISH);
+    backend.add("All Mail", "5", "Plain", NOW_ISH);
+    let mut rig = Rig::start(backend);
+    rig.pass().await;
+
+    let all: Vec<LocalMessageId> = rig
+        .store
+        .folders()
+        .unwrap()
+        .into_iter()
+        .flat_map(|folder| rig.store.messages(Mailbox::Folder(folder.id)).unwrap())
+        .map(|row| row.id)
+        .collect();
+    assert_eq!(all.len(), 5);
+    for id in &all {
+        assert!(rig.store.body(*id).unwrap().is_some(), "{id:?}");
+        let hash = rig.store.blob_hash(*id).unwrap().expect("a copy");
+        assert!(rig.blobs.get(&hash).unwrap().is_some(), "{id:?}");
+    }
+    assert_eq!(rig.backend.with(|server| server.downloads), 4);
 }

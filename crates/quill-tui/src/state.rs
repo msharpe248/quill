@@ -402,6 +402,10 @@ pub struct Effects {
     /// The host asked where its reading pane goes: it is told again,
     /// though the place is what it was.
     pub place_again: bool,
+    /// The mail around the list's cursor, nearest first, when that has
+    /// changed: what is not here is downloaded, so that the message
+    /// opened next is.
+    pub near: Option<Vec<LocalMessageId>>,
 }
 
 impl Effects {
@@ -415,8 +419,14 @@ impl Effects {
             && self.trying.is_none()
             && !self.agents_stopped
             && !self.place_again
+            && self.near.is_none()
     }
 }
+
+/// How many messages after the list's cursor are downloaded ahead of
+/// being opened, and how many before it.
+const NEAR_AFTER: usize = 8;
+const NEAR_BEFORE: usize = 3;
 
 /// What the web reading pane says about its page in a bar above it, and
 /// the buttons beside the words: each a command, by name, and what the
@@ -1455,6 +1465,8 @@ pub struct State {
     /// than that while a pane of the host's stands beside it.
     pub window_columns: Option<u16>,
     follow: Follow,
+    /// The mail around the list's cursor that was last asked for.
+    near_asked: Vec<LocalMessageId>,
     /// A sign-in to an account's provider, waiting on the user.
     pub sign_in: Option<SignIn>,
     /// The host's settings window, while it is open.
@@ -1562,6 +1574,7 @@ impl State {
             tips_seen: false,
             window_columns: None,
             follow: Follow::default(),
+            near_asked: Vec::new(),
             sign_in: None,
             settings: None,
             when: None,
@@ -1926,6 +1939,7 @@ impl State {
                 .push(AccountRequest::Remember(Preference::EditorTips(false)));
         }
         self.follow_selection(env, &mut out);
+        self.ask_for_mail_nearby(&mut out);
         self.follow_theme_draft(env, &mut out);
         self.settle_notifications(&mut out);
         // With no accounts there is nothing to read: offer to add one,
@@ -5367,6 +5381,34 @@ impl State {
             }
             Body::Loaded(_) => Some(Shown::Page(target)),
         }
+    }
+
+    /// Asks for the mail around the list's cursor to be downloaded, when
+    /// what is around it has changed: the message under it, then those
+    /// after it and a few before, nearest first. Whatever list is on show
+    /// and however old its mail, the message opened next is then here
+    /// already. Run at the end of every update, like the reading pane's
+    /// following; the engine waits for the cursor to rest, and knows
+    /// which of them it has.
+    fn ask_for_mail_nearby(&mut self, out: &mut Effects) {
+        if !self.list.loaded {
+            return;
+        }
+        let rows = &self.list.rows;
+        let at = self.list.selected;
+        let mut near: Vec<LocalMessageId> = rows.get(at).map(|row| row.id).into_iter().collect();
+        for step in 1..=NEAR_AFTER {
+            near.extend(rows.get(at + step).map(|row| row.id));
+            if step <= NEAR_BEFORE {
+                let before = at.checked_sub(step).and_then(|at| rows.get(at));
+                near.extend(before.map(|row| row.id));
+            }
+        }
+        if near.is_empty() || near == self.near_asked {
+            return;
+        }
+        self.near_asked.clone_from(&near);
+        out.near = Some(near);
     }
 
     /// Keeps the web reading pane on the message under the list's cursor.

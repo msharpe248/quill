@@ -2190,3 +2190,29 @@ fn installing_the_command_line_is_asked_of_the_service_and_what_it_says_is_shown
         harness.screen()
     );
 }
+
+#[test]
+fn the_mail_around_the_cursor_is_asked_for_when_what_is_around_it_changes() {
+    let mut harness = Harness::demo(200, 60);
+    let ids: Vec<_> = harness.state.list.rows.iter().map(|row| row.id).collect();
+    assert!(ids.len() > 9, "{}", ids.len());
+
+    // As the list is first shown: the message under the cursor, then the
+    // ones after it.
+    assert_eq!(harness.near, [ids[..9].to_vec()]);
+
+    // Something that leaves the cursor where it was asks for nothing.
+    harness.keys("K esc");
+    assert_eq!(harness.near.len(), 1);
+
+    // Moved, it asks again: under it first, then after and before by
+    // turns, the nearest first, and more after than before.
+    harness.keys("j j j j j");
+    assert_eq!(harness.near.len(), 6);
+    let near = harness.near.last().unwrap();
+    assert_eq!(
+        near[..7],
+        [ids[5], ids[6], ids[4], ids[7], ids[3], ids[8], ids[2]]
+    );
+    assert!(!near.contains(&ids[1]), "three before it and no more");
+}

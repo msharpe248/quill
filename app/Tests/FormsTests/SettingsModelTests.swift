@@ -426,9 +426,19 @@ struct SettingsModelTests {
     }
 
     @Test func thePaneLastOnShowIsKeptInTheDefaultsAndOnlyThere() throws {
-        let suite = "dev.quill.tests.settings-pane-\(UUID().uuidString)"
+        // One name for every run, and its file taken away afterwards: a
+        // name made new each time left an empty file in the user's
+        // preferences for every run of the tests.
+        let suite = "dev.quill.tests.settings-pane"
         let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.removePersistentDomain(forName: suite)
+        defer {
+            defaults.removePersistentDomain(forName: suite)
+            defaults.synchronize()
+            let file = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Preferences/\(suite).plist")
+            try? FileManager.default.removeItem(at: file)
+        }
 
         #expect(DefaultsSettingsPaneMemory(defaults: defaults).pane == nil)
         DefaultsSettingsPaneMemory(defaults: defaults).pane = "composing"

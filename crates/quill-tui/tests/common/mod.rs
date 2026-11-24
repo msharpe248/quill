@@ -31,6 +31,8 @@ pub struct Harness {
     pub host_requests: Vec<HostRequest>,
     /// What the UI has asked of the sync engine so far.
     pub sync_requests: Vec<quill_sync::SyncRequest>,
+    /// Each asking for the mail around the list's cursor, in order.
+    pub near: Vec<Vec<quill_core::types::LocalMessageId>>,
     /// What the UI has asked of the accounts service so far.
     pub account_requests: Vec<quill_tui::setup::AccountRequest>,
     /// How many times settings that came to hold changed the keys.
@@ -244,6 +246,7 @@ impl Harness {
             store,
             host_requests: Vec::new(),
             sync_requests: Vec::new(),
+            near: Vec::new(),
             account_requests: Vec::new(),
             keys_announced: 0,
             hung_up: 0,
@@ -264,6 +267,7 @@ impl Harness {
         self.take_settings(&mut effects);
         self.host_requests.extend(effects.host);
         self.sync_requests.extend(effects.sync);
+        self.near.extend(effects.near);
         self.account_requests.extend(effects.accounts);
         self.pump(effects.data);
     }
@@ -305,6 +309,7 @@ impl Harness {
                 self.take_settings(&mut effects);
                 self.host_requests.extend(effects.host);
                 self.sync_requests.extend(effects.sync);
+                self.near.extend(effects.near);
                 self.account_requests.extend(effects.accounts);
                 queue.extend(effects.data);
             }

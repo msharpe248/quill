@@ -857,6 +857,59 @@ impl Store {
         Ok(hash.flatten())
     }
 
+    /// The hash of the raw bytes of another copy of this message that has
+    /// been downloaded: the same account's, with the same `Message-ID`,
+    /// the same size and the same date. One message is often in several
+    /// folders (Gmail keeps everything in All Mail too), and is the same
+    /// bytes in each.
+    ///
+    /// The size is what makes the three enough: a copy that was changed on
+    /// its way (a `Bcc` kept in the sender's own, a list's footer) is not
+    /// the same length.
+    pub fn downloaded_copy(&self, message: LocalMessageId) -> Result<Option<String>> {
+        let hash: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT o.blob_hash FROM messages m
+                 JOIN folders f ON f.id = m.folder_id
+                 JOIN messages o ON o.message_id = m.message_id
+                 JOIN folders g ON g.id = o.folder_id
+                 WHERE m.id = ?1 AND o.id != m.id AND g.account_id = f.account_id
+                   AND m.message_id IS NOT NULL AND m.message_id != ''
+                   AND m.size > 0 AND o.size = m.size AND o.date = m.date
+                   AND o.blob_hash IS NOT NULL
+                   AND EXISTS (SELECT 1 FROM bodies b WHERE b.message_id = o.id)
+                 LIMIT 1",
+                [message.0],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(hash)
+    }
+
+    /// Those of `messages` that are a server's and have not been
+    /// downloaded, in the order given, each with its account.
+    pub fn not_downloaded(
+        &self,
+        messages: &[LocalMessageId],
+    ) -> Result<Vec<(LocalMessageId, LocalAccountId)>> {
+        let mut statement = self.conn.prepare(
+            "SELECT f.account_id FROM messages m JOIN folders f ON f.id = m.folder_id
+             WHERE m.id = ?1 AND m.remote_id NOT LIKE 'local:op%'
+               AND NOT EXISTS (SELECT 1 FROM bodies b WHERE b.message_id = m.id)",
+        )?;
+        let mut found = Vec::new();
+        for message in messages {
+            let account: Option<i64> = statement
+                .query_row([message.0], |row| row.get(0))
+                .optional()?;
+            if let Some(account) = account {
+                found.push((*message, LocalAccountId(account)));
+            }
+        }
+        Ok(found)
+    }
+
     /// Messages of an account dated at or after `since` whose bodies have
     /// not been downloaded, newest first, at most `limit` of them.
     pub fn messages_without_body(

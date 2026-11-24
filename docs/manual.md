@@ -1039,7 +1039,7 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 
 ### Disk space
 
-Messages you have opened, and recent ones, are kept on this Mac so they read offline. They may take up to 5 GB; past that the oldest copies are let go and fetched again when you next open them. The list of your mail and its text for searching are always kept.
+Messages you have opened, and those of the last 30 days, are kept on this Mac so they read offline. The messages around where you are in a list are downloaded too, a moment after the cursor comes to rest, so that older mail opens as quickly as you move through it. A message that is in several folders of an account (Gmail keeps everything in All Mail as well) is downloaded once. They may take up to 5 GB; past that the oldest copies are let go and fetched again when you next open them. The list of your mail and its text for searching are always kept.
 
 Opening a message whose copy was let go shows its text at once, with a line above it saying the rest is being fetched; its layout, pictures, attachments and any invitation appear when the copy arrives. If it cannot be fetched (no connection, say), the text stays and the line says why. Opening the message again tries again.
 

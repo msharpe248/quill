@@ -800,8 +800,18 @@ impl Io<'_> {
                         ),
                     }));
                 }
-                (None, SyncRequest::SyncNow | SyncRequest::SyncOne(_) | SyncRequest::Queue) => {}
+                (
+                    None,
+                    SyncRequest::SyncNow
+                    | SyncRequest::SyncOne(_)
+                    | SyncRequest::Queue
+                    | SyncRequest::FetchNear(_),
+                ) => {}
             }
+        }
+        // With no engine there is nothing to download from.
+        if let (Some(engine), Some(near)) = (self.sync, effects.near) {
+            engine.send(SyncRequest::FetchNear(near));
         }
     }
 

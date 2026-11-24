@@ -17,6 +17,7 @@ pub mod rules;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -182,6 +183,10 @@ pub enum SyncRequest {
     SyncOne(LocalAccountId),
     /// Download a message's body. Answered by `BodyReady` or `BodyFailed`.
     FetchBody(LocalMessageId),
+    /// The messages around the list's cursor, nearest first: download the
+    /// ones that are not here, so that the one opened next is. Only the
+    /// last asked for counts, and nothing is said of how it went.
+    FetchNear(Vec<LocalMessageId>),
     /// The store's queue or outbox has something new: a change the user
     /// made, or mail to send. Look now instead of at the next due time.
     Queue,
@@ -296,6 +301,13 @@ const RULES_FETCH_LARGEST: i64 = 5 * 1024 * 1024;
 /// The most mail one catching up asks about.
 const RULES_CATCH_UP_MOST: usize = 5000;
 
+/// How long the list's cursor stays in one place before the mail around
+/// it is downloaded.
+const NEAR_SETTLES: Duration = Duration::from_millis(250);
+/// How long mail near the cursor is left alone after its server could not
+/// be asked.
+const NEAR_RESTS: Duration = Duration::from_secs(60);
+
 /// How long after starting the cache is first measured.
 const CACHE_FIRST_LOOK: Duration = Duration::from_secs(120);
 /// And how often after that.
@@ -342,6 +354,8 @@ pub fn spawn_with_rules(
         options,
         rules: RwLock::new(Arc::new(rules)),
         rules_waiting: Mutex::new(HashSet::new()),
+        fetching: Mutex::new(HashMap::new()),
+        near: AtomicU64::new(0),
         events,
         accounts: RwLock::new(HashMap::new()),
     });
@@ -423,6 +437,11 @@ async fn serve(engine: Arc<Engine>, mut queue: UnboundedReceiver<SyncRequest>) {
                 let engine = Arc::clone(&engine);
                 tokio::spawn(async move { engine.fetch_body_for_ui(id).await });
             }
+            SyncRequest::FetchNear(messages) => {
+                let turn = engine.near.fetch_add(1, Ordering::SeqCst) + 1;
+                let engine = Arc::clone(&engine);
+                tokio::spawn(async move { engine.fetch_near(messages, turn).await });
+            }
             SyncRequest::Queue => engine
                 .running()
                 .iter()
@@ -450,6 +469,13 @@ struct Engine {
     /// Accounts whose catching up is waiting for the user, and has been
     /// said to be: it is said once.
     rules_waiting: Mutex<HashSet<LocalAccountId>>,
+    /// The messages being downloaded now, and whether the reader is
+    /// waiting to hear of each: a message is downloaded once, whoever
+    /// asked first.
+    fetching: Mutex<HashMap<LocalMessageId, bool>>,
+    /// Counts the times the mail near the cursor was asked for. Only the
+    /// last asking is carried on with.
+    near: AtomicU64,
     events: UnboundedSender<SyncEvent>,
 }
 
@@ -470,6 +496,9 @@ struct Running {
     /// The account has been replaced: the queue runner takes up nothing
     /// more, and ends when what it has in hand is done.
     retired: Arc<std::sync::atomic::AtomicBool>,
+    /// Until when nothing near the cursor is downloaded: its server could
+    /// not be asked a moment ago, and is not tried again at every move.
+    near_rests: Mutex<Option<tokio::time::Instant>>,
 }
 
 impl Running {
@@ -514,6 +543,22 @@ impl Running {
 
     fn is_retired(&self) -> bool {
         self.retired.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Whether mail near the cursor is being left alone for now.
+    fn near_resting(&self) -> bool {
+        self.near_rests
+            .lock()
+            .ok()
+            .and_then(|until| *until)
+            .is_some_and(|until| tokio::time::Instant::now() < until)
+    }
+
+    /// Leaves mail near the cursor alone for a while.
+    fn rest_near(&self) {
+        if let Ok(mut until) = self.near_rests.lock() {
+            *until = Some(tokio::time::Instant::now() + NEAR_RESTS);
+        }
     }
 }
 
@@ -620,6 +665,7 @@ impl Engine {
             task: Mutex::new(Vec::new()),
             queue_task: Mutex::new(None),
             retired: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            near_rests: Mutex::new(None),
         });
         // In the account's place from here, so that nothing asked of it
         // meanwhile is asked of the one it replaces.
@@ -1043,7 +1089,7 @@ impl Engine {
         let mut downloaded = false;
         turn.begin();
         for id in wanted {
-            match self.fetch_body(id).await {
+            match self.fetch_ahead(id).await {
                 Ok(()) => downloaded = true,
                 // A message that vanished meanwhile is no reason to stop.
                 Err(FetchFailure::Gone) => {}
@@ -1360,14 +1406,107 @@ impl Engine {
         Ok(())
     }
 
+    /// Downloads the message the reader is waiting for, and says how it
+    /// went.
     async fn fetch_body_for_ui(&self, id: LocalMessageId) {
-        match self.fetch_body(id).await {
+        // On its way already, downloaded ahead: the reader hears when
+        // that lands.
+        if !self.begin_fetch(id, true) {
+            return;
+        }
+        let outcome = self.fetch_body(id).await;
+        self.end_fetch(id);
+        self.tell_reader(id, &outcome);
+    }
+
+    /// Downloads a message nobody is reading yet. Should the reader ask
+    /// for it meanwhile, it is told how this went.
+    async fn fetch_ahead(&self, id: LocalMessageId) -> Result<(), FetchFailure> {
+        if !self.begin_fetch(id, false) {
+            return Ok(());
+        }
+        let outcome = self.fetch_body(id).await;
+        if self.end_fetch(id) {
+            self.tell_reader(id, &outcome);
+        }
+        outcome
+    }
+
+    /// Notes that `id` is being downloaded, and whether the reader waits
+    /// for it. `false` when it already is: whoever has it in hand says
+    /// how it went.
+    fn begin_fetch(&self, id: LocalMessageId, awaited: bool) -> bool {
+        let Ok(mut fetching) = self.fetching.lock() else {
+            return true;
+        };
+        match fetching.get_mut(&id) {
+            Some(waiting) => {
+                *waiting |= awaited;
+                false
+            }
+            None => {
+                fetching.insert(id, awaited);
+                true
+            }
+        }
+    }
+
+    /// The download of `id` is over. Whether the reader waits to hear.
+    fn end_fetch(&self, id: LocalMessageId) -> bool {
+        self.fetching
+            .lock()
+            .ok()
+            .and_then(|mut fetching| fetching.remove(&id))
+            .unwrap_or(false)
+    }
+
+    fn tell_reader(&self, id: LocalMessageId, outcome: &Result<(), FetchFailure>) {
+        match outcome {
             Ok(()) => self.emit(SyncEvent::BodyReady(id)),
             Err(FetchFailure::Gone) => self.emit(SyncEvent::BodyFailed {
                 id,
                 reason: "The message is no longer on the server.".to_owned(),
             }),
-            Err(FetchFailure::Other(reason)) => self.emit(SyncEvent::BodyFailed { id, reason }),
+            Err(FetchFailure::Other(reason)) => self.emit(SyncEvent::BodyFailed {
+                id,
+                reason: reason.clone(),
+            }),
+        }
+    }
+
+    /// Downloads those of `messages` that are not here, in the order
+    /// given: the mail around the list's cursor, so that what is opened
+    /// next is here already, however old it is.
+    ///
+    /// It is left the moment the cursor has gone somewhere else (`turn` is
+    /// no longer the last asking), and says nothing of how it went: the
+    /// sync says what is wrong with a server, and a message that is
+    /// opened is asked for again and answered.
+    async fn fetch_near(&self, messages: Vec<LocalMessageId>, turn: u64) {
+        // A cursor on its way past is not resting here.
+        tokio::time::sleep(NEAR_SETTLES).await;
+        if self.near.load(Ordering::SeqCst) != turn {
+            return;
+        }
+        let Ok(missing) = self.db(move |store| store.not_downloaded(&messages)).await else {
+            return;
+        };
+        for (id, account) in missing {
+            if self.near.load(Ordering::SeqCst) != turn {
+                return;
+            }
+            let Some(running) = self.account(account) else {
+                continue;
+            };
+            // What is kept here whole has nothing left on a server to
+            // fetch, and a server that just failed is left a while.
+            if !running.account.backend.capabilities().folders || running.near_resting() {
+                continue;
+            }
+            match self.fetch_ahead(id).await {
+                Ok(()) | Err(FetchFailure::Gone) => {}
+                Err(FetchFailure::Other(_)) => running.rest_near(),
+            }
         }
     }
 
@@ -1378,6 +1517,11 @@ impl Engine {
             .await
             .map_err(FetchFailure::Other)?
             .ok_or(FetchFailure::Gone)?;
+        // The same message in another folder, downloaded already: the
+        // bytes are the same, and the server is not asked again.
+        if let Some(raw) = self.copy_here(id).await {
+            return self.store_downloaded(id, location.date, raw).await;
+        }
         let running = self
             .account(location.account)
             .ok_or_else(|| FetchFailure::Other("This account does not sync.".to_owned()))?;
@@ -1391,6 +1535,22 @@ impl Engine {
                 other => FetchFailure::Other(other.to_string()),
             })?;
         self.store_downloaded(id, location.date, raw).await
+    }
+
+    /// The bytes of another copy of this message, if one is here.
+    async fn copy_here(&self, id: LocalMessageId) -> Option<bytes::Bytes> {
+        let blobs = self.blobs.clone()?;
+        let hash = self
+            .db(move |store| store.downloaded_copy(id))
+            .await
+            .ok()
+            .flatten()?;
+        tokio::task::spawn_blocking(move || blobs.get(&hash))
+            .await
+            .ok()?
+            .ok()
+            .flatten()
+            .map(bytes::Bytes::from)
     }
 
     /// Files a downloaded message's raw bytes and stores its text.
