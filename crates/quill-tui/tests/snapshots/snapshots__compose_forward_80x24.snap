@@ -7,15 +7,16 @@ expression: harness.screen()
 │  ▾ W Work      │┃ To:                                                        ┃
 │    Inbox     8 │┃ Cc:                                                        ┃
 │    Drafts      │┃ Subject: Fwd: Q4 roadmap                                   ┃
-│    Sent        │┃ ────────────────────────────────────────────────────────── ┃
-│    Archive     │┃                                                            ┃
+│    Sent        │┃ Include: [x] roadmap.pdf (937 bytes), from the original    ┃
+│    Archive     │┃ ────────────────────────────────────────────────────────── ┃
 │    Trash       │┃                                                            ┃
-│  ▾ P Personal  │┃ -------- Forwarded message --------                        ┃
-│    Inbox     4 │┃ From: Ana Ruiz <ana.ruiz@example.com>                      ┃
-│    Drafts      │┃ Date: Sat 14 Nov 2026 09:14                                ┃
-│    Sent        │┃ Subject: Q4 roadmap                                        ┃
-│    Archive     │┃ To: Robin Vale <robin@example.com>                         ┃
-│    Trash       │┃                                                            ┃
+│  ▾ P Personal  │┃                                                            ┃
+│    Inbox     4 │┃ -------- Forwarded message --------                        ┃
+│    Drafts      │┃ From: Ana Ruiz <ana.ruiz@example.com>                      ┃
+│    Sent        │┃ Date: Sat 14 Nov 2026 09:14                                ┃
+│    Archive     │┃ Subject: Q4 roadmap                                        ┃
+│    Trash       │┃ To: Robin Vale <robin@example.com>                         ┃
+│                │┃                                                            ┃
 │                │┃ Hi Robin,                                                  ┃
 │                │┃                                                            ┃
 │                │┃ Here is the draft roadmap for Q4. The short version: we    ┃
@@ -23,6 +24,5 @@ expression: harness.screen()
 │                │┃ search, and keep December for whatever the first two       ┃
 │                │┃ months break.                                              ┃
 │                │┃                                                            ┃
-│                │┃ Three things I would like your eyes on before Thursday:    ┃
-└────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1-16 of 34 ┛
+└────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1-15 of 34 ┛
  cmd-enter send  cmd-s save draft  cmd-A attach  tab next field  esc close

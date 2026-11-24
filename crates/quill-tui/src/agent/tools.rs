@@ -554,6 +554,11 @@ pub const TOOLS: &[Tool] = &[
                 Kind::Text,
                 "What to say above the forwarded message."
             ),
+            param(
+                "without_files",
+                Kind::Flag,
+                "Leave the message's files out."
+            ),
         ]
     ),
     tool!(
@@ -895,6 +900,8 @@ pub enum Call {
         id: i64,
         to: Vec<String>,
         body: String,
+        /// The message's files are left out.
+        without_files: bool,
     },
     /// What is `None` is left as it was.
     DraftEdit {
@@ -1152,6 +1159,7 @@ impl Call {
                 id: id()?,
                 to: args.texts("to")?,
                 body: args.text("body")?.unwrap_or_default(),
+                without_files: args.flag("without_files")?,
             },
             "invite" => Self::Invite {
                 id: id()?,
@@ -1292,11 +1300,19 @@ impl Call {
             | Self::Open { id }
             | Self::Unsubscribe { id }
             | Self::OutboxCancel { id } => put("id", json!(id)),
-            Self::DraftForward { id, to, body } => {
+            Self::DraftForward {
+                id,
+                to,
+                body,
+                without_files,
+            } => {
                 put("id", json!(id));
                 put("to", list(to));
                 if !body.is_empty() {
                     put("body", json!(body));
+                }
+                if *without_files {
+                    put("without_files", json!(true));
                 }
             }
             Self::Invite { id, answer } => {
@@ -1629,11 +1645,13 @@ mod tests {
                 id: 9,
                 to: vec!["ana@example.com".to_owned()],
                 body: "See below.".to_owned(),
+                without_files: false,
             },
             Call::DraftForward {
                 id: 9,
                 to: Vec::new(),
                 body: String::new(),
+                without_files: true,
             },
             Call::Invite {
                 id: 9,

@@ -1627,3 +1627,16 @@ Until now the protocol had been worked by hand. Claude Code (2.1.331) was run ag
 - **With the skill** (linked into a scratch project's `.claude/skills` by `quill skill install --to`, the agent allowed the skill and one wrapper around `quill`). It found the skill, ran `status`, `search` and `read` with `--json`, answered from them and changed nothing, as asked. That a linked folder is followed by Claude Code is now seen, not only read.
 - **Not tried:** any other agent's program; a change made by the skill; a long session; and still nothing with a real account.
 
+### A forward says whether it takes the message's files (2026-11-24)
+
+Asked by the owner: forwarding should have a way to say whether the attachments are included, perhaps a check in the composer's header. Until now Forward in the window took none of them, and only an agent's `draft forward` took them.
+
+- **A forward takes the files, and a check under the subject says so** (`Include: [x]`, then the files by name and size; `Field::Include`, `Compose::original`). On as it opens: that is what Mail and the others do, and what the agents' forward already did. A reply takes none.
+- **All or none.** The check puts every one of the message's files among the message's attachments or takes them all out (`Compose::include_original`); it is on only while every one is there (`includes_original`), so an editor's file that names some of them and not others reads as off, with what is still attached listed as attached. Files attached here are on their own line and are never touched by it.
+- **Turned three ways**: `space` with the cursor on it (it is the stop after the subject), a click on the row, and a command (`compose.include_files`, `cmd-shift-i` or `ctrl-q`) that the app's Message menu shows with a tick (`State::is_on`). The box is `[x]` and `[ ]`: plain characters, which every terminal draws one cell wide.
+- **The files' names come before the words about them** in the row: a narrow pane cuts the end.
+- **Nothing more is kept in a draft.** The files are ordinary attachments of the draft that is saved, so a forward taken up again from Drafts has what it was saved with and no check. A column in the store for it was not worth what it would buy.
+- **One forward for the window and for agents** (`outgoing::respond`): the files are put by where the message is read, and `draft_forward` gained `without_files` (`quill draft forward ID --without-files`). With nowhere to keep the files the window's forward opens without them and says so; an agent's is refused, not written short.
+- **Not added:** a setting for how the check starts. Say if it should start off.
+- **Verified** by tests of the keys, the click, the command, what is sent either way, a file attached beside them and the draft saved, and seen in a check build on the demo mailbox.
+

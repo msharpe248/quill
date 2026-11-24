@@ -22,16 +22,20 @@ pub enum Field {
     Cc,
     Bcc,
     Subject,
+    /// The check that says whether a forward takes the files of the
+    /// message it passes on. There only when that message had files.
+    Include,
     Body,
 }
 
 impl Field {
-    const ORDER: [Field; 6] = [
+    const ORDER: [Field; 7] = [
         Field::From,
         Field::To,
         Field::Cc,
         Field::Bcc,
         Field::Subject,
+        Field::Include,
         Field::Body,
     ];
 
@@ -62,6 +66,11 @@ pub struct Prefill {
     pub draft: Option<DraftId>,
     pub account: LocalAccountId,
     pub content: DraftContent,
+    /// The files of the message this one passes on, when it is a forward
+    /// of a message that had any. They are among `content`'s files to
+    /// begin with, and can be left out as one: see
+    /// [`Compose::include_original`].
+    pub original: Vec<DraftAttachment>,
     /// Where in the body the cursor starts, as a byte offset.
     pub cursor: usize,
     pub focus: Field,
@@ -131,6 +140,11 @@ pub struct Compose {
     pub references: Vec<String>,
     pub replied_to: Option<i64>,
     pub attachments: Vec<DraftAttachment>,
+    /// The files of the message this one passes on: what the check under
+    /// the subject puts among `attachments` or takes out of them. Empty
+    /// for anything but a forward of a message with files, and for a
+    /// draft taken up again, whose files are simply its files.
+    pub original: Vec<DraftAttachment>,
     pub completion: Option<Completion>,
     /// The list of accounts to send from, while it is open under the
     /// From field.
@@ -177,6 +191,7 @@ impl Compose {
             references: content.references,
             replied_to: content.replied_to,
             attachments: content.attachments,
+            original: prefill.original,
             completion: None,
             choosing: None,
             attaching: None,
@@ -232,7 +247,7 @@ impl Compose {
             Field::Cc => Some(&mut self.cc),
             Field::Bcc => Some(&mut self.bcc),
             Field::Subject => Some(&mut self.subject),
-            Field::From | Field::Body => None,
+            Field::From | Field::Include | Field::Body => None,
         }
     }
 
@@ -243,7 +258,7 @@ impl Compose {
             Field::Cc => Some(&self.cc),
             Field::Bcc => Some(&self.bcc),
             Field::Subject => Some(&self.subject),
-            Field::From | Field::Body => None,
+            Field::From | Field::Include | Field::Body => None,
         }
     }
 
@@ -288,6 +303,72 @@ impl Compose {
         // in it.
         if self.field == Field::Bcc && self.bcc.is_empty() {
             self.field = self.field.step(forward);
+        }
+        // And there is a check only where there are files to take.
+        if self.field == Field::Include && self.original.is_empty() {
+            self.field = self.field.step(forward);
+        }
+    }
+
+    /// Whether this is a forward of a message that had files: whether
+    /// there is a check to say if they go with it.
+    pub fn has_original(&self) -> bool {
+        !self.original.is_empty()
+    }
+
+    /// Whether the files of the message being passed on go with it: every
+    /// one of them is among the files attached.
+    pub fn includes_original(&self) -> bool {
+        self.has_original()
+            && self
+                .original
+                .iter()
+                .all(|file| self.attachments.contains(file))
+    }
+
+    /// Takes the files of the message being passed on, all of them, or
+    /// leaves them all out. Files attached here are not touched.
+    pub fn include_original(&mut self, include: bool) {
+        if !self.has_original() {
+            return;
+        }
+        let mut files = self.own_files().into_iter().cloned().collect::<Vec<_>>();
+        if include {
+            files.splice(0..0, self.original.iter().cloned());
+        }
+        if files != self.attachments {
+            self.attachments = files;
+            self.touched = true;
+        }
+        self.doubts.clear();
+        self.error = None;
+    }
+
+    /// The files attached here: all that are attached but those of the
+    /// message being passed on.
+    pub fn own_files(&self) -> Vec<&DraftAttachment> {
+        let mut theirs: Vec<&DraftAttachment> = self.original.iter().collect();
+        self.attachments
+            .iter()
+            .filter(|file| match theirs.iter().position(|other| other == file) {
+                Some(at) => {
+                    theirs.remove(at);
+                    false
+                }
+                None => true,
+            })
+            .collect()
+    }
+
+    /// The files the header lists as attached, beside what the check
+    /// says: those attached here, and with the check off any of the
+    /// forwarded message's that are attached all the same (an editor's
+    /// file can name some and not others).
+    pub fn listed_files(&self) -> Vec<&DraftAttachment> {
+        if self.includes_original() {
+            self.own_files()
+        } else {
+            self.attachments.iter().collect()
         }
     }
 
@@ -629,6 +710,26 @@ impl Compose {
                 Key::Char(_) if plain => Did::Handled,
                 _ => Did::Nothing,
             },
+            Field::Include => match chord.key {
+                // The check: space turns it.
+                Key::Char(' ') if plain => {
+                    self.include_original(!self.includes_original());
+                    Did::Handled
+                }
+                Key::Enter | Key::Down if plain => {
+                    self.move_field(true);
+                    Did::Handled
+                }
+                Key::Up if plain => {
+                    self.move_field(false);
+                    Did::Handled
+                }
+                // Nothing is typed into a check.
+                Key::Char(_) | Key::Left | Key::Right | Key::Backspace | Key::Delete if plain => {
+                    Did::Handled
+                }
+                _ => Did::Nothing,
+            },
             Field::Body => {
                 // The first line of the body leads back up to the subject.
                 match self.body.key(chord) {
@@ -801,11 +902,137 @@ mod tests {
             draft: None,
             account: WORK,
             content: DraftContent::default(),
+            original: Vec::new(),
             cursor: 0,
             focus: Field::To,
             title: "New message",
             note: None,
         })
+    }
+
+    fn file(name: &str) -> DraftAttachment {
+        DraftAttachment {
+            name: name.to_owned(),
+            content_type: content_type_for(name).to_owned(),
+            blob_hash: format!("hash of {name}"),
+            size: 12,
+        }
+    }
+
+    /// A forward of a message that had two files.
+    fn forward() -> Compose {
+        let original = vec![file("plan.pdf"), file("map.png")];
+        Compose::new(Prefill {
+            draft: None,
+            account: WORK,
+            content: DraftContent {
+                subject: "Fwd: The plan".to_owned(),
+                attachments: original.clone(),
+                ..DraftContent::default()
+            },
+            original,
+            cursor: 0,
+            focus: Field::To,
+            title: "Forward",
+            note: None,
+        })
+    }
+
+    fn names(files: &[DraftAttachment]) -> Vec<&str> {
+        files.iter().map(|file| file.name.as_str()).collect()
+    }
+
+    #[test]
+    fn a_forward_takes_the_messages_files_until_the_check_is_turned() {
+        let mut compose = forward();
+        assert!(compose.has_original() && compose.includes_original());
+        assert_eq!(
+            names(&compose.content().attachments),
+            ["plan.pdf", "map.png"]
+        );
+        assert!(compose.listed_files().is_empty());
+        assert!(!compose.is_modified());
+
+        // The check is the stop after the subject, and space turns it.
+        for _ in 0..3 {
+            compose.move_field(true);
+        }
+        assert_eq!(compose.field, Field::Include);
+        press(&mut compose, "space");
+        assert!(!compose.includes_original());
+        assert!(compose.content().attachments.is_empty());
+        assert!(compose.is_modified());
+        // Nothing is typed into it, and the arrows and enter go on.
+        assert_eq!(press(&mut compose, "x"), [Did::Handled]);
+        assert!(compose.content().attachments.is_empty());
+        press(&mut compose, "space");
+        assert_eq!(
+            names(&compose.content().attachments),
+            ["plan.pdf", "map.png"]
+        );
+        press(&mut compose, "up");
+        assert_eq!(compose.field, Field::Subject);
+        press(&mut compose, "down enter");
+        assert_eq!(compose.field, Field::Body);
+        compose.move_field(false);
+        assert_eq!(compose.field, Field::Include);
+    }
+
+    #[test]
+    fn a_file_attached_here_stays_whatever_the_check_says() {
+        let mut compose = forward();
+        compose.attach(file("notes.txt"));
+        assert_eq!(
+            names(&compose.attachments),
+            ["plan.pdf", "map.png", "notes.txt"]
+        );
+        assert_eq!(
+            compose
+                .listed_files()
+                .into_iter()
+                .map(|file| file.name.as_str())
+                .collect::<Vec<_>>(),
+            ["notes.txt"]
+        );
+        compose.include_original(false);
+        assert_eq!(names(&compose.attachments), ["notes.txt"]);
+        // Put back, the message's own come first, as they were.
+        compose.include_original(true);
+        assert_eq!(
+            names(&compose.attachments),
+            ["plan.pdf", "map.png", "notes.txt"]
+        );
+        // The same file attached here as well is one more, and is kept.
+        compose.attach(file("plan.pdf"));
+        compose.include_original(false);
+        assert_eq!(names(&compose.attachments), ["notes.txt", "plan.pdf"]);
+    }
+
+    #[test]
+    fn some_of_the_messages_files_is_not_all_of_them() {
+        // An editor's file named one of the two and not the other.
+        let mut compose = forward();
+        compose.attachments.remove(0);
+        assert!(!compose.includes_original());
+        // What is attached all the same is listed as attached.
+        assert_eq!(compose.listed_files().len(), 1);
+        // The check takes them all again, once each.
+        compose.include_original(true);
+        assert_eq!(names(&compose.attachments), ["plan.pdf", "map.png"]);
+    }
+
+    #[test]
+    fn there_is_no_check_where_nothing_is_passed_on() {
+        let mut compose = blank();
+        assert!(!compose.has_original() && !compose.includes_original());
+        for _ in 0..3 {
+            compose.move_field(true);
+        }
+        assert_eq!(compose.field, Field::Body);
+        compose.move_field(false);
+        assert_eq!(compose.field, Field::Subject);
+        compose.include_original(true);
+        assert!(compose.attachments.is_empty() && !compose.is_modified());
     }
 
     fn press(compose: &mut Compose, keys: &str) -> Vec<Did> {
@@ -1114,6 +1341,7 @@ mod tests {
                 replied_to: Some(5),
                 ..DraftContent::default()
             },
+            original: Vec::new(),
             cursor: 0,
             focus: Field::Body,
             title: "Reply",

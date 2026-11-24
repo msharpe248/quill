@@ -2537,6 +2537,11 @@ impl State {
                     compose.show_bcc();
                 }
             }
+            CommandId::ComposeIncludeFiles => {
+                if let Some(compose) = &mut self.compose {
+                    compose.include_original(!compose.includes_original());
+                }
+            }
             CommandId::ComposeTemplate => {
                 self.templates = Some(TemplatePicker {
                     filter: LineInput::default(),
@@ -2907,6 +2912,11 @@ impl State {
             CommandId::ComposeAttach | CommandId::ComposeBcc => {
                 self.compose.as_ref().is_none_or(Compose::fields_in_reach)
             }
+            // Only a forward of a message that had files has any to take
+            // or leave.
+            CommandId::ComposeIncludeFiles => self.compose.as_ref().is_some_and(|compose| {
+                compose.has_original() && !compose.sending && compose.fields_in_reach()
+            }),
             CommandId::ComposeFields | CommandId::ComposeBody => self
                 .compose
                 .as_ref()
@@ -3150,6 +3160,10 @@ impl State {
             CommandId::ViewDarkPages => self.dark_pages,
             CommandId::ViewSidebar => !self.sidebar_hidden,
             CommandId::RulesToggle => self.rules_on(),
+            CommandId::ComposeIncludeFiles => self
+                .compose
+                .as_ref()
+                .is_some_and(Compose::includes_original),
             _ => false,
         }
     }
@@ -3591,6 +3605,7 @@ impl State {
                 draft: None,
                 account,
                 content: DraftContent::default(),
+                original: Vec::new(),
                 cursor: 0,
                 focus: Field::To,
                 title: "New message",
@@ -4921,6 +4936,7 @@ impl State {
                 draft: None,
                 account,
                 content,
+                original: Vec::new(),
                 cursor,
                 focus,
                 title: "New message",

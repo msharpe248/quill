@@ -258,6 +258,40 @@ fn a_form_is_not_answered_or_dismissed_by_a_stray_click() {
 }
 
 #[test]
+fn a_click_on_a_forwards_check_turns_it() {
+    let mut harness = Harness::demo(200, 60);
+    harness.keys("f");
+    let files = |harness: &Harness| {
+        harness
+            .state
+            .compose
+            .as_ref()
+            .unwrap()
+            .content()
+            .attachments
+            .len()
+    };
+    assert_eq!(files(&harness), 1);
+    // On the box, or on the words beside it.
+    click_on(&mut harness, "[x]");
+    assert_eq!(
+        harness.state.compose.as_ref().unwrap().field,
+        Field::Include
+    );
+    assert_eq!(files(&harness), 0);
+    assert!(harness.row_with("Include:").contains("[ ] roadmap.pdf"));
+    click_on(&mut harness, "from the original");
+    assert_eq!(files(&harness), 1);
+    assert!(harness.row_with("Include:").contains("[x] roadmap.pdf"));
+    // The rule under it, and the text, are as they were: a click in the
+    // text is a click in the text.
+    let text = find(&harness, "Forwarded message");
+    click(&mut harness, text);
+    assert_eq!(harness.state.compose.as_ref().unwrap().field, Field::Body);
+    assert_eq!(files(&harness), 1);
+}
+
+#[test]
 fn the_message_being_written_takes_clicks_drags_and_the_wheel() {
     let mut harness = Harness::demo(200, 60);
     harness.keys("c tab tab tab");

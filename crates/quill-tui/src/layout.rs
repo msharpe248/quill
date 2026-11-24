@@ -612,11 +612,13 @@ pub fn dragged(
 
 /// How many rows of the compose pane the header fields take, with the rule
 /// under them: From, To, Cc, Subject always; Bcc when it is in use; the
-/// attachments when there are any.
+/// check for a forwarded message's files when it had any; the files
+/// attached here when there are any.
 pub fn compose_header_rows(compose: &Compose) -> u16 {
     let bcc = u16::from(compose.field == Field::Bcc || !compose.bcc.is_empty());
-    let attachments = u16::from(!compose.attachments.is_empty());
-    4 + bcc + attachments + 1
+    let include = u16::from(compose.has_original());
+    let attachments = u16::from(!compose.listed_files().is_empty());
+    4 + bcc + include + attachments + 1
 }
 
 /// The most rows a complaint at the foot of the compose pane may take.

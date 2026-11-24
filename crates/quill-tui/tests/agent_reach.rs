@@ -411,6 +411,19 @@ fn a_forward_is_drafted_with_what_is_said_and_the_messages_files() {
     // To nobody yet, and with nothing said: the user fills it in.
     let (bare, _) = done(&mut store, &alone(), "draft_forward", json!({ "id": id }));
     assert_eq!(bare["to"], "");
+    // Asked for without the files, it has the message and none of them.
+    let (light, _) = done(
+        &mut store,
+        &alone(),
+        "draft_forward",
+        json!({ "id": id, "without_files": true }),
+    );
+    let light = store
+        .draft(DraftId(light["draft"].as_i64().unwrap()))
+        .unwrap()
+        .unwrap();
+    assert!(light.content.attachments.is_empty());
+    assert!(light.content.body.contains("Here are the figures."));
     // Writing drafts is what it needs, and a message that is there.
     let mut reading = alone();
     reading.agent.draft = false;

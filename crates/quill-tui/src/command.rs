@@ -240,6 +240,7 @@ pub enum CommandId {
     ComposeSave,
     ComposeAttach,
     ComposeBcc,
+    ComposeIncludeFiles,
     ComposeTemplate,
     ComposeVim,
     ComposeFields,
@@ -924,6 +925,16 @@ impl Registry {
                     ComposeBcc,
                     "compose.bcc",
                     "Add blind copies (Bcc)",
+                    Message,
+                    Some(Menu::Message),
+                    COMPOSE,
+                ),
+                // On or off: a forward takes the files of the message it
+                // passes on, or leaves them.
+                spec(
+                    ComposeIncludeFiles,
+                    "compose.include_files",
+                    "Include the forwarded message's files",
                     Message,
                     Some(Menu::Message),
                     COMPOSE,

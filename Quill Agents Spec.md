@@ -197,7 +197,7 @@ Each is a shell command and an MCP tool of the same name (`draft reply` is `draf
 |---|---|
 | `draft new` | A draft: `--to`, `--cc`, `--bcc`, `--subject`, `--account`, `--attach`, the text on standard input (in MCP, `body`) |
 | `draft reply ID [--all]` | A reply, addressed and threaded as Quill's own |
-| `draft forward ID` | A forward, with the message's files |
+| `draft forward ID` | A forward, with the message's files, or with `--without-files` none of them |
 | `draft edit ID` | Changes a draft's fields or text |
 | `draft discard ID` | Discards one |
 

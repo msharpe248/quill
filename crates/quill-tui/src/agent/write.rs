@@ -323,7 +323,12 @@ pub(crate) fn run(
             let said = format!("wrote a reply to {}.", recipients(&content));
             Ok(wrote(&row, &accounts, "draft_reply", said))
         }
-        Call::DraftForward { id, to, body } => {
+        Call::DraftForward {
+            id,
+            to,
+            body,
+            without_files,
+        } => {
             let original = super::look::message(store, settings, *id)?;
             let date_line = text::long_date(original.headers.date, &settings.tz);
             let events = outgoing::respond(
@@ -347,7 +352,15 @@ pub(crate) fn run(
                 written.push('\n');
                 content.body.insert_str(0, &written);
             }
-            content.attachments = carried(store, original.id)?;
+            // The message's files go with it, as they do when the user
+            // forwards one, unless it was asked for without them. A
+            // forward that should have had them and cannot is not
+            // written short.
+            if *without_files {
+                content.attachments.clear();
+            } else if let Some(why) = prefill.note {
+                return Err(Refusal::new(Code::Failed, why));
+            }
             let row = saved(store, caller, prefill.account, &content, now)?;
             let said = if content.to.trim().is_empty() {
                 "wrote a forward of a message, to nobody yet.".to_owned()
@@ -534,39 +547,6 @@ fn not_here(id: i64, done: &str) -> Refusal {
         "Message {id} has not been downloaded, so it cannot be {done} yet. Open it in Quill, \
          or run `quill sync`."
     ))
-}
-
-/// The files of a message, to go with a forward of it: every one, the
-/// pictures shown in its text among them, since a forward is plain text.
-fn carried(
-    store: &Store,
-    id: LocalMessageId,
-) -> Result<Vec<quill_store::DraftAttachment>, Refusal> {
-    let Some(raw) = store.raw(id)? else {
-        return Ok(Vec::new());
-    };
-    let listed = quill_mime::parse(&raw, 0)
-        .map(|parsed| crate::files::attached(&parsed.attachments))
-        .unwrap_or_default();
-    let mut files = Vec::new();
-    for file in listed {
-        let Some(bytes) = quill_mime::attachment_bytes(&raw, file.part) else {
-            continue;
-        };
-        let Some(blob_hash) = store.put_blob(&bytes)? else {
-            return Err(Refusal::new(
-                Code::Failed,
-                "There is nowhere to keep the message's files.",
-            ));
-        };
-        files.push(quill_store::DraftAttachment {
-            name: file.name,
-            content_type: file.content_type,
-            blob_hash,
-            size: bytes.len() as u64,
-        });
-    }
-    Ok(files)
 }
 
 /// Unsubscribes from the list a message came from, by the way the list

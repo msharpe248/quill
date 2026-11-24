@@ -498,6 +498,7 @@ There is no Outlook `.msg`: that is a format of Outlook's own for Windows, and O
 | `cmd-s` or `ctrl-s` | Save as a draft and keep writing |
 | `cmd-shift-a` or `ctrl-t` | Attach a file. The app shows its file panel; a terminal asks for the path, typed or pasted |
 | `cmd-shift-b` or `ctrl-o` | Add blind copies (Bcc) |
+| `cmd-shift-i` or `ctrl-q` | In a forward of a message that had files: take them with it, or leave them |
 | `cmd-shift-t` or `ctrl-r` | Insert a template, when there are any |
 | `cmd-shift-e` or `ctrl-v` | Write the message in Vim, or come back from it. See "Writing in Vim" |
 | `cmd-shift-g` or `ctrl-g` | Other spellings of the misspelt word at the cursor (in the app) |
@@ -508,6 +509,7 @@ The `cmd` keys work in the app; a terminal keeps `cmd` for itself, so there the 
 
 - **Addresses.** As you type in To, Cc or Bcc, people you have had mail from or written to are offered under the field. `↓`/`↑` choose, `enter` or `tab` takes one, `esc` declines. Separate several with commas.
 - **Files.** In the app, files dropped on the window are attached to the message being written, or start a new one.
+- **A forward's files.** A forward of a message that had files takes them with it, and says so under the subject: `Include: [x]` and the files by name and size. To leave them out, turn the check off: `tab` to it and press `space`, click it, or use the key above from anywhere in the message (in the app it is in the Message menu too, with a tick while they are included). It is all of them or none; files you attach yourself are listed on their own line and are not touched. A reply takes none of the message's files. A forward you come back to in Drafts has the files it was saved with, and no check.
 - **From.** A reply or a forward goes from the account the message came to, and a new message from the account whose mail is in view (the first, from every inbox together). With more than one account From is a list to choose from, marked `▾`: click it, or `shift-tab` up to it and press `space`, and the accounts are listed under it by name and address; `↑`/`↓` and `enter`, or a click, take one, and `esc` puts the list away. `←`/`→` on From change the account without the list. Each account sends through its own server, so choosing the account is choosing how the message is sent.
 - **The body** follows macOS text keys: arrows, `opt-←`/`opt-→` by word, `cmd-←`/`cmd-→` to the ends of the line, `cmd-↑`/`cmd-↓` to the ends of the message, shift with any of them to select, `cmd-a`, `cmd-c`, `cmd-x`, `cmd-z` and `cmd-shift-z` to undo and redo. `ctrl-a`, `ctrl-e`, `ctrl-k`, `ctrl-w` and the other Emacs-style keys of macOS text fields work as well, and are the ones to use in a terminal.
 - **Markdown.** The body is written as Markdown and sent as plain text with an HTML version beside it. `format = "plain"` under `[compose]` sends plain text only. Only what you write is Markdown. The message you are answering (every line that begins with `>`) and a message you forward (everything after the line `-------- Forwarded message --------`) are somebody else's words: in the HTML version they are the text they were, a quote behind its bar, so an asterisk or an underscore in them stays one. A quote you type yourself with `>` is sent the same way. Mail you receive is never read as Markdown.
@@ -857,7 +859,7 @@ A search with a `-` in it is best given as one quoted argument, as above: `quill
 
 **The log** is kept on this Mac for 90 days. `quill log --all` shows what was looked at as well: which search was run, which message was read, how many came back, and never what a message said. A command the settings refused is in it too.
 
-**Drafts.** `draft new` and `draft reply ID` (`--all` for everyone) write a draft from what is piped in and leave it in Drafts, for you to read and send in Quill: a reply is addressed and threaded as a reply is, with the original quoted. `draft forward ID` writes a forward: what is piped in, then the message as it was, with every file the message carried attached; `--to` says who it is for, and can be left for you to fill in. `drafts` lists them, `draft show N` prints one, `draft send N` sends one. `draft edit N` and `draft discard N` work only on a draft that a command or an agent wrote: a draft you wrote in Quill is yours, and is changed and thrown away in Quill.
+**Drafts.** `draft new` and `draft reply ID` (`--all` for everyone) write a draft from what is piped in and leave it in Drafts, for you to read and send in Quill: a reply is addressed and threaded as a reply is, with the original quoted. `draft forward ID` writes a forward: what is piped in, then the message as it was, with every file the message carried attached, or none of them with `--without-files`; `--to` says who it is for, and can be left for you to fill in. `drafts` lists them, `draft show N` prints one, `draft send N` sends one. `draft edit N` and `draft discard N` work only on a draft that a command or an agent wrote: a draft you wrote in Quill is yours, and is changed and thrown away in Quill.
 
 **Sending.** `send` and `draft send` check the message as the compose screen would and put it in the Outbox; it goes at the next sync, from the app if it is running or from `quill sync`. `--account NAME` chooses which account sends, `--attach FILE` attaches, and `--at "tomorrow 9"` sends it later. Three things are yours to set:
 
@@ -1062,6 +1064,7 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `compose.send`, `compose.save` | Send the message being written, or save it as a draft. In the Outbox, `compose.send` sends the message the list is on, now |
 | `compose.send_later` | Send the message being written at a time you type |
 | `compose.attach`, `compose.bcc` | Attach a file; add blind copies |
+| `compose.include_files` | In a forward of a message that had files: take them with it, or leave them |
 | `compose.template` | Put a template into the message being written |
 | `compose.vim` | Write the message being written in another editor: Vim, unless `editor` names another. In the app, from that editor, back to Quill's own |
 | `compose.fields`, `compose.body` | In the app, with an editor in the message's pane: go to the fields above it, and back to the text |

@@ -965,6 +965,10 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "without_files": {
+            "description": "Leave the message's files out.",
+            "type": "boolean"
           }
         },
         "required": [

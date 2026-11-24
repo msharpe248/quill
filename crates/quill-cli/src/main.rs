@@ -538,6 +538,9 @@ enum DraftAction {
         /// A recipient. Repeat for more
         #[arg(long, value_name = "ADDRESS")]
         to: Vec<String>,
+        /// Leave the message's files out
+        #[arg(long)]
+        without_files: bool,
         #[command(flatten)]
         output: Output,
     },
@@ -1016,12 +1019,18 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                     body: typed_in()?,
                 },
             ),
-            DraftAction::Forward { id, to, output } => act(
+            DraftAction::Forward {
+                id,
+                to,
+                without_files,
+                output,
+            } => act(
                 output,
                 Call::DraftForward {
                     id,
                     to,
                     body: typed_in()?,
+                    without_files,
                 },
             ),
             DraftAction::Show { id, output } => act(output, Call::DraftShow { id }),

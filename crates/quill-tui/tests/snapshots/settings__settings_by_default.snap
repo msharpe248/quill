@@ -115,6 +115,7 @@ expression: outline(&window.shown())
      row "Save as a draft": cmd-s, ctrl-s [change]
      row "Attach a file": cmd-A, ctrl-t [change]
      row "Add blind copies (Bcc)": cmd-B, ctrl-o [change]
+     row "Include the forwarded message's files": cmd-I, ctrl-q [change]
      row "Insert a template": cmd-T, ctrl-r [change]
      row "Write in Another Editor": cmd-E, ctrl-v [change]
      row "Go to the fields above the text": cmd-up [change]

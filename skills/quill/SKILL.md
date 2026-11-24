@@ -166,7 +166,7 @@ quill draft discard 12 --json
 
 A draft has a number of its own (`draft`), which is not a message's id. A reply is addressed and threaded as a reply is, with the original quoted under your text: write only the answer. Drafts are left in Quill's Drafts for the user to read, change and send.
 
-A forward is what you say, then the message as it was, with its files attached. `--to` can be left out: the user fills it in.
+A forward is what you say, then the message as it was, with its files attached; `--without-files` leaves them out. `--to` can be left out: the user fills it in.
 
 You can change or discard only a draft that was written this way. A draft the user wrote in Quill is theirs: you can read it, and nothing else.
 

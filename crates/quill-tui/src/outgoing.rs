@@ -517,6 +517,16 @@ pub fn respond(
             Field::To,
         ),
     };
+    // A forward takes the message's files with it, unless whoever writes
+    // it says otherwise (the check under the subject). A reply takes
+    // none: who it goes to has them.
+    let (files, note) = match how {
+        Response::Reply { .. } => (Vec::new(), None),
+        Response::Forward => match original_files(store, &raw, &original)? {
+            Some(files) => (files, None),
+            None => (Vec::new(), Some(FILES_NOT_KEPT.to_owned())),
+        },
+    };
     Ok(vec![DataEvent::ComposeReady(Box::new(Prefill {
         draft: None,
         account: location.account,
@@ -528,15 +538,47 @@ pub fn respond(
             body: draft.body,
             in_reply_to: draft.in_reply_to,
             references: draft.references,
-            attachments: Vec::new(),
+            attachments: files.clone(),
             // Only a reply marks the original answered.
             replied_to: matches!(how, Response::Reply { .. }).then_some(id.0),
         },
+        original: files,
         cursor: draft.cursor,
         focus,
         title,
-        note: None,
+        note,
     }))])
+}
+
+/// What a forward says as it opens when the files of the message it
+/// passes on could not be kept to go with it.
+pub const FILES_NOT_KEPT: &str =
+    "There is nowhere to keep the message's files, so they are not attached.";
+
+/// The files of a message, kept so that a message being written can take
+/// them: what the reader lists as attached, each as it was sent. `None`
+/// when there is nowhere to keep them.
+fn original_files(
+    store: &Store,
+    raw: &[u8],
+    original: &quill_mime::Parsed,
+) -> quill_store::Result<Option<Vec<DraftAttachment>>> {
+    let mut files = Vec::new();
+    for file in crate::files::attached(&original.attachments) {
+        let Some(bytes) = quill_mime::attachment_bytes(raw, file.part) else {
+            continue;
+        };
+        let Some(blob_hash) = store.put_blob(&bytes)? else {
+            return Ok(None);
+        };
+        files.push(DraftAttachment {
+            name: file.name,
+            content_type: file.content_type,
+            blob_hash,
+            size: bytes.len() as u64,
+        });
+    }
+    Ok(Some(files))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -602,6 +644,8 @@ pub fn open_draft(store: &mut Store, id: DraftId) -> quill_store::Result<Vec<Dat
         draft: Some(id),
         account: row.account,
         content: row.content,
+        // A draft's files are its files, whichever message they came with.
+        original: Vec::new(),
         cursor,
         focus: Field::Body,
         title: "Draft",

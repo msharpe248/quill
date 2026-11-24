@@ -543,6 +543,175 @@ fn a_forward_carries_the_message_and_asks_who_for() {
     assert!(raw.contains("Here is the draft roadmap for Q4."), "{raw}");
 }
 
+#[test]
+fn a_forward_takes_the_messages_files_and_a_check_says_so() {
+    let mut harness = Harness::demo(200, 30);
+    harness.keys("f");
+    // Under the subject: checked, and which files they are.
+    let row = harness.row_with("Include:");
+    assert!(
+        row.contains("Include: [x] roadmap.pdf (937 bytes), from the original"),
+        "{row}"
+    );
+    // They are not listed a second time as files attached here.
+    assert!(
+        !harness.screen().contains("Attach:"),
+        "{}",
+        harness.screen()
+    );
+    let on = |harness: &Harness| harness.state.is_on(CommandId::ComposeIncludeFiles);
+    assert!(
+        harness
+            .state
+            .is_enabled(&harness.env, CommandId::ComposeIncludeFiles)
+    );
+    assert!(on(&harness));
+    harness.type_text("priya.nair@example.com");
+    harness.keys("cmd-enter");
+    let (_, raw) = outgoing(&mut harness);
+    assert!(raw.contains("multipart/mixed"), "{raw}");
+    assert!(raw.contains("filename=\"roadmap.pdf\""), "{raw}");
+    assert!(raw.contains("application/pdf"), "{raw}");
+}
+
+#[test]
+fn the_check_turned_off_sends_a_forward_without_the_files() {
+    let mut harness = Harness::demo(200, 30);
+    harness.keys("f");
+    // The check is the stop after the subject; space turns it, and the
+    // cursor is in its box.
+    harness.keys("tab tab tab");
+    assert_eq!(
+        harness.state.compose.as_ref().unwrap().field,
+        Field::Include
+    );
+    let screen = harness.screen();
+    let (column, row) = harness.cursor().unwrap();
+    let drawn = screen.lines().nth(usize::from(row)).unwrap();
+    assert!(drawn.contains("Include: [x]"), "{drawn}");
+    let boxed: String = drawn
+        .chars()
+        .skip(usize::from(column) - 1)
+        .take(3)
+        .collect();
+    assert_eq!(boxed, "[x]", "{drawn}");
+    harness.keys("space");
+    let row = harness.row_with("Include:");
+    assert!(
+        row.contains("Include: [ ] roadmap.pdf (937 bytes), from the original"),
+        "{row}"
+    );
+    assert!(!harness.state.is_on(CommandId::ComposeIncludeFiles));
+    // And back, and off again by its command's key from the text.
+    harness.keys("space");
+    assert!(harness.row_with("Include:").contains("[x]"));
+    harness.keys("tab");
+    assert_eq!(harness.state.compose.as_ref().unwrap().field, Field::Body);
+    harness.keys("ctrl-q");
+    assert!(harness.row_with("Include:").contains("[ ]"));
+    assert_eq!(harness.state.compose.as_ref().unwrap().field, Field::Body);
+
+    harness.keys("shift-tab shift-tab shift-tab shift-tab");
+    assert_eq!(harness.state.compose.as_ref().unwrap().field, Field::To);
+    harness.type_text("priya.nair@example.com");
+    harness.keys("cmd-enter");
+    let (_, raw) = outgoing(&mut harness);
+    assert!(!raw.contains("roadmap.pdf"), "{raw}");
+    assert!(!raw.contains("multipart/mixed"), "{raw}");
+    assert!(raw.contains("Here is the draft roadmap for Q4."), "{raw}");
+}
+
+#[test]
+fn a_file_attached_to_a_forward_is_listed_beside_the_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("agenda.txt");
+    std::fs::write(&path, "1. Lunch\n2. Coffee\n").unwrap();
+
+    let mut harness = wide();
+    harness.keys("f");
+    harness.type_text("priya.nair@example.com");
+    harness.keys("cmd-A");
+    harness.act(Action::Paste(path.to_str().unwrap().to_owned()));
+    harness.keys("enter");
+    assert!(harness.row_with("Include:").contains("[x] roadmap.pdf"));
+    let attached = harness.row_with("Attach:");
+    assert!(attached.contains("agenda.txt (19 bytes)"), "{attached}");
+    assert!(!attached.contains("roadmap.pdf"), "{attached}");
+    // Without the message's files, the one attached here still goes.
+    harness.keys("ctrl-q");
+    assert!(harness.row_with("Include:").contains("[ ] roadmap.pdf"));
+    assert!(harness.row_with("Attach:").contains("agenda.txt"));
+    harness.keys("cmd-enter");
+    let (_, raw) = outgoing(&mut harness);
+    assert!(raw.contains("agenda.txt"), "{raw}");
+    assert!(!raw.contains("roadmap.pdf"), "{raw}");
+}
+
+#[test]
+fn only_a_forward_of_a_message_with_files_has_the_check() {
+    // A reply to that message: who it goes to has the files.
+    let mut harness = wide();
+    harness.keys("r");
+    assert!(
+        !harness.screen().contains("Include:"),
+        "{}",
+        harness.screen()
+    );
+    assert!(
+        !harness
+            .state
+            .is_enabled(&harness.env, CommandId::ComposeIncludeFiles)
+    );
+    assert!(
+        harness
+            .state
+            .compose
+            .as_ref()
+            .unwrap()
+            .attachments
+            .is_empty()
+    );
+    // A forward of a message that had none.
+    let mut harness = wide();
+    harness.keys("j f");
+    assert!(harness.row_with("Subject:").contains("Fwd: [quill] PR"));
+    assert!(
+        !harness.screen().contains("Include:"),
+        "{}",
+        harness.screen()
+    );
+    assert!(
+        !harness
+            .state
+            .is_enabled(&harness.env, CommandId::ComposeIncludeFiles)
+    );
+    // Its key does nothing there, and tab goes from the subject to the
+    // text as it always did.
+    harness.keys("ctrl-q tab tab tab");
+    assert_eq!(harness.state.compose.as_ref().unwrap().field, Field::Body);
+    // Nor has a new message.
+    let mut harness = wide();
+    harness.keys("c");
+    assert!(!harness.screen().contains("Include:"));
+}
+
+#[test]
+fn a_forward_saved_as_a_draft_keeps_what_the_check_said() {
+    // Left out, the files are not in the draft.
+    let mut harness = wide();
+    harness.keys("f ctrl-q cmd-s");
+    let drafts = harness.store.drafts().unwrap();
+    assert_eq!(drafts.len(), 1, "{drafts:?}");
+    assert!(drafts[0].content.attachments.is_empty());
+    // Put back, they are; the check is still there while it is written.
+    harness.keys("ctrl-q cmd-s");
+    let drafts = harness.store.drafts().unwrap();
+    assert_eq!(drafts.len(), 1, "{drafts:?}");
+    assert_eq!(drafts[0].content.attachments.len(), 1);
+    assert_eq!(drafts[0].content.attachments[0].name, "roadmap.pdf");
+    assert!(harness.row_with("Include:").contains("[x]"));
+}
+
 /// What the store answers when asked to start a reply to a message it has
 /// only the headers of.
 fn not_downloaded(harness: &Harness) -> (quill_core::types::LocalMessageId, Action) {

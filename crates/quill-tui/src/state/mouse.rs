@@ -453,6 +453,9 @@ impl State {
                     fields.push(Field::Bcc);
                 }
                 fields.push(Field::Subject);
+                if compose.has_original() {
+                    fields.push(Field::Include);
+                }
                 let Some(row) = mouse.row.checked_sub(rect.y + 1) else {
                     return;
                 };
@@ -461,9 +464,12 @@ impl State {
                     compose.completion = None;
                     compose.attaching = None;
                     // A click on From opens its list, as a click on a
-                    // pop-up menu does.
+                    // pop-up menu does; and one on the check turns it,
+                    // as a click on a check box or its words does.
                     if *field == Field::From {
                         compose.toggle_accounts(&accounts);
+                    } else if *field == Field::Include {
+                        compose.include_original(!compose.includes_original());
                     }
                 }
             }

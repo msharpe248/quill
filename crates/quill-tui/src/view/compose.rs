@@ -21,6 +21,25 @@ use crate::vim::ExternalEditor;
 /// The width of the longest label and its gap: `Subject: `.
 const LABEL_WIDTH: usize = 9;
 
+/// The check that says a forward takes the files of the message it passes
+/// on, and the same left empty. Plain characters, which every terminal
+/// draws one cell wide.
+const CHECKED: &str = "[x]";
+const UNCHECKED: &str = "[ ]";
+
+/// What the check is about: the files of the message being passed on, by
+/// name and size. The names come first: in a narrow pane it is the end
+/// that is cut.
+fn original_files(compose: &Compose) -> String {
+    let files = compose
+        .original
+        .iter()
+        .map(described)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{files}, from the original")
+}
+
 pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
     let Some(compose) = &state.compose else {
         return;
@@ -151,12 +170,46 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
             popup_under = Some(rect);
         }
     }
-    if !compose.attachments.is_empty()
+    // A forward of a message that had files: a check that says whether
+    // they go with it, and which they are.
+    if compose.has_original()
         && let Some(rect) = row(&mut y)
     {
-        let files = compose
-            .attachments
-            .iter()
+        let focused = typing && compose.field == Field::Include;
+        let included = compose.includes_original();
+        let mut boxed = styles.text();
+        if focused {
+            boxed = boxed.add_modifier(Modifier::BOLD);
+        }
+        let line = Line::from(vec![
+            label("Include:", focused, styles),
+            Span::styled(if included { CHECKED } else { UNCHECKED }, boxed),
+            Span::raw(" "),
+            Span::styled(
+                text::truncate(
+                    &text::sanitize_line(&original_files(compose)),
+                    width.saturating_sub(LABEL_WIDTH + CHECKED.len() + 1),
+                ),
+                // Left out, they are said more quietly.
+                if included {
+                    styles.text()
+                } else {
+                    styles.dim()
+                },
+            ),
+        ]);
+        frame.render_widget(line, rect);
+        if focused {
+            // In the box, where a check is made.
+            frame.set_cursor_position(Position::new(rect.x + LABEL_WIDTH as u16 + 1, rect.y));
+        }
+    }
+    let listed = compose.listed_files();
+    if !listed.is_empty()
+        && let Some(rect) = row(&mut y)
+    {
+        let files = listed
+            .into_iter()
             .map(described)
             .collect::<Vec<_>>()
             .join(", ");
@@ -441,6 +494,7 @@ fn field_row(compose: &Compose, field: Field) -> Option<u16> {
         Field::Cc => Some(2),
         Field::Bcc => bcc.then_some(3),
         Field::Subject => Some(3 + u16::from(bcc)),
+        Field::Include => compose.has_original().then_some(4 + u16::from(bcc)),
         Field::Body => None,
     }
 }
