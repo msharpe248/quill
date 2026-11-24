@@ -158,7 +158,15 @@ pub struct SyncWith<'a> {
     pub config: &'a Config,
     pub config_ok: bool,
     pub rules: quill_sync::RuleSet,
+    /// Only the account of this name.
+    pub only: Option<&'a str>,
 }
+
+/// How long `sync` of one account waits, once that account has been
+/// looked at, for what was queued for it to be carried out: the queue
+/// may hold other accounts' changes, which this run does not carry out
+/// and must not wait for.
+const ONE_ACCOUNT_SETTLES: Duration = Duration::from_secs(3);
 
 /// How long `sync` waits for the engine to say anything before giving up.
 const QUIET_LIMIT: Duration = Duration::from_secs(120);
@@ -182,8 +190,19 @@ pub async fn sync(
         config,
         config_ok,
         rules,
+        only,
     } = with;
-    let prepared = crate::accounts::prepare(config, &mut store, &secrets, config_ok)?;
+    let mut prepared = crate::accounts::prepare(config, &mut store, &secrets, config_ok)?;
+    if let Some(name) = only {
+        prepared
+            .accounts
+            .retain(|account| account.name.eq_ignore_ascii_case(name.trim()));
+        anyhow::ensure!(
+            !prepared.accounts.is_empty(),
+            "there is no account named \"{}\" that syncs. Nothing was synced",
+            text::sanitize_line(name)
+        );
+    }
     // What is said about an account that will sync is a warning (it
     // connects without encryption); about one that will not, a problem.
     let syncs = |text: &str| {
@@ -219,7 +238,15 @@ pub async fn sync(
         if waiting.is_empty() && settled(&store)? {
             break;
         }
-        let event = tokio::time::timeout(QUIET_LIMIT, events.recv()).await;
+        // One account alone: once it has been looked at, what is left in
+        // the queue may be another account's, and is not waited for.
+        let one_done = only.is_some() && waiting.is_empty();
+        let quiet = if one_done {
+            ONE_ACCOUNT_SETTLES
+        } else {
+            QUIET_LIMIT
+        };
+        let event = tokio::time::timeout(quiet, events.recv()).await;
         match event {
             Ok(Some(SyncEvent::Syncing {
                 account,
@@ -243,6 +270,7 @@ pub async fn sync(
             )),
             Ok(Some(_)) => {}
             Ok(None) => break,
+            Err(_) if one_done => break,
             Err(_) => {
                 problems.push("Gave up waiting: nothing was heard for two minutes.".to_owned());
                 break;
@@ -702,6 +730,7 @@ mod tests {
                         config: &config,
                         config_ok: true,
                         rules: crate::rules::load(&config, std::path::Path::new("")).set,
+                        only: None,
                     },
                     &database,
                     blobs,

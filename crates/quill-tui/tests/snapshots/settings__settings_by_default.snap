@@ -160,10 +160,14 @@ expression: outline(&window.shown())
      help: An agent’s program is given this command to reach Quill: quill mcp
    organize "They may:": toggle "Organize mail: mark, move, archive, snooze" = true
    delete "": toggle "Delete mail: to the trash, never for good" = true
-   draft "": toggle "Write drafts" = true
-   send "": toggle "Send mail" = false
+   draft "": toggle "Write drafts, left in Drafts for me to send" = true
+   send "": toggle "Send mail themselves" = false
+     help: Off: an agent can only leave a draft in Drafts. Nothing goes until you open it and send it. This holds for quill send in a shell too.
    notify "Tell me:": choice = changes of changes "When they change or send mail" | sends "When they send mail" | none "Nothing of what they do"
      help: An agent connecting over MCP is always said. What they do is always said in Quill’s window, and kept in the log.
+   bulk_limit "At once:": number = 50 from 1 to 1000 by 10, 0 places, messages in one change
+     help: A change that names its messages by a search and finds more than this changes none of them, and says how many it found. It is done only when asked again with the word to go on.
+   connected "Connected:": Static { id: "connected", label: "Connected:", value: "No agent’s program is connected over MCP.", help: None }
    recent "Lately:": list
      action copy_mcp "Copy MCP Command"
      action stop "Stop Agents"

@@ -276,6 +276,15 @@ pub enum DataRequest {
         call: Box<crate::agent::Call>,
         settings: Box<crate::agent::Settings>,
     },
+    /// Mail has arrived while commands are waiting to hear of it (`quill
+    /// watch`): which of `messages` each watcher's search finds. Answered
+    /// with [`DataEvent::AgentArrived`].
+    AgentArrived {
+        /// Each watcher by its number, with what it looks for.
+        watchers: Vec<(u64, String)>,
+        messages: Vec<LocalMessageId>,
+        settings: Box<crate::agent::Settings>,
+    },
 }
 
 /// How many of the last changes made from outside the window the
@@ -451,7 +460,14 @@ pub enum DataEvent {
         result: Box<Result<crate::agent::Answer, crate::agent::Refusal>>,
         /// What the user is to be told of it, when the mail was changed.
         notice: Option<crate::agent::Notice>,
+        /// What is still to be done before it is answered, by the run
+        /// loop: with the window, the engine or the network.
+        then: Option<crate::agent::Then>,
     },
+    /// The answer to [`DataRequest::AgentArrived`]: for each watcher, the
+    /// arriving messages it is to be told of. `None`: the way in the
+    /// watchers came by is switched off, and they are let go.
+    AgentArrived(Option<Vec<(u64, Vec<serde_json::Value>)>>),
     Error(String),
 }
 
@@ -984,8 +1000,26 @@ fn run(
                 ticket,
                 result: Box::new(outcome.result),
                 notice: outcome.notice,
+                then: outcome.then,
             });
             events
+        }
+        DataRequest::AgentArrived {
+            watchers,
+            messages,
+            settings,
+        } => {
+            let open = crate::agent::way_open(&settings, crate::agent::Way::Shell);
+            vec![DataEvent::AgentArrived(open.then(|| {
+                watchers
+                    .into_iter()
+                    .map(|(watcher, query)| {
+                        let found = crate::agent::arrived(store, &settings, &query, &messages);
+                        (watcher, found)
+                    })
+                    .filter(|(_, found)| !found.is_empty())
+                    .collect()
+            }))]
         }
         DataRequest::ReadForHook { message, hook } => read_for_hook(store, message, &hook)?,
         DataRequest::Undo => {

@@ -59,7 +59,17 @@ fn the_tools_are_as_the_schema_says() {
                   object with \"schema\" in it; a refusal is {\"schema\", \"refused\": {\"code\", \
                   \"message\"}}. Examples are in schema/examples/agent.",
         "refusal_codes": codes.iter().map(|code| code.as_str()).collect::<Vec<_>>(),
-        "tools": tools::TOOLS.iter().map(tools::Tool::described).collect::<Vec<_>>(),
+        "tools": tools::TOOLS
+            .iter()
+            .map(|tool| {
+                let mut described = tool.described();
+                // A command for a shell alone: no MCP client is told of it.
+                if tool.shell {
+                    described["shell_only"] = json!(true);
+                }
+                described
+            })
+            .collect::<Vec<_>>(),
     });
     held_to(&schema_dir().join("agent.json"), &value);
 }
@@ -124,6 +134,19 @@ fn the_answers_are_as_the_examples_show() {
     ask("delete", &settings, "delete", json!({ "ids": [id] }));
     ask("undo", &settings, "undo", json!({}));
     ask("log", &settings, "log", json!({ "limit": 2 }));
+    ask(
+        "folder_create",
+        &settings,
+        "folder_create",
+        json!({ "name": "Receipts", "account": "Work", "on_this_mac": true }),
+    );
+    // What needs the Quill that is running, asked with none running.
+    ask(
+        "refused.not_running",
+        &settings,
+        "open",
+        json!({ "id": id }),
+    );
     ask(
         "refused.switched_off",
         &careful,

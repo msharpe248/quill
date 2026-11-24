@@ -28,6 +28,7 @@ use crate::layout;
 use crate::outgoing::{Handed, InviteAnswer, Response, SendRequest};
 use crate::palette::{self, Item, Palette, What};
 
+mod agents;
 mod caret;
 mod edit;
 mod folders;
@@ -43,6 +44,7 @@ mod sheet;
 mod themes;
 use quill_host::bridge::{FormUsed, Number, SettingsUsed};
 
+pub use self::agents::McpPrompt;
 pub use self::folders::{
     FolderAsk, FolderLeaving, FolderPrompt, INSIDE_ANOTHER, LeavingMail, ON_THE_SERVER, ON_THIS_MAC,
 };
@@ -283,6 +285,14 @@ pub enum Action {
     AgentNotice(crate::agent::Notice),
     /// An agent's program connected over MCP, under this name.
     AgentConnected(String),
+    /// And one of that name has gone.
+    AgentGone(String),
+    /// Show this message, in its folder's list: asked for from outside
+    /// the window (`quill open`).
+    ShowMessage {
+        message: LocalMessageId,
+        folder: LocalFolderId,
+    },
     /// News from the sync engine.
     Sync(SyncEvent),
     /// An answer from the accounts service.
@@ -466,6 +476,8 @@ pub enum HostRequest {
     /// Close the host's window and leave Quill running behind it, as the
     /// window's own close button does.
     CloseWindow,
+    /// Bring up the host's settings window on the pane of this name.
+    ShowSettings(&'static str),
     /// Show files in the host's viewer, starting with the one at `index`.
     /// Each is a path and what to call it.
     Preview {
@@ -1390,6 +1402,11 @@ pub struct State {
     pub unsubscribe: Option<UnsubscribePrompt>,
     /// The question to answer before an account is removed.
     pub remove: Option<RemovePrompt>,
+    /// The question to answer before agents are let in over MCP.
+    pub mcp_ask: Option<McpPrompt>,
+    /// The agents' programs that are connected over MCP now, by the
+    /// names they gave: one twice, when two of a name are.
+    pub agents_connected: Vec<String>,
     /// The question of which letter stands for an account in lists.
     pub letter_prompt: Option<LetterPrompt>,
     /// The service was asked for a letter from that question, and has
@@ -1565,6 +1582,8 @@ impl State {
             spell: Spell::default(),
             unsubscribe: None,
             remove: None,
+            mcp_ask: None,
+            agents_connected: Vec::new(),
             letter_prompt: None,
             letter_asked: false,
             remove_asked: false,
@@ -1666,6 +1685,9 @@ impl State {
         }
         if self.remove.is_some() {
             return Context::RemoveAccount;
+        }
+        if self.mcp_ask.is_some() {
+            return Context::LetAgentsIn;
         }
         if self.setup.is_some() {
             return Context::Setup;
@@ -1826,6 +1848,18 @@ impl State {
             Action::Notify(notice) => self.notices.push_back(notice),
             Action::AgentNotice(notice) => self.on_agent_notice(env, &notice, &mut out),
             Action::AgentConnected(name) => self.on_agent_connected(env, &name, &mut out),
+            Action::AgentGone(name) => {
+                if let Some(index) = self
+                    .agents_connected
+                    .iter()
+                    .position(|connected| *connected == name)
+                {
+                    self.agents_connected.remove(index);
+                }
+            }
+            Action::ShowMessage { message, folder } => {
+                self.show_message(env, message, folder, &mut out);
+            }
             Action::Sync(event) => self.on_sync(env, event, &mut out),
             Action::Account(event) => self.on_account(env, event, &mut out),
             Action::Settings(act) => self.on_settings(env, act, &mut out),
@@ -2123,6 +2157,8 @@ impl State {
                 return;
             }
             Context::RemoveAccount if self.answer_remove_key(chord, out) => return,
+            // Asked in a sheet of the host's, and answered there.
+            Context::LetAgentsIn if matches!(chord.key, Key::Char(_)) => return,
             _ => {}
         }
         self.pending.push(chord);
@@ -2935,7 +2971,7 @@ impl State {
             _ if context == Context::Unsubscribe => {
                 matches!(id, CommandId::NavBack | CommandId::HelpToggle)
             }
-            _ if context == Context::RemoveAccount => {
+            _ if matches!(context, Context::RemoveAccount | Context::LetAgentsIn) => {
                 matches!(id, CommandId::NavBack | CommandId::HelpToggle)
             }
             CommandId::ComposeTemplate => {
@@ -3153,6 +3189,7 @@ impl State {
                 | Context::EditTheme
                 | Context::Unsubscribe
                 | Context::RemoveAccount
+                | Context::LetAgentsIn
                 | Context::Setup
         ) {
             return;
@@ -3358,6 +3395,9 @@ impl State {
         } else if self.remove.is_some() {
             // The account stays, unless it is already being removed.
             self.cancel_remove();
+        } else if self.mcp_ask.is_some() {
+            // MCP stays off.
+            self.cancel_mcp();
         } else if self.sign_in.is_some() {
             self.give_up_sign_in(out);
         } else if let Some(setup) = &mut self.setup {
@@ -4938,6 +4978,7 @@ impl State {
         } else {
             format!("{name} tried to connect over MCP, which is switched off in Settings, Agents.")
         };
+        self.agents_connected.push(name.to_owned());
         self.agent_notes += 1;
         out.host.push(HostRequest::Notify {
             id: format!("{AGENT_NOTIFICATION}connect.{}", self.agent_notes),
@@ -4989,9 +5030,15 @@ impl State {
             if id.starts_with(AGENT_NOTIFICATION) {
                 match action {
                     Some("stop") => self.run(env, CommandId::AgentsStop, out),
-                    _ => self.notices.push_back(Notice::info(
-                        "What agents did is in Settings, Agents, and all of it in `quill log`.",
-                    )),
+                    // Where it is listed: the app has a window for it.
+                    _ if env.window => {
+                        out.host.push(HostRequest::ShowSettings(
+                            crate::settings::Pane::Agents.id(),
+                        ));
+                    }
+                    _ => self
+                        .notices
+                        .push_back(Notice::info("What agents did is in `quill log`.")),
                 }
                 return;
             }
@@ -5020,6 +5067,26 @@ impl State {
                 }
             }
             Some(_) => {}
+        }
+    }
+
+    /// Shows a message in its folder's list, as going to that folder and
+    /// opening the message does: asked for from outside the window. What
+    /// is being written is not put aside for it.
+    fn show_message(
+        &mut self,
+        env: &Env,
+        message: LocalMessageId,
+        folder: LocalFolderId,
+        out: &mut Effects,
+    ) {
+        let mailbox = Mailbox::Folder(folder);
+        self.go_to = Some((message, false));
+        if self.mailbox != mailbox || self.search.is_some() {
+            self.show_mailbox(mailbox, out);
+            self.select_mailbox_row(mailbox, out);
+        } else {
+            self.go_to_pending(env, out);
         }
     }
 
@@ -5984,7 +6051,7 @@ impl State {
         match event {
             // The answer to a request from outside the window is the run
             // loop's to give: it never comes this far.
-            DataEvent::AgentDone { .. } => {}
+            DataEvent::AgentDone { .. } | DataEvent::AgentArrived(_) => {}
             DataEvent::AgentLog(entries) => {
                 if self.agent_recent != entries {
                     self.agent_recent = entries;

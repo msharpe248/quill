@@ -796,6 +796,8 @@ quill read 4127 --raw > message.eml
 quill thread 4127                  # the conversation it is in
 quill attachments 4127
 quill attachment save 4127 2 --to ~/Desktop
+quill open 4127                    # show it in Quill's own window
+quill watch from:ana               # a line for each such message as it arrives
 
 quill mark read 4127 4130
 quill archive 4127
@@ -803,6 +805,7 @@ quill move receipts --where 'from:billing has:attachment'
 quill delete --where 'from:newsletters older:30d' --dry-run
 quill snooze "tomorrow 9" 4127
 quill restore 4127                 # out of the trash, to where it was
+quill folder create Projects/2026 --account work
 quill undo                         # take the last change back
 
 quill accounts
@@ -815,16 +818,24 @@ quill rules test "Receipts"        # what one would change: nothing is changed
 
 echo "Running late." | quill send --to ana.ruiz@example.com --subject "Today"
 echo "Yes, Thursday." | quill draft reply 4127      # a reply, left in Drafts
+echo "For your records." | quill draft forward 4127 --to sam.lee@example.com
 quill drafts
 quill draft send 12 --at "tomorrow 9"
 quill outbox                       # what is waiting to go, or held
 quill outbox cancel 12             # take it back: a draft again
+quill invite accept 4127           # answer an invitation: accept, decline, maybe
+quill unsubscribe 4127             # leave the mailing list a message came through
 quill sync                         # fetch, carry out what is queued, send, stop
+quill sync --account work          # one account alone
 quill theme list --ghostty         # the themes there are, and Ghostty's to import
 quill keys                         # every key and what it does
 ```
 
 **Looking.** `list`, `search`, `count`, `read`, `thread`, `attachments`, `contacts`, `status`, `accounts` and `folders` look at the mail already on this Mac and reach no server. `read` gives a message's text 20,000 characters at a time and says how much is left (`--max-chars`, `--from-char`; `--max-chars 0` for all of it); `--headers` prints every header line as it arrived.
+
+**Showing a message.** `quill open ID` brings Quill's window forward on the message's folder with the message open, as if you had gone to it: for when a search in a shell finds what you want to read properly, or an agent has found the message you asked about. It needs Quill to be running, and the message is marked read as any message opened in Quill is, which is why it comes under `organize` in the settings below.
+
+**Waiting for mail.** `quill watch` does not return. It prints one line of JSON, with the fields `list` gives, for each message that arrives in an inbox while it runs; with words after it (`quill watch from:ana has:attachment`), only for the messages that search finds. It is for a script that is to do something when mail comes: read its output a line at a time. It needs Quill to be running, since mail arrives in the Quill that is, and ends when Quill is quit, when commands from a shell are switched off, or when you stop it. It is a command for a shell only: no agent is offered it over MCP.
 
 **Which messages.** A command that changes mail is told which, in any of three ways, together if you like:
 
@@ -836,7 +847,9 @@ A search with a `-` in it is best given as one quoted argument, as above: `quill
 
 `--dry-run` changes nothing and says what would have been changed. A search that finds more than 50 messages changes none of them and says how many it found; `--yes` goes on. One command never touches more than 1,000. Finding nothing is not an error: the answer says none.
 
-**Changing.** `mark read|unread|starred|unstarred`, `move FOLDER`, `copy FOLDER`, `archive`, `snooze WHEN`, `unsnooze`, `restore` and `folder create NAME` do what the keys in Quill do, through the same queue: they happen here at once and reach the server when Quill next syncs. A folder is named by its name or by what it is for (`archive`, `trash`, `work/receipts`), and is always one of the message's own account. `folder create` makes a folder on this Mac; see "Folders, and folders on this Mac" for what that means for mail moved into it.
+**Changing.** `mark read|unread|starred|unstarred`, `move FOLDER`, `copy FOLDER`, `archive`, `snooze WHEN`, `unsnooze`, `restore` and `folder create NAME` do what the keys in Quill do, through the same queue: they happen here at once and reach the server when Quill next syncs. A folder is named by its name or by what it is for (`archive`, `trash`, `work/receipts`), and is always one of the message's own account.
+
+**Making a folder.** `quill folder create NAME --account A` makes a folder on the account's mail server, as New Folder in Quill does, and answers when the server has: so it needs Quill to be running, and says so when it is not. One inside another is named with a `/` between (`Projects/2026`). `--on-this-mac` makes it on this Mac only, with Quill running or not; see "Folders, and folders on this Mac" for what that means for mail moved into it. An account whose server keeps no folders (POP3) has its folders on this Mac whichever is asked for. A folder is not renamed or deleted from a shell: that is done in Quill.
 
 **Deleting is never for good.** `quill delete` moves mail to its account's trash, and `quill restore` puts it back. A message that is already in the trash, or in a folder that is only on this Mac, is left alone and said to be: deleting those would be for good, and that is done in Quill, by you.
 
@@ -844,7 +857,7 @@ A search with a `-` in it is best given as one quoted argument, as above: `quill
 
 **The log** is kept on this Mac for 90 days. `quill log --all` shows what was looked at as well: which search was run, which message was read, how many came back, and never what a message said. A command the settings refused is in it too.
 
-**Drafts.** `draft new` and `draft reply ID` (`--all` for everyone) write a draft from what is piped in and leave it in Drafts, for you to read and send in Quill: a reply is addressed and threaded as a reply is, with the original quoted. `drafts` lists them, `draft show N` prints one, `draft send N` sends one. `draft edit N` and `draft discard N` work only on a draft that a command or an agent wrote: a draft you wrote in Quill is yours, and is changed and thrown away in Quill.
+**Drafts.** `draft new` and `draft reply ID` (`--all` for everyone) write a draft from what is piped in and leave it in Drafts, for you to read and send in Quill: a reply is addressed and threaded as a reply is, with the original quoted. `draft forward ID` writes a forward: what is piped in, then the message as it was, with every file the message carried attached; `--to` says who it is for, and can be left for you to fill in. `drafts` lists them, `draft show N` prints one, `draft send N` sends one. `draft edit N` and `draft discard N` work only on a draft that a command or an agent wrote: a draft you wrote in Quill is yours, and is changed and thrown away in Quill.
 
 **Sending.** `send` and `draft send` check the message as the compose screen would and put it in the Outbox; it goes at the next sync, from the app if it is running or from `quill sync`. `--account NAME` chooses which account sends, `--attach FILE` attaches, and `--at "tomorrow 9"` sends it later. Three things are yours to set:
 
@@ -854,20 +867,32 @@ A search with a `-` in it is best given as one quoted argument, as above: `quill
 
 `quill undo` takes back a message sent this way while it has not gone. Once it has, it has.
 
+**Answering an invitation.** `quill invite accept ID` (or `decline`, or `maybe`) answers the invitation message `ID` carries, as the keys on the invitation's card do: a short message to whoever sent it, with the calendar's own form of the answer attached. It is sending, so it needs `send`, and it goes as anything sent this way does: after the wait, or held for your OK.
+
+**Unsubscribing.** `quill unsubscribe ID` leaves the mailing list message `ID` came through, by the way the list itself gives in the message's headers, and says which it was:
+
+- Where the list takes one request that says "unsubscribe" and nothing else, Quill makes that request, to the list's own address, and says how the list's server answered. This needs Quill to be running.
+- Where the list wants a message, the message is written as a draft and nothing is sent. Sending the draft unsubscribes: `quill draft send N`, or in Quill.
+- Where the list has only a web page, nothing is done and no page is opened: that is for you, with Unsubscribe in Quill. The answer gives the page's address.
+
+It needs `send` too: either it reaches a server outside this Mac, or it writes mail that is only waiting to go.
+
 **What these commands may do** is yours to say, under `[agent]` in the config:
 
 ```toml
 [agent]
 commands = true     # the commands on this page that touch mail
-organize = true     # mark, move, copy, archive, snooze, restore, folder create, undo
+organize = true     # mark, move, copy, archive, snooze, restore, folder create, open, undo
 delete = true       # delete (to the trash)
-draft = true        # draft new, draft reply, draft edit, draft discard
-send = false        # send, draft send, outbox cancel. Off as Quill comes
+draft = true        # draft new, draft reply, draft forward, draft edit, draft discard
+send = false        # send, draft send, outbox cancel, invite, unsubscribe. Off as Quill comes
 send_gap = 30       # seconds from one message sent this way to the next; 0 for none
 hold_sends = false  # true: what is sent waits in the Outbox for your OK
 accounts = ["Work"] # only these accounts can be seen; leave it out for all of them
 bulk_limit = 50     # the most messages a search may name for one change without --yes
 ```
+
+As Quill comes, then, a command or an agent can write a draft and cannot send it: what it writes stays in Drafts until you open it and send it yourself. That is `draft = true` with `send = false`, and it holds for `quill send` typed at a prompt as much as for an agent. To let mail be sent but see each message first, switch `send` on with `hold_sends`.
 
 A script runs `quill delete` exactly as you would at a prompt, and so does an agent you have given the skill to. Quill cannot tell them apart, so these switches are for all of you: with `delete = false`, `quill delete` refuses whoever types it. A command that is refused says which setting refused it and exits with status 3, so a script can tell a refusal from a fault (1) and from a command written wrong (2). Looking, and `sync`, need only `commands`.
 
@@ -907,7 +932,7 @@ quill skill path             # the folder it is in, to link to yourself
 
 The skill needs the shell commands switched on (`commands`, which they are as Quill comes), and whatever it is to do allowed, as above. It works with Quill running or not.
 
-**Switching MCP on.** It is off as Quill comes. In the app, Settings > Agents, "Serve agents over MCP while Quill is running"; in the config, `mcp = true` under `[agent]`. Then give the agent's program the command the pane shows (Copy MCP Command copies it), which is Quill's own program and the word `mcp`:
+**Switching MCP on.** It is off as Quill comes. In the app, Settings > Agents, "Serve agents over MCP while Quill is running"; in the config, `mcp = true` under `[agent]`. In the app Quill asks first, each time it is switched on: the question says what it lets in, what to keep in mind, and what agents may do as your settings stand (whether they may send, above all), and nothing changes until you choose Switch MCP On. Then give the agent's program the command the pane shows (Copy MCP Command copies it), which is Quill's own program and the word `mcp`:
 
 ```sh
 claude mcp add quill -- /Applications/Quill.app/Contents/Helpers/quill mcp
@@ -919,9 +944,9 @@ That command is a relay and nothing more: it carries what the agent asks to the 
 - **Only your own programs can reach it.** Quill listens on a socket file in its data folder that is yours alone, and asks macOS who is on the other end of every connection. Nothing listens on the network, on this Mac or beyond it, and there is no password to keep.
 - **Every connection is a notification**: "Claude Code connected to Quill over MCP." Always, whatever else you have asked to be told.
 
-**What agents may do** is in the same pane, and holds from the moment you change it: organize mail, delete it (to the trash, never for good), write drafts, send. A tool that is switched off is not offered to the agent at all. The same switches govern the shell commands; see "From a shell" for each of them, for the wait between messages sent, and for holding what is sent for your OK.
+**What agents may do** is in the same pane, and holds from the moment you change it: organize mail, delete it (to the trash, never for good), write drafts, send. As Quill comes they may write drafts and may not send, so what an agent writes waits in Drafts for you to send. The pane also has which accounts they see (every one, or one alone; any other choice is made in the config, and shown as it is written), the most messages one change may name by a search, and who is connected over MCP at that moment, by the name each program gave. A tool that is switched off is not offered to the agent at all. The same switches govern the shell commands; see "From a shell" for each of them, for the wait between messages sent, and for holding what is sent for your OK.
 
-**What you are told.** Whatever an agent changes is said in Quill's bottom bar as it happens, with who did it ("Claude Code: archived 12 messages."), and `U` takes it back for the few seconds it takes back anything. As notifications you are told of every change and every message sent, or of messages sent only, or of nothing (`notify = "changes"`, `"sends"` or `"none"`); changes are gathered, so forty moves are one notification and not forty. The pane lists the last things changed, and `quill log` has all of it, with what was only looked at under `--all`.
+**What you are told.** Whatever an agent changes is said in Quill's bottom bar as it happens, with who did it ("Claude Code: archived 12 messages."), and `U` takes it back for the few seconds it takes back anything. As notifications you are told of every change and every message sent, or of messages sent only, or of nothing (`notify = "changes"`, `"sends"` or `"none"`); changes are gathered, so forty moves are one notification and not forty. The pane lists the last things changed, and `quill log` has all of it, with what was only looked at under `--all`. A click on a notification about agents opens Settings on that pane.
 
 **Stop Agents** (File > Stop Agents, `Z` then `a`, the button in the pane, or the button on any notification about agents) is for when one is doing what it should not. At once: every program connected is hung up on, both ways in are switched off, here and in the config, and mail agents sent that has not gone is taken back to Drafts. Nothing done before is undone by it; `quill log` says what was done, and `quill undo` takes a change back. Agents are let in again in Settings > Agents, and nowhere else.
 
@@ -931,7 +956,7 @@ That command is a relay and nothing more: it carries what the agent asks to the 
 
 An agent's program sends what it reads to whoever makes it. Quill itself still sends your mail to nobody: letting an agent in is letting that program, and its maker, see the mail it asks for. Choose the accounts it sees with `accounts = ["Work"]` under `[agent]`.
 
-MCP here is the protocol's revisions up to 2025-11-25, which every client speaks. Tools only: no resources and no prompts.
+MCP here is the protocol's revisions up to 2026-07-28: the ones that open with a greeting (up to 2025-11-25) and the one that does not, whichever the agent's program speaks. Tools only: no resources and no prompts. Every tool is a shell command of the same name (`draft_forward` is `quill draft forward`), but for `watch`, which is a shell command alone.
 
 ## Configuration
 
@@ -978,6 +1003,7 @@ In the app, Settings… in the Quill menu (`cmd-,`) opens a settings window. It 
 | Privacy | Remote pictures: ask for each message, or never load them | `remote_images` under `[privacy]` | At once |
 | Agents | Shell commands; MCP; what they may do (organize, delete, write drafts, send) | `commands`, `mcp`, `organize`, `delete`, `draft`, `send` under `[agent]` | At once |
 | Agents | The wait between messages they send; hold what they send for your OK | `send_gap`, `hold_sends` under `[agent]` | At once |
+| Agents | The accounts they see; the most messages one change may name by a search | `accounts`, `bulk_limit` under `[agent]` | At once |
 | Agents | What you are told of as a notification | `notify` under `[agent]` | At once |
 | Storage | Keep up to so many GB of downloaded mail | `cache_gb` under `[storage]` | When Quill is next opened |
 

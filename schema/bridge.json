@@ -37,7 +37,8 @@
         { "$ref": "#/$defs/keys.list" },
         { "$ref": "#/$defs/keys.show" },
         { "$ref": "#/$defs/rules.edit" },
-        { "$ref": "#/$defs/window.close" }
+        { "$ref": "#/$defs/window.close" },
+        { "$ref": "#/$defs/window.show" }
       ]
     },
     "shellToCore": {
@@ -1671,6 +1672,27 @@
         "jsonrpc": { "const": "2.0" },
         "method": { "const": "rules.edit" },
         "params": { "type": "object", "additionalProperties": false }
+      }
+    },
+
+    "window.show": {
+      "description": "Core to shell. Bring a window forward, and Quill with it. With nothing said, the main window, brought back if it was closed or in the Dock: the user asked from outside the window to be shown something in it (quill open). With `settings`, the settings window on that pane, opened as Settings in the Quill menu opens it: the user clicked a notification about what agents did, which is listed there. The shell brings the window up and decides nothing; a pane it has no such name for leaves the window on the pane it was on.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "window.show" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "settings": {
+              "description": "The name of a pane of the settings window, as settings.show names it.",
+              "$ref": "#/$defs/formId"
+            }
+          }
+        }
       }
     },
 

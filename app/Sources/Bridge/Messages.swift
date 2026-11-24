@@ -82,6 +82,9 @@ public enum CoreToShell: Equatable, Sendable {
     /// Close the main window and go on running behind it, as the
     /// window's own close button does.
     case windowClose
+    /// Bring a window forward, and Quill with it: the main window, or
+    /// with `settings` the settings window on the pane of that name.
+    case windowShow(settings: String?)
 }
 
 /// A message the shell sends to the core.

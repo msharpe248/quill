@@ -20,7 +20,7 @@ pub use blobs::BlobStore;
 pub use contacts::Contact;
 pub use drafts::{DraftAttachment, DraftContent, DraftId, DraftRow, DraftState, Outgoing};
 pub use folders::FolderPlace;
-pub use local::{KEPT, LOCAL_FOLDER, is_kept, is_made_here};
+pub use local::{KEPT, LOCAL_FOLDER, is_kept, is_made_here, name_problem as folder_name_problem};
 pub use queue::{OperationId, QueuedKind, QueuedOperation, is_placeholder};
 
 use std::path::Path;
@@ -80,6 +80,13 @@ pub struct AccountRow {
 }
 
 impl AccountRow {
+    /// Whether the account's server keeps folders that can be made,
+    /// renamed and deleted there. One that does not (POP3) has its
+    /// folders on this Mac.
+    pub fn has_server_folders(&self) -> bool {
+        keeps_server_folders(&self.kind)
+    }
+
     /// What stands for the account in a list of several accounts' mail:
     /// the letter chosen for it, or else the first letter of its name.
     pub fn initial(&self) -> Option<char> {
@@ -145,6 +152,11 @@ pub struct MessageLocation {
     pub remote: RemoteId,
     pub flags: Flags,
     pub date: i64,
+}
+
+/// Whether an account of this kind has folders on a server.
+pub fn keeps_server_folders(kind: &str) -> bool {
+    matches!(kind, "imap" | "graph" | "ews")
 }
 
 /// Which messages a list shows.

@@ -1,0 +1,13 @@
+{
+  "answer": {
+    "refused": {
+      "code": "not_running",
+      "message": "A message is shown in Quill's window. Quill is not running. Open Quill and try again."
+    },
+    "schema": 1
+  },
+  "arguments": {
+    "id": 17
+  },
+  "tool": "open"
+}

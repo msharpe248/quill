@@ -106,6 +106,17 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         }
     }
 
+    /// Opens the window on the pane of this name, or brings it forward
+    /// on it: the core asked for that pane. A name no pane has leaves the
+    /// window on the pane it would have opened on.
+    func open(on pane: String) {
+        // Where the window opens is the pane remembered: so it is
+        // remembered first, for a window that is still to be made.
+        memory.pane = pane
+        open()
+        _ = choose(pane: pane)
+    }
+
     /// Takes the window down, as closing it does.
     func close() {
         waitingToOpen = false

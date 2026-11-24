@@ -41,7 +41,7 @@ private enum Examples {
                 "reading.close.json", "reading.place.json", "reading.scroll.json", "reading.show.json",
                 "rules.edit.json", "settings.show.json", "spell.check.json",
                 "spell.suggest.json", "state.update.json", "themes.pick.json", "thumbnail.make.json",
-                "window.close.json",
+                "window.close.json", "window.show.json",
             ])
         for (name, text) in examples {
             let message = try CoreToShell(line: text)
@@ -382,6 +382,22 @@ private enum Examples {
         #expect(CoreToShell.windowClose.line == #"{"jsonrpc":"2.0","method":"window.close","params":{}}"#)
         #expect(throws: BridgeError.self) {
             try CoreToShell(line: #"{"jsonrpc":"2.0","method":"window.close","params":{"quit":true}}"#)
+        }
+        // A window is brought forward: the main one with nothing said, or
+        // the settings window on a pane, by a name a pane could have.
+        #expect(try CoreToShell(line: examples["window.show.json"]!) == .windowShow(settings: "agents"))
+        #expect(
+            try CoreToShell(line: #"{"jsonrpc":"2.0","method":"window.show","params":{}}"#)
+                == .windowShow(settings: nil))
+        #expect(
+            CoreToShell.windowShow(settings: nil).line
+                == #"{"jsonrpc":"2.0","method":"window.show","params":{}}"#)
+        #expect(throws: BridgeError.self) {
+            try CoreToShell(
+                line: #"{"jsonrpc":"2.0","method":"window.show","params":{"settings":"../etc"}}"#)
+        }
+        #expect(throws: BridgeError.self) {
+            try CoreToShell(line: #"{"jsonrpc":"2.0","method":"window.show","params":{"front":true}}"#)
         }
     }
 

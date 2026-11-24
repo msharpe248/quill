@@ -43,6 +43,7 @@ const SEND_LATER: &str = "send_later";
 const UNSUBSCRIBE: &str = "unsubscribe";
 /// The step of the question about removing an account.
 const REMOVE_ACCOUNT: &str = "remove_account";
+const LET_AGENTS_IN: &str = "let_agents_in";
 /// The step of the question about an account's letter, and its field.
 const ACCOUNT_LETTER: &str = "account_letter";
 const LETTER: &str = "letter";
@@ -79,6 +80,7 @@ fn asked_in_a_sheet(context: Context) -> bool {
             | Context::EditTheme
             | Context::Unsubscribe
             | Context::RemoveAccount
+            | Context::LetAgentsIn
     )
 }
 
@@ -693,6 +695,32 @@ impl RemovePrompt {
     }
 }
 
+impl super::McpPrompt {
+    /// The question as a host shows it: what is asked is its title, and
+    /// under it what saying yes lets in, what to keep in mind, and what
+    /// agents may do as the settings stand. No button is the one `return`
+    /// presses: letting agents in is not to be done by a stray key.
+    pub fn form(&self) -> Option<FormShow> {
+        FormShow::new(FormShowParams {
+            step: LET_AGENTS_IN.to_owned(),
+            title: self.title().to_owned(),
+            note: paragraphs(&[self.does(), self.mind(), &self.may]),
+            error: None,
+            busy: None,
+            fields: Vec::new(),
+            buttons: vec![
+                Press::Cancel.button(Some(FormRole::Cancel), true),
+                FormButton {
+                    id: CONFIRM.to_owned(),
+                    title: "Switch MCP On".to_owned(),
+                    role: None,
+                    enabled: true,
+                },
+            ],
+        })
+    }
+}
+
 impl State {
     /// The form or question the host is to show in its sheet, when the
     /// host is the one that shows them ([`Env::sheets`]): the one a
@@ -718,6 +746,7 @@ impl State {
             Context::EditTheme => self.theme_prompt.as_ref()?.form(),
             Context::Unsubscribe => self.unsubscribe.as_ref()?.form(),
             Context::RemoveAccount => self.remove.as_ref()?.form(),
+            Context::LetAgentsIn => self.mcp_ask.as_ref()?.form(),
             Context::Setup => self.setup.as_ref()?.form(&env.tz),
             _ => None,
         }
@@ -779,6 +808,11 @@ impl State {
             Context::RemoveAccount => match used.button() {
                 Some(CONFIRM) => self.answer_remove(out),
                 Some(id) if id == Press::Cancel.id() => self.cancel_remove(),
+                _ => {}
+            },
+            Context::LetAgentsIn => match used.button() {
+                Some(CONFIRM) => self.answer_mcp(out),
+                Some(id) if id == Press::Cancel.id() => self.cancel_mcp(),
                 _ => {}
             },
             _ => {}

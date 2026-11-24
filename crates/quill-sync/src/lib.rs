@@ -218,6 +218,19 @@ pub enum SyncRequest {
     DeleteFolder(LocalFolderId),
 }
 
+/// How a problem with making a folder begins.
+fn the_folder(name: &str) -> String {
+    format!("The folder {name}")
+}
+
+/// Whether a [`SyncEvent::Problem`]'s message says that the folder of
+/// this name, asked for with [`SyncRequest::CreateFolder`], was not made.
+pub fn is_folder_trouble(message: &str, name: &str) -> bool {
+    message
+        .strip_prefix(&the_folder(name))
+        .is_some_and(|rest| rest.starts_with(' '))
+}
+
 /// The UI's end of the engine. Dropping it stops the engine.
 pub struct SyncHandle {
     requests: UnboundedSender<SyncRequest>,
@@ -2074,7 +2087,8 @@ impl Engine {
             self.emit(SyncEvent::Problem {
                 account: "Folders".to_owned(),
                 message: format!(
-                    "The folder {name} was not made: its account is not being synced."
+                    "{} was not made: its account is not being synced.",
+                    the_folder(&name)
                 ),
             });
             return;
@@ -2099,7 +2113,10 @@ impl Engine {
             }
             Err(reason) => self.problem(
                 account,
-                format!("The folder {name} could not be made on the server: {reason}"),
+                format!(
+                    "{} could not be made on the server: {reason}",
+                    the_folder(&name)
+                ),
             ),
         }
     }

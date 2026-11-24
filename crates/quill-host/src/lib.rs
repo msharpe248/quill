@@ -313,6 +313,21 @@ pub trait Host: Send + Sync {
         self.send(CoreToShell::WindowClose(NoParams {}));
     }
 
+    /// Brings the host's main window forward, and Quill with it: the
+    /// user asked from outside the window to be shown something in it.
+    /// Only a shell has one to bring.
+    fn show_window(&self) {
+        self.send(CoreToShell::WindowShow(bridge::WindowShow::main()));
+    }
+
+    /// Brings the host's settings window up on the pane of this name.
+    /// Only a shell has one.
+    fn show_settings_pane(&self, pane: &str) {
+        if let Some(show) = bridge::WindowShow::settings(pane) {
+            self.send(CoreToShell::WindowShow(show));
+        }
+    }
+
     /// Puts text on the system clipboard, if this host can. Returns
     /// whether it took it; a terminal is asked instead when it did not.
     fn copy_text(&self, text: &str) -> bool {

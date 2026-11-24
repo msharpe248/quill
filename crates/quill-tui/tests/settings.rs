@@ -133,6 +133,8 @@ impl File {
             Change::AgentSendGap(seconds) => settings.agent.send_gap = seconds,
             Change::AgentHoldSends(on) => settings.agent.hold_sends = on,
             Change::AgentNotify(notify) => settings.agent.notify = notify,
+            Change::AgentAccounts(names) => settings.agent.accounts = names,
+            Change::AgentBulkLimit(most) => settings.agent.bulk_limit = most,
             Change::RulesEnabled(on) => settings.rules_enabled = on,
             Change::RulesLookBack(age) => settings.rules_look_back = age,
         }
@@ -223,6 +225,27 @@ impl Window {
 
     fn choose(&mut self, pane: &str, field: &str, option: &str) {
         self.set(pane, field, FormValue::Text(option.to_owned()));
+    }
+
+    /// Presses a button of the question on show in the sheet.
+    fn answer(&mut self, button: &str) {
+        let step = self
+            .harness
+            .state
+            .form(&self.harness.env)
+            .expect("a question is on show")
+            .step()
+            .to_owned();
+        self.harness.act(Action::FormUsed(
+            quill_host::bridge::FormUsed::new(&step, Some(button), &[], &[]).unwrap(),
+        ));
+        self.serve();
+    }
+
+    /// Switches MCP on, and says yes to the question that asks first.
+    fn let_agents_in(&mut self) {
+        self.set("agents", "mcp", FormValue::Flag(true));
+        self.answer("confirm");
     }
 
     fn press(&mut self, action: &str, row: Option<&str>) {
@@ -1440,7 +1463,7 @@ fn the_agents_pane_has_the_ways_in_what_they_may_do_and_how_sending_goes() {
     );
     window.choose("agents", "notify", "loudly");
     assert!(window.shown().problem().is_some());
-    window.set("agents", "mcp", FormValue::Flag(true));
+    window.let_agents_in();
     assert!(window.harness.env.agent.mcp);
     window.set("agents", "delete", FormValue::Flag(false));
     assert!(!window.harness.env.agent.delete);
@@ -1450,10 +1473,207 @@ fn the_agents_pane_has_the_ways_in_what_they_may_do_and_how_sending_goes() {
 }
 
 #[test]
+fn letting_agents_in_over_mcp_is_asked_about_first() {
+    let mut window = Window::new(CONFIG);
+    window.open();
+    assert!(window.harness.state.form(&window.harness.env).is_none());
+
+    // Switching it on changes nothing yet: the question comes up, saying
+    // what it lets in and what agents may do as the settings stand.
+    window.set("agents", "mcp", FormValue::Flag(true));
+    assert!(!window.harness.env.agent.mcp && !window.file.settings.agent.mcp);
+    assert!(!flag(&window, "mcp"));
+    assert_eq!(window.harness.state.context(), Context::LetAgentsIn);
+    let form = window.harness.state.form(&window.harness.env).unwrap();
+    assert_eq!(form.step(), "let_agents_in");
+    assert_eq!(form.title(), "Let agents work your mail over MCP?");
+    let said = form.note().unwrap();
+    assert!(said.contains("can then read the mail on this Mac"));
+    assert!(said.contains("Stop Agents shuts them all out at once"));
+    assert!(
+        said.contains(
+            "agents may read mail, organize it, delete it to the Trash and write drafts."
+        )
+    );
+    assert!(said.contains("They may not send"));
+    // No button is the one a stray return presses.
+    let buttons: Vec<(String, Option<quill_host::bridge::FormRole>)> = form
+        .buttons()
+        .iter()
+        .map(|button| (button.title.clone(), button.role))
+        .collect();
+    assert_eq!(
+        buttons,
+        [
+            (
+                "Cancel".to_owned(),
+                Some(quill_host::bridge::FormRole::Cancel)
+            ),
+            ("Switch MCP On".to_owned(), None)
+        ]
+    );
+    // A letter typed behind the sheet answers nothing and runs nothing.
+    window.harness.keys("y enter");
+    assert!(!window.harness.env.agent.mcp);
+    assert_eq!(window.harness.state.context(), Context::LetAgentsIn);
+
+    // No: it stays off, and nothing was written.
+    window.answer("cancel");
+    assert!(window.harness.state.form(&window.harness.env).is_none());
+    assert!(!window.harness.env.agent.mcp && !window.file.settings.agent.mcp);
+
+    // Asked again, and yes: on, at once and in the file.
+    window.set("agents", "mcp", FormValue::Flag(true));
+    window.answer("confirm");
+    assert!(window.harness.state.form(&window.harness.env).is_none());
+    assert!(window.harness.env.agent.mcp && window.file.settings.agent.mcp);
+    assert!(flag(&window, "mcp"));
+
+    // Switching it off asks nothing; switching it on again asks again,
+    // and says what the settings are by then.
+    window.set("agents", "mcp", FormValue::Flag(false));
+    assert!(!window.harness.env.agent.mcp);
+    assert!(window.harness.state.form(&window.harness.env).is_none());
+    window.set("agents", "send", FormValue::Flag(true));
+    window.set("agents", "hold_sends", FormValue::Flag(true));
+    window.set("agents", "mcp", FormValue::Flag(true));
+    let said = window
+        .harness
+        .state
+        .form(&window.harness.env)
+        .unwrap()
+        .note()
+        .unwrap()
+        .to_owned();
+    assert!(said.contains("waits in the Outbox for your OK"), "{said}");
+    // `esc` is the Cancel button.
+    window.harness.keys("esc");
+    assert!(window.harness.state.form(&window.harness.env).is_none());
+    assert!(!window.harness.env.agent.mcp);
+}
+
+#[test]
+fn the_agents_pane_says_who_is_connected_what_they_see_and_how_much_at_once() {
+    let mut window = Window::new(CONFIG);
+    window.open();
+    let connected = |window: &Window| match window.field("agents", "connected") {
+        FormField::Static { value, help, .. } => (value, help),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        connected(&window),
+        (
+            "No agent\u{2019}s program is connected over MCP.".to_owned(),
+            None
+        )
+    );
+    // Each program that connects is named for as long as it stays, one
+    // twice when two of a name do; with MCP off, that it gets nowhere is
+    // said.
+    for name in ["Claude Code", "Codex", "Claude Code"] {
+        window.harness.act(Action::AgentConnected(name.to_owned()));
+    }
+    let (names, help) = connected(&window);
+    assert_eq!(names, "Claude Code, Codex, Claude Code");
+    assert!(help.unwrap().contains("refused everything"));
+    window
+        .harness
+        .act(Action::AgentGone("Claude Code".to_owned()));
+    window.harness.act(Action::AgentGone("Nobody".to_owned()));
+    assert_eq!(connected(&window).0, "Codex, Claude Code");
+    window.let_agents_in();
+    assert_eq!(connected(&window).1, None);
+
+    // Which accounts they see: every one, or one alone.
+    let seen = |window: &Window| match window.field("agents", "accounts") {
+        FormField::Choice { value, options, .. } => (
+            value,
+            options
+                .into_iter()
+                .map(|option| option.title)
+                .collect::<Vec<_>>(),
+        ),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        seen(&window),
+        (
+            "all".to_owned(),
+            vec![
+                "Every account".to_owned(),
+                "Only Work".to_owned(),
+                "Only Home".to_owned()
+            ]
+        )
+    );
+    window.choose("agents", "accounts", "only_1");
+    assert_eq!(
+        window.harness.env.agent.accounts,
+        Some(vec!["Home".to_owned()])
+    );
+    assert!(!window.harness.env.agent.sees("Work"));
+    assert_eq!(seen(&window).0, "only_1");
+    window.choose("agents", "accounts", "only_7");
+    assert!(window.shown().problem().is_some());
+    window.choose("agents", "accounts", "all");
+    assert_eq!(window.harness.env.agent.accounts, None);
+    assert_eq!(window.file.settings.agent.accounts, None);
+
+    // The most messages one change may name by a search.
+    match window.field("agents", "bulk_limit") {
+        FormField::Number {
+            value, min, max, ..
+        } => {
+            assert_eq!(value, Number::from(50));
+            assert_eq!(min, Number::from(1));
+            assert_eq!(max, Some(Number::from(1000)));
+        }
+        other => panic!("{other:?}"),
+    }
+    window.set("agents", "bulk_limit", FormValue::Number(Number::from(200)));
+    assert_eq!(window.harness.env.agent.bulk_limit, 200);
+    window.set("agents", "bulk_limit", FormValue::Number(Number::from(0)));
+    assert!(window.shown().problem().is_some());
+    assert_eq!(window.harness.env.agent.bulk_limit, 200);
+    assert_eq!(window.file.settings.agent.bulk_limit, 200);
+}
+
+#[test]
+fn accounts_the_file_names_in_a_way_the_window_cannot_are_shown_as_written() {
+    // Two of three: the window has no choice of its own for that.
+    let mut window = Window::new(&format!(
+        "{CONFIG}\n[[account]]\nname = \"Club\"\ntype = \"imap\"\naddress = \"robin@example.net\"\n\
+         imap = {{ host = \"mail.example.net\" }}\n\n[agent]\naccounts = [\"Work\", \"Club\"]\n"
+    ));
+    window.open();
+    let (value, options) = match window.field("agents", "accounts") {
+        FormField::Choice { value, options, .. } => (value, options),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(value, "as_written");
+    assert_eq!(
+        options.last().unwrap().title,
+        "Work, Club (as the settings file says)"
+    );
+    // Chosen again, it stays what the file says.
+    window.choose("agents", "accounts", "as_written");
+    assert_eq!(
+        window.harness.env.agent.accounts,
+        Some(vec!["Work".to_owned(), "Club".to_owned()])
+    );
+    // One alone is named by the name the file gives it.
+    window.choose("agents", "accounts", "only_2");
+    assert_eq!(
+        window.harness.env.agent.accounts,
+        Some(vec!["Club".to_owned()])
+    );
+}
+
+#[test]
 fn stop_agents_switches_both_ways_in_off_at_once_and_in_the_file() {
     let mut window = Window::new(CONFIG);
     window.open();
-    window.set("agents", "mcp", FormValue::Flag(true));
+    window.let_agents_in();
     let stop = |window: &Window| match window.field("agents", "recent") {
         FormField::List { actions, .. } => {
             actions
@@ -1608,6 +1828,32 @@ fn the_user_is_told_what_agents_do_as_far_as_they_asked_and_always_of_a_connecti
     harness.act(Action::AgentConnected("Claude Code".to_owned()));
     let told = notifications(&mut harness);
     assert!(told[0].2.contains("tried to connect"), "{}", told[0].2);
+
+    // A click on one is a wish to see what they did: the settings window
+    // comes up on the pane that lists it.
+    harness.env.window = true;
+    harness.host_requests.clear();
+    harness.act(Action::Notification {
+        id: "agent.changes".to_owned(),
+        action: None,
+    });
+    assert_eq!(harness.host_requests, [HostRequest::ShowSettings("agents")]);
+    // A terminal has no such window: it says where to look.
+    harness.env.window = false;
+    harness.host_requests.clear();
+    harness.act(Action::Notification {
+        id: "agent.changes".to_owned(),
+        action: None,
+    });
+    assert!(harness.host_requests.is_empty());
+    assert!(
+        harness
+            .state
+            .notices
+            .back()
+            .is_some_and(|notice| notice.text.contains("quill log"))
+    );
+    harness.env.window = true;
 
     // The button on a notification stops them.
     harness.env.agent.mcp = true;

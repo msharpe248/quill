@@ -59,10 +59,12 @@ use std::path::PathBuf;
 
 use jiff::tz::TimeZone;
 use quill_core::config::AgentConfig;
+use quill_core::types::{LocalAccountId, LocalFolderId, LocalMessageId};
 use quill_store::{NewAgentEntry, Store, StoreError};
 use serde_json::{Value, json};
 
 use crate::data::DataEvent;
+pub use look::arrived;
 pub use tools::{Call, Hint, Kind, Level, Mark, Param, Tool, Which};
 
 /// The version of the answers' shapes (`schema/agent.json`). A field is
@@ -142,6 +144,12 @@ pub struct Settings {
     pub markdown: bool,
     /// An answer is written above what it answers.
     pub reply_above: bool,
+    /// The Quill that is running is asking: there is a window to show
+    /// things in. A command working on the store by itself has none.
+    pub running: bool,
+    /// And it has an engine and a service that reach the accounts'
+    /// servers and the network. The demo mailbox has neither.
+    pub online: bool,
 }
 
 impl Settings {
@@ -153,8 +161,33 @@ impl Settings {
             from_names: Vec::new(),
             markdown: true,
             reply_above: true,
+            running: false,
+            online: false,
         }
     }
+}
+
+/// What is still to be done once a request has been checked, done as far
+/// as the store goes and written in the log: by whoever has what it
+/// needs. The window, the engine and the network are not the store's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Then {
+    /// Show this message in the window, in its folder's list.
+    Show {
+        message: LocalMessageId,
+        folder: LocalFolderId,
+    },
+    /// Make a folder of this name on the account's server.
+    MakeFolder {
+        account: LocalAccountId,
+        account_name: String,
+        name: String,
+    },
+    /// Tell a mailing list's server to unsubscribe the user: one request
+    /// to this address, which the list gave for it.
+    Unsubscribe { url: String, host: String },
+    /// Go on telling whoever asked of the mail that arrives.
+    Watch { query: String },
 }
 
 /// Why something was not done. `code` does not change between versions;
@@ -272,6 +305,9 @@ pub struct Outcome {
     pub events: Vec<DataEvent>,
     /// For a notification, when the mail was changed or sent.
     pub notice: Option<Notice>,
+    /// What whoever holds the window, the engine and the network is to
+    /// do before the answer is given.
+    pub then: Option<Then>,
 }
 
 impl Outcome {
@@ -280,6 +316,7 @@ impl Outcome {
             result: Err(refusal),
             events: Vec::new(),
             notice: None,
+            then: None,
         }
     }
 }
@@ -305,6 +342,8 @@ pub(crate) struct Done {
     pub queued: bool,
     /// A message sent: when it is due to go.
     pub due: Option<i64>,
+    /// What is still to be done, by whoever can.
+    pub then: Option<Then>,
 }
 
 impl Done {
@@ -320,6 +359,7 @@ impl Done {
             undoable: false,
             queued: false,
             due: None,
+            then: None,
         }
     }
 }
@@ -342,10 +382,23 @@ fn way_refused(settings: &Settings, way: Way) -> Option<Refusal> {
 /// Whether the settings allow `call` by this way in: `None` when they do.
 pub fn refused(settings: &Settings, way: Way, call: &Call) -> Option<Refusal> {
     way_refused(settings, way).or_else(|| {
-        let level = call.tool().level;
+        let tool = call.tool();
+        if tool.shell && way != Way::Shell {
+            return Some(Refusal::invalid(format!(
+                "{} is a command for a shell, and no tool.",
+                tool.name
+            )));
+        }
+        let level = tool.level;
         (!level.allowed(&settings.agent))
             .then(|| Refusal::new(Code::SwitchedOff, level.off_words()))
     })
+}
+
+/// Whether a way in is open at all, for what is asked more than once of
+/// a connection that stays.
+pub fn way_open(settings: &Settings, way: Way) -> bool {
+    way_refused(settings, way).is_none()
 }
 
 /// The tools there are to call, as an MCP client is told of them: the
@@ -356,7 +409,7 @@ pub fn refused(settings: &Settings, way: Way, call: &Call) -> Option<Refusal> {
 pub fn tools_for(settings: &Settings) -> Vec<Value> {
     tools::TOOLS
         .iter()
-        .filter(|tool| tool.level.allowed(&settings.agent))
+        .filter(|tool| !tool.shell && tool.level.allowed(&settings.agent))
         .map(Tool::described)
         .collect()
 }
@@ -388,6 +441,7 @@ pub fn perform(
             "Checking for mail is not done here.",
         )),
         Call::Undo { entry } => change::undo(store, settings, *entry, now),
+        Call::Open { id } => look::open(store, settings, *id),
         call if tool.level == Level::Read => look::run(store, settings, call, now),
         call if matches!(tool.level, Level::Draft | Level::Send) => {
             write::run(store, settings, caller, call, now)
@@ -435,6 +489,7 @@ pub fn perform(
     }
     let mut events = Vec::new();
     let mut notice = None;
+    let then = done.then;
     if let Some(said) = done.said.filter(|_| done.count > 0) {
         let text = format!("{}: {said}", caller.name);
         events.push(DataEvent::StoreChanged);
@@ -457,6 +512,7 @@ pub fn perform(
         }),
         events,
         notice,
+        then,
     }
 }
 

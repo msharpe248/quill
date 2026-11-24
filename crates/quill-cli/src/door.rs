@@ -47,7 +47,7 @@ const ANSWER_WAIT: Duration = Duration::from_secs(150);
 #[derive(Debug, Serialize, Deserialize)]
 struct Request {
     id: u64,
-    /// `call`, `tools` or `hello`.
+    /// `call`, `tools`, `hello` or `watch`.
     method: String,
     /// `shell` or `mcp`.
     way: String,
@@ -209,6 +209,12 @@ async fn connection(stream: UnixStream, asks: UnboundedSender<AgentAsk>) {
     let (read, mut write) = stream.into_split();
     let mut lines = tokio::io::BufReader::new(read);
     let mut line = Vec::new();
+    // An agent's program that says who it is is said to have gone when
+    // this ends, however it ends: it hung up, or was hung up on.
+    let mut met = Met {
+        asks: asks.clone(),
+        callers: Vec::new(),
+    };
     loop {
         if !matches!(read_line(&mut lines, &mut line).await, Ok(true)) {
             return;
@@ -216,13 +222,64 @@ async fn connection(stream: UnixStream, asks: UnboundedSender<AgentAsk>) {
         let Ok(request) = serde_json::from_slice::<Request>(&line) else {
             return;
         };
-        let response = answer(request, &asks).await;
+        if request.method == "hello" && way_from(&request.way) == Some(Way::Mcp) {
+            met.callers
+                .push(Caller::mcp(request.name.as_deref().unwrap_or_default()));
+        }
+        // A watch is answered once, and then the connection is its own:
+        // a line for each message that arrives, until either end goes.
+        let (watch, watching) = if request.method == "watch" {
+            let (lines, heard) = tokio::sync::mpsc::unbounded_channel();
+            (Some(lines), Some(heard))
+        } else {
+            (None, None)
+        };
+        let response = answer(request, &asks, watch).await;
+        let begun = response.ok.is_some();
         let Ok(mut text) = serde_json::to_vec(&response) else {
             return;
         };
         text.push(b'\n');
         if write.write_all(&text).await.is_err() {
             return;
+        }
+        if let (Some(mut heard), true) = (watching, begun) {
+            loop {
+                tokio::select! {
+                    arrived = heard.recv() => {
+                        // Quill has let the watcher go: commands were
+                        // switched off, or Quill is closing.
+                        let Some(message) = arrived else {
+                            return;
+                        };
+                        let Ok(mut text) = serde_json::to_vec(&message) else {
+                            return;
+                        };
+                        text.push(b'\n');
+                        if write.write_all(&text).await.is_err() {
+                            return;
+                        }
+                    }
+                    // Whoever watches says nothing more: anything read
+                    // here is the other end going, or a mistake.
+                    _ = read_line(&mut lines, &mut line) => return,
+                }
+            }
+        }
+    }
+}
+
+/// The agents' programs a connection has said hello for. Dropped with the
+/// connection, it says each has gone.
+struct Met {
+    asks: UnboundedSender<AgentAsk>,
+    callers: Vec<Caller>,
+}
+
+impl Drop for Met {
+    fn drop(&mut self) {
+        for caller in self.callers.drain(..) {
+            let _ = self.asks.send(AgentAsk::Bye { caller });
         }
     }
 }
@@ -271,7 +328,11 @@ fn turned(id: u64, refusal: &Refusal) -> Response {
     }
 }
 
-async fn answer(request: Request, asks: &UnboundedSender<AgentAsk>) -> Response {
+async fn answer(
+    request: Request,
+    asks: &UnboundedSender<AgentAsk>,
+    watch: Option<UnboundedSender<Value>>,
+) -> Response {
     let id = request.id;
     let closing = || Refusal::new(Code::NotRunning, "Quill is closing.");
     let Some(way) = way_from(&request.way) else {
@@ -323,6 +384,40 @@ async fn answer(request: Request, asks: &UnboundedSender<AgentAsk>) -> Response 
             let ask = AgentAsk::Call {
                 caller,
                 call: Box::new(call),
+                reply,
+            };
+            if asks.send(ask).is_err() {
+                return turned(id, &closing());
+            }
+            match heard.await {
+                Ok(Ok(done)) => Response {
+                    id,
+                    ok: Some(Done {
+                        value: done.value,
+                        lines: done.lines,
+                    }),
+                    ..Response::default()
+                },
+                Ok(Err(refusal)) => turned(id, &refusal),
+                Err(_) => turned(id, &closing()),
+            }
+        }
+        "watch" => {
+            // A command for a shell, and no other way in.
+            let (Way::Shell, Some(lines)) = (way, watch) else {
+                return turned(id, &Refusal::invalid("That is not something to ask."));
+            };
+            let query = request
+                .arguments
+                .as_ref()
+                .and_then(|arguments| arguments["query"].as_str())
+                .unwrap_or_default()
+                .to_owned();
+            let (reply, heard) = oneshot::channel();
+            let ask = AgentAsk::Watch {
+                caller,
+                query,
+                lines,
                 reply,
             };
             if asks.send(ask).is_err() {
@@ -456,6 +551,64 @@ impl Client {
         })
     }
 
+    /// Asks the running Quill to say what mail arrives that `query`
+    /// finds, and gives each message to `each` as it does, for as long as
+    /// Quill runs and `each` says to go on. The outer error is the
+    /// door's; `Ok(Err)` is Quill's refusal to begin; `Ok(Ok)` is the
+    /// watching having ended because Quill let go.
+    pub fn watch(
+        &mut self,
+        query: &str,
+        mut each: impl FnMut(&Value) -> bool,
+    ) -> std::io::Result<Result<(), Refusal>> {
+        let response = self.ask(Request {
+            arguments: Some(serde_json::json!({ "query": query })),
+            ..Self::request(Way::Shell, "watch")
+        })?;
+        if let Some(turned) = response.refused {
+            return Ok(Err(Refusal::new(
+                Code::from_word(&turned.code).unwrap_or(Code::Failed),
+                turned.message,
+            )));
+        }
+        if response.ok.is_none() {
+            return Ok(Err(Refusal::new(Code::Failed, "Quill gave no answer.")));
+        }
+        // Mail arrives when it arrives: there is no time to give up at.
+        // A connection that has just closed may refuse to be told so,
+        // and then a wait that runs out is only a reason to wait again.
+        let _ = self.stream.get_ref().set_read_timeout(None);
+        let mut line = Vec::new();
+        loop {
+            let read = (&mut self.stream)
+                .take(LONGEST_LINE as u64 + 1)
+                .read_until(b'\n', &mut line);
+            let read = match read {
+                Ok(read) => read,
+                Err(err)
+                    if matches!(
+                        err.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    continue;
+                }
+                // The other end went without a word: Quill has closed.
+                Err(_) => return Ok(Ok(())),
+            };
+            if read == 0 || line.len() > LONGEST_LINE {
+                return Ok(Ok(()));
+            }
+            let Ok(message) = serde_json::from_slice::<Value>(&line) else {
+                return Ok(Ok(()));
+            };
+            line.clear();
+            if !each(&message) {
+                return Ok(Ok(()));
+            }
+        }
+    }
+
     /// The tools this way in may use now.
     pub fn tools(&mut self, way: Way) -> std::io::Result<Vec<Value>> {
         Ok(self
@@ -512,6 +665,22 @@ mod tests {
                         let _ = reply.send(agent::tools_for(&settings));
                     }
                     AgentAsk::Hello { caller } => greeted.push(caller.name),
+                    AgentAsk::Bye { caller } => greeted.push(format!("{} gone", caller.name)),
+                    AgentAsk::Watch {
+                        query,
+                        lines,
+                        reply,
+                        ..
+                    } => {
+                        let _ = reply.send(Ok(Answer {
+                            value: json!({ "watching": query }),
+                            lines: Vec::new(),
+                        }));
+                        // Two messages arrive, and then Quill lets go.
+                        for id in [7, 8] {
+                            let _ = lines.send(json!({ "id": id, "looked_for": query }));
+                        }
+                    }
                 }
             }
             greeted
@@ -589,7 +758,8 @@ mod tests {
         let path = dir.path().join(SOCKET);
         drop(door);
         assert!(!path.exists());
-        assert_eq!(behind.await.unwrap(), ["Claude Code"]);
+        // Said to have come, and, its connection closed, to have gone.
+        assert_eq!(behind.await.unwrap(), ["Claude Code", "Claude Code gone"]);
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -620,6 +790,71 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(100)).await;
         go.send(()).unwrap();
         assert_eq!(client.await.unwrap(), (true, true));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_watch_is_told_of_what_arrives_until_quill_lets_go() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_door, link) = open(dir.path()).unwrap();
+        let _behind = quill_behind(link, AgentConfig::default());
+        let data_dir = dir.path().to_path_buf();
+        let heard = tokio::task::spawn_blocking(move || {
+            let mut heard = Vec::new();
+            let ended = connect(&data_dir)
+                .unwrap()
+                .watch("from:ana", |message| {
+                    heard.push(message.clone());
+                    true
+                })
+                .unwrap();
+            (heard, ended.is_ok())
+        })
+        .await
+        .unwrap();
+        // Each message that arrived, a line each, in order; and then the
+        // watching ends because Quill let go, which is no mistake.
+        assert_eq!(
+            heard,
+            (
+                vec![
+                    json!({ "id": 7, "looked_for": "from:ana" }),
+                    json!({ "id": 8, "looked_for": "from:ana" }),
+                ],
+                true
+            )
+        );
+        // Whoever watches may stop when it has heard enough.
+        let data_dir = dir.path().to_path_buf();
+        let first = tokio::task::spawn_blocking(move || {
+            let mut heard = 0;
+            connect(&data_dir)
+                .unwrap()
+                .watch("", |_| {
+                    heard += 1;
+                    false
+                })
+                .unwrap()
+                .unwrap();
+            heard
+        })
+        .await
+        .unwrap();
+        assert_eq!(first, 1);
+        // Only a command for a shell watches: no other way in.
+        let path = dir.path().join(SOCKET);
+        let said = tokio::task::spawn_blocking(move || {
+            let mut stream = BufReader::new(StdStream::connect(&path).unwrap());
+            stream
+                .get_mut()
+                .write_all(b"{\"id\":1,\"method\":\"watch\",\"way\":\"mcp\"}\n")
+                .unwrap();
+            let mut line = String::new();
+            stream.read_line(&mut line).unwrap();
+            line
+        })
+        .await
+        .unwrap();
+        assert!(said.contains("\"invalid\""), "{said}");
     }
 
     #[tokio::test(flavor = "multi_thread")]

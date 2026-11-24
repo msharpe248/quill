@@ -43,7 +43,7 @@ const LONGEST_FOLDER_NAME: usize = 60;
 /// Why a folder on this Mac cannot be called `name`, in words for the
 /// user. A `/` in a name puts the folder inside another, so there must be
 /// something on each side of one.
-pub(crate) fn name_problem(name: &str) -> Option<String> {
+pub fn name_problem(name: &str) -> Option<String> {
     if name.is_empty() {
         return Some("Give the folder a name.".to_owned());
     }

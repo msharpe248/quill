@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use super::select::{self, visible};
 use super::show::{Names, row_json, row_line, when};
-use super::{Call, Done, Refusal, Settings, messages};
+use super::{Call, Code, Done, Refusal, Settings, Then, messages};
 use crate::files;
 use crate::text;
 
@@ -64,6 +64,7 @@ pub(crate) fn run(
         Call::Outbox => super::write::list(store, settings, true),
         Call::DraftShow { id } => super::write::show(store, settings, *id),
         Call::Log { limit: asked, all } => log(store, limit(*asked), *all),
+        Call::Watch { query } => watch(settings, query),
         _ => Err(Refusal::invalid("That is not something to look at.")),
     }
 }
@@ -210,6 +211,94 @@ fn count(store: &Store, settings: &Settings, words: &str) -> Result<Done, Refusa
         count,
         format!("{}: {}", text::sanitize_line(words.trim()), messages(count)),
     ))
+}
+
+/// What needs the Quill that is running says so when none is.
+pub(crate) fn needs_quill(what: &str) -> Refusal {
+    Refusal::new(
+        Code::NotRunning,
+        format!("{what} Quill is not running. Open Quill and try again."),
+    )
+}
+
+/// Asks for a message to be shown in Quill's window. The window marks it
+/// read, as it does any message opened in it.
+pub(crate) fn open(store: &Store, settings: &Settings, id: i64) -> Result<Done, Refusal> {
+    let row = message(store, settings, id)?;
+    if !settings.running {
+        return Err(needs_quill("A message is shown in Quill's window."));
+    }
+    let location = store
+        .message_location(row.id)?
+        .ok_or_else(|| Refusal::not_found(format!("There is no message {id}.")))?;
+    Ok(Done {
+        value: json!({ "action": "open", "id": id, "changed": 1 }),
+        lines: vec![format!("Message {id} is on show in Quill.")],
+        count: 1,
+        summary: format!("showed message {id} in the window"),
+        undo: None,
+        // The window shows it: there is nothing more to say there.
+        said: None,
+        undoable: false,
+        queued: false,
+        due: None,
+        then: Some(Then::Show {
+            message: row.id,
+            folder: location.folder,
+        }),
+    })
+}
+
+/// Begins saying what arrives. What arrives is found by [`arrived`], for
+/// as long as whoever asked stays.
+fn watch(settings: &Settings, query: &str) -> Result<Done, Refusal> {
+    if !settings.running {
+        return Err(needs_quill("Mail arrives in the Quill that is running."));
+    }
+    let asked = query.trim();
+    Ok(Done {
+        then: Some(Then::Watch {
+            query: asked.to_owned(),
+        }),
+        ..Done::look(
+            json!({ "watching": asked }),
+            Vec::new(),
+            0,
+            if asked.is_empty() {
+                "watch: all that arrives".to_owned()
+            } else {
+                format!("watch: {}", text::sanitize_line(asked))
+            },
+        )
+    })
+}
+
+/// Of the messages that have just arrived, the ones a watcher's search
+/// finds among the mail agents may see, as a list or a search would give
+/// them: with nothing to find, all of them.
+pub fn arrived(
+    store: &Store,
+    settings: &Settings,
+    query: &str,
+    ids: &[LocalMessageId],
+) -> Vec<Value> {
+    let read = select::query(query, &settings.tz);
+    let rows = if read.is_empty() {
+        store.message_rows(ids)
+    } else {
+        store.search_among(&read, ids)
+    };
+    let (Ok(rows), Ok(seen), Ok(names)) = (rows, visible(store, settings), Names::of(store)) else {
+        return Vec::new();
+    };
+    rows.iter()
+        .filter(|row| seen.contains(&row.account))
+        .map(|row| {
+            let mut value = row_json(row, &names);
+            value["schema"] = json!(super::SCHEMA);
+            value
+        })
+        .collect()
 }
 
 /// The message with this id, if agents may see it.

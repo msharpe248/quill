@@ -120,8 +120,10 @@ impl Host for StandaloneHost {
             // Nor is the rules' file opened from here: in a terminal the
             // user is told where it is, and opens it as they open files.
             | CoreToShell::RulesEdit(_)
-            // Nor a window to close with Quill left running.
+            // Nor a window to close with Quill left running, or to bring
+            // forward: a terminal is its user's to bring forward.
             | CoreToShell::WindowClose(_)
+            | CoreToShell::WindowShow(_)
             | CoreToShell::SpellCheck(_)
             | CoreToShell::SpellSuggest(_)
             | CoreToShell::NotifyPost(_)

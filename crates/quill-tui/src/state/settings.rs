@@ -71,6 +71,7 @@ impl State {
                     themes: self.themes_can_change(env),
                 },
                 &self.agent_recent,
+                &self.agents_connected,
                 window.refused.as_deref(),
             ),
             Err(problem) => settings::describe_unreadable(problem),
@@ -110,6 +111,14 @@ impl State {
                     SettingsDid::Set(value) => {
                         match settings::change(&described, &read, used.pane(), used.field(), value)
                         {
+                            // Letting agents in over MCP is asked about
+                            // first, with what it lets them do said: the
+                            // window is answered as it stands, and the
+                            // change is made when the question is.
+                            Ok(settings::Change::AgentMcp(true)) if env.sheets => {
+                                self.ask_mcp(&read.settings.agent);
+                                self.settings_answered(None);
+                            }
                             // Answered when the service has written it.
                             Ok(change) => {
                                 out.accounts.push(AccountRequest::Settings(Some(change)));

@@ -423,6 +423,12 @@ pub fn set(text: &str, change: &Change) -> Result<String, String> {
     let written = match change.written() {
         Written::Gone => return remove_value(text, setting.section(), key),
         Written::Word(word) => Value::from(word),
+        Written::Words(words) => Value::Array(
+            words
+                .iter()
+                .map(String::as_str)
+                .collect::<toml_edit::Array>(),
+        ),
         Written::Flag(on) => Value::from(on),
         Written::Whole(number) => Value::from(number),
         Written::Decimal(number) => Value::from(number),
@@ -1001,6 +1007,35 @@ mod tests {
             set(&text, &Change::ThemeDark("dark".to_owned())).unwrap(),
             text
         );
+    }
+
+    #[test]
+    fn the_accounts_agents_see_are_written_as_a_list_and_taken_out_for_all() {
+        let named = |names: &[&str]| {
+            Change::AgentAccounts(Some(names.iter().map(|name| (*name).to_owned()).collect()))
+        };
+        let text = "# Mine.\n[agent]\nmcp = true # for Claude\n";
+        let one = set(text, &named(&["Work"])).unwrap();
+        assert_eq!(
+            one,
+            "# Mine.\n[agent]\nmcp = true # for Claude\naccounts = [\"Work\"]\n"
+        );
+        assert_eq!(
+            Config::parse(&one).unwrap().agent.accounts,
+            Some(vec!["Work".to_owned()])
+        );
+        // Another list takes its place, and a name is written as it is,
+        // whatever is in it.
+        let two = set(&one, &named(&["Home", "Ana's \"old\" mail"])).unwrap();
+        assert_eq!(
+            Config::parse(&two).unwrap().agent.accounts,
+            Some(vec!["Home".to_owned(), "Ana's \"old\" mail".to_owned()])
+        );
+        // Every account: the line goes, and the file is as it was.
+        assert_eq!(set(&two, &Change::AgentAccounts(None)).unwrap(), text);
+        // And the most messages at once, a number like any other.
+        let most = set(text, &Change::AgentBulkLimit(200)).unwrap();
+        assert_eq!(Config::parse(&most).unwrap().agent.bulk_limit, 200);
     }
 
     #[test]

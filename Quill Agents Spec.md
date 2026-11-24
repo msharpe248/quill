@@ -181,7 +181,8 @@ Each is a shell command and an MCP tool of the same name (`draft reply` is `draf
 | `archive` | To the account's archive |
 | `snooze WHEN` / `unsnooze` | As `b` does, with the same words for times |
 | `restore` | Puts back what was deleted, where it came from |
-| `folder create NAME [--account A] [--on-this-mac]` | Makes a folder |
+| `folder create NAME [--account A] [--on-this-mac]` | Makes a folder: on the account's server, which needs Quill running, or on this Mac |
+| `open ID` | Shows a message in Quill's window. Needs Quill running. Under organize, because the window marks what it opens read |
 | `undo [N]` | Takes back an entry in the log: the last, or number N |
 
 ### Delete (needs: delete)
@@ -311,7 +312,7 @@ Each step is tried on the demo mailbox and scratch folders only.
 
 ## Open questions
 
-1. **Is `quill send` meant to be off too?** As drafted, "Send mail" is one switch for both ways in, so the shell's `quill send`, which works today, refuses until it is on. The other reading is that only MCP's sending starts off, which needs a second switch.
+None. The one there was, whether `quill send` in a shell is off with MCP's sending, was settled on 2026-11-24: it is. "Send mail" is one switch for both ways in, and with "Write drafts" on and it off, which is how Quill comes, an agent or a command can only leave a draft for the user to send.
 
 ## Settled (2026-11-17)
 

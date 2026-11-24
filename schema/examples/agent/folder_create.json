@@ -1,0 +1,17 @@
+{
+  "answer": {
+    "account": "Work",
+    "action": "folder_create",
+    "changed": 1,
+    "log": 10,
+    "name": "Receipts",
+    "on_this_mac": true,
+    "schema": 1
+  },
+  "arguments": {
+    "account": "Work",
+    "name": "Receipts",
+    "on_this_mac": true
+  },
+  "tool": "folder_create"
+}

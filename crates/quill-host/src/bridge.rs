@@ -112,6 +112,10 @@ pub enum CoreToShell {
     /// key.
     #[serde(rename = "window.close")]
     WindowClose(NoParams),
+    /// Bring a window forward: the main window, or the settings window
+    /// on a pane.
+    #[serde(rename = "window.show")]
+    WindowShow(WindowShow),
 }
 
 /// A message the shell sends to the core.
@@ -448,6 +452,66 @@ pub enum Context {
     Compose,
     Palette,
     Search,
+}
+
+/// Which window to bring forward: the main one, or with `settings` the
+/// settings window on the pane of that name. The name cannot be built or
+/// decoded as anything but a form's kind of name.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    deny_unknown_fields,
+    try_from = "WindowShowParams",
+    into = "WindowShowParams"
+)]
+pub struct WindowShow {
+    settings: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WindowShowParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    settings: Option<String>,
+}
+
+impl WindowShow {
+    /// The main window.
+    pub fn main() -> Self {
+        Self::default()
+    }
+
+    /// The settings window, on this pane. `None` when that is no name a
+    /// pane could have.
+    pub fn settings(pane: &str) -> Option<Self> {
+        valid_form_id(pane).then(|| Self {
+            settings: Some(pane.to_owned()),
+        })
+    }
+
+    /// The pane of the settings window, when that is the window meant.
+    pub fn pane(&self) -> Option<&str> {
+        self.settings.as_deref()
+    }
+}
+
+impl TryFrom<WindowShowParams> for WindowShow {
+    type Error = String;
+
+    fn try_from(params: WindowShowParams) -> Result<Self, Self::Error> {
+        match params.settings {
+            None => Ok(Self::main()),
+            Some(pane) => Self::settings(&pane)
+                .ok_or_else(|| "window.show: settings is not the name of a pane".to_owned()),
+        }
+    }
+}
+
+impl From<WindowShow> for WindowShowParams {
+    fn from(show: WindowShow) -> Self {
+        Self {
+            settings: show.settings,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

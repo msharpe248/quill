@@ -308,3 +308,49 @@ fn a_mail_link_does_not_put_aside_what_is_being_written_or_run_anything() {
     assert!(!compose.subject.text().chars().any(char::is_control));
     assert!(compose.attachments.is_empty());
 }
+
+#[test]
+fn a_message_asked_for_from_outside_the_window_is_shown_in_its_folders_list() {
+    let mut harness = Harness::demo(120, 40);
+    // A message that is not in the inbox on show, and not the first of
+    // its folder.
+    let folder = harness
+        .store
+        .folders()
+        .unwrap()
+        .into_iter()
+        .find(|folder| folder.role != FolderRole::Inbox && folder.total > 1)
+        .unwrap();
+    let rows = harness.store.messages(Mailbox::Folder(folder.id)).unwrap();
+    let wanted = rows.last().unwrap().clone();
+    assert_ne!(harness.state.mailbox, Mailbox::Folder(folder.id));
+
+    harness.act(Action::ShowMessage {
+        message: wanted.id,
+        folder: folder.id,
+    });
+    // Its folder's list, with the cursor on it, and the message open.
+    assert_eq!(harness.state.mailbox, Mailbox::Folder(folder.id));
+    assert_eq!(harness.selected_subject(), wanted.headers.subject);
+    assert_eq!(harness.state.context(), Context::Reader);
+
+    // Another of the same folder is gone to at once.
+    let other = rows.first().unwrap().clone();
+    harness.act(Action::ShowMessage {
+        message: other.id,
+        folder: folder.id,
+    });
+    assert_eq!(harness.selected_subject(), other.headers.subject);
+    assert_eq!(harness.state.context(), Context::Reader);
+
+    // What is being written is not put aside for it: the list goes to
+    // the message behind, and the writing stays in front.
+    harness.keys("esc c");
+    assert_eq!(harness.state.context(), Context::Compose);
+    harness.act(Action::ShowMessage {
+        message: wanted.id,
+        folder: folder.id,
+    });
+    assert_eq!(harness.state.context(), Context::Compose);
+    assert_eq!(harness.selected_subject(), wanted.headers.subject);
+}

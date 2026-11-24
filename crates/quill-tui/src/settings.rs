@@ -20,8 +20,8 @@
 use std::hash::{Hash, Hasher};
 
 use quill_core::config::{
-    AccountType, AgentConfig, AgentNotify, Appearance, ComposeEditor, ComposeFormat, Config,
-    KeymapPreset, RemoteImages, ReplyPosition, SEND_GAP_LONGEST,
+    AccountType, AgentConfig, AgentNotify, Appearance, BULK_CEILING, ComposeEditor, ComposeFormat,
+    Config, KeymapPreset, RemoteImages, ReplyPosition, SEND_GAP_LONGEST,
 };
 use quill_host::bridge::{
     FormAction, FormField, FormOption, FormRow, FormValue, MAX_FONT_NAME, MAX_FORM_ROWS, Number,
@@ -143,12 +143,14 @@ pub enum Setting {
     AgentSendGap,
     AgentHoldSends,
     AgentNotify,
+    AgentAccounts,
+    AgentBulkLimit,
     RulesEnabled,
     RulesLookBack,
 }
 
 impl Setting {
-    pub const ALL: [Setting; 28] = [
+    pub const ALL: [Setting; 30] = [
         Setting::Appearance,
         Setting::ThemeLight,
         Setting::ThemeDark,
@@ -175,6 +177,8 @@ impl Setting {
         Setting::AgentSendGap,
         Setting::AgentHoldSends,
         Setting::AgentNotify,
+        Setting::AgentAccounts,
+        Setting::AgentBulkLimit,
         Setting::RulesEnabled,
         Setting::RulesLookBack,
     ];
@@ -209,6 +213,8 @@ impl Setting {
             Setting::AgentSendGap => "send_gap",
             Setting::AgentHoldSends => "hold_sends",
             Setting::AgentNotify => "notify",
+            Setting::AgentAccounts => "accounts",
+            Setting::AgentBulkLimit => "bulk_limit",
             Setting::RulesEnabled => "enabled",
             Setting::RulesLookBack => "look_back",
         }
@@ -242,7 +248,9 @@ impl Setting {
             | Setting::AgentSend
             | Setting::AgentSendGap
             | Setting::AgentHoldSends
-            | Setting::AgentNotify => "agent",
+            | Setting::AgentNotify
+            | Setting::AgentAccounts
+            | Setting::AgentBulkLimit => "agent",
             Setting::RulesEnabled | Setting::RulesLookBack => "rules",
         }
     }
@@ -277,7 +285,9 @@ impl Setting {
             | Setting::AgentSend
             | Setting::AgentSendGap
             | Setting::AgentHoldSends
-            | Setting::AgentNotify => Pane::Agents,
+            | Setting::AgentNotify
+            | Setting::AgentAccounts
+            | Setting::AgentBulkLimit => Pane::Agents,
         }
     }
 
@@ -417,6 +427,10 @@ pub enum Change {
     AgentSendGap(u32),
     AgentHoldSends(bool),
     AgentNotify(AgentNotify),
+    /// The accounts agents see, by name: every one, when none is named.
+    AgentAccounts(Option<Vec<String>>),
+    /// The most messages a search may name for one change.
+    AgentBulkLimit(u32),
     /// Whether rules run by themselves.
     RulesEnabled(bool),
     /// How far back a rule goes over mail already here: `1d`, `1w`.
@@ -429,6 +443,8 @@ pub enum Written<'a> {
     /// Nothing: the key is taken out of the file.
     Gone,
     Word(&'a str),
+    /// A list of words.
+    Words(&'a [String]),
     Flag(bool),
     Whole(i64),
     Decimal(f64),
@@ -463,6 +479,8 @@ impl Change {
             Change::AgentSendGap(_) => Setting::AgentSendGap,
             Change::AgentHoldSends(_) => Setting::AgentHoldSends,
             Change::AgentNotify(_) => Setting::AgentNotify,
+            Change::AgentAccounts(_) => Setting::AgentAccounts,
+            Change::AgentBulkLimit(_) => Setting::AgentBulkLimit,
             Change::RulesEnabled(_) => Setting::RulesEnabled,
             Change::RulesLookBack(_) => Setting::RulesLookBack,
         }
@@ -479,7 +497,11 @@ impl Change {
             Change::Keymap(preset) => Written::Word(preset.as_str()),
             Change::Editor(editor) => Written::Word(editor.as_str()),
             Change::EditorPath(Some(path)) => Written::Word(path),
-            Change::EditorPath(None) | Change::Font(None) => Written::Gone,
+            Change::EditorPath(None) | Change::Font(None) | Change::AgentAccounts(None) => {
+                Written::Gone
+            }
+            Change::AgentAccounts(Some(names)) => Written::Words(names),
+            Change::AgentBulkLimit(most) => Written::Whole(i64::from(*most)),
             Change::Font(Some(family)) => Written::Word(family),
             Change::Format(format) => Written::Word(format.as_str()),
             Change::ReplyPosition(position) => Written::Word(position.as_str()),
@@ -1497,6 +1519,12 @@ pub const AGENT_LOG: &str = "recent";
 pub const STOP_AGENTS: &str = "stop";
 /// Copy the command that adds Quill to an agent's program.
 pub const COPY_MCP: &str = "copy_mcp";
+/// Who is connected over MCP now.
+pub const AGENTS_CONNECTED: &str = "connected";
+/// The choice of accounts that stands for what the file says, when the
+/// window has no choice of its own for it. It is shown, and is not to be
+/// chosen.
+const AS_THE_FILE_SAYS: &str = "as_written";
 
 /// The command an agent's program is given to reach Quill over MCP: this
 /// Quill's own program, by its whole path, and `mcp`.
@@ -1517,7 +1545,12 @@ pub fn mcp_command(env: &Env) -> String {
 /// What programs outside Quill's window may do with the mail: the two
 /// ways in, what may be done through them, how sending goes, and what
 /// was done last.
-fn agents(read: &SettingsRead, env: &Env, recent: &[AgentEntry]) -> Vec<FormField> {
+fn agents(
+    read: &SettingsRead,
+    env: &Env,
+    recent: &[AgentEntry],
+    connected: &[String],
+) -> Vec<FormField> {
     let agent = &read.settings.agent;
     let mut fields = vec![
         toggle(
@@ -1548,8 +1581,30 @@ fn agents(read: &SettingsRead, env: &Env, recent: &[AgentEntry]) -> Vec<FormFiel
             "Delete mail: to the trash, never for good",
             agent.delete,
         ),
-        toggle(Setting::AgentDraft, "", "Write drafts", agent.draft),
-        toggle(Setting::AgentSend, "", "Send mail", agent.send),
+        toggle(
+            Setting::AgentDraft,
+            "",
+            "Write drafts, left in Drafts for me to send",
+            agent.draft,
+        ),
+        FormField::Toggle {
+            id: Setting::AgentSend.key().to_owned(),
+            label: String::new(),
+            title: "Send mail themselves".to_owned(),
+            value: agent.send,
+            help: Some(
+                if agent.send {
+                    "What they send goes as below. Off, they can only leave drafts, and \
+                     nothing goes until you send it."
+                } else if agent.draft {
+                    "Off: an agent can only leave a draft in Drafts. Nothing goes until you \
+                     open it and send it. This holds for quill send in a shell too."
+                } else {
+                    "Off, with drafts off too: an agent writes no mail at all."
+                }
+                .to_owned(),
+            ),
+        },
     ];
     // How sending goes is decided when it is switched on, and is not in
     // the way before.
@@ -1599,6 +1654,90 @@ fn agents(read: &SettingsRead, env: &Env, recent: &[AgentEntry]) -> Vec<FormFiel
                 .to_owned(),
         ),
     ));
+    // Which accounts they see: every one, or one alone. More than one
+    // and fewer than all is said in the file, and shown here as it is.
+    let every = "all";
+    let only = |index: usize| format!("only_{index}");
+    let mut seen = vec![option(every, "Every account")];
+    seen.extend(read.accounts.iter().enumerate().map(|(index, account)| {
+        option(
+            only(index),
+            format!("Only {}", text::sanitize_line(&account.name)),
+        )
+    }));
+    let chosen = match &agent.accounts {
+        None => every.to_owned(),
+        Some(names) => {
+            let one = match names.as_slice() {
+                [name] => read
+                    .accounts
+                    .iter()
+                    .position(|account| account.name.eq_ignore_ascii_case(name)),
+                _ => None,
+            };
+            match one {
+                Some(index) => only(index),
+                None => {
+                    let named: Vec<String> =
+                        names.iter().map(|name| text::sanitize_line(name)).collect();
+                    seen.push(option(
+                        AS_THE_FILE_SAYS,
+                        if named.is_empty() {
+                            "None (as the settings file says)".to_owned()
+                        } else {
+                            format!("{} (as the settings file says)", named.join(", "))
+                        },
+                    ));
+                    AS_THE_FILE_SAYS.to_owned()
+                }
+            }
+        }
+    };
+    if read.accounts.len() > 1 || agent.accounts.is_some() {
+        fields.push(choice(
+            Setting::AgentAccounts,
+            "They see:",
+            chosen,
+            seen,
+            Some(
+                "An account they do not see does not exist for them: not its mail, its \
+                 folders or its drafts."
+                    .to_owned(),
+            ),
+        ));
+    }
+    fields.push(FormField::Number {
+        id: Setting::AgentBulkLimit.key().to_owned(),
+        label: "At once:".to_owned(),
+        value: Number::from(agent.bulk_limit),
+        min: Number::from(1),
+        max: Some(Number::from(BULK_CEILING)),
+        step: Number::from(10),
+        decimals: 0,
+        unit: Some("messages in one change".to_owned()),
+        help: Some(
+            "A change that names its messages by a search and finds more than this changes \
+             none of them, and says how many it found. It is done only when asked again \
+             with the word to go on."
+                .to_owned(),
+        ),
+    });
+    fields.push(FormField::Static {
+        id: AGENTS_CONNECTED.to_owned(),
+        label: "Connected:".to_owned(),
+        value: match connected {
+            [] => "No agent\u{2019}s program is connected over MCP.".to_owned(),
+            names => {
+                let names: Vec<String> =
+                    names.iter().map(|name| text::sanitize_line(name)).collect();
+                names.join(", ")
+            }
+        },
+        help: (!connected.is_empty() && !agent.mcp).then(|| {
+            "MCP is switched off: a program that is connected is refused everything it asks."
+                .to_owned()
+        }),
+    });
     fields.push(FormField::List {
         id: AGENT_LOG.to_owned(),
         label: "Lately:".to_owned(),
@@ -1659,6 +1798,7 @@ pub fn describe(
     env: &Env,
     can: Can,
     recent: &[AgentEntry],
+    connected: &[String],
     problem: Option<&str>,
 ) -> Option<SettingsShow> {
     let panes = Pane::ALL
@@ -1690,7 +1830,7 @@ pub fn describe(
                 Pane::Composing => composing(read, env),
                 Pane::Keys => keys(read, env),
                 Pane::Privacy => privacy(read),
-                Pane::Agents => agents(read, env, recent),
+                Pane::Agents => agents(read, env, recent, connected),
                 Pane::Storage => storage(read, env),
             },
             more: Some(MORE.to_owned()),
@@ -1805,6 +1945,17 @@ pub fn change(
                     .find(|notify| notify.as_str() == chosen)
                     .map(Change::AgentNotify)
                     .ok_or_else(not_one),
+                Setting::AgentAccounts if chosen == "all" => Ok(Change::AgentAccounts(None)),
+                // What the file says and the window cannot: it stays.
+                Setting::AgentAccounts if chosen == AS_THE_FILE_SAYS => {
+                    Ok(Change::AgentAccounts(read.settings.agent.accounts.clone()))
+                }
+                Setting::AgentAccounts => chosen
+                    .strip_prefix("only_")
+                    .and_then(|index| index.parse::<usize>().ok())
+                    .and_then(|index| read.accounts.get(index))
+                    .map(|account| Change::AgentAccounts(Some(vec![account.name.clone()])))
+                    .ok_or_else(not_one),
                 Setting::RulesLookBack => chosen
                     .strip_prefix("back_")
                     .filter(|age| quill_core::rules::look_back_seconds(age).is_some())
@@ -1884,6 +2035,11 @@ pub fn change(
                     .and_then(|seconds| u32::try_from(seconds).ok())
                     .map(Change::AgentSendGap)
                     .ok_or_else(|| format!("{label} is a whole number of seconds.")),
+                Setting::AgentBulkLimit => number
+                    .whole()
+                    .and_then(|most| u32::try_from(most).ok())
+                    .map(Change::AgentBulkLimit)
+                    .ok_or_else(|| format!("{label} is a whole number of messages.")),
                 Setting::CacheGb => Ok(Change::CacheGb(number)),
                 Setting::FontSize => Ok(Change::FontSize(number)),
                 _ => Err(format!("{label} is not a number.")),
@@ -2067,6 +2223,8 @@ mod tests {
                 Setting::AgentSendGap => Change::AgentSendGap(60),
                 Setting::AgentHoldSends => Change::AgentHoldSends(true),
                 Setting::AgentNotify => Change::AgentNotify(AgentNotify::Sends),
+                Setting::AgentAccounts => Change::AgentAccounts(Some(vec!["Work".to_owned()])),
+                Setting::AgentBulkLimit => Change::AgentBulkLimit(10),
                 Setting::RulesEnabled => Change::RulesEnabled(false),
                 Setting::RulesLookBack => Change::RulesLookBack("2w".to_owned()),
             };

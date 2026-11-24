@@ -549,6 +549,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             // The user closed Quill with a key. It is the red button's
             // close and nothing else: Quill goes on running.
             window?.performClose(nil)
+        case let .windowShow(settings):
+            bringForward(settingsPane: settings)
         case let .readingShow(page):
             showReading(page)
         case let .readingScroll(by):
@@ -871,10 +873,37 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         focusTerminal()
     }
 
+    /// How many times the core has asked for a window to be brought
+    /// forward, and the pane of the settings window it last asked for:
+    /// for a scripted run's dump.
+    private(set) var timesBroughtForward = 0
+    private(set) var settingsPaneAsked: String?
+
+    /// Brings a window forward because the core asked: the main window,
+    /// or the settings window on a pane. A scripted run brings the
+    /// window up and leaves the other applications where they are.
+    private func bringForward(settingsPane: String?) {
+        timesBroughtForward += 1
+        if let settingsPane {
+            settingsPaneAsked = settingsPane
+            settingsWindow.open(on: settingsPane)
+        } else {
+            showMainWindow(nil)
+        }
+        if !options.isScripted {
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
     /// The main window in a few words, for a scripted run's dump.
     var mainWindowSummary: String {
         let shown = (window?.isVisible ?? false) ? "on screen" : "closed"
-        return "\(shown), closed \(timesClosed) times, core \(coreIsRunning ? "running" : "stopped")"
+        let forward =
+            timesBroughtForward == 0
+            ? ""
+            : ", brought forward \(timesBroughtForward) times"
+                + (settingsPaneAsked.map { " (settings: \($0))" } ?? "")
+        return "\(shown), closed \(timesClosed) times, core \(coreIsRunning ? "running" : "stopped")\(forward)"
     }
 
     // MARK: - Toolbar

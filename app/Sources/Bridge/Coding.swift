@@ -266,6 +266,10 @@ private struct FileOpenParams: Codable {
     var path: String
 }
 
+private struct WindowShowParams: Codable {
+    var settings: String?
+}
+
 private struct FilesSaveParams: Codable {
     var path: String
     var name: String
@@ -1066,6 +1070,14 @@ public extension CoreToShell {
         case "window.close":
             try envelope.requireOnly([])
             self = .windowClose
+        case "window.show":
+            let params = try envelope.decode(WindowShowParams.self, allowing: ["settings"])
+            if let pane = params.settings {
+                guard FormID.isValid(pane) else {
+                    throw BridgeError.malformed("window.show: settings is not the name of a pane")
+                }
+            }
+            self = .windowShow(settings: params.settings)
         default:
             throw BridgeError.unknownMethod(envelope.method)
         }
@@ -1131,6 +1143,8 @@ public extension CoreToShell {
             encodeLine(method: "rules.edit", params: NoParams())
         case .windowClose:
             encodeLine(method: "window.close", params: NoParams())
+        case let .windowShow(settings):
+            encodeLine(method: "window.show", params: WindowShowParams(settings: settings))
         }
     }
 }

@@ -256,6 +256,41 @@ enum Command {
         #[command(flatten)]
         output: Output,
     },
+    /// Show a message in Quill's window, by the id `list` and `search`
+    /// show. Quill has to be running
+    Open {
+        id: i64,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Wait, and print a line of JSON for each message that arrives in an
+    /// inbox and that a search finds: every one, with nothing to find.
+    /// Quill has to be running; it goes on until Quill closes or it is
+    /// stopped
+    Watch {
+        /// What to find among the mail that arrives: `from:ana is:unread`
+        #[arg(value_name = "WORDS", allow_hyphen_values = true)]
+        words: Vec<String>,
+        #[command(flatten)]
+        dirs: Dirs,
+    },
+    /// Answer the invitation a message carries
+    Invite {
+        #[arg(value_enum)]
+        answer: InviteAs,
+        /// The message with the invitation, by its id
+        id: i64,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Unsubscribe from the mailing list a message came from, by the way
+    /// the list itself gives
+    Unsubscribe {
+        /// A message from the list, by its id
+        id: i64,
+        #[command(flatten)]
+        output: Output,
+    },
     /// Make a folder
     Folder {
         #[command(subcommand)]
@@ -339,6 +374,9 @@ enum Command {
     /// Fetch new mail, carry out what is queued and send what is waiting,
     /// once, and stop
     Sync {
+        /// Only this account
+        #[arg(long, value_name = "NAME")]
+        account: Option<String>,
         #[command(flatten)]
         output: Output,
     },
@@ -434,13 +472,18 @@ enum AttachmentAction {
 
 #[derive(Subcommand)]
 enum FolderAction {
-    /// Make a folder on this Mac. Mail moved into it is taken off the
-    /// server, and is then only on this Mac
+    /// Make a folder: on the account's server, which the Quill that is
+    /// running asks, or with --on-this-mac on this Mac only. One inside
+    /// another is named with a / between: Projects/2026
     Create {
         name: String,
         /// The account it is for. Needed when there is more than one
         #[arg(long, value_name = "NAME")]
         account: Option<String>,
+        /// Make it on this Mac only. Mail moved into it is taken off the
+        /// server, and is then only on this Mac
+        #[arg(long)]
+        on_this_mac: bool,
         #[command(flatten)]
         output: Output,
     },
@@ -484,6 +527,17 @@ enum DraftAction {
         /// Answer everyone it went to
         #[arg(long)]
         all: bool,
+        #[command(flatten)]
+        output: Output,
+    },
+    /// Write a forward of a message as a draft, with its files. What to
+    /// say above it is read from standard input
+    Forward {
+        /// The message to pass on, by its id
+        id: i64,
+        /// A recipient. Repeat for more
+        #[arg(long, value_name = "ADDRESS")]
+        to: Vec<String>,
         #[command(flatten)]
         output: Output,
     },
@@ -537,6 +591,13 @@ enum OutboxAction {
         #[command(flatten)]
         output: Output,
     },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum InviteAs {
+    Accept,
+    Decline,
+    Maybe,
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -885,9 +946,31 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 FolderAction::Create {
                     name,
                     account,
+                    on_this_mac,
                     output,
                 },
-        } => act(output, Call::FolderCreate { name, account }),
+        } => act(
+            output,
+            Call::FolderCreate {
+                name,
+                account,
+                on_this_mac,
+            },
+        ),
+        Command::Open { id, output } => act(output, Call::Open { id }),
+        Command::Watch { words, dirs } => watch(dirs, &words.join(" ")),
+        Command::Invite { answer, id, output } => act(
+            output,
+            Call::Invite {
+                id,
+                answer: match answer {
+                    InviteAs::Accept => quill_mime::invite::Answer::Accepted,
+                    InviteAs::Decline => quill_mime::invite::Answer::Declined,
+                    InviteAs::Maybe => quill_mime::invite::Answer::Tentative,
+                },
+            },
+        ),
+        Command::Unsubscribe { id, output } => act(output, Call::Unsubscribe { id }),
         Command::Undo { entry, output } => act(output, Call::Undo { entry }),
         Command::Send {
             to,
@@ -930,6 +1013,14 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                 Call::DraftReply {
                     id,
                     all,
+                    body: typed_in()?,
+                },
+            ),
+            DraftAction::Forward { id, to, output } => act(
+                output,
+                Call::DraftForward {
+                    id,
+                    to,
                     body: typed_in()?,
                 },
             ),
@@ -1044,7 +1135,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             })?;
             mcp::run(paths.data_dir.clone(), paths.config_file())
         }
-        Command::Sync { output } => {
+        Command::Sync { account, output } => {
             let paths = Paths::resolve(output.dirs.config_dir, output.dirs.data_dir, |name| {
                 std::env::var_os(name)
             })?;
@@ -1056,7 +1147,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             // second engine beside its own would fetch and send twice.
             if let Some(mut quill) = door::connect(&paths.data_dir) {
                 let result = quill
-                    .call(&Caller::shell(), &Call::Sync { account: None })
+                    .call(&Caller::shell(), &Call::Sync { account })
                     .context("Quill is running on this mailbox and did not answer")?;
                 let fine = result.as_ref().is_ok_and(|answer| {
                     answer.value["problems"]
@@ -1082,6 +1173,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                     config: &config,
                     config_ok,
                     rules: rules.set,
+                    only: account.as_deref(),
                 },
                 &paths.database(),
                 paths.data_dir.join("blobs"),
@@ -1473,6 +1565,43 @@ fn act(output: Output, call: Call) -> anyhow::Result<()> {
         &call,
         output.json,
     )
+}
+
+/// `quill watch`: asks the Quill that is running to say what mail
+/// arrives, and prints a line of JSON for each message until Quill lets
+/// go or the output is closed. There is nothing to watch with no Quill
+/// running: mail arrives in the one that is.
+fn watch(dirs: Dirs, query: &str) -> anyhow::Result<()> {
+    use std::io::Write;
+    let paths = Paths::resolve(dirs.config_dir, dirs.data_dir, |name| {
+        std::env::var_os(name)
+    })?;
+    let Some(mut quill) = door::connect(&paths.data_dir) else {
+        return Err(headless::Turned {
+            refusal: quill_tui::agent::Refusal::new(
+                quill_tui::agent::Code::NotRunning,
+                "Quill is not running, and mail arrives in the Quill that is. Open Quill, \
+                 then watch",
+            ),
+        }
+        .into());
+    };
+    let mut out = std::io::stdout().lock();
+    let begun = quill
+        .watch(query, |message| {
+            writeln!(out, "{message}").is_ok() && out.flush().is_ok()
+        })
+        .context("Quill is running on this mailbox and did not answer")?;
+    match begun {
+        Ok(()) => {
+            eprintln!(
+                "quill: Quill has stopped saying what arrives: it closed, or commands from a \
+                 shell were switched off."
+            );
+            Ok(())
+        }
+        Err(refusal) => Err(headless::Turned { refusal }.into()),
+    }
 }
 
 /// Opens the mail there is, for the commands that only look at it or add

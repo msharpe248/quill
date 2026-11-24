@@ -43,6 +43,8 @@ pub enum Context {
     RemoveAccount,
     /// Typing the letter that stands for an account in lists.
     AccountLetter,
+    /// The question asked before agents are let in over MCP.
+    LetAgentsIn,
     /// Choosing a folder to move a message to. Typing narrows the list.
     Folders,
     /// Choosing a template to put into the message being written. Typing
@@ -82,6 +84,7 @@ impl Context {
             Self::Unsubscribe => "Unsubscribe",
             Self::RemoveAccount => "Remove an account",
             Self::AccountLetter => "An account\u{2019}s letter",
+            Self::LetAgentsIn => "Letting agents in over MCP",
             Self::Folders => "Move to a folder",
             Self::Templates => "Insert a template",
             Self::Suggestions => "Spelling suggestions",
@@ -113,6 +116,7 @@ const EVERYWHERE: &[Context] = &[
     Context::Unsubscribe,
     Context::RemoveAccount,
     Context::AccountLetter,
+    Context::LetAgentsIn,
     Context::Folders,
     Context::Templates,
     Context::Suggestions,
@@ -1371,7 +1375,8 @@ pub fn hints(context: Context) -> &'static [Hint] {
         Context::NewFolder => NEW_FOLDER,
         Context::AccountLetter => LETTER,
         Context::NewRule => NEW_RULE,
-        Context::RecordKeys | Context::EditTheme => RECORDING,
+        // Asked in a sheet, like them: there is only leaving it.
+        Context::RecordKeys | Context::EditTheme | Context::LetAgentsIn => RECORDING,
         Context::Links => LINKS,
         Context::Search => SEARCHING,
         Context::Palette => PALETTE,

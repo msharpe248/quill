@@ -41,7 +41,7 @@ The same program runs in a terminal of your own, over the same mailbox: `quill t
 - **A skill**, which you install into your agent's program yourself (`quill skill install`, for Claude Code, Codex, Gemini CLI, Cursor and others). It teaches the agent the command line above, and nothing more.
 - **MCP**, which is off until you switch it on in Settings. Quill then offers the same actions as tools to an agent's program, while Quill is running, over a connection only your own programs can open. Nothing listens on the network.
 
-Either way, what may be done is yours to say (look, organize, delete to the trash, draft, send), every change is logged and can be taken back, what is sent can wait for your OK, and one command stops it all. [The manual](docs/manual.md#agents) has the whole of it.
+Either way, what may be done is yours to say (look, organize, delete to the trash, draft, send), every change is logged and can be taken back, what is sent can wait for your OK, and one command stops it all. As Quill comes an agent can write a draft and cannot send it: what it writes waits in Drafts for you. [The manual](docs/manual.md#agents) has the whole of it.
 
 **Private.** Quill has no servers of its own, no analytics and no tracking. Your mail goes between your Mac and your mail providers and nowhere else, and your passwords are in the macOS Keychain. [PRIVACY.md](PRIVACY.md) says exactly what it keeps and what it connects to.
 
@@ -121,7 +121,7 @@ The keys for where you are stand along the bottom of the window, and everything 
 - **It is young.** Quill is used for real mail, but by few people and not for long. Settings, keys and commands may still change between versions.
 - **Some of it has only met test servers.** IMAP with a password, and Gmail signed in to with Google, have been used against the real thing. Microsoft 365, Exchange and POP3 providers have so far been tested only against servers run locally and stand-ins written from the providers' documentation. [The roadmap](docs/roadmap.md#not-yet-tried-on-the-real-thing) has the list. If you use one of these, your report matters more than most.
 - **There is no signed download.** A notarized disk image and a Homebrew cask are next; until then, see "Get it".
-- **The command line, the skill and MCP are new.** They are a day old, and have been tried on the demo mailbox, not yet on a real account or with a real agent's program. Start with sending off or held.
+- **The command line, the skill and MCP are new.** They have been tried on the demo mailbox, with Claude Code over MCP and with the skill, and not yet on a real account or with any other agent's program. Start with sending off or held.
 - **Apple silicon only, so far.** An Intel Mac has not been tried.
 - **It acts on your real mail.** Quill is careful: deleting moves a message to the account's Trash, where it can be put back. But it is young software. The one thing to know before you start: mail you move into a folder "On This Mac" is taken off the server and then exists only on your Mac, as the name says. Keep a backup of your Mac if you use those.
 

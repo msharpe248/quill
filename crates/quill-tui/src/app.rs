@@ -88,6 +88,17 @@ pub enum AgentAsk {
     },
     /// An MCP client has connected.
     Hello { caller: Caller },
+    /// And has gone: its connection closed.
+    Bye { caller: Caller },
+    /// Go on saying what mail arrives that a search finds, a line for
+    /// each message into `lines`, until whoever asked lets go of the
+    /// other end. `reply` says whether it was begun.
+    Watch {
+        caller: Caller,
+        query: String,
+        lines: UnboundedSender<serde_json::Value>,
+        reply: oneshot::Sender<Result<Answer, Refusal>>,
+    },
 }
 
 /// Where requests from outside the window arrive.
@@ -244,6 +255,14 @@ struct Agents {
     asked: std::collections::HashMap<u64, oneshot::Sender<Result<Answer, Refusal>>>,
     /// Waiting on the engine to have looked at these accounts.
     checking: Vec<Checking>,
+    /// Waiting on a server to have made a folder, or on a mailing list's
+    /// server to have been asked.
+    waiting: Vec<Waiting>,
+    /// Commands that asked to watch, until the store worker has said they
+    /// may: by the ticket each was sent under.
+    watch_wanted: std::collections::HashMap<u64, UnboundedSender<serde_json::Value>>,
+    /// Commands that are told of the mail that arrives.
+    watchers: Vec<Watcher>,
     /// Hangs up on every program that is connected.
     hang_up: Option<Box<dyn Fn() + Send>>,
 }
@@ -289,6 +308,35 @@ impl Checking {
 /// How long a check for mail asked for from outside is waited on.
 const CHECK_WAIT: Duration = Duration::from_secs(90);
 
+/// How long a server is waited on for a folder, or a mailing list's
+/// server for its answer, before whoever asked is told it is not known.
+const SERVER_WAIT: Duration = Duration::from_secs(60);
+
+/// What someone outside is waiting to hear of.
+enum WaitingFor {
+    /// A folder of this name made on this account's server.
+    Folder { account: String, name: String },
+    /// A mailing list's server, by its name, asked to unsubscribe.
+    Unsubscribed { host: String },
+}
+
+/// Something asked from outside that the store worker has done its part
+/// of, and that is answered when a server has.
+struct Waiting {
+    what: WaitingFor,
+    /// What is answered when it went well.
+    answer: Answer,
+    until: tokio::time::Instant,
+    reply: oneshot::Sender<Result<Answer, Refusal>>,
+}
+
+/// A command that is told of the mail that arrives.
+struct Watcher {
+    id: u64,
+    query: String,
+    lines: UnboundedSender<serde_json::Value>,
+}
+
 impl Io<'_> {
     /// What the settings are for a request from outside, now.
     fn agent_settings(env: &Env) -> crate::agent::Settings {
@@ -302,6 +350,9 @@ impl Io<'_> {
                 .collect(),
             markdown: env.compose.markdown,
             reply_above: env.compose.reply_above,
+            running: true,
+            // The demo mailbox has no engine and no service.
+            online: env.accounts,
             ..crate::agent::Settings::new(env.agent.clone(), env.tz.clone())
         }
     }
@@ -318,6 +369,35 @@ impl Io<'_> {
             // Always said: it is how the user learns that something has
             // come in.
             AgentAsk::Hello { caller } => return Some(Action::AgentConnected(caller.name)),
+            AgentAsk::Bye { caller } => return Some(Action::AgentGone(caller.name)),
+            AgentAsk::Watch {
+                caller,
+                query,
+                lines,
+                reply,
+            } => {
+                // Checked and written down as any request is; what it
+                // came to says whether the watching begins.
+                self.agents.next += 1;
+                let ticket = self.agents.next;
+                self.agents.asked.insert(ticket, reply);
+                self.agents.watch_wanted.insert(ticket, lines);
+                let sent = self.data.send(DataRequest::Agent {
+                    ticket,
+                    caller: Box::new(caller),
+                    call: Box::new(Call::Watch { query }),
+                    settings: Box::new(Self::agent_settings(env)),
+                });
+                if !sent {
+                    self.agents.watch_wanted.remove(&ticket);
+                    if let Some(reply) = self.agents.asked.remove(&ticket) {
+                        let _ = reply.send(Err(Refusal::new(
+                            crate::agent::Code::Failed,
+                            "Quill is closing.",
+                        )));
+                    }
+                }
+            }
             AgentAsk::Call {
                 caller,
                 call,
@@ -408,7 +488,27 @@ impl Io<'_> {
     /// Notes what the engine said for whoever outside is waiting on a
     /// check for mail, and answers those whose accounts have all been
     /// looked at.
-    fn agent_heard(&mut self, event: &SyncEvent) {
+    fn agent_heard(&mut self, env: &Env, event: &SyncEvent) {
+        self.agents.heard_engine(event);
+        // Mail that has arrived is told to the commands watching for it,
+        // once the store worker has said which of it each looks for.
+        if let SyncEvent::Arrived { messages, .. } = event {
+            self.agents
+                .watchers
+                .retain(|watcher| !watcher.lines.is_closed());
+            if !self.agents.watchers.is_empty() {
+                self.data.send(DataRequest::AgentArrived {
+                    watchers: self
+                        .agents
+                        .watchers
+                        .iter()
+                        .map(|watcher| (watcher.id, watcher.query.clone()))
+                        .collect(),
+                    messages: messages.clone(),
+                    settings: Box::new(Self::agent_settings(env)),
+                });
+            }
+        }
         if self.agents.checking.is_empty() {
             return;
         }
@@ -444,13 +544,199 @@ impl Io<'_> {
             }
             check.answer();
         }
+        if late {
+            self.agents.give_up(now);
+        }
     }
 
     /// Gives a request from outside its answer, when the store worker has
-    /// one for it.
-    fn agent_done(&mut self, ticket: u64, result: Result<Answer, Refusal>) {
-        if let Some(reply) = self.agents.asked.remove(&ticket) {
-            let _ = reply.send(result);
+    /// one for it: at once, or when whatever is still to be done with the
+    /// window, the engine or the network has been.
+    fn agent_done(
+        &mut self,
+        ticket: u64,
+        result: Result<Answer, Refusal>,
+        then: Option<crate::agent::Then>,
+    ) -> Option<Action> {
+        use crate::agent::Then;
+        let watch = self.agents.watch_wanted.remove(&ticket);
+        let reply = self.agents.asked.remove(&ticket)?;
+        let answer = match result {
+            Ok(answer) => answer,
+            Err(refusal) => {
+                let _ = reply.send(Err(refusal));
+                return None;
+            }
+        };
+        let wait = |what, answer, reply| Waiting {
+            what,
+            answer,
+            until: tokio::time::Instant::now() + SERVER_WAIT,
+            reply,
+        };
+        match then {
+            None => {
+                let _ = reply.send(Ok(answer));
+            }
+            Some(Then::Show { message, folder }) => {
+                let _ = reply.send(Ok(answer));
+                self.host.show_window();
+                return Some(Action::ShowMessage { message, folder });
+            }
+            Some(Then::Watch { query }) => {
+                if let Some(lines) = watch {
+                    self.agents.watchers.push(Watcher {
+                        id: ticket,
+                        query,
+                        lines,
+                    });
+                }
+                let _ = reply.send(Ok(answer));
+            }
+            Some(Then::MakeFolder {
+                account,
+                account_name,
+                name,
+            }) => match self.sync {
+                Some(engine) => {
+                    engine.send(SyncRequest::CreateFolder {
+                        account,
+                        name: name.clone(),
+                    });
+                    self.agents.waiting.push(wait(
+                        WaitingFor::Folder {
+                            account: account_name,
+                            name,
+                        },
+                        answer,
+                        reply,
+                    ));
+                }
+                None => {
+                    let _ = reply.send(Err(Refusal::new(
+                        crate::agent::Code::Failed,
+                        "There is no server to ask here. Nothing was made.",
+                    )));
+                }
+            },
+            Some(Then::Unsubscribe { url, host }) => match &self.accounts {
+                Some(service) if service.send(AccountRequest::Unsubscribe { url }).is_ok() => {
+                    self.agents.waiting.push(wait(
+                        WaitingFor::Unsubscribed { host },
+                        answer,
+                        reply,
+                    ));
+                }
+                _ => {
+                    let _ = reply.send(Err(Refusal::new(
+                        crate::agent::Code::Failed,
+                        "There is nothing here to make the request with. Nothing was sent.",
+                    )));
+                }
+            },
+        }
+        None
+    }
+}
+
+impl Agents {
+    /// Answers those outside who were waiting on a server for what
+    /// `heard` says has come of it: well, or with the reason it did not.
+    fn waited(&mut self, heard: impl Fn(&WaitingFor) -> Option<Result<(), String>>) {
+        // One thing heard answers one who waited: two who asked the same
+        // are each answered by their own.
+        let Some((index, came)) = self
+            .waiting
+            .iter()
+            .enumerate()
+            .find_map(|(index, waiting)| Some((index, heard(&waiting.what)?)))
+        else {
+            return;
+        };
+        let waiting = self.waiting.remove(index);
+        let _ = waiting.reply.send(match came {
+            Ok(()) => Ok(waiting.answer),
+            Err(why) => Err(Refusal::new(
+                crate::agent::Code::Failed,
+                crate::text::sanitize_line(&why),
+            )),
+        });
+    }
+
+    /// Notes what the engine said for whoever outside is waiting on a
+    /// folder: that it was made, or the problem that says it was not.
+    fn heard_engine(&mut self, event: &SyncEvent) {
+        self.waited(|what| match (what, event) {
+            (
+                WaitingFor::Folder { account, name },
+                SyncEvent::FolderMade {
+                    account: made_for,
+                    name: made,
+                },
+            ) if account == made_for && name == made => Some(Ok(())),
+            (WaitingFor::Folder { name, .. }, SyncEvent::Problem { message, .. })
+                if quill_sync::is_folder_trouble(message, name) =>
+            {
+                Some(Err(message.clone()))
+            }
+            _ => None,
+        });
+    }
+
+    /// Notes what the accounts service said for whoever outside is
+    /// waiting on a mailing list's server.
+    fn heard_service(&mut self, event: &AccountEvent) {
+        if let AccountEvent::Unsubscribed { host, result } = event {
+            self.waited(|what| match what {
+                WaitingFor::Unsubscribed { host: asked } if asked == host => Some(
+                    result
+                        .clone()
+                        .map_err(|why| format!("{host} was asked, and it did not go well: {why}")),
+                ),
+                _ => None,
+            });
+        }
+    }
+
+    /// Tells those who have waited on a server long enough that what
+    /// came of it is not known.
+    fn give_up(&mut self, now: tokio::time::Instant) {
+        let (late, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut self.waiting)
+            .into_iter()
+            .partition(|waiting| waiting.until <= now);
+        self.waiting = waiting;
+        for waiting in late {
+            let _ = waiting.reply.send(Err(Refusal::new(
+                crate::agent::Code::Failed,
+                match waiting.what {
+                    WaitingFor::Folder { .. } => {
+                        "The server was asked for the folder and has not answered yet. \
+                         Whether it was made is not known: look at the folders before asking \
+                         again."
+                    }
+                    WaitingFor::Unsubscribed { .. } => {
+                        "The list's server was asked and has not answered yet. Whether it \
+                         unsubscribed you is not known."
+                    }
+                },
+            )));
+        }
+    }
+
+    /// Tells the commands that are watching of the mail that arrived and
+    /// that each looks for. `None`: commands from a shell have been
+    /// switched off, and every watcher is let go.
+    fn arrived(&mut self, found: Option<Vec<(u64, Vec<serde_json::Value>)>>) {
+        let Some(found) = found else {
+            self.watchers.clear();
+            return;
+        };
+        for (id, messages) in found {
+            if let Some(watcher) = self.watchers.iter().find(|watcher| watcher.id == id) {
+                for message in messages {
+                    let _ = watcher.lines.send(message);
+                }
+            }
         }
     }
 }
@@ -652,6 +938,7 @@ impl Io<'_> {
                 HostRequest::PickTheme => self.host.pick_theme(),
                 HostRequest::ShowKeys => self.host.show_keys(),
                 HostRequest::CloseWindow => self.host.close_window(),
+                HostRequest::ShowSettings(pane) => self.host.show_settings_pane(pane),
                 HostRequest::Preview { files, index } => {
                     let files: Vec<(&std::path::Path, &str)> = files
                         .iter()
@@ -859,7 +1146,7 @@ impl Io<'_> {
                 // certificate is.
                 Context::Unsubscribe => bridge::Context::Certificate,
                 // And so is one to answer before an account is removed.
-                Context::RemoveAccount => bridge::Context::Certificate,
+                Context::RemoveAccount | Context::LetAgentsIn => bridge::Context::Certificate,
                 Context::Folders => bridge::Context::Folders,
                 // A list to narrow by typing, over the message.
                 Context::Templates => bridge::Context::Folders,
@@ -1263,11 +1550,18 @@ async fn event_loop(
             Some(event) = inbound.data.recv() => match event {
                 // An answer for someone outside the window: theirs, and
                 // nothing for the UI.
-                DataEvent::AgentDone { ticket, result, notice } => {
-                    io.agent_done(ticket, *result);
+                DataEvent::AgentDone { ticket, result, notice, then } => {
+                    // Shown in the window, when that is what was asked.
+                    if let Some(show) = io.agent_done(ticket, *result, then) {
+                        let _ = io.injected.send(show);
+                    }
                     // What was changed is told to the user, as far as
                     // they asked to be.
                     notice.map(Action::AgentNotice)
+                }
+                DataEvent::AgentArrived(found) => {
+                    io.agents.arrived(found);
+                    None
                 }
                 event => Some(Action::Data(event)),
             },
@@ -1311,10 +1605,13 @@ async fn event_loop(
                 HostEvent::Problem(text) => Some(Action::Notify(Notice::error(text))),
             },
             Some(event) = inbound.sync.recv() => {
-                io.agent_heard(&event);
+                io.agent_heard(env, &event);
                 Some(Action::Sync(event))
             }
-            Some(event) = inbound.accounts.recv() => Some(Action::Account(event)),
+            Some(event) = inbound.accounts.recv() => {
+                io.agents.heard_service(&event);
+                Some(Action::Account(event))
+            }
             Some(action) = inbound.injected.recv() => Some(action),
             _ = clock.tick() => {
                 io.agent_settle(true);
@@ -1778,5 +2075,168 @@ mod tests {
             bridge::decode::<bridge::CoreToShell>(&line).unwrap(),
             message
         );
+    }
+
+    /// Someone outside, waiting on a server for `what`.
+    fn waiting_for(
+        agents: &mut Agents,
+        what: WaitingFor,
+        until: tokio::time::Instant,
+    ) -> oneshot::Receiver<Result<Answer, Refusal>> {
+        let (reply, heard) = oneshot::channel();
+        agents.waiting.push(Waiting {
+            what,
+            answer: Answer {
+                value: serde_json::json!({ "done": true }),
+                lines: Vec::new(),
+            },
+            until,
+            reply,
+        });
+        heard
+    }
+
+    #[tokio::test]
+    async fn whoever_asked_for_a_folder_is_answered_when_the_server_has() {
+        let mut agents = Agents::default();
+        let later = tokio::time::Instant::now() + SERVER_WAIT;
+        let folder = |name: &str| WaitingFor::Folder {
+            account: "Work".to_owned(),
+            name: name.to_owned(),
+        };
+        let mut made = waiting_for(&mut agents, folder("Projects"), later);
+        let mut refused = waiting_for(&mut agents, folder("Receipts"), later);
+        let mut again = waiting_for(&mut agents, folder("Projects"), later);
+
+        // News of other things, other folders and other accounts answers
+        // nobody.
+        agents.heard_engine(&SyncEvent::Changed);
+        agents.heard_engine(&SyncEvent::FolderMade {
+            account: "Home".to_owned(),
+            name: "Projects".to_owned(),
+        });
+        agents.heard_engine(&SyncEvent::Problem {
+            account: "Work".to_owned(),
+            message: "The folder Projects/2026 could not be made on the server: no".to_owned(),
+        });
+        assert_eq!(agents.waiting.len(), 3);
+
+        // Made: the one who asked first is told so, and only that one.
+        agents.heard_engine(&SyncEvent::FolderMade {
+            account: "Work".to_owned(),
+            name: "Projects".to_owned(),
+        });
+        assert_eq!(
+            made.try_recv().unwrap().unwrap().value,
+            serde_json::json!({ "done": true })
+        );
+        assert!(again.try_recv().is_err());
+        // Not made: the reason is the answer, as a refusal.
+        agents.heard_engine(&SyncEvent::Problem {
+            account: "Work".to_owned(),
+            message: "The folder Receipts could not be made on the server: it exists".to_owned(),
+        });
+        let why = refused.try_recv().unwrap().unwrap_err();
+        assert_eq!(why.code, crate::agent::Code::Failed);
+        assert!(why.message.ends_with("it exists"));
+
+        // A server that never says is given up on, and that is said as
+        // not known, which is what it is.
+        agents.give_up(later - Duration::from_secs(1));
+        assert_eq!(agents.waiting.len(), 1);
+        agents.give_up(later);
+        assert!(agents.waiting.is_empty());
+        let unknown = again.try_recv().unwrap().unwrap_err();
+        assert!(unknown.message.contains("not known"));
+    }
+
+    #[tokio::test]
+    async fn whoever_asked_a_list_to_unsubscribe_is_told_how_it_went() {
+        let mut agents = Agents::default();
+        let later = tokio::time::Instant::now() + SERVER_WAIT;
+        let list = |host: &str| WaitingFor::Unsubscribed {
+            host: host.to_owned(),
+        };
+        let mut fine = waiting_for(&mut agents, list("lists.example.com"), later);
+        let mut failed = waiting_for(&mut agents, list("news.example.com"), later);
+        agents.heard_service(&AccountEvent::Unsubscribed {
+            host: "other.example.com".to_owned(),
+            result: Ok(()),
+        });
+        assert_eq!(agents.waiting.len(), 2);
+        agents.heard_service(&AccountEvent::Unsubscribed {
+            host: "news.example.com".to_owned(),
+            result: Err("the server answered 500".to_owned()),
+        });
+        let why = failed.try_recv().unwrap().unwrap_err();
+        assert!(why.message.contains("news.example.com"));
+        assert!(why.message.contains("500"));
+        agents.heard_service(&AccountEvent::Unsubscribed {
+            host: "lists.example.com".to_owned(),
+            result: Ok(()),
+        });
+        assert!(fine.try_recv().unwrap().is_ok());
+        assert!(agents.waiting.is_empty());
+    }
+
+    #[tokio::test]
+    async fn each_watcher_is_told_of_its_own_mail_until_commands_are_switched_off() {
+        let mut agents = Agents::default();
+        let mut watch = |id: u64| {
+            let (lines, heard) = unbounded_channel();
+            agents.watchers.push(Watcher {
+                id,
+                query: String::new(),
+                lines,
+            });
+            heard
+        };
+        let mut first = watch(1);
+        let mut second = watch(2);
+        agents.arrived(Some(vec![
+            (
+                2,
+                vec![
+                    serde_json::json!({ "id": 7 }),
+                    serde_json::json!({ "id": 8 }),
+                ],
+            ),
+            // One that has gone meanwhile: nobody to tell.
+            (3, vec![serde_json::json!({ "id": 9 })]),
+        ]));
+        assert!(first.try_recv().is_err());
+        assert_eq!(second.try_recv().unwrap()["id"], 7);
+        assert_eq!(second.try_recv().unwrap()["id"], 8);
+        // Switched off: every watcher is let go, which each hears as its
+        // line being closed.
+        agents.arrived(None);
+        assert!(agents.watchers.is_empty());
+        assert_eq!(
+            first.try_recv().unwrap_err(),
+            tokio::sync::mpsc::error::TryRecvError::Disconnected
+        );
+    }
+
+    #[test]
+    fn the_engine_says_which_problem_is_a_folder_that_was_not_made() {
+        let trouble = quill_sync::is_folder_trouble;
+        assert!(trouble(
+            "The folder A/B could not be made on the server: no",
+            "A/B"
+        ));
+        assert!(trouble(
+            "The folder A was not made: its account is not being synced.",
+            "A"
+        ));
+        // Another folder whose name begins the same, and other problems.
+        assert!(!trouble(
+            "The folder A/B could not be made on the server: no",
+            "A"
+        ));
+        assert!(!trouble(
+            "The folder was not changed: there is no server.",
+            "A"
+        ));
+        assert!(!trouble("Work: the connection was lost", "Work"));
     }
 }

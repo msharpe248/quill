@@ -283,7 +283,7 @@ impl State {
         };
         // A server that can be asked for one, and an engine to ask it:
         // the demo mailbox has neither.
-        let either = env.accounts && matches!(kind.as_str(), "imap" | "graph");
+        let either = env.accounts && quill_store::keeps_server_folders(&kind);
         self.new_folder = Some(FolderPrompt {
             ask: FolderAsk::New,
             account,
@@ -315,7 +315,7 @@ impl State {
             return None;
         };
         let account = self.accounts.get(*account)?;
-        let asks = env.accounts && matches!(account.kind.as_str(), "imap" | "graph" | "ews");
+        let asks = env.accounts && account.has_server_folders();
         (*local || asks).then_some((*id, name.as_str(), *local, account))
     }
 

@@ -77,8 +77,24 @@ fn the_headless_commands_are_in_the_help() {
     let output = quill().arg("--help").output().unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
     for command in [
-        "list", "search", "read", "send", "sync", "account", "move", "delete", "restore", "undo",
-        "log", "drafts", "outbox", "mcp",
+        "list",
+        "search",
+        "read",
+        "send",
+        "sync",
+        "account",
+        "move",
+        "delete",
+        "restore",
+        "undo",
+        "log",
+        "drafts",
+        "outbox",
+        "mcp",
+        "open",
+        "watch",
+        "invite",
+        "unsubscribe",
     ] {
         assert!(stdout.contains(command), "{command}: {stdout}");
     }
@@ -267,6 +283,104 @@ fn mail_is_found_changed_and_put_back_from_a_shell() {
             .iter()
             .any(|folder| folder["role"] == "archive" && folder["messages"] != 0)
     );
+}
+
+#[test]
+fn what_needs_the_quill_that_is_running_says_so_when_none_is() {
+    let scratch = Scratch::new("[agent]\nsend = true\n");
+    let found = scratch.json(&["search", "from:peter", "dinner"]);
+    let id = found["messages"][0]["id"].as_i64().unwrap().to_string();
+
+    // A window to show a message in, and mail to watch arrive: both are
+    // the running Quill's. Said in words, as JSON when that was asked
+    // for, and with the status of something that failed.
+    for args in [vec!["open", id.as_str()], vec!["watch", "from:ana"]] {
+        let output = scratch.run(&args);
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("Quill is not running"),
+            "{args:?}: {stderr}"
+        );
+        assert!(output.stdout.is_empty(), "{args:?}");
+    }
+    let output = scratch.run(&["open", &id, "--json"]);
+    assert_eq!(output.status.code(), Some(1));
+    let refusal: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(refusal["refused"]["code"], "not_running");
+
+    // What needs only the mail on this Mac is done all the same: a
+    // forward, with what is said read from standard input.
+    let mut forward = quill()
+        .args([
+            "draft",
+            "forward",
+            &id,
+            "--to",
+            "sam.lee@example.com",
+            "--json",
+        ])
+        .env("QUILL_CONFIG_DIR", scratch.dir.path().join("config"))
+        .env("QUILL_DATA_DIR", scratch.dir.path().join("data"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        use std::io::Write;
+        forward
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"For your records.\n")
+            .unwrap();
+    }
+    let output = forward.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let made: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(made["action"], "draft_forward");
+    assert_eq!(made["subject"], "Fwd: Sunday dinner");
+    assert_eq!(made["to"], "sam.lee@example.com");
+    let draft = made["draft"].as_i64().unwrap().to_string();
+    let shown = scratch.json(&["draft", "show", &draft]);
+    assert!(
+        shown["body"]
+            .as_str()
+            .unwrap()
+            .starts_with("For your records.\n"),
+        "{shown}"
+    );
+
+    // A folder on this Mac is made by anyone; the demo's accounts have
+    // no server to make one on.
+    let made = scratch.json(&[
+        "folder",
+        "create",
+        "Receipts",
+        "--account",
+        "Work",
+        "--on-this-mac",
+    ]);
+    assert_eq!(made["on_this_mac"], true);
+    // A message from no list has no way to leave one, and one with no
+    // invitation nothing to answer: each says so, and which it is.
+    let output = scratch.run(&["unsubscribe", &id, "--json"]);
+    assert_eq!(output.status.code(), Some(1));
+    let refusal: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(refusal["refused"]["code"], "not_found");
+    let output = scratch.run(&["invite", "accept", &id, "--json"]);
+    assert_eq!(output.status.code(), Some(2));
+    // An answer that is not one is the command written wrong.
+    assert_eq!(
+        scratch.run(&["invite", "perhaps", &id]).status.code(),
+        Some(2)
+    );
+    // One account alone is asked for by name, and one there is none of
+    // is said to be so before anything is synced.
+    let output = scratch.run(&["sync", "--account", "Nowhere"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("no account named \"Nowhere\""), "{stderr}");
 }
 
 #[test]

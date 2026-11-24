@@ -122,8 +122,13 @@ pub(crate) fn run(
     call: &Call,
     now: i64,
 ) -> Result<Done, Refusal> {
-    if let Call::FolderCreate { name, account } = call {
-        return folder_create(store, settings, name, account.as_deref());
+    if let Call::FolderCreate {
+        name,
+        account,
+        on_this_mac,
+    } = call
+    {
+        return folder_create(store, settings, name, account.as_deref(), *on_this_mac);
     }
     let Some(which) = call.which() else {
         return Err(Refusal::invalid("That is not a change to mail."));
@@ -294,6 +299,7 @@ pub(crate) fn run(
         undoable: !work.operations.is_empty(),
         queued: work.queued || !work.operations.is_empty(),
         due: None,
+        then: None,
     })
 }
 
@@ -495,6 +501,7 @@ fn folder_create(
     settings: &Settings,
     name: &str,
     account: Option<&str>,
+    on_this_mac: bool,
 ) -> Result<Done, Refusal> {
     let seen = visible(store, settings)?;
     let accounts: Vec<_> = store
@@ -526,6 +533,50 @@ fn folder_create(
             }
         },
     };
+    // On the server, where the account has folders there: asked of it
+    // by the engine, which the Quill that is running has.
+    if !on_this_mac && account.has_server_folders() {
+        let name = name.trim();
+        if let Some(problem) = quill_store::folder_name_problem(name) {
+            return Err(Refusal::invalid(problem));
+        }
+        if !settings.running || !settings.online {
+            return Err(Refusal::new(
+                super::Code::NotRunning,
+                "A folder on the server is asked for by the Quill that is running, and none \
+                 is here to ask. Open Quill and try again, or make the folder on this Mac \
+                 (on_this_mac).",
+            ));
+        }
+        let place = format!(
+            "{}/{}",
+            text::sanitize_line(&account.name),
+            text::sanitize_line(name)
+        );
+        return Ok(Done {
+            value: json!({
+                "action": "folder_create",
+                "changed": 1,
+                "account": account.name,
+                "name": name,
+                "on_this_mac": false,
+            }),
+            lines: vec![format!("Made {place}.")],
+            count: 1,
+            summary: format!("asked the server for the folder {place}"),
+            // Removing a folder is not something done from outside.
+            undo: None,
+            said: Some(format!("asked for the folder {place}.")),
+            undoable: false,
+            queued: false,
+            due: None,
+            then: Some(super::Then::MakeFolder {
+                account: account.id,
+                account_name: account.name.clone(),
+                name: name.to_owned(),
+            }),
+        });
+    }
     let folder = store
         .create_local_folder(account.id, name)?
         .map_err(Refusal::invalid)?;
@@ -550,6 +601,7 @@ fn folder_create(
         undoable: false,
         queued: false,
         due: None,
+        then: None,
     })
 }
 
@@ -748,6 +800,7 @@ pub(crate) fn undo_entry(store: &mut Store, entry: Option<i64>, now: i64) -> Res
                 undoable: false,
                 queued: false,
                 due: None,
+                then: None,
             });
         }
         Some("folder") => {
@@ -772,6 +825,7 @@ pub(crate) fn undo_entry(store: &mut Store, entry: Option<i64>, now: i64) -> Res
                 undoable: false,
                 queued: false,
                 due: None,
+                then: None,
             });
         }
         _ => {
@@ -835,5 +889,6 @@ pub(crate) fn undo_entry(store: &mut Store, entry: Option<i64>, now: i64) -> Res
         undoable: !operations.is_empty(),
         queued: queued || !operations.is_empty(),
         due: None,
+        then: None,
     })
 }
