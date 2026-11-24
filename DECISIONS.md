@@ -1585,3 +1585,12 @@ Asked for by the owner, from the list of what was left under "Reading and downlo
 - **Left out:** selecting by whole lines, and a selection in the web reading pane, which is the web view's own.
 - **Verified** against the scratch Dovecot (two connections, one kept, both closed), the engine's tests, and tests of every move of the cursor and of each copy. **Not verified** against Gmail.
 
+### A mark that turns beside an account while it syncs (2026-11-23)
+
+Asked by the owner: something to show that a sync is still going, perhaps a ripple of bold through each account's name, or a spinner beside it.
+
+- **A spinner in the cell the account already has for its `▾`** (`view/sidebar.rs`, `State::spin`): it costs no room, which is what the ripple was for, and says which account. Not bold: in that pane bold is a row with unread mail, and some fonts and terminals do not show it.
+- **Plain characters** (`|` `/` `-` `\`): every terminal draws them one cell wide.
+- **Turned by the run loop** eight times a second (`Action::Spin`, `State::spinning`), and only while an account syncs and the pane is drawn: otherwise nothing is redrawn for it. It says that Quill is still at it, not that the server is answering: a server that says nothing is given up on after twenty seconds by the connection itself, which is why there is no command to cancel a sync.
+- "syncing…" stays in the bottom bar, where it was the only sign before.
+

@@ -2216,3 +2216,71 @@ fn the_mail_around_the_cursor_is_asked_for_when_what_is_around_it_changes() {
     );
     assert!(!near.contains(&ids[1]), "three before it and no more");
 }
+
+#[test]
+fn the_mark_beside_an_account_turns_while_it_syncs() {
+    use quill_sync::SyncEvent;
+    let mut harness = Harness::demo(200, 60);
+    let (work, personal) = (harness.state.accounts[0].id, harness.state.accounts[1].id);
+    let row = |harness: &Harness, name: &str| -> String {
+        let line = harness.row_with(name);
+        line.chars().take(20).collect()
+    };
+    assert!(row(&harness, "W Work").contains("▾ W Work"));
+    // Nothing is syncing: there is nothing to turn, and nothing to redraw.
+    assert!(!harness.state.spinning(&harness.env));
+
+    harness.act(Action::Sync(SyncEvent::Syncing {
+        account: work,
+        active: true,
+    }));
+    assert!(harness.state.spinning(&harness.env));
+    // The mark that shows whether its folders are open gives its cell to
+    // one that turns; the other account keeps its own.
+    assert!(
+        row(&harness, "W Work").contains("| W Work"),
+        "{}",
+        row(&harness, "W Work")
+    );
+    assert!(row(&harness, "P Personal").contains("▾ P Personal"));
+    let mut seen = Vec::new();
+    for _ in 0..4 {
+        harness.act(Action::Spin);
+        let drawn = row(&harness, "W Work");
+        seen.push(drawn.chars().find(|c| "|/-\\".contains(*c)).unwrap());
+    }
+    assert_eq!(seen, ['/', '-', '\\', '|']);
+
+    // Its folders can still be hidden and shown while it turns.
+    harness.keys("1 g g j h");
+    assert!(
+        !harness.screen().contains("Inbox           8"),
+        "{}",
+        harness.screen()
+    );
+    assert!(
+        harness
+            .row_with("W Work")
+            .chars()
+            .take(12)
+            .any(|c| "|/-\\".contains(c))
+    );
+    harness.keys("l");
+
+    // With the accounts pane hidden there is no mark to turn, and
+    // nothing is redrawn eight times a second: the words in the bottom
+    // bar say it.
+    harness.keys("2");
+    harness.act(Action::Command(CommandId::ViewSidebar));
+    assert!(!harness.state.spinning(&harness.env));
+    harness.act(Action::Command(CommandId::ViewSidebar));
+    assert!(harness.state.spinning(&harness.env));
+
+    harness.act(Action::Sync(SyncEvent::Syncing {
+        account: work,
+        active: false,
+    }));
+    assert!(!harness.state.spinning(&harness.env));
+    assert!(row(&harness, "W Work").contains("▾ W Work"));
+    let _ = personal;
+}

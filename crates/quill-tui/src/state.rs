@@ -347,6 +347,10 @@ pub enum Action {
     /// The list's cursor has rested on a message for a moment: the time
     /// to show it in the web reading pane. See [`State::settle_due`].
     SelectionSettled,
+    /// A moment has passed with an account syncing: the mark that turns
+    /// beside it in the accounts pane turns on. The run loop says so for
+    /// as long as [`State::spinning`] holds.
+    Spin,
     /// The pointer is still held past the top or the foot of the text,
     /// where it was: the text moves on under it. The run loop says so
     /// for as long as [`State::drag_scrolls`] holds.
@@ -1519,6 +1523,9 @@ pub struct State {
     pub now: i64,
     /// The accounts with a sync pass in progress.
     pub syncing: BTreeSet<LocalAccountId>,
+    /// How far round the mark of a syncing account has turned: see
+    /// [`State::spinning`].
+    pub spin: u8,
     pub should_quit: bool,
     /// The last changes made from outside the window, newest first, as
     /// the settings window shows them.
@@ -1608,6 +1615,7 @@ impl State {
             notices: VecDeque::new(),
             now,
             syncing: BTreeSet::new(),
+            spin: 0,
             should_quit: false,
             agent_recent: Vec::new(),
             agent_notes: 0,
@@ -1769,6 +1777,10 @@ impl State {
                 self.follow.settled = true;
             }
             Action::DragHeld => changed = self.drag_on(env),
+            Action::Spin => {
+                changed = self.spinning(env);
+                self.spin = self.spin.wrapping_add(1);
+            }
             Action::WindowColumns(columns) => {
                 // Told again what it was told before, the host is asking
                 // where its pane goes: it is answered, and nothing drawn
@@ -5388,6 +5400,17 @@ impl State {
     /// moment. `None` when nothing is waiting.
     pub fn settle_due(&self) -> Option<u64> {
         (self.web_reading && !self.follow.settled).then_some(self.follow.moves)
+    }
+
+    /// Whether a mark is turning beside an account in the accounts pane:
+    /// an account is syncing, and the pane is drawn to show it. While it
+    /// holds, the run loop turns the mark ([`Action::Spin`]); with nothing
+    /// syncing, or no pane to show it, nothing is redrawn for it.
+    pub fn spinning(&self, env: &Env) -> bool {
+        !self.syncing.is_empty()
+            && layout::compute(self, self.size, env.reader_width)
+                .sidebar
+                .is_some()
     }
 
     /// What the web reading pane was last asked to show.

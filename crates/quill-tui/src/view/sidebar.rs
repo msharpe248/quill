@@ -16,6 +16,9 @@ const COUNT_WIDTH: usize = 5;
 /// A click on it, or anywhere left of it, opens and closes.
 const OPEN: &str = "▾ ";
 const CLOSED: &str = "▸ ";
+/// What turns in the mark's place while the account syncs. Plain
+/// characters, which every terminal draws one cell wide.
+const SYNCING: [&str; 4] = ["| ", "/ ", "- ", "\\ "];
 
 pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
     let styles = &env.styles;
@@ -73,7 +76,16 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
                 unread,
             } => {
                 let open = state.sidebar.is_open(*id);
-                let marker = Span::styled(if open { OPEN } else { CLOSED }, styles.dim());
+                // While the account syncs its mark turns: the same cell,
+                // and a click on it still shows or hides the folders.
+                let marker = if state.syncing.contains(id) {
+                    SYNCING[usize::from(state.spin) % SYNCING.len()]
+                } else if open {
+                    OPEN
+                } else {
+                    CLOSED
+                };
+                let marker = Span::styled(marker, styles.dim());
                 // Open, its unread mail is counted on its inbox, the row
                 // below. Closed, this row is where the count is: in the
                 // column of the others, and the name has what is left.

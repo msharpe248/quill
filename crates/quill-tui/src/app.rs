@@ -1231,6 +1231,11 @@ async fn event_loop(
         let drag_due = state
             .drag_scrolls(env)
             .then(|| tokio::time::Instant::now() + DRAG_PACE);
+        // The mark beside a syncing account turns while there is one to
+        // turn and a pane to turn it in.
+        let spin_due = state
+            .spinning(env)
+            .then(|| tokio::time::Instant::now() + SPIN_PACE);
         let action = tokio::select! {
             event = next_input(&mut input) => match event {
                 Some(Ok(event)) => translate(event),
@@ -1318,6 +1323,7 @@ async fn event_loop(
             () = quiet_until(spelling_due) => Some(Action::TypingPaused),
             () = quiet_until(settle_due) => Some(Action::SelectionSettled),
             () = quiet_until(drag_due) => Some(Action::DragHeld),
+            () = quiet_until(spin_due) => Some(Action::Spin),
             // The new width did not come: draw at the one there is.
             () = quiet_until(width_due) => None,
         };
@@ -1548,6 +1554,10 @@ const SETTLE_PAUSE: Duration = Duration::from_millis(150);
 /// there is. The host does it in a few milliseconds; a page that is slow
 /// to make is not waited for.
 const WIDTH_WAIT: Duration = Duration::from_millis(200);
+
+/// How long the mark beside a syncing account stays as it is before it
+/// turns on: eight turns a second.
+const SPIN_PACE: Duration = Duration::from_millis(125);
 
 /// How long between two lines of the text moving under a pointer that is
 /// held still past its edge.
