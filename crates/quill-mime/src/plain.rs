@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::ops::Range;
 
-use crate::html::{self, Line, Rendered, Span, Style};
+use crate::html::{self, Line, Rendered, Span, Style, Wrapped};
 use crate::{clean, links, width};
 
 /// Text longer than this is cut short, with a line saying so: nobody reads
@@ -124,8 +124,18 @@ impl Layout {
         // Rows and addresses both run left to right, so each row starts
         // looking where the one before left off.
         let mut first = 0;
-        for row in wrap(content, available) {
-            let mut line = Line::default();
+        let rows = wrap(content, available);
+        for (index, row) in rows.iter().enumerate() {
+            // A row that is not the line's last was broken to fit: where
+            // a space was dropped, or in the middle of a long word.
+            let mut line = Line {
+                wrapped: match rows.get(index + 1) {
+                    None => Wrapped::No,
+                    Some(next) if next.start > row.end => Wrapped::AtSpace,
+                    Some(_) => Wrapped::InWord,
+                },
+                ..Line::default()
+            };
             push(&mut line, prefix, style, None);
             let mut at = row.start;
             while places.get(first).is_some_and(|place| place.end <= at) {
@@ -654,5 +664,31 @@ mod tests {
             ["goes to evil.example,", "not www.mybank.example"]
         );
         assert_eq!(wrap_text("", 0), [""]);
+    }
+
+    fn whole(rendered: &Rendered) -> String {
+        html::joined(
+            rendered
+                .lines
+                .iter()
+                .map(|line| (line, line.text().into(), true, true)),
+        )
+    }
+
+    #[test]
+    fn rows_a_line_was_wrapped_to_say_so_and_go_back_together() {
+        let source = "The quarterly figures are attached and the margin target holds.\n\
+                      Short line.\n\
+                      > A quoted line that is long enough to be wrapped over two rows.\n\
+                      see abcdefghijklmnopqrstuvwxyz now";
+        let rendered = render(source, 24);
+        assert!(rendered.lines.len() > 8);
+        // Exactly what was written: the long word whole, the quote under
+        // one mark, and the lines that were ended still ended.
+        assert_eq!(whole(&rendered), source);
+        let wrapped: Vec<Wrapped> = rendered.lines.iter().map(|line| line.wrapped).collect();
+        assert!(wrapped.contains(&Wrapped::AtSpace));
+        assert!(wrapped.contains(&Wrapped::InWord));
+        assert_eq!(wrapped.last(), Some(&Wrapped::No));
     }
 }

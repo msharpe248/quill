@@ -1059,7 +1059,12 @@ fn the_app_has_one_command_for_the_web_pane_and_no_page_beside_the_reader() {
             })
             .collect();
         for (index, (keys, title)) in entries.iter().enumerate() {
-            assert_ne!(*keys, "v", "{title}");
+            // `v` shows no page: it is the cursor that selects, or
+            // nobody's.
+            assert!(
+                *keys != "v" || *title == "Select text with the keys",
+                "{title}"
+            );
             assert!(
                 entries[index + 1..].iter().all(|(_, other)| other != title),
                 "{title} is listed twice"

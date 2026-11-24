@@ -1106,3 +1106,50 @@ async fn a_folder_is_deleted_only_once_its_mail_is_in_the_trash() {
         );
     }
 }
+
+#[tokio::test]
+async fn a_message_someone_waits_for_is_fetched_on_a_connection_of_its_own() {
+    let Some(server) = Dovecot::start().await else {
+        return;
+    };
+    let user = "reading@example.com";
+    arrange(&server, user).await;
+    let (backend, relay) = lesser(&server, user, &[]).await;
+    let invoice = id_of(&listing(&backend, "INBOX").await, "Invoice 114");
+    assert_eq!(relay.connections(), 1);
+
+    // The message is the same whichever way it is asked for.
+    let ahead = backend.fetch_raw(&invoice).await.unwrap();
+    assert_eq!(relay.connections(), 1);
+    let waited = backend.fetch_raw_now(&invoice).await.unwrap();
+    assert_eq!(waited, ahead);
+    // It came down a second connection, which is kept for the next.
+    assert_eq!(relay.connections(), 2);
+    let first = id_of(&listing(&backend, "INBOX").await, "Message 1");
+    backend.fetch_raw_now(&first).await.unwrap();
+    assert_eq!(relay.connections(), 2);
+
+    // One that is not there is not there, and is not asked for twice.
+    relay.clear();
+    let gone = RemoteId(invoice.0.replacen("4;", "99;", 1));
+    assert!(matches!(
+        backend.fetch_raw_now(&gone).await,
+        Err(Error::NotFound(_))
+    ));
+    let fetches = relay
+        .commands()
+        .iter()
+        .filter(|command| command.starts_with("UID FETCH"))
+        .count();
+    assert_eq!(fetches, 1);
+
+    // Both are closed when the backend is.
+    backend.disconnect().await;
+    for _ in 0..100 {
+        if relay.connections() == 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert_eq!(relay.connections(), 0);
+}

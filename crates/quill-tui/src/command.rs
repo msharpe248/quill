@@ -8,6 +8,9 @@ pub enum Context {
     Sidebar,
     List,
     Reader,
+    /// Selecting the words of the message being read with the keys: a
+    /// cursor on the text, moved as a cursor is moved anywhere.
+    Select,
     Help,
     /// Choosing one of a message's links to open.
     Links,
@@ -64,6 +67,7 @@ impl Context {
             Self::Sidebar => "Accounts",
             Self::List => "Message list",
             Self::Reader => "Reader",
+            Self::Select => "Selecting text with the keys",
             Self::Help => "Help",
             Self::Links => "Links",
             Self::Attachments => "Attachments",
@@ -94,6 +98,7 @@ const EVERYWHERE: &[Context] = &[
     Context::Sidebar,
     Context::List,
     Context::Reader,
+    Context::Select,
     Context::Help,
     Context::Links,
     Context::Attachments,
@@ -163,6 +168,7 @@ const COMPOSE: &[Context] = &[Context::Compose];
 const ATTACHMENTS: &[Context] = &[Context::Attachments];
 /// The panes, and the message being written in the reader's place.
 const PANES_AND_COMPOSE: &[Context] = &[
+    Context::Select,
     Context::Sidebar,
     Context::List,
     Context::Reader,
@@ -240,6 +246,7 @@ pub enum CommandId {
     EditCopy,
     EditCut,
     EditSelectAll,
+    TextSelect,
     EditUndo,
     AccountAdd,
     AccountSignIn,
@@ -396,6 +403,9 @@ impl Registry {
                     &[
                         Context::Sidebar,
                         Context::List,
+                        // The cursor that selects: what it has selected
+                        // is copied.
+                        Context::Select,
                         Context::Links,
                         Context::Attachments,
                         Context::Setup,
@@ -612,7 +622,7 @@ impl Registry {
                     "Copy the message's text",
                     Message,
                     Some(Menu::Message),
-                    MESSAGE,
+                    &[Context::List, Context::Reader, Context::Select],
                 ),
                 spec(
                     MessageSave,
@@ -999,7 +1009,17 @@ impl Registry {
                     "Select all of the message",
                     General,
                     None,
-                    &[Context::Compose, Context::Reader],
+                    &[Context::Compose, Context::Reader, Context::Select],
+                ),
+                // A cursor on the message's text, to select with the
+                // keys. The keys that move it are its own, as in a field.
+                spec(
+                    TextSelect,
+                    "text.select",
+                    "Select text with the keys",
+                    Message,
+                    Some(Menu::Message),
+                    &[Context::Reader, Context::Select],
                 ),
                 spec(
                     EditUndo,
@@ -1304,6 +1324,11 @@ pub fn hints(context: Context) -> &'static [Hint] {
     const SIGNING_IN: &[Hint] = &[hint(&[NavBack], "give up")];
     const WHEN: &[Hint] = &[hint(&[NavOpen], "set"), hint(&[NavBack], "cancel")];
     const NEW_FOLDER: &[Hint] = &[hint(&[NavOpen], "make it"), hint(&[NavBack], "cancel")];
+    const SELECTING: &[Hint] = &[
+        hint(&[TextSelect], "select from here"),
+        hint(&[NavOpen], "copy"),
+        hint(&[NavBack], "done"),
+    ];
     const LETTER: &[Hint] = &[hint(&[NavOpen], "use it"), hint(&[NavBack], "cancel")];
     const NEW_RULE: &[Hint] = &[
         hint(&[NavOpen], "save and try it"),
@@ -1354,8 +1379,33 @@ pub fn hints(context: Context) -> &'static [Hint] {
         Context::Sidebar => SIDEBAR,
         Context::List => LIST,
         Context::Reader => READER,
+        Context::Select => SELECTING,
         Context::Help => HELP,
     }
+}
+
+/// The hints the status bar shows while a cursor selects with the keys:
+/// what the key that began it does now says whether the selection has
+/// begun.
+pub fn hints_selecting(begun: bool) -> Vec<Hint> {
+    use CommandId::*;
+    let hint = |commands: &'static [CommandId], label: &'static str| Hint {
+        commands,
+        label,
+        only_enabled: false,
+    };
+    vec![
+        hint(
+            &[TextSelect],
+            if begun {
+                "let go of it"
+            } else {
+                "select from here"
+            },
+        ),
+        hint(&[NavOpen], "copy"),
+        hint(&[NavBack], "done"),
+    ]
 }
 
 /// The hints the status bar shows under the question about a folder:

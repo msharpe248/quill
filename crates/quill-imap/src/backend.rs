@@ -54,6 +54,11 @@ const SUMMARY: &str = "(UID FLAGS RFC822.SIZE INTERNALDATE BODYSTRUCTURE \
                        BODY.PEEK[HEADER.FIELDS (DATE SUBJECT FROM TO CC MESSAGE-ID \
                        IN-REPLY-TO REFERENCES)])";
 
+/// How long the reading connection may sit unused and still be used:
+/// well inside the half hour a server keeps an idle connection, and
+/// inside the few minutes after which a router may forget one.
+const READING_KEPT: Duration = Duration::from_secs(4 * 60);
+
 /// What is known of whether the server pushes: nothing until a sign-in has
 /// asked it.
 const PUSH_UNKNOWN: u8 = 0;
@@ -69,6 +74,12 @@ pub struct ImapBackend {
     /// One connection, opened on demand and dropped after any failure so the
     /// next call starts clean. `watch` does not use it: it opens its own.
     session: Mutex<Option<Open>>,
+    /// A second connection, for a message someone is waiting to read
+    /// ([`Backend::fetch_raw_now`]): the first may be in the middle of a
+    /// long listing or a large download. Opened when it is first wanted,
+    /// with when it was last used: one that has sat unused is not trusted
+    /// to be there still.
+    reading: Mutex<Option<(Open, tokio::time::Instant)>>,
     /// Whether the server said it has `IDLE`, the last time it was asked.
     /// Kept apart from the connection because `capabilities` is asked
     /// without one and cannot wait for a lock.
@@ -209,6 +220,7 @@ impl ImapBackend {
             patience: quill_net::PATIENCE,
             idle_refresh: idle::REFRESH,
             session: Mutex::new(None),
+            reading: Mutex::new(None),
             push: AtomicU8::new(PUSH_UNKNOWN),
         }
     }
@@ -257,6 +269,9 @@ impl ImapBackend {
     /// it ends when its future is dropped.
     pub async fn disconnect(&self) {
         if let Some(mut open) = self.session.lock().await.take() {
+            let _ = open.session.logout().await;
+        }
+        if let Some((mut open, _)) = self.reading.lock().await.take() {
             let _ = open.session.logout().await;
         }
     }
@@ -338,6 +353,58 @@ impl Backend for ImapBackend {
     async fn fetch_raw(&self, id: &RemoteId) -> Result<Bytes> {
         let message = MessageRef::parse(id)?;
         with_session!(self, |session| fetch_raw(session, &message).await)
+    }
+
+    /// On the reading connection, so that it does not wait for whatever
+    /// the first connection is doing. Where there is no second connection
+    /// to be had (a server that allows an account few), or the one kept
+    /// has gone, the first connection does, as it did before there were
+    /// two: this is never a way for a message to fail that would not have.
+    async fn fetch_raw_now(&self, id: &RemoteId) -> Result<Bytes> {
+        let message = MessageRef::parse(id)?;
+        let mut reading = self.reading.lock().await;
+        // Left unused, it may have been closed at the other end, or by
+        // something on the way that says nothing: a command sent down it
+        // would wait out its whole patience before failing.
+        if reading
+            .as_ref()
+            .is_some_and(|(_, used)| used.elapsed() > READING_KEPT)
+        {
+            *reading = None;
+        }
+        let kept = reading.is_some();
+        if reading.is_none() {
+            match self.sign_in().await {
+                Ok(open) => *reading = Some((open, tokio::time::Instant::now())),
+                Err(_) => {
+                    drop(reading);
+                    return self.fetch_raw(id).await;
+                }
+            }
+        }
+        let fetched = match reading.as_mut() {
+            Some((open, used)) => {
+                *used = tokio::time::Instant::now();
+                fetch_raw(&mut open.session, &message).await
+            }
+            None => Err(Error::Backend("no connection".to_owned())),
+        };
+        match fetched {
+            Ok(raw) => Ok(raw),
+            Err(err) => {
+                // After an error the connection is in an unknown state.
+                *reading = None;
+                drop(reading);
+                // The server looked and the message was not there: asking
+                // again finds the same. Anything else on a connection
+                // that was kept may be the connection's own trouble.
+                if kept && !matches!(err, Error::NotFound(_)) {
+                    self.fetch_raw(id).await
+                } else {
+                    Err(err)
+                }
+            }
+        }
     }
 
     async fn apply(&self, op: &Operation) -> Result<()> {

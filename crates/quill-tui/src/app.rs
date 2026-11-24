@@ -832,7 +832,7 @@ impl Io<'_> {
             context: match current.context {
                 Context::Sidebar => bridge::Context::Sidebar,
                 Context::List => bridge::Context::List,
-                Context::Reader => bridge::Context::Reader,
+                Context::Reader | Context::Select => bridge::Context::Reader,
                 Context::Help => bridge::Context::Help,
                 Context::Links => bridge::Context::Links,
                 // A list to choose from over the reader, as the links are.
@@ -1226,6 +1226,11 @@ async fn event_loop(
             _ => (moves, tokio::time::Instant::now()),
         });
         let settle_due = resting.map(|(_, since)| since + SETTLE_PAUSE);
+        // A pointer held still says nothing, so while one is held past
+        // the edge of the text it is asked about at a steady pace.
+        let drag_due = state
+            .drag_scrolls(env)
+            .then(|| tokio::time::Instant::now() + DRAG_PACE);
         let action = tokio::select! {
             event = next_input(&mut input) => match event {
                 Some(Ok(event)) => translate(event),
@@ -1312,6 +1317,7 @@ async fn event_loop(
             }
             () = quiet_until(spelling_due) => Some(Action::TypingPaused),
             () = quiet_until(settle_due) => Some(Action::SelectionSettled),
+            () = quiet_until(drag_due) => Some(Action::DragHeld),
             // The new width did not come: draw at the one there is.
             () = quiet_until(width_due) => None,
         };
@@ -1542,6 +1548,10 @@ const SETTLE_PAUSE: Duration = Duration::from_millis(150);
 /// there is. The host does it in a few milliseconds; a page that is slow
 /// to make is not waited for.
 const WIDTH_WAIT: Duration = Duration::from_millis(200);
+
+/// How long between two lines of the text moving under a pointer that is
+/// held still past its edge.
+const DRAG_PACE: Duration = Duration::from_millis(60);
 
 /// Waits until `at`, or for ever when there is nothing to wait for.
 async fn quiet_until(at: Option<tokio::time::Instant>) {

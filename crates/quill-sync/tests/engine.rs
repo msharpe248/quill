@@ -65,6 +65,8 @@ struct Server {
     download_gate: Option<Arc<tokio::sync::Semaphore>>,
     /// How many downloads have been asked for.
     downloads: usize,
+    /// How many of them were for someone waiting to read the message.
+    waited_for: usize,
 }
 
 /// A sender that keeps what it was given, or refuses as told.
@@ -282,6 +284,11 @@ impl Backend for MemoryBackend {
             "Subject: {}\r\nContent-Type: text/plain\r\n\r\n{}\r\n",
             mail.subject, mail.body
         )))
+    }
+
+    async fn fetch_raw_now(&self, id: &RemoteId) -> Result<Bytes> {
+        self.0.lock().unwrap().waited_for += 1;
+        self.fetch_raw(id).await
     }
 
     async fn apply(&self, op: &Operation) -> Result<()> {
@@ -3121,4 +3128,33 @@ async fn a_folder_is_deleted_on_the_server_and_its_mail_is_in_the_trash() {
     trashed.sort();
     assert_eq!(trashed, ["Invoice", "Older", "Thrown away", "Ticket"]);
     assert_eq!(rig.subjects("INBOX"), ["Stays"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn only_what_someone_waits_for_goes_round_the_pass() {
+    let backend = MemoryBackend::new(100);
+    backend.add("INBOX", "1", "Recent", NOW_ISH);
+    backend.add("INBOX", "2", "Old", LONG_AGO);
+    backend.add("INBOX", "3", "Older", LONG_AGO);
+    let mut rig = Rig::start(backend);
+    rig.pass().await;
+    // The pass downloads ahead in its own time.
+    assert_eq!(
+        rig.backend
+            .with(|server| (server.downloads, server.waited_for)),
+        (1, 0)
+    );
+
+    // A message that is opened, and the mail near the cursor, do not
+    // wait for it.
+    let (old, older) = (rig.local("Old"), rig.local("Older"));
+    rig.handle.send(SyncRequest::FetchBody(old));
+    assert_eq!(rig.next().await, SyncEvent::BodyReady(old));
+    rig.handle.send(SyncRequest::FetchNear(vec![old, older]));
+    rig.downloaded(older).await;
+    assert_eq!(
+        rig.backend
+            .with(|server| (server.downloads, server.waited_for)),
+        (3, 2)
+    );
 }

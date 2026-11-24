@@ -182,7 +182,7 @@ fn words_dragged_over_are_selected_and_copy_copies_them() {
 }
 
 #[test]
-fn a_selection_over_several_lines_is_copied_a_row_to_a_line() {
+fn a_selection_over_several_lines_is_copied_as_it_was_written() {
     let mut harness = reading();
     let (index, first) = a_line_of(&harness, 12);
     let second = line(&harness, index + 1);
@@ -192,8 +192,10 @@ fn a_selection_over_several_lines_is_copied_a_row_to_a_line() {
     // line two below it.
     drag(&mut harness, (at.0 + 3, at.1), (at.0 + 2, at.1 + 2));
     harness.keys("cmd-c");
+    // The three rows are one paragraph, wrapped to fit the pane: copied,
+    // they are the sentence again and not three lines.
     let wanted = format!(
-        "{}\n{}\n{}",
+        "{} {} {}",
         &first[3..],
         second.trim_end(),
         quill_tui::text::cells(&third, 0, 3).trim_end()
@@ -263,21 +265,23 @@ fn the_fields_above_the_text_can_be_selected_too() {
     harness.keys("cmd-c");
     assert_eq!(copied(&harness), [subject.as_str()]);
 
-    // Dragged on down into the text it stops at the last of the rows
-    // above it: the text is another part.
+    // Dragged on down into the text, it takes in the rest of the rows
+    // above the text and the text down to the pointer: a blank line
+    // between the two, as the whole message is copied.
     harness.host_requests.clear();
-    drag(&mut harness, value, (value.0 + 3, value.1 + 30));
+    let first = line(&harness, 0);
+    let into = find_from(&harness, first.trim(), 6);
+    drag(&mut harness, value, (into.0 + 3, into.1));
     assert!(matches!(
         harness.state.reader.selection,
-        Some(Selection::Some {
-            part: Part::Head,
-            ..
-        })
+        Some(Selection::Some { anchor, head })
+            if anchor.part == Part::Head && head.part == Part::Body
     ));
     harness.keys("cmd-c");
     let copied = copied(&harness)[0];
     assert!(copied.starts_with(&subject), "{copied}");
-    assert!(!copied.contains(line(&harness, 0).trim()), "{copied}");
+    let taken = quill_tui::text::cells(&first, 0, 4);
+    assert!(copied.ends_with(&format!("\n\n{taken}")), "{copied:?}");
 }
 
 #[test]
@@ -376,7 +380,55 @@ fn dragging_past_the_foot_of_the_pane_brings_more_of_the_text_up() {
         copied.ends_with(line(&harness, lines - 1).trim_end()),
         "{copied}"
     );
-    assert_eq!(copied.lines().count(), lines - index);
+    // A line for each that the writer ended, and none for the rows a
+    // line was only wrapped to.
+    let wrapped = harness.state.reader.lines[index..lines - 1]
+        .iter()
+        .filter(|line| line.wrapped != quill_mime::html::Wrapped::No)
+        .count();
+    assert!(wrapped > 0);
+    assert_eq!(copied.lines().count(), lines - index - wrapped);
+}
+
+#[test]
+fn a_pointer_held_still_past_the_edge_keeps_the_text_moving() {
+    let mut harness = Harness::demo(80, 24);
+    harness.keys("enter");
+    let (_, words) = a_line_of(&harness, 12);
+    let at = find_from(&harness, &words, 6);
+    let lines = harness.state.reader.lines.len();
+    // Nothing is held: there is nothing to keep moving.
+    assert!(!harness.state.drag_scrolls(&harness.env));
+    mouse(&mut harness, MouseKind::Press, at);
+    assert!(!harness.state.drag_scrolls(&harness.env));
+    // Taken below the pane once, and held there.
+    mouse(&mut harness, MouseKind::Drag, (at.0, 30));
+    let after_one = harness.state.reader.scroll;
+    assert_eq!(after_one, 1);
+    assert!(harness.state.drag_scrolls(&harness.env));
+    // The run loop says it is still held, again and again: a line each
+    // time, to the end of the text and no further.
+    for _ in 0..lines + 5 {
+        harness.act(Action::DragHeld);
+    }
+    let furthest = harness.state.reader.scroll;
+    assert!(furthest > after_one);
+    assert!(!harness.state.drag_scrolls(&harness.env));
+    harness.act(Action::DragHeld);
+    assert_eq!(harness.state.reader.scroll, furthest);
+    // Held above the text, it comes back down, to its first line.
+    mouse(&mut harness, MouseKind::Drag, (at.0, 2));
+    assert!(harness.state.drag_scrolls(&harness.env));
+    for _ in 0..lines + 5 {
+        harness.act(Action::DragHeld);
+    }
+    assert_eq!(harness.state.reader.scroll, 0);
+    assert!(!harness.state.drag_scrolls(&harness.env));
+    // Let go, nothing moves any more.
+    mouse(&mut harness, MouseKind::Release, (at.0, 2));
+    assert!(!harness.state.drag_scrolls(&harness.env));
+    harness.act(Action::DragHeld);
+    assert_eq!(harness.state.reader.scroll, 0);
 }
 
 #[test]
@@ -617,4 +669,180 @@ fn only_mail_that_is_here_can_be_saved_or_copied() {
             .state
             .is_enabled(&harness.env, CommandId::MessageCopyText)
     );
+}
+
+const PLAIN: &str = "From: Ana Ruiz <ana.ruiz@example.com>\r\n\
+To: Robin Vale <robin@example.com>\r\n\
+Subject: Words\r\n\
+Content-Type: text/plain; charset=utf-8\r\n\
+\r\n\
+alpha beta gamma\r\n\
+delta epsilon\r\n\
+\r\n\
+zeta eta theta\r\n";
+
+/// Where the cursor that selects is: the part, the row and the cell.
+fn cursor(harness: &Harness) -> (Part, usize, usize) {
+    match harness.state.reader.selection {
+        Some(Selection::Some { head, .. }) => (head.part, head.row, head.column),
+        other => panic!("no cursor: {other:?}"),
+    }
+}
+
+#[test]
+fn a_cursor_is_put_on_the_text_and_moved_with_the_keys() {
+    let mut harness = reading_our_own(PLAIN, "Words");
+    assert!(
+        harness
+            .state
+            .is_enabled(&harness.env, CommandId::TextSelect)
+    );
+    harness.keys("v");
+    assert_eq!(harness.state.context(), Context::Select);
+    assert_eq!(cursor(&harness), (Part::Body, 0, 0));
+    let hints = status(&harness);
+    assert!(hints.contains("select from here"), "{hints}");
+    assert!(hints.contains("copy") && hints.contains("done"), "{hints}");
+
+    // A cell at a time, a word at a time, to the ends of a row.
+    harness.keys("l l");
+    assert_eq!(cursor(&harness), (Part::Body, 0, 2));
+    harness.keys("h");
+    assert_eq!(cursor(&harness), (Part::Body, 0, 1));
+    harness.keys("w");
+    assert_eq!(cursor(&harness), (Part::Body, 0, 6));
+    harness.keys("w w");
+    // Past the end of a row, to the first word of the next.
+    assert_eq!(cursor(&harness), (Part::Body, 1, 0));
+    harness.keys("b");
+    assert_eq!(cursor(&harness), (Part::Body, 0, 11));
+    harness.keys("$");
+    assert_eq!(cursor(&harness), (Part::Body, 0, 15));
+    harness.keys("0");
+    assert_eq!(cursor(&harness), (Part::Body, 0, 0));
+    // The arrows do what the letters do.
+    harness.keys("right down");
+    assert_eq!(cursor(&harness), (Part::Body, 1, 1));
+    // An empty row is a row like any other, and a word stops at it.
+    harness.keys("w w");
+    assert_eq!(cursor(&harness), (Part::Body, 2, 0));
+    harness.keys("j $");
+    assert_eq!(cursor(&harness), (Part::Body, 3, 13));
+    // Up and down keep to the end of the row, across an empty one.
+    harness.keys("k k");
+    assert_eq!(cursor(&harness), (Part::Body, 1, 12));
+    // And to a cell, coming in where a row is shorter.
+    harness.keys("0 l l l j j k k");
+    assert_eq!(cursor(&harness), (Part::Body, 1, 3));
+    harness.keys("G");
+    assert_eq!(cursor(&harness), (Part::Body, 3, 0));
+    harness.keys("g");
+    assert_eq!(cursor(&harness), (Part::Body, 0, 0));
+    // Until the selection is begun the cursor is all of it: one cell.
+    harness.keys("cmd-c");
+    assert_eq!(copied(&harness), ["a"]);
+}
+
+#[test]
+fn the_selection_begins_where_it_is_said_to_and_goes_where_the_cursor_goes() {
+    let mut harness = reading_our_own(PLAIN, "Words");
+    harness.keys("v w v");
+    assert!(harness.state.selection_begun());
+    assert!(
+        status(&harness).contains("let go of it"),
+        "{}",
+        status(&harness)
+    );
+    // From "beta" to the end of its row.
+    harness.keys("$ enter");
+    assert_eq!(copied(&harness), ["beta gamma"]);
+    // Copying puts the cursor away and leaves what was copied on show.
+    assert_eq!(harness.state.context(), Context::Reader);
+    assert!(harness.state.reader.selection.is_some());
+    assert!(status(&harness).contains("Copied."), "{}", status(&harness));
+
+    // Over rows the writer ended, a row to a line; and backwards as well
+    // as forwards.
+    harness.host_requests.clear();
+    harness.keys("v j v k 0 enter");
+    assert_eq!(copied(&harness), ["alpha beta gamma\nd"]);
+
+    // Said again, the selection is let go and the cursor stays.
+    harness.host_requests.clear();
+    harness.keys("v v l l v");
+    assert!(!harness.state.selection_begun());
+    assert_eq!(cursor(&harness), (Part::Body, 0, 2));
+    harness.keys("enter");
+    assert_eq!(copied(&harness), ["p"]);
+
+    // `esc` puts the cursor away with what it had, and the reader's keys
+    // are the reader's again.
+    harness.keys("v v l");
+    harness.keys("esc");
+    assert_eq!(harness.state.context(), Context::Reader);
+    assert_eq!(harness.state.reader.selection, None);
+    harness.keys("esc");
+    assert_eq!(harness.state.context(), Context::List);
+}
+
+#[test]
+fn the_cursor_goes_up_into_the_fields_and_the_mouse_takes_over_from_it() {
+    let mut harness = reading_our_own(PLAIN, "Words");
+    harness.keys("v l l v");
+    // Up from the first line of the text is the last row above it.
+    harness.keys("k");
+    let (part, row, _) = cursor(&harness);
+    assert_eq!(part, Part::Head);
+    harness.keys("0 enter");
+    let copied_now = copied(&harness)[0].to_owned();
+    assert!(copied_now.starts_with("Subject: Words"), "{copied_now}");
+    assert!(copied_now.ends_with("\n\nalp"), "{copied_now:?}");
+    // And back down into the text.
+    harness.keys("v");
+    for _ in 0..=row {
+        harness.keys("k");
+    }
+    assert_eq!(cursor(&harness).0, Part::Head);
+    assert_eq!(cursor(&harness).1, 0);
+    harness.keys("G");
+    assert_eq!(cursor(&harness), (Part::Body, 3, 0));
+
+    // A press of the mouse puts the cursor away: the selection is the
+    // mouse's now.
+    let at = find_from(&harness, "delta", 6);
+    click(&mut harness, at);
+    assert_eq!(harness.state.context(), Context::Reader);
+    assert_eq!(harness.state.reader.selection, None);
+}
+
+#[test]
+fn the_text_follows_the_cursor_and_no_cursor_is_offered_with_nothing_to_go_on() {
+    let mut harness = Harness::demo(80, 24);
+    // In the list there is no text to put a cursor on.
+    assert!(
+        !harness
+            .state
+            .is_enabled(&harness.env, CommandId::TextSelect)
+    );
+    harness.keys("enter");
+    harness.keys("j j");
+    let scrolled = harness.state.reader.scroll;
+    assert!(scrolled > 0);
+    // The cursor starts on the first line on show, not the first line.
+    harness.keys("v");
+    assert_eq!(cursor(&harness), (Part::Body, scrolled, 0));
+    let lines = harness.state.reader.lines.len();
+    harness.keys("G");
+    assert_eq!(cursor(&harness).1, lines - 1);
+    assert!(harness.state.reader.scroll > scrolled);
+    harness.keys("g");
+    assert_eq!(harness.state.reader.scroll, 0);
+    // A page at a time.
+    harness.keys("pagedown");
+    assert!(cursor(&harness).1 > 1);
+    // Laid out again, the text is other cells: the cursor goes with the
+    // selection.
+    harness.resize(100, 30);
+    assert_eq!(harness.state.reader.selection, None);
+    assert_eq!(harness.state.context(), Context::Reader);
 }

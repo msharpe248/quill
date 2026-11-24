@@ -1124,7 +1124,7 @@ impl Engine {
         let mut downloaded = false;
         turn.begin();
         for id in wanted {
-            match self.fetch_ahead(id).await {
+            match self.fetch_ahead(id, Haste::Ahead).await {
                 Ok(()) => downloaded = true,
                 // A message that vanished meanwhile is no reason to stop.
                 Err(FetchFailure::Gone) => {}
@@ -1192,7 +1192,7 @@ impl Engine {
             for id in wanted {
                 // One that cannot be had now is asked what can be told
                 // without it, and again once it is here.
-                let _ = self.fetch_body(id).await;
+                let _ = self.fetch_body(id, Haste::Ahead).await;
             }
         }
         let account_id = account.id;
@@ -1449,18 +1449,18 @@ impl Engine {
         if !self.begin_fetch(id, true) {
             return;
         }
-        let outcome = self.fetch_body(id).await;
+        let outcome = self.fetch_body(id, Haste::Waited).await;
         self.end_fetch(id);
         self.tell_reader(id, &outcome);
     }
 
     /// Downloads a message nobody is reading yet. Should the reader ask
     /// for it meanwhile, it is told how this went.
-    async fn fetch_ahead(&self, id: LocalMessageId) -> Result<(), FetchFailure> {
+    async fn fetch_ahead(&self, id: LocalMessageId, haste: Haste) -> Result<(), FetchFailure> {
         if !self.begin_fetch(id, false) {
             return Ok(());
         }
-        let outcome = self.fetch_body(id).await;
+        let outcome = self.fetch_body(id, haste).await;
         if self.end_fetch(id) {
             self.tell_reader(id, &outcome);
         }
@@ -1538,7 +1538,9 @@ impl Engine {
             if !running.account.backend.capabilities().folders || running.near_resting() {
                 continue;
             }
-            match self.fetch_ahead(id).await {
+            // Beside the pass and not behind it: what is near the cursor
+            // is what is opened next.
+            match self.fetch_ahead(id, Haste::Waited).await {
                 Ok(()) | Err(FetchFailure::Gone) => {}
                 Err(FetchFailure::Other(_)) => running.rest_near(),
             }
@@ -1546,7 +1548,7 @@ impl Engine {
     }
 
     /// Downloads a message, files its raw bytes and stores its text.
-    async fn fetch_body(&self, id: LocalMessageId) -> Result<(), FetchFailure> {
+    async fn fetch_body(&self, id: LocalMessageId, haste: Haste) -> Result<(), FetchFailure> {
         let location = self
             .db(move |store| store.message_location(id))
             .await
@@ -1560,15 +1562,15 @@ impl Engine {
         let running = self
             .account(location.account)
             .ok_or_else(|| FetchFailure::Other("This account does not sync.".to_owned()))?;
-        let raw = running
-            .account
-            .backend
-            .fetch_raw(&location.remote)
-            .await
-            .map_err(|err| match err {
-                Error::NotFound(_) => FetchFailure::Gone,
-                other => FetchFailure::Other(other.to_string()),
-            })?;
+        let backend = &running.account.backend;
+        let raw = match haste {
+            Haste::Waited => backend.fetch_raw_now(&location.remote).await,
+            Haste::Ahead => backend.fetch_raw(&location.remote).await,
+        }
+        .map_err(|err| match err {
+            Error::NotFound(_) => FetchFailure::Gone,
+            other => FetchFailure::Other(other.to_string()),
+        })?;
         self.store_downloaded(id, location.date, raw).await
     }
 
@@ -2563,6 +2565,16 @@ impl Engine {
             Err(other) => refuse(other.to_string()).await,
         }
     }
+}
+
+/// How soon a message being downloaded is wanted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Haste {
+    /// Someone is waiting to read it, or is about to: it does not wait
+    /// for the pass, where the backend has a way round.
+    Waited,
+    /// Ahead of anyone asking, in the pass's own time.
+    Ahead,
 }
 
 enum FetchFailure {

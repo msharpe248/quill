@@ -71,6 +71,15 @@ pub trait Backend: Send + Sync {
     /// IDLE, polling, or a no-op that returns at once.
     async fn watch(&self, tx: mpsc::Sender<RemoteEvent>) -> Result<()>;
 
+    /// The whole message, for someone who is waiting to read it. The same
+    /// as [`Backend::fetch_raw`], except that a backend whose other work
+    /// shares one connection may have another for this, so that a message
+    /// that is opened does not wait for a sync to finish what it has in
+    /// hand.
+    async fn fetch_raw_now(&self, id: &RemoteId) -> Result<Bytes> {
+        self.fetch_raw(id).await
+    }
+
     /// Moves a message to another folder and says what it is called there,
     /// when the server tells: with that the local copy can keep its body
     /// and simply take the new id. `None` means the move worked and the

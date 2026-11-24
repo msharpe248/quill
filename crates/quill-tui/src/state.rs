@@ -28,6 +28,7 @@ use crate::layout;
 use crate::outgoing::{Handed, InviteAnswer, Response, SendRequest};
 use crate::palette::{self, Item, Palette, What};
 
+mod caret;
 mod edit;
 mod folders;
 mod keys;
@@ -64,6 +65,7 @@ use crate::template::{self, Template};
 use crate::theme::{Look, Styles, Theme};
 use crate::vim::{self, ExternalEditor, Verdict};
 use crate::{text, view};
+pub use caret::Caret;
 pub use mouse::{Mouse, MouseKind, Resizing};
 pub use save::SaveKind;
 pub use select::{Clicked, HeadRow, Held, LABEL_WIDTH, Part, Selection, Spot};
@@ -345,6 +347,10 @@ pub enum Action {
     /// The list's cursor has rested on a message for a moment: the time
     /// to show it in the web reading pane. See [`State::settle_due`].
     SelectionSettled,
+    /// The pointer is still held past the top or the foot of the text,
+    /// where it was: the text moves on under it. The run loop says so
+    /// for as long as [`State::drag_scrolls`] holds.
+    DragHeld,
     /// The host's window has room for this many columns: what the
     /// terminal would have with the window to itself. The layout goes by
     /// it while the host's reading pane has part of the window.
@@ -1221,6 +1227,8 @@ pub struct Reader {
     pub note: Vec<String>,
     /// What of the message is selected, to copy.
     pub selection: Option<Selection>,
+    /// The cursor that selects with the keys, while it is on the text.
+    pub caret: Option<Caret>,
 }
 
 impl Reader {
@@ -1684,6 +1692,7 @@ impl State {
         match self.focus {
             Pane::Sidebar => Context::Sidebar,
             Pane::List => Context::List,
+            Pane::Reader if self.selecting_with_keys() => Context::Select,
             Pane::Reader => Context::Reader,
         }
     }
@@ -1759,6 +1768,7 @@ impl State {
                 changed = false;
                 self.follow.settled = true;
             }
+            Action::DragHeld => changed = self.drag_on(env),
             Action::WindowColumns(columns) => {
                 // Told again what it was told before, the host is asking
                 // where its pane goes: it is answered, and nothing drawn
@@ -2001,6 +2011,12 @@ impl State {
                 if let Some(prompt) = &mut self.new_folder
                     && prompt.key(chord)
                 {
+                    return;
+                }
+            }
+            // The cursor that selects takes the keys that move it.
+            Context::Select => {
+                if self.caret_key(env, chord) {
                     return;
                 }
             }
@@ -2505,10 +2521,21 @@ impl State {
             // editor can. Typed in a terminal they reach the editor itself.
             // With no message being written they are the reader's: what
             // was selected in it with the mouse.
+            CommandId::NavOpen if context == Context::Select => self.copy_with_keys(env, out),
+            CommandId::NavBack if context == Context::Select => {
+                self.stop_selecting_with_keys(false);
+            }
+            CommandId::TextSelect => self.select_with_keys(env),
+            CommandId::EditCopy | CommandId::MessageCopyText if context == Context::Select => {
+                self.copy_with_keys(env, out);
+            }
             CommandId::EditCopy if self.compose.is_none() => {
                 self.copy_selection(env, out);
             }
-            CommandId::EditSelectAll if self.compose.is_none() => self.select_all_of_message(env),
+            CommandId::EditSelectAll if self.compose.is_none() => {
+                self.stop_selecting_with_keys(true);
+                self.select_all_of_message(env);
+            }
             CommandId::MessageCopyText => self.copy_message_text(env, out),
             CommandId::MessageSave => self.ask_save_as(env),
             CommandId::EditCopy => {
@@ -2909,7 +2936,14 @@ impl State {
             // With no message being written, the reader's selection.
             CommandId::EditCopy if self.compose.is_none() => self.selected_text(env).is_some(),
             CommandId::EditSelectAll if self.compose.is_none() => {
-                context == Context::Reader && self.reader_text_on_show(env)
+                matches!(context, Context::Reader | Context::Select)
+                    && self.reader_text_on_show(env)
+            }
+            CommandId::TextSelect => self.can_select_with_keys(env),
+            // The cursor that selects: what it has is copied, and it can
+            // always be put away.
+            CommandId::NavOpen | CommandId::MessageCopyText if context == Context::Select => {
+                self.selected_text(env).is_some()
             }
             CommandId::MessageCopyText | CommandId::MessageSave => {
                 self.message_to_save(context).is_some()
@@ -6414,6 +6448,7 @@ impl State {
                 self.reader.wrap_width = Some(width);
                 // A selection names cells of the lines as they were.
                 self.reader.selection = None;
+                self.reader.caret = None;
                 self.held = None;
             }
             let viewport = layout::reader_body_height(

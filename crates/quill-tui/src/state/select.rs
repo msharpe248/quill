@@ -1,16 +1,21 @@
-//! Text chosen in the reader with the mouse, to copy: dragged over, a word
-//! by a double click, a line by a triple one, or all of the message.
+//! Text chosen in the reader, to copy: dragged over with the mouse, a
+//! word by a double click, a line by a triple one, all of the message, or
+//! taken with the keys from a cursor ([`Caret`]).
 //!
 //! A selection is of the message, not of the screen: it names lines of the
 //! text and the cells in them, so it stays with the words when the text is
-//! scrolled, and is dropped when the text is laid out again. The fields
-//! above the text do not scroll, so a selection lies in them or in the
-//! text and never across both: one that did would take in the lines
-//! scrolled out of sight between them.
+//! scrolled, and is dropped when the text is laid out again. The message
+//! is read from the top: the rows above the text, which do not scroll,
+//! and then the text. A selection may begin in one and end in the other,
+//! and then takes in the text from its first line, whatever part of it
+//! is scrolled out of sight. A drag from the text that goes above it
+//! brings the text down first, and reaches the rows above only from the
+//! text's first line.
 //!
-//! What is copied is what is drawn, a row to a line. All of the message is
-//! the exception: its fields are copied whole, however little of them the
-//! pane had room for.
+//! What is copied is what was written: lines that end only because the
+//! pane is no wider are put back together (`quill_mime::html::joined`).
+//! All of the message has its fields copied whole, however little of
+//! them the pane had room for.
 
 use quill_core::types::Address;
 use quill_mime::html::Line;
@@ -28,15 +33,17 @@ pub const LABEL_WIDTH: usize = 9;
 /// row to its end.
 const END: usize = usize::MAX / 2;
 
-/// A cell of a row of the message.
+/// A cell of a row of the message. Ordered as the message is read: the
+/// rows above the text come before the text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Spot {
+    pub part: Part,
     pub row: usize,
     pub column: usize,
 }
 
-/// The two parts of a message on show.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The two parts of a message on show, in the order they are read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Part {
     /// The rows above the text, which stay where they are: the fields,
     /// and what is said under them.
@@ -50,13 +57,9 @@ pub enum Part {
 pub enum Selection {
     /// All of it: the fields and the text.
     All,
-    /// From one cell to another of one part, both taken in. `anchor` is
-    /// where it began and `head` where it has been taken to.
-    Some {
-        part: Part,
-        anchor: Spot,
-        head: Spot,
-    },
+    /// From one cell to another, both taken in. `anchor` is where it
+    /// began and `head` where it has been taken to.
+    Some { anchor: Spot, head: Spot },
 }
 
 impl Selection {
@@ -65,13 +68,18 @@ impl Selection {
     pub fn columns(&self, of: Part, row: usize) -> Option<(usize, usize)> {
         match *self {
             Self::All => Some((0, END)),
-            Self::Some { part, anchor, head } => {
+            Self::Some { anchor, head } => {
                 let (start, end) = (anchor.min(head), anchor.max(head));
-                if part != of || row < start.row || row > end.row {
+                let here = (of, row);
+                if here < (start.part, start.row) || here > (end.part, end.row) {
                     return None;
                 }
-                let from = if row == start.row { start.column } else { 0 };
-                let to = if row == end.row {
+                let from = if here == (start.part, start.row) {
+                    start.column
+                } else {
+                    0
+                };
+                let to = if here == (end.part, end.row) {
                     end.column.saturating_add(1)
                 } else {
                     END
@@ -118,13 +126,14 @@ impl HeadRow {
 /// go.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Held {
-    part: Part,
     anchor: Spot,
     /// The cell of the screen it went down on.
     at: (u16, u16),
     /// The pointer has been taken to another cell since: this is a
     /// selection being made, and not a click.
     moved: bool,
+    /// The cell of the screen the pointer was last at.
+    last: (u16, u16),
 }
 
 /// A press in the reader that a press in the same place, soon enough,
@@ -266,9 +275,10 @@ impl State {
 
     /// The message on show as text: its fields, whole, then what its
     /// invitation says, then `lines`, which are its text laid out for some
-    /// width. What is copied when all of it is, and what a text file of
-    /// it holds.
-    pub(super) fn message_text(&self, env: &Env, lines: &[Line]) -> String {
+    /// width. What is copied when all of it is, with the lines that were
+    /// only wrapped put back together (`joined`), and what a text file of
+    /// it holds, a row to a line.
+    pub(super) fn message_text(&self, env: &Env, lines: &[Line], joined: bool) -> String {
         let mut out = String::new();
         for (label, value) in self.message_fields(env) {
             out.push_str(&text::fit(&label, LABEL_WIDTH));
@@ -290,6 +300,14 @@ impl State {
             }
         }
         out.push('\n');
+        if joined {
+            out.push_str(&quill_mime::html::joined(lines.iter().map(|line| {
+                let words = line_text(line).trim_end().to_owned();
+                (line, words.into(), true, true)
+            })));
+            out.push('\n');
+            return out;
+        }
         for line in lines {
             out.push_str(line_text(line).trim_end());
             out.push('\n');
@@ -305,7 +323,7 @@ impl State {
             return None;
         };
         let (lines, _) = super::body_lines(body, showing, super::UNDRAWN_WIDTH);
-        Some(self.message_text(env, &lines))
+        Some(self.message_text(env, &lines, false))
     }
 
     /// Whether the reader's text is drawn, with a message in it whose
@@ -329,32 +347,47 @@ impl State {
         }
         let selection = self.reader.selection?;
         let copied = match selection {
-            Selection::All => self.message_text(env, &self.reader.lines),
-            Selection::Some { part, anchor, head } => {
-                let rows: Vec<String> = match part {
-                    Part::Head => {
-                        let width = layout::reader_text_width(self.reader_rect(env)?);
-                        self.reader_head(env, width)
-                            .iter()
-                            .map(HeadRow::text)
-                            .collect()
-                    }
-                    Part::Body => self.reader.lines.iter().map(line_text).collect(),
+            Selection::All => self.message_text(env, &self.reader.lines, true),
+            Selection::Some { anchor, head } => {
+                let (start, end) = (anchor.min(head), anchor.max(head));
+                // What of a row is taken: its words, and whether that is
+                // from its start and to its end.
+                let taken = |part: Part, row: usize, words: &str| {
+                    let (from, to) = selection.columns(part, row)?;
+                    let cut = text::cells(words, from, to);
+                    // A row taken to its end has no use for the spaces a
+                    // row may end in.
+                    let cut = if to >= END { cut.trim_end() } else { cut };
+                    Some((cut.to_owned(), from == 0, to >= END))
                 };
-                let (first, last) = (anchor.min(head).row, anchor.max(head).row);
-                rows.iter()
-                    .enumerate()
-                    .skip(first)
-                    .take(last.saturating_sub(first) + 1)
-                    .filter_map(|(row, words)| {
-                        let (from, to) = selection.columns(part, row)?;
-                        let taken = text::cells(words, from, to);
-                        // A row taken to its end has no use for the
-                        // spaces a row may end in.
-                        Some(if to >= END { taken.trim_end() } else { taken })
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
+                let mut parts = Vec::new();
+                if start.part == Part::Head {
+                    let width = layout::reader_text_width(self.reader_rect(env)?);
+                    let rows: Vec<String> = self
+                        .reader_head(env, width)
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(row, head)| taken(Part::Head, row, &head.text()))
+                        .map(|(words, _, _)| words)
+                        .collect();
+                    parts.push(rows.join("\n"));
+                }
+                if end.part == Part::Body {
+                    let rows = self
+                        .reader
+                        .lines
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(row, line)| {
+                            let (words, from_start, to_end) =
+                                taken(Part::Body, row, &line_text(line))?;
+                            Some((line, words.into(), from_start, to_end))
+                        });
+                    parts.push(quill_mime::html::joined(rows));
+                }
+                // The fields, a blank line, and the text: as the whole
+                // message is copied.
+                parts.join("\n\n")
             }
         };
         (!copied.trim().is_empty()).then_some(copied)
@@ -388,7 +421,7 @@ impl State {
         // Laid out for the pane where the text is drawn, as a selection
         // of all of it would be; for a page's width where it is not.
         let copied = if self.reader_text_on_show(env) {
-            Some(self.message_text(env, &self.reader.lines))
+            Some(self.message_text(env, &self.reader.lines, true))
         } else {
             self.message_text_for_file(env)
         };
@@ -421,59 +454,97 @@ impl State {
         }
     }
 
-    /// The cell of `part` the pointer is over, or the nearest there is to
-    /// it. Taken above or below the text, the text follows it a line at a
-    /// time.
-    fn spot(&mut self, geometry: &Geometry, part: Part, column: u16, row: u16) -> Spot {
+    /// The cell the pointer is over, or the nearest there is to it, for a
+    /// selection that began in `from`. Taken below the text, the text
+    /// follows it a line at a time; taken above the text from within it,
+    /// the text comes down a line at a time, and the rows above it are
+    /// reached once its first line is on show.
+    fn spot(&mut self, geometry: &Geometry, from: Part, column: u16, row: u16) -> Spot {
         let across =
             usize::from(column.saturating_sub(geometry.left)).min(geometry.width.saturating_sub(1));
-        match part {
-            Part::Head => {
-                let last = geometry.head_rows.saturating_sub(1);
-                match row.checked_sub(geometry.head_top).map(usize::from) {
-                    None => Spot { row: 0, column: 0 },
-                    Some(down) if down > last => Spot {
-                        row: last,
-                        column: END,
-                    },
-                    Some(down) => Spot {
-                        row: down,
-                        column: across,
-                    },
-                }
-            }
-            Part::Body => {
-                let lines = self.reader.lines.len();
-                let last = lines.saturating_sub(1);
-                let Some(down) = row.checked_sub(geometry.body_top).map(usize::from) else {
-                    self.reader.scroll = self.reader.scroll.saturating_sub(1);
-                    return Spot {
-                        row: self.reader.scroll,
-                        column: 0,
-                    };
+        let lines = self.reader.lines.len();
+        if row < geometry.body_top || lines == 0 {
+            if from == Part::Body && self.reader.scroll > 0 {
+                self.reader.scroll -= 1;
+                return Spot {
+                    part: Part::Body,
+                    row: self.reader.scroll,
+                    column: 0,
                 };
-                if down >= geometry.body_rows {
-                    let furthest = lines.saturating_sub(geometry.body_rows);
-                    self.reader.scroll = (self.reader.scroll + 1).min(furthest);
-                    return Spot {
-                        row: (self.reader.scroll + geometry.body_rows)
-                            .saturating_sub(1)
-                            .min(last),
-                        column: END,
-                    };
-                }
-                match self.reader.scroll + down {
-                    line if line > last => Spot {
-                        row: last,
-                        column: END,
-                    },
-                    line => Spot {
-                        row: line,
-                        column: across,
-                    },
-                }
             }
+            let last = geometry.head_rows.saturating_sub(1);
+            let (row, column) = match row.checked_sub(geometry.head_top).map(usize::from) {
+                None => (0, 0),
+                // The blank rows between the two: after the last of them.
+                Some(down) if down > last => (last, END),
+                Some(down) => (down, across),
+            };
+            return Spot {
+                part: Part::Head,
+                row,
+                column,
+            };
         }
+        let last = lines.saturating_sub(1);
+        let down = usize::from(row - geometry.body_top);
+        if down >= geometry.body_rows {
+            let furthest = lines.saturating_sub(geometry.body_rows);
+            self.reader.scroll = (self.reader.scroll + 1).min(furthest);
+            return Spot {
+                part: Part::Body,
+                row: (self.reader.scroll + geometry.body_rows)
+                    .saturating_sub(1)
+                    .min(last),
+                column: END,
+            };
+        }
+        match self.reader.scroll + down {
+            line if line > last => Spot {
+                part: Part::Body,
+                row: last,
+                column: END,
+            },
+            line => Spot {
+                part: Part::Body,
+                row: line,
+                column: across,
+            },
+        }
+    }
+
+    /// Whether the pointer is held where the text should go on moving
+    /// under it: above the text with more of it above, or below it with
+    /// more below. The run loop then says so again and again
+    /// ([`State::drag_on`]), since a pointer held still says nothing.
+    pub fn drag_scrolls(&self, env: &Env) -> bool {
+        let (Some(held), Some(rect)) = (self.held, self.reader_rect(env)) else {
+            return false;
+        };
+        if !held.moved {
+            return false;
+        }
+        let geometry = self.reader_geometry(env, rect);
+        let row = held.last.1;
+        let furthest = self.reader.lines.len().saturating_sub(geometry.body_rows);
+        if row < geometry.body_top {
+            held.anchor.part == Part::Body && self.reader.scroll > 0
+        } else {
+            usize::from(row - geometry.body_top) >= geometry.body_rows
+                && self.reader.scroll < furthest
+        }
+    }
+
+    /// The pointer is still held where it was: the text moves one more
+    /// line under it, and the selection with it.
+    pub(super) fn drag_on(&mut self, env: &Env) -> bool {
+        let Some(held) = self.held else {
+            return false;
+        };
+        if !self.drag_scrolls(env) {
+            return false;
+        }
+        self.drag_in_reader(env, held.last.0, held.last.1);
+        true
     }
 
     /// The main button went down in the reader, on the message. A press
@@ -484,6 +555,8 @@ impl State {
     pub(super) fn press_in_reader(&mut self, env: &Env, rect: Rect, column: u16, row: u16) {
         self.held = None;
         self.reader.selection = None;
+        // The mouse has the selection now, and the cursor is put away.
+        self.reader.caret = None;
         let geometry = self.reader_geometry(env, rect);
         let in_head =
             row >= geometry.head_top && usize::from(row - geometry.head_top) < geometry.head_rows;
@@ -514,10 +587,10 @@ impl State {
         });
         if times == 1 {
             self.held = Some(Held {
-                part,
                 anchor: spot,
                 at: (column, row),
                 moved: false,
+                last: (column, row),
             });
             return;
         }
@@ -539,14 +612,13 @@ impl State {
         };
         if let Some((from, to)) = cells {
             self.reader.selection = Some(Selection::Some {
-                part,
                 anchor: Spot {
-                    row: spot.row,
                     column: from,
+                    ..spot
                 },
                 head: Spot {
-                    row: spot.row,
                     column: to.saturating_sub(1),
+                    ..spot
                 },
             });
         }
@@ -562,14 +634,14 @@ impl State {
             return;
         }
         let geometry = self.reader_geometry(env, rect);
-        let head = self.spot(&geometry, held.part, column, row);
+        let head = self.spot(&geometry, held.anchor.part, column, row);
         self.reader.selection = Some(Selection::Some {
-            part: held.part,
             anchor: held.anchor,
             head,
         });
         self.held = Some(Held {
             moved: true,
+            last: (column, row),
             ..held
         });
         // It has been dragged, so it is not half of a double click.
@@ -585,7 +657,7 @@ impl State {
         let Some(held) = self.held.take() else {
             return;
         };
-        if held.moved || held.part != Part::Body {
+        if held.moved || held.anchor.part != Part::Body {
             return;
         }
         let Some(line) = self.reader.lines.get(held.anchor.row) else {
@@ -622,15 +694,39 @@ mod tests {
 
     fn some(part: Part, anchor: (usize, usize), head: (usize, usize)) -> Selection {
         Selection::Some {
-            part,
             anchor: Spot {
+                part,
                 row: anchor.0,
                 column: anchor.1,
             },
             head: Spot {
+                part,
                 row: head.0,
                 column: head.1,
             },
+        }
+    }
+
+    #[test]
+    fn a_selection_from_the_fields_into_the_text_takes_both_from_where_it_began() {
+        let spot = |part, row, column| Spot { part, row, column };
+        for selection in [
+            Selection::Some {
+                anchor: spot(Part::Head, 3, 9),
+                head: spot(Part::Body, 2, 4),
+            },
+            Selection::Some {
+                anchor: spot(Part::Body, 2, 4),
+                head: spot(Part::Head, 3, 9),
+            },
+        ] {
+            assert_eq!(selection.columns(Part::Head, 2), None);
+            assert_eq!(selection.columns(Part::Head, 3), Some((9, END)));
+            assert_eq!(selection.columns(Part::Head, 4), Some((0, END)));
+            // The text from its first line, down to where it was taken.
+            assert_eq!(selection.columns(Part::Body, 0), Some((0, END)));
+            assert_eq!(selection.columns(Part::Body, 2), Some((0, 5)));
+            assert_eq!(selection.columns(Part::Body, 3), None);
         }
     }
 

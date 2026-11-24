@@ -8,7 +8,7 @@ use ratatui::widgets::Padding;
 
 use super::{ImagePlacement, LinkPlacement, pane_block, placeholder};
 use crate::layout;
-use crate::state::{Body, Env, HeadRow, LABEL_WIDTH, Pane, Part, Showing, State};
+use crate::state::{Body, Env, HeadRow, LABEL_WIDTH, Pane, Part, Selection, Showing, State};
 use crate::text;
 use crate::theme::Styles;
 
@@ -87,6 +87,16 @@ pub fn render(
         let to = to.min(words).min(width);
         if from < to {
             let rect = Rect::new(inner.x + from as u16, y, (to - from) as u16, 1);
+            frame.buffer_mut().set_style(rect, styles.selected(true));
+        }
+        // The cursor that selects with the keys is drawn wherever it is:
+        // on a row with no words too, where nothing else would show it.
+        if let (Some(_), Some(Selection::Some { head, .. })) = (state.reader.caret, selection)
+            && (head.part, head.row) == (part, row)
+            && width > 0
+        {
+            let at = head.column.min(width - 1);
+            let rect = Rect::new(inner.x + at as u16, y, 1, 1);
             frame.buffer_mut().set_style(rect, styles.selected(true));
         }
     };

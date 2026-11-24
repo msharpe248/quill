@@ -372,6 +372,7 @@ const VIM: PresetTable = &[
     // menu item that is switched off still takes its key.
     (CommandId::MessageSave, &["cmd-S", "ctrl-s"]),
     (CommandId::MessagePutBack, &["P"]),
+    (CommandId::TextSelect, &["v"]),
     (CommandId::FolderCreate, &["+"]),
     (CommandId::FolderRename, &["R"]),
     (CommandId::FolderRemove, &["_"]),
@@ -475,6 +476,7 @@ const MUTT: PresetTable = &[
     // menu item that is switched off still takes its key.
     (CommandId::MessageSave, &["cmd-S", "ctrl-s"]),
     (CommandId::MessagePutBack, &["P"]),
+    (CommandId::TextSelect, &["V"]),
     (CommandId::FolderCreate, &["+"]),
     (CommandId::FolderRename, &["R"]),
     (CommandId::FolderRemove, &["_"]),

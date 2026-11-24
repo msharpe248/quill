@@ -19,10 +19,66 @@ use html2text::render::{TaggedLine, TextDecorator};
 use crate::disguise::{self, Disguise};
 use crate::{clean, guard, plain};
 
+/// The text of `lines` as it was written, a paragraph to a line: lines
+/// that end only because the pane was no wider are joined to the ones
+/// that carry them on. Each line is given through `taken`, which says
+/// what of it is wanted (all of it, or the part that is selected) and
+/// whether that reaches the line's end; a line not taken to its end, or
+/// carried on by one not taken from its start, is left a line of its own.
+pub fn joined<'a>(
+    lines: impl IntoIterator<Item = (&'a Line, std::borrow::Cow<'a, str>, bool, bool)>,
+) -> String {
+    let mut out = String::new();
+    // How the line before ended, when it was taken to its end.
+    let mut before: Option<Wrapped> = None;
+    for (line, taken, from_start, to_end) in lines {
+        match before {
+            None => out.push_str(&taken),
+            Some(Wrapped::No) => {
+                out.push('\n');
+                out.push_str(&taken);
+            }
+            Some(_) if !from_start => {
+                out.push('\n');
+                out.push_str(&taken);
+            }
+            Some(wrapped) => {
+                // Without the quote marks and the indentation every row
+                // of a wrapped line is given again.
+                let whole = line.text();
+                let skipped = whole.len() - line.carried_on().len();
+                let rest = taken.get(skipped.min(taken.len())..).unwrap_or(&taken);
+                if wrapped == Wrapped::AtSpace {
+                    out.push(' ');
+                }
+                out.push_str(rest);
+            }
+        }
+        before = Some(if to_end { line.wrapped } else { Wrapped::No });
+    }
+    out
+}
+
 /// One line of a rendered message.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Line {
     pub spans: Vec<Span>,
+    /// Whether the line ends where it does only because the pane is no
+    /// wider, with the line after it carrying on the same sentence. Text
+    /// copied out of the message is put back together by it.
+    pub wrapped: Wrapped,
+}
+
+/// Why a line ends where it does.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Wrapped {
+    /// Because the writer ended it there, or nothing follows.
+    #[default]
+    No,
+    /// Between two words: the next word did not fit.
+    AtSpace,
+    /// In the middle of a word too long for a line.
+    InWord,
 }
 
 /// A run of text drawn one way.
@@ -74,7 +130,21 @@ impl Line {
                 style: Style::default(),
                 link: None,
             }],
+            wrapped: Wrapped::No,
         }
+    }
+
+    /// What the line says once its place in a quote and its indentation
+    /// are set aside: what a line it carries on from is joined to.
+    pub fn carried_on(&self) -> String {
+        let text = self.text();
+        let quoted = self.spans.first().is_some_and(|span| span.style.quote > 0);
+        let rest = if quoted {
+            text.trim_start_matches(['>', ' '])
+        } else {
+            text.trim_start()
+        };
+        rest.to_owned()
     }
 
     /// The line without its styling.
@@ -483,6 +553,7 @@ fn assemble(tagged: &[TaggedLine<Vec<Mark>>], urls: &[String], width: usize) -> 
     while lines.last().is_some_and(Line::is_blank) {
         lines.pop();
     }
+    mark_wrapped(&mut lines, width);
 
     if !lines.is_empty() && !numbering.numbered.is_empty() {
         let aside = Style {
@@ -610,6 +681,62 @@ fn warn(
         line.push(&format!("{indent}{row}"), loud, Some(number - 1));
         lines.push(line);
     }
+}
+
+/// Says of each line whether it ends only because the next word did not
+/// fit. The layout does not say, so it is worked out: a line was wrapped
+/// when the first word of the line after it would not have fitted on it.
+///
+/// Left as the writer's own: a blank line or one beside it, code, a line
+/// drawn with rules (a table), a change of quote depth, and a line that
+/// begins a list item.
+fn mark_wrapped(lines: &mut [Line], width: usize) {
+    let drawn = |line: &Line| {
+        line.spans.iter().any(|span| {
+            span.style.code
+                || span
+                    .text
+                    .chars()
+                    .any(|c| ('\u{2500}'..='\u{257F}').contains(&c))
+        })
+    };
+    let depth = |line: &Line| line.spans.first().map_or(0, |span| span.style.quote);
+    for at in 0..lines.len().saturating_sub(1) {
+        let (line, next) = (&lines[at], &lines[at + 1]);
+        if line.is_blank() || next.is_blank() || drawn(line) || drawn(next) {
+            continue;
+        }
+        if depth(line) != depth(next) {
+            continue;
+        }
+        let carried = next.carried_on();
+        let Some(word) = carried.split(' ').next().filter(|word| !word.is_empty()) else {
+            continue;
+        };
+        if begins_item(word) {
+            continue;
+        }
+        let taken = crate::width::of_str(&line.text());
+        if taken + 1 + crate::width::of_str(word) <= width {
+            continue;
+        }
+        // One word the whole width of the line has the rest of it below.
+        let one_word = taken >= width && !line.carried_on().contains(' ');
+        lines[at].wrapped = if one_word {
+            Wrapped::InWord
+        } else {
+            Wrapped::AtSpace
+        };
+    }
+}
+
+/// Whether a line's first word is the mark of a list item: a bullet, or
+/// a number with a full stop.
+fn begins_item(word: &str) -> bool {
+    matches!(word, "*" | "-" | "+" | "\u{2022}" | "\u{25E6}" | "\u{25AA}")
+        || word
+            .strip_suffix('.')
+            .is_some_and(|digits| !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()))
 }
 
 /// Gives every span of a quoted line its depth. A line of code that
@@ -1284,5 +1411,97 @@ mod tests {
             to_text("<p>Hello <b>Robin</b>.</p><p>Bye.</p>").as_deref(),
             Some("Hello Robin.\n\nBye.\n")
         );
+    }
+
+    /// The lines of a message put back together, all of each.
+    fn whole(rendered: &Rendered) -> String {
+        joined(
+            rendered
+                .lines
+                .iter()
+                .map(|line| (line, line.text().into(), true, true)),
+        )
+    }
+
+    #[test]
+    fn lines_that_were_only_wrapped_are_put_back_together() {
+        let html = "<p>The quarterly figures are attached and the margin target holds for \
+                    every region we report on.</p><p>Second paragraph, short.</p>";
+        let rendered = render(html, 30).unwrap();
+        assert!(rendered.lines.len() > 4, "{:?}", text(html, 30));
+        assert_eq!(
+            whole(&rendered),
+            "The quarterly figures are attached and the margin target holds for every \
+             region we report on.\n\nSecond paragraph, short."
+        );
+    }
+
+    #[test]
+    fn lines_the_writer_ended_are_left_ended() {
+        // An address: each line ends where it was ended, however short.
+        let html = "<p>Robin Vale<br>14 Harbour Road<br>Portsmouth</p>";
+        let rendered = render(html, 30).unwrap();
+        assert_eq!(whole(&rendered), "Robin Vale\n14 Harbour Road\nPortsmouth");
+        assert!(
+            rendered
+                .lines
+                .iter()
+                .all(|line| line.wrapped == Wrapped::No)
+        );
+
+        // A list: an item that wraps is one item, and the next is its own.
+        let html = "<ul><li>Bring the long extension lead from the hall cupboard upstairs</li>\
+                    <li>And the tape</li></ul>";
+        let rendered = render(html, 30).unwrap();
+        assert_eq!(
+            whole(&rendered),
+            "* Bring the long extension lead from the hall cupboard upstairs\n* And the tape"
+        );
+
+        // Code is never joined.
+        let html =
+            "<pre>let total = first_value_of_the_run + second;\nprintln!(\"{total}\");</pre>";
+        let rendered = render(html, 30).unwrap();
+        assert!(
+            rendered
+                .lines
+                .iter()
+                .all(|line| line.wrapped == Wrapped::No)
+        );
+    }
+
+    #[test]
+    fn a_quote_that_wraps_is_put_back_together_under_one_mark() {
+        let html = "<blockquote>The quarterly figures are attached and the margin target \
+                    holds.</blockquote><p>Thanks.</p>";
+        let rendered = render(html, 30).unwrap();
+        assert_eq!(
+            whole(&rendered),
+            "> The quarterly figures are attached and the margin target holds.\n\nThanks."
+        );
+    }
+
+    #[test]
+    fn a_line_not_taken_to_its_end_is_not_joined_to_the_next() {
+        let html = "<p>alpha beta gamma delta epsilon zeta eta theta</p>";
+        let rendered = render(html, 20).unwrap();
+        let lines = &rendered.lines;
+        assert_eq!(
+            text(html, 20),
+            ["alpha beta gamma", "delta epsilon zeta", "eta theta"]
+        );
+        // From the middle of the first line to the middle of the last.
+        let taken = joined([
+            (&lines[0], "beta gamma".into(), false, true),
+            (&lines[1], lines[1].text().into(), true, true),
+            (&lines[2], "eta".into(), true, false),
+        ]);
+        assert_eq!(taken, "beta gamma delta epsilon zeta eta");
+        // The first line cut short: the second is not its continuation.
+        let cut = joined([
+            (&lines[0], "alpha".into(), true, false),
+            (&lines[1], lines[1].text().into(), true, true),
+        ]);
+        assert_eq!(cut, "alpha\ndelta epsilon zeta");
     }
 }

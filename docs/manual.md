@@ -218,6 +218,7 @@ Press `?` at any time for the keys that apply where you are, and `K` (or `f1`) f
 | `+` | Make a folder, on the server or on this Mac | `_` | In the accounts pane: delete the folder (a server's: its mail goes to the Trash first; this Mac's: only when empty) |
 | `R` | In the accounts pane: rename the folder | | |
 | `W` | In the web pane: mail dark while Quill is dark, or as it was sent (in the app) | `ctrl-y` | Copy what is selected in the message, or with nothing selected the whole message as text |
+| `v` | In the message: a cursor to select its text with the keys | | |
 | `ctrl-s` | Save the message as a file: text, a web page, or the message itself | | |
 
 `tab` keeps to the two panes of everyday use: from the list it goes to the message and from the message back to the list. `shift-tab` goes to the accounts from either, and from the accounts `tab` goes to the list and `shift-tab` to the message. (With the web reading pane on there is no message pane in the terminal to go to: `tab` does nothing from the list, and the keys for the message work from there.)
@@ -448,7 +449,20 @@ Files are written to a private folder that is removed when Quill quits, under na
 
 ## Copying from a message, and saving one as a file
 
-In the text reader, drag over the words of a message to select them. A double click selects a word and a triple click the line. Dragging past the top or the foot of the pane brings more of the text into it, and what is selected stays with its words when the text is scrolled. The fields above the text (who it is from, the subject and the rest) can be selected the same way; a selection is of the fields or of the text, not both at once. A click anywhere in the message lets the selection go, and so does anything that lays the text out again: another message, a pane made wider or narrower, the other version of the message.
+In the text reader, drag over the words of a message to select them. A double click selects a word and a triple click the line. Dragging past the top or the foot of the pane brings more of the text into it, and goes on doing so for as long as the pointer is held there; what is selected stays with its words when the text is scrolled. The fields above the text (who it is from, the subject and the rest) can be selected the same way, and a selection may begin in the fields and end in the text: it then takes in the text from its first line. A click anywhere in the message lets the selection go, and so does anything that lays the text out again: another message, a pane made wider or narrower, the other version of the message.
+
+**With the keys.** `v` (`V` with the Mutt keys; Message > Select Text with the Keys) puts a cursor on the first line of the text that is on show. Move it to where the selection is to begin and press `v` again; from then on the cursor takes the other end of the selection with it. `enter` copies what is selected and puts the cursor away; `esc` puts it away with nothing copied; `v` a third time lets go of the selection and leaves the cursor.
+
+| Key | Moves the cursor |
+|---|---|
+| `h` `l`, `←` `→` | A cell left or right, on to the next row at the end of one |
+| `j` `k`, `↓` `↑` | A row down or up; up from the first line of the text goes into the fields |
+| `w` `b` | To the start of the next word, or of this one and then the one before |
+| `0` `$`, `home` `end` | To the start or the end of the row |
+| `g` `G` | To the first or the last line of the text |
+| `space`, `pagedown`, `pageup` | A page down or up |
+
+An arrow with `shift` moves as it does without. The text scrolls to keep the cursor on show.
 
 A link is opened by a click, which is the button let go where it went down. A drag that begins on a link selects its words and opens nothing.
 
@@ -459,7 +473,7 @@ A link is opened by a click, which is the button let go where it went down. A dr
 | `ctrl-y` (`cmd-shift-c` in the app, and Message > Copy the Message's Text) | Copy what is selected, or with nothing selected the whole message. This is the key for a terminal, where `cmd` never arrives |
 | `ctrl-s` (`cmd-shift-s` in the app, and Message > Save As a File…) | Save the message as a file |
 
-What is copied is what is drawn, a row of the pane to a line. The whole message is copied with its fields in full, however little of them the pane had room for, then its text as the pane has it. In a terminal the copy goes to the clipboard through the terminal (OSC 52), which the terminals Quill is meant for allow. With the web reading pane on, the page is selected and copied the Mac's own way, and `ctrl-y` copies the whole message as text.
+What is copied is what was written, not how the pane happened to wrap it: a paragraph that the pane shows as five rows is copied as one line, a quote that wrapped is copied under one `>`, and a line the writer ended (an address, a list item, a line of code) stays a line. For a message's HTML this is worked out from the layout, and can be wrong where a line the writer ended happens to fill the pane. The whole message is copied with its fields in full, however little of them the pane had room for, then its text. In a terminal the copy goes to the clipboard through the terminal (OSC 52), which the terminals Quill is meant for allow. With the web reading pane on, the page is selected and copied the Mac's own way, and `ctrl-y` copies the whole message as text.
 
 Saving lists three kinds of file to choose from, with `↑`, `↓` and `enter`, or by typing a few letters of one:
 
@@ -1009,6 +1023,7 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `message.archive`, `message.delete`, `message.move` | File the message, or every selected one |
 | `message.copy` | Put a second copy of the message, or of every selected one, into another folder of its account |
 | `message.copy_text` | Copy what is selected in the message being read, or with nothing selected the whole message as text |
+| `text.select` | Put a cursor on the text of the message being read, to select with the keys; again, to begin the selection where the cursor is |
 | `message.save` | Save the message as a file: text, a web page, or the message itself |
 | `message.put_back` | In a Trash folder, put the messages chosen back where they were deleted from; anywhere else, the one deleted last |
 | `folder.create` | Make a folder for the account chosen: on its server, or on this Mac |
@@ -1053,7 +1068,7 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 
 ### Disk space
 
-Messages you have opened, and those of the last 30 days, are kept on this Mac so they read offline. The messages around where you are in a list are downloaded too, a moment after the cursor comes to rest, so that older mail opens as quickly as you move through it. A message that is in several folders of an account (Gmail keeps everything in All Mail as well) is downloaded once. They may take up to 5 GB; past that the oldest copies are let go and fetched again when you next open them. The list of your mail and its text for searching are always kept.
+Messages you have opened, and those of the last 30 days, are kept on this Mac so they read offline. The messages around where you are in a list are downloaded too, a moment after the cursor comes to rest, so that older mail opens as quickly as you move through it. On an IMAP account they, and any message you open, come down a second connection, so they do not wait for whatever the sync is in the middle of. A message that is in several folders of an account (Gmail keeps everything in All Mail as well) is downloaded once. They may take up to 5 GB; past that the oldest copies are let go and fetched again when you next open them. The list of your mail and its text for searching are always kept.
 
 Opening a message whose copy was let go shows its text at once, with a line above it saying the rest is being fetched; its layout, pictures, attachments and any invitation appear when the copy arrives. If it cannot be fetched (no connection, say), the text stays and the line says why. Opening the message again tries again.
 

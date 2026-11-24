@@ -59,7 +59,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
             .compose
             .as_ref()
             .is_some_and(|compose| compose.away.is_some());
-    // The question about a folder says what its answer does.
+    // The question about a folder says what its answer does, and the
+    // cursor that selects what its key does now.
     let about_folder: Vec<command::Hint>;
     let offered = if in_vim {
         command::hints_in_vim()
@@ -70,6 +71,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         &[]
     } else if state.saving_as() {
         command::hints_saving_as()
+    } else if state.context() == Context::Select {
+        about_folder = command::hints_selecting(state.selection_begun());
+        &about_folder
     } else if let (Context::NewFolder, Some(prompt)) = (state.context(), &state.new_folder) {
         about_folder = command::hints_folder(match prompt.ask {
             FolderAsk::New => "make it",

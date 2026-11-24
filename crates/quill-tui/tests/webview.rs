@@ -294,18 +294,32 @@ fn there_is_one_command_for_the_browser_and_none_for_a_page_beside_the_reader() 
     let registry = Registry::builtin();
     assert!(registry.by_name("message.view_html").is_none());
     assert!(registry.by_name("message.open_in_browser").is_some());
-    // The keys it had are nobody's, in either set.
-    for (preset, key) in [(KeymapPreset::Vim, "v"), (KeymapPreset::Mutt, "H")] {
+    // The keys it had show no page any more. `H` is nobody's; `v` has
+    // since become the key that puts a cursor on the text to select with,
+    // which is nothing to do with a page.
+    for (preset, key, now) in [
+        (KeymapPreset::Vim, "v", Some("text.select")),
+        (KeymapPreset::Mutt, "H", None),
+    ] {
         let keymap = Keymap::preset(preset);
-        let bound = registry.specs().iter().any(|spec| {
-            keymap
-                .keys_for(spec.id)
-                .iter()
-                .any(|sequence| sequence.to_string() == key)
-        });
-        assert!(!bound, "{key} is still bound in {preset:?}");
+        let bound: Vec<&str> = registry
+            .specs()
+            .iter()
+            .filter(|spec| {
+                keymap
+                    .keys_for(spec.id)
+                    .iter()
+                    .any(|sequence| sequence.to_string() == key)
+            })
+            .map(|spec| spec.name)
+            .collect();
+        assert_eq!(
+            bound,
+            now.into_iter().collect::<Vec<_>>(),
+            "{key} in {preset:?}"
+        );
     }
-    // And pressing it where it used to work does nothing.
+    // And pressing it where it used to work shows no page.
     let mut harness = newsletter();
     harness.keys("v");
     assert!(harness.host_requests.is_empty());

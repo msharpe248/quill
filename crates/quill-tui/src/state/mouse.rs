@@ -616,6 +616,7 @@ impl State {
         // The line naming the files opens their list.
         if !self.reader.files().is_empty() && mouse.row == top + fields - 1 {
             self.reader.selection = None;
+            self.reader.caret = None;
             self.run(env, CommandId::MessageAttachments, out);
             return;
         }

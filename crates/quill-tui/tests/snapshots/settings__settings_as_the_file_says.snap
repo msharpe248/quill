@@ -129,6 +129,7 @@ expression: outline(&shown)
      row "Copy what is selected": cmd-c [change]
      row "Cut what is selected in the message being written": cmd-x [change]
      row "Select all of the message": cmd-a [change]
+     row "Select text with the keys": V [change]
      row "Undo the last move, deletion or send": U [change]
      row "Add an account": A [change]
      row "Sign in to an account": S [change]
