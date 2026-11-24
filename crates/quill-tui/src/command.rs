@@ -23,7 +23,8 @@ pub enum Context {
     /// message is sent.
     When,
     /// Naming a folder to make, and saying where: on the account's
-    /// server, or on this Mac.
+    /// server, or on this Mac. Also naming one again, and being asked
+    /// before a server's folder is deleted.
     NewFolder,
     /// Writing a rule, started from a message.
     NewRule,
@@ -70,7 +71,7 @@ impl Context {
             Self::Certificate => "Certificate",
             Self::SignIn => "Signing in",
             Self::When => "Choosing a time",
-            Self::NewFolder => "New folder",
+            Self::NewFolder => "A folder made, renamed or deleted",
             Self::NewRule => "New rule",
             Self::RecordKeys => "Changing a key",
             Self::EditTheme => "Changing a theme",
@@ -246,6 +247,7 @@ pub enum CommandId {
     AccountEdit,
     AccountLetter,
     FolderCreate,
+    FolderRename,
     FolderRemove,
     MailboxSync,
     AgentsStop,
@@ -697,9 +699,17 @@ impl Registry {
                     PANES,
                 ),
                 spec(
+                    FolderRename,
+                    "folder.rename",
+                    "Rename this folder\u{2026}",
+                    General,
+                    Some(Menu::Mailbox),
+                    &[Context::Sidebar],
+                ),
+                spec(
                     FolderRemove,
                     "folder.remove",
-                    "Remove this empty folder from this Mac",
+                    "Delete this folder\u{2026}",
                     General,
                     Some(Menu::Mailbox),
                     &[Context::Sidebar],
@@ -1206,8 +1216,9 @@ pub fn hints(context: Context) -> &'static [Hint] {
         // One or the other, and only on an account or one of its folders.
         hint_while_enabled(&[SidebarOpen], "show folders"),
         hint_while_enabled(&[SidebarClose], "hide folders"),
-        // Only on a folder that is on this Mac and nowhere else.
-        hint_while_enabled(&[FolderRemove], "remove folder"),
+        // Only on a folder the user made, on a server or on this Mac.
+        hint_while_enabled(&[FolderRename], "rename"),
+        hint_while_enabled(&[FolderRemove], "delete folder"),
         hint(&[FocusNext], "list"),
         hint(&[ViewZoom], "zoom"),
         hint(&[HelpToggle], "help"),
@@ -1345,6 +1356,25 @@ pub fn hints(context: Context) -> &'static [Hint] {
         Context::Reader => READER,
         Context::Help => HELP,
     }
+}
+
+/// The hints the status bar shows under the question about a folder:
+/// what `answer` says the key that answers does (`make it`, `rename`,
+/// `delete`).
+pub fn hints_folder(answer: &'static str) -> Vec<Hint> {
+    use CommandId::*;
+    vec![
+        Hint {
+            commands: &[NavOpen],
+            label: answer,
+            only_enabled: false,
+        },
+        Hint {
+            commands: &[NavBack],
+            label: "cancel",
+            only_enabled: false,
+        },
+    ]
 }
 
 /// The hints the status bar shows over the kinds of file a message can be

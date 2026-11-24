@@ -8,7 +8,7 @@ use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::path::PathBuf;
 
 use jiff::tz::TimeZone;
-use quill_core::types::{FolderRole, LocalAccountId, LocalFolderId, LocalMessageId};
+use quill_core::types::{FolderMail, FolderRole, LocalAccountId, LocalFolderId, LocalMessageId};
 use quill_mime::html::Line;
 use quill_mime::{BodyFormat, ReplyPosition};
 use quill_store::{AccountRow, DraftContent, DraftId, FolderRow, Mailbox, MessageRow};
@@ -42,7 +42,9 @@ mod sheet;
 mod themes;
 use quill_host::bridge::{FormUsed, Number, SettingsUsed};
 
-pub use self::folders::{FolderPrompt, ON_THE_SERVER, ON_THIS_MAC};
+pub use self::folders::{
+    FolderAsk, FolderLeaving, FolderPrompt, INSIDE_ANOTHER, LeavingMail, ON_THE_SERVER, ON_THIS_MAC,
+};
 pub use self::keys::{KeysAsk, KeysHow, KeysPrompt};
 pub use self::letter::LetterPrompt;
 pub use self::remove::{REMOVING, RemovePrompt, YES as REMOVE_YES};
@@ -649,6 +651,12 @@ pub enum SidebarEntry {
         /// Made on this Mac: no server has it. It is listed under the
         /// heading that says so.
         local: bool,
+        /// How many folders it is inside, of those listed above it: it is
+        /// drawn that many steps in.
+        depth: u8,
+        /// Its name where it is drawn: what is left of `name` after the
+        /// name of the folder it is inside.
+        label: String,
     },
     /// The heading, within an account, over its folders that are only on
     /// this Mac. The cursor skips it.
@@ -2266,11 +2274,8 @@ impl State {
             }
             CommandId::MessagePutBack => self.put_back(out),
             CommandId::FolderCreate => self.ask_new_folder(env),
-            CommandId::FolderRemove => {
-                if let Some(folder) = self.chosen_local_folder() {
-                    out.data.push(DataRequest::RemoveLocalFolder(folder));
-                }
-            }
+            CommandId::FolderRename => self.ask_rename_folder(env),
+            CommandId::FolderRemove => self.delete_folder(env, out),
             CommandId::NavOpen if context == Context::NewFolder => {
                 self.answer_new_folder(env, out);
             }
@@ -2857,7 +2862,7 @@ impl State {
                 .is_some_and(|row| DraftId::from_message_id(row.id).is_none()),
             CommandId::MessagePutBack => self.can_put_back(),
             CommandId::FolderCreate => self.can_make_folder(env),
-            CommandId::FolderRemove => self.chosen_local_folder().is_some(),
+            CommandId::FolderRename | CommandId::FolderRemove => self.can_change_folder(env),
             CommandId::NavOpen if context == Context::Unsubscribe => true,
             CommandId::NavOpen if context == Context::Templates => self
                 .templates
@@ -5744,6 +5749,32 @@ impl State {
                     text::sanitize_line(&account)
                 )));
             }
+            SyncEvent::FolderRenamed { account, from, to } => {
+                self.notices.push_back(Notice::info(format!(
+                    "Renamed {} to {} on {}'s server.",
+                    text::sanitize_line(&from),
+                    text::sanitize_line(&to),
+                    text::sanitize_line(&account)
+                )));
+            }
+            SyncEvent::FolderDeleted {
+                account,
+                name,
+                mail,
+                messages,
+            } => {
+                let mail = match (mail, messages) {
+                    (_, 0) | (FolderMail::None, _) => "",
+                    (FolderMail::Trashed, 1) => " The message that was in it is in the trash.",
+                    (FolderMail::Trashed, _) => " The mail that was in it is in the trash.",
+                    (FolderMail::Kept, _) => " The mail that was in it is still in All Mail.",
+                };
+                self.notices.push_back(Notice::info(format!(
+                    "Deleted {} from {}'s server.{mail}",
+                    text::sanitize_line(&name),
+                    text::sanitize_line(&account)
+                )));
+            }
             SyncEvent::Arrived { messages, .. } => {
                 if env.notifications {
                     out.data.push(DataRequest::Announce(messages));
@@ -6097,6 +6128,7 @@ impl State {
                 }
             }
             DataEvent::StoreChanged => self.reload(env, out),
+            DataEvent::FolderLeaving(leaving) => self.on_folder_leaving(&leaving),
             // The change is written down: the engine can take it from there.
             DataEvent::Queued => out.sync.push(SyncRequest::Queue),
             DataEvent::Flash { text, undoable } => self.flash = Some((text, undoable)),
@@ -6764,17 +6796,85 @@ fn sidebar_entries(
             if local && of_kind.peek().is_some() {
                 entries.push(SidebarEntry::OnThisMac);
             }
-            entries.extend(of_kind.map(|folder| SidebarEntry::Folder {
-                id: folder.id,
-                account: index,
-                name: text::sanitize_line(&folder.name),
-                role: folder.role,
-                unread: folder.unread,
-                local,
+            let of_kind: Vec<&FolderRow> = of_kind.collect();
+            entries.extend(nested(&of_kind).into_iter().map(|(folder, depth, label)| {
+                SidebarEntry::Folder {
+                    id: folder.id,
+                    account: index,
+                    name: text::sanitize_line(&folder.name),
+                    role: folder.role,
+                    unread: folder.unread,
+                    local,
+                    depth,
+                    label: text::sanitize_line(label),
+                }
             }));
         }
     }
     entries
+}
+
+/// The deepest a folder is drawn inside others. One deeper is drawn at
+/// this depth, under its whole name from there.
+const DEEPEST_FOLDER: u8 = 6;
+
+/// The folders of one account that are in one place (its server, or this
+/// Mac), arranged so that a folder comes under the one its name says it is
+/// inside (`Projects/2026` under `Projects`), with how deep it is and
+/// what is left of its name there. Otherwise the order is the one given.
+///
+/// A folder is inside the one with the longest name that its own starts
+/// with, before a `/`: where the server lists `Projects/2026/May` and no
+/// `Projects/2026`, it is `2026/May` inside `Projects`. One whose name
+/// has a `/` and nothing listed to be inside of stays where it was, under
+/// its whole name.
+fn nested<'a>(folders: &[&'a FolderRow]) -> Vec<(&'a FolderRow, u8, &'a str)> {
+    let parent: Vec<Option<usize>> = folders
+        .iter()
+        .enumerate()
+        .map(|(at, folder)| {
+            folders
+                .iter()
+                .enumerate()
+                .filter(|(other, outer)| {
+                    *other != at
+                        && folder
+                            .name
+                            .strip_prefix(outer.name.as_str())
+                            .is_some_and(|rest| rest.len() > 1 && rest.starts_with('/'))
+                })
+                .max_by_key(|(_, outer)| outer.name.len())
+                .map(|(other, _)| other)
+        })
+        .collect();
+    let mut arranged = Vec::with_capacity(folders.len());
+    // Depth first, from the folders inside nothing: each with how deep
+    // it is and where its own name starts.
+    let mut waiting: Vec<(usize, u8, usize)> = (0..folders.len())
+        .rev()
+        .filter(|at| parent[*at].is_none())
+        .map(|at| (at, 0, 0))
+        .collect();
+    while let Some((at, depth, from)) = waiting.pop() {
+        let folder = folders[at];
+        arranged.push((
+            folder,
+            depth,
+            folder.name.get(from..).unwrap_or(&folder.name),
+        ));
+        let inside = (0..folders.len())
+            .rev()
+            .filter(|other| parent[*other] == Some(at))
+            .map(|other| {
+                if depth < DEEPEST_FOLDER {
+                    (other, depth + 1, folder.name.len() + 1)
+                } else {
+                    (other, depth, from)
+                }
+            });
+        waiting.extend(inside);
+    }
+    arranged
 }
 
 /// Header text comes from the network. Clean it once, on the way in.

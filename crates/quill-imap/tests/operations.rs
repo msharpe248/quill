@@ -929,3 +929,180 @@ async fn a_folder_is_made_on_the_server_listed_and_ready_to_take_mail() {
         before.len() + 2
     );
 }
+
+fn names(folders: &[quill_core::types::RemoteFolder]) -> Vec<&str> {
+    folders.iter().map(|folder| folder.name.as_str()).collect()
+}
+
+#[tokio::test]
+async fn a_folder_is_made_inside_another() {
+    let Some(server) = Dovecot::start().await else {
+        return;
+    };
+    let user = "inside@example.com";
+    let _other_client = arrange(&server, user).await;
+    let backend = server.backend(TlsMode::Implicit, user);
+
+    // The folder it is inside need not be there first.
+    let made = backend.create_folder("Projects/2026").await.unwrap();
+    assert_eq!(made.name, "Projects/2026");
+    let listed = backend.list_folders().await.unwrap();
+    assert!(names(&listed).contains(&"Projects/2026"), "{listed:?}");
+
+    // And one more beside it, inside the same.
+    let beside = backend.create_folder("Projects / Reçus").await.unwrap();
+    assert_eq!(beside.name, "Projects/Reçus");
+    let invoice = id_of(&listing(&backend, "INBOX").await, "Invoice 114");
+    backend.move_message(&invoice, &beside.id).await.unwrap();
+    assert_eq!(
+        subjects(&listing(&backend, &beside.id.0).await),
+        ["Invoice 114"]
+    );
+
+    // A name with nothing on one side of its slash is refused before the
+    // server is asked.
+    let refused = backend.create_folder("Projects/").await.unwrap_err();
+    assert!(refused.to_string().contains("each side"), "{refused}");
+}
+
+#[tokio::test]
+async fn a_folder_is_renamed_with_what_is_inside_it_and_its_mail_is_found_by_the_new_name() {
+    let Some(server) = Dovecot::start().await else {
+        return;
+    };
+    let user = "rename@example.com";
+    let _other_client = arrange(&server, user).await;
+    let backend = server.backend(TlsMode::Implicit, user);
+    let projects = backend.create_folder("Projects").await.unwrap();
+    let year = backend.create_folder("Projects/2026").await.unwrap();
+    let invoice = id_of(&listing(&backend, "INBOX").await, "Invoice 114");
+    let moved = backend
+        .move_message(&invoice, &year.id)
+        .await
+        .unwrap()
+        .expect("the server says where it went");
+
+    let renamed = backend.rename_folder(&projects.id, "Work").await.unwrap();
+    let mut pairs: Vec<(&str, &str)> = renamed
+        .iter()
+        .map(|renamed| (renamed.from.0.as_str(), renamed.to.name.as_str()))
+        .collect();
+    pairs.sort_unstable();
+    assert_eq!(
+        pairs,
+        [("Projects", "Work"), ("Projects/2026", "Work/2026")]
+    );
+    let listed = backend.list_folders().await.unwrap();
+    let listed = names(&listed);
+    assert!(listed.contains(&"Work") && listed.contains(&"Work/2026"));
+    assert!(!listed.iter().any(|name| name.starts_with("Projects")));
+
+    // The message is the one it was, under its folder's new name.
+    let now = renamed
+        .iter()
+        .find(|renamed| renamed.from == year.id)
+        .unwrap();
+    let there = backend.message_in(&moved, &now.to.id).unwrap();
+    let raw = backend.fetch_raw(&there).await.unwrap();
+    assert!(String::from_utf8_lossy(&raw).contains("Invoice 114"));
+    assert_eq!(
+        id_of(&listing(&backend, &now.to.id.0).await, "Invoice 114"),
+        there
+    );
+
+    // A name that is taken is refused, and nothing is renamed.
+    let taken = backend
+        .rename_folder(&now.to.id, "archive")
+        .await
+        .unwrap_err();
+    assert!(taken.to_string().contains("already a folder"), "{taken}");
+    // The same name again changes nothing, and says so by saying nothing.
+    let same = backend.rename_folder(&now.to.id, "Work/2026").await;
+    assert_eq!(same.unwrap(), []);
+    // The inbox keeps its name, and a folder that is not there has none
+    // to change.
+    assert!(backend.rename_folder(&folder("INBOX"), "In").await.is_err());
+    assert!(matches!(
+        backend.rename_folder(&folder("Nowhere"), "Somewhere").await,
+        Err(Error::NotFound(_))
+    ));
+}
+
+#[tokio::test]
+async fn a_folder_is_deleted_only_once_its_mail_is_in_the_trash() {
+    let Some(server) = Dovecot::start().await else {
+        return;
+    };
+    for (user, hidden) in [
+        ("delete@example.com", &[][..]),
+        ("delete-plainly@example.com", &["MOVE", "UIDPLUS"][..]),
+    ] {
+        arrange(&server, user).await;
+        let (backend, relay) = lesser(&server, user, hidden).await;
+        let receipts = backend.create_folder("Receipts").await.unwrap();
+        let inside = backend.create_folder("Receipts/Old").await.unwrap();
+        for subject in ["Invoice 114", "Message 1"] {
+            let id = id_of(&listing(&backend, "INBOX").await, subject);
+            backend.move_message(&id, &receipts.id).await.unwrap();
+        }
+        let trash = folder("Trash");
+
+        // Not with a folder inside it.
+        let refused = backend
+            .delete_folder(&receipts.id, Some(&trash))
+            .await
+            .unwrap_err();
+        assert!(refused.to_string().contains("folders inside"), "{refused}");
+        // An empty one goes, and there was no mail to speak of.
+        assert_eq!(
+            backend
+                .delete_folder(&inside.id, Some(&trash))
+                .await
+                .unwrap(),
+            quill_core::types::FolderMail::None
+        );
+
+        // Not with mail in it and nowhere for the mail to go.
+        let refused = backend.delete_folder(&receipts.id, None).await.unwrap_err();
+        assert!(refused.to_string().contains("no trash folder"), "{refused}");
+        assert_eq!(listing(&backend, &receipts.id.0).await.len(), 2);
+
+        relay.clear();
+        assert_eq!(
+            backend
+                .delete_folder(&receipts.id, Some(&trash))
+                .await
+                .unwrap(),
+            quill_core::types::FolderMail::Trashed
+        );
+        let commands = relay.commands();
+        assert_eq!(
+            sent(&commands, "UID MOVE 1:* \"Trash\""),
+            hidden.is_empty(),
+            "{commands:?}"
+        );
+        let listed = backend.list_folders().await.unwrap();
+        assert!(!names(&listed).contains(&"Receipts"), "{listed:?}");
+        let mut trashed = listing(&backend, "Trash").await;
+        trashed.sort_by(|a, b| a.headers.subject.cmp(&b.headers.subject));
+        assert_eq!(subjects(&trashed), ["Invoice 114", "Message 1"]);
+        // What was not in the folder is where it was.
+        assert_eq!(listing(&backend, "INBOX").await.len(), 2);
+
+        // Asked again, it is gone already, which is what was wanted.
+        assert_eq!(
+            backend
+                .delete_folder(&receipts.id, Some(&trash))
+                .await
+                .unwrap(),
+            quill_core::types::FolderMail::None
+        );
+        // And the inbox is never deleted.
+        assert!(
+            backend
+                .delete_folder(&folder("INBOX"), Some(&trash))
+                .await
+                .is_err()
+        );
+    }
+}

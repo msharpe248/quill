@@ -324,7 +324,7 @@ fn mail_on_this_mac_is_deleted_from_this_mac_and_an_empty_folder_can_be_taken_aw
             .is_enabled(&harness.env, CommandId::FolderRemove)
     );
     assert!(
-        status(&harness).contains("remove folder"),
+        status(&harness).contains("delete folder"),
         "{}",
         status(&harness)
     );
@@ -587,4 +587,418 @@ fn the_demo_mailbox_has_no_server_so_its_folders_are_made_on_this_mac() {
             .all(|request| !matches!(request, SyncRequest::CreateFolder { .. }))
     );
     assert!(harness.store.folders().unwrap().iter().any(|f| f.local));
+}
+
+/// The mailbox, with folders of the user's own on the server: `Projects`
+/// with two messages and `2026` inside it, and `Projects 2` beside it.
+fn with_projects() -> (Harness, LocalAccountId) {
+    let (mut store, account) = mailbox();
+    let mut folder = |name: &str| {
+        store
+            .upsert_folder(
+                account,
+                &RemoteFolder {
+                    id: FolderId(name.to_owned()),
+                    name: name.to_owned(),
+                    role: FolderRole::Other,
+                },
+            )
+            .unwrap()
+    };
+    let projects = folder("Projects");
+    folder("Projects 2");
+    folder("Projects/2026");
+    folder("Projects/2026/May");
+    filled(
+        &mut store,
+        projects,
+        vec![message("6", "Plan", 30), message("7", "Budget", 20)],
+    );
+    (Harness::over_store(store, 140, 40, true), account)
+}
+
+/// Puts the accounts pane's cursor on the folder called `name`.
+fn go_to(harness: &mut Harness, name: &str) {
+    harness.keys("1 g g");
+    for _ in 0..40 {
+        let sidebar = &harness.state.sidebar;
+        if matches!(&sidebar.entries[sidebar.selected],
+            SidebarEntry::Folder { name: here, .. } if here == name)
+        {
+            return;
+        }
+        harness.keys("j");
+    }
+    panic!("no folder {name} in the accounts pane");
+}
+
+#[test]
+fn a_folder_inside_another_is_drawn_under_it_and_a_step_further_in() {
+    let (mut harness, _) = with_projects();
+    make_local(&mut harness, "Kept");
+    make_local(&mut harness, "Kept/Tax");
+    let rows: Vec<(String, u8, String)> = harness
+        .state
+        .sidebar
+        .entries
+        .iter()
+        .filter_map(|entry| match entry {
+            SidebarEntry::Folder {
+                name, depth, label, ..
+            } => Some((name.clone(), *depth, label.clone())),
+            _ => None,
+        })
+        .collect();
+    let row = |name: &str, depth: u8, label: &str| (name.to_owned(), depth, label.to_owned());
+    assert_eq!(
+        rows,
+        [
+            row("Inbox", 0, "Inbox"),
+            row("Archive", 0, "Archive"),
+            row("Trash", 0, "Trash"),
+            // Under the folder it is inside, before the one that only
+            // sorts between them.
+            row("Projects", 0, "Projects"),
+            row("Projects/2026", 1, "2026"),
+            row("Projects/2026/May", 2, "May"),
+            row("Projects 2", 0, "Projects 2"),
+            // This Mac's folders among themselves.
+            row("Kept", 0, "Kept"),
+            row("Kept/Tax", 1, "Tax"),
+        ]
+    );
+    let screen = harness.screen();
+    let column = |label: &str| {
+        screen
+            .lines()
+            .find_map(|line| {
+                // The accounts pane's part of the row, without its edge,
+                // its cursor and its count.
+                let cell: String = line.chars().skip(1).take(16).collect();
+                (cell.trim() == label).then(|| cell.chars().position(|c| c != ' '))?
+            })
+            .unwrap_or_else(|| panic!("no {label} in\n{screen}"))
+    };
+    assert_eq!(column("2026"), column("Projects 2") + 2);
+    assert_eq!(column("May"), column("2026") + 2);
+    assert_eq!(column("Tax"), column("Kept") + 2);
+    // Wherever else it is named, a folder has its whole name.
+    go_to(&mut harness, "Projects/2026");
+    harness.keys("enter");
+    assert!(screen_has(&harness, "Projects/2026"));
+}
+
+/// What was asked of the engine about folders: not the messages the
+/// reader asked for as the cursor went by.
+fn asked(harness: &Harness) -> Vec<SyncRequest> {
+    harness
+        .sync_requests
+        .iter()
+        .filter(|request| !matches!(request, SyncRequest::FetchBody(_)))
+        .cloned()
+        .collect()
+}
+
+fn screen_has(harness: &Harness, text: &str) -> bool {
+    harness.screen().contains(text)
+}
+
+#[test]
+fn a_folder_on_the_server_is_renamed_by_asking_the_server() {
+    let (mut harness, _) = with_projects();
+    // Not a folder the server keeps for a purpose.
+    go_to(&mut harness, "Trash");
+    assert!(
+        !harness
+            .state
+            .is_enabled(&harness.env, CommandId::FolderRename)
+    );
+    go_to(&mut harness, "Projects");
+    assert!(
+        harness
+            .state
+            .is_enabled(&harness.env, CommandId::FolderRename)
+    );
+    assert!(status(&harness).contains("rename"), "{}", status(&harness));
+
+    harness.keys("R");
+    assert_eq!(harness.state.context(), Context::NewFolder);
+    let screen = harness.screen();
+    assert!(screen.contains("Rename Projects"), "{screen}");
+    assert!(screen.contains("On the server"), "{screen}");
+    assert!(
+        screen.contains("renamed on the account's server"),
+        "{screen}"
+    );
+    assert!(status(&harness).contains("rename"), "{}", status(&harness));
+    // The name it has is there to be changed. A name with nothing on one
+    // side of a slash is refused before anything is asked.
+    harness.type_text("/");
+    harness.keys("enter");
+    assert!(harness.screen().contains("each side of a /"));
+    assert!(asked(&harness).is_empty());
+    harness.keys("backspace");
+    harness.type_text(" 2027");
+    harness.keys("enter");
+    assert_eq!(
+        asked(&harness),
+        [SyncRequest::RenameFolder {
+            folder: folder(&harness, "Projects"),
+            name: "Projects 2027".to_owned(),
+        }]
+    );
+    assert!(harness.state.new_folder.is_none());
+    assert!(
+        status(&harness).contains("Asking the server to rename Projects to Projects 2027"),
+        "{}",
+        status(&harness)
+    );
+
+    // What the engine says is said: done, or why not.
+    harness.act(Action::Sync(SyncEvent::FolderRenamed {
+        account: "Work".to_owned(),
+        from: "Projects".to_owned(),
+        to: "Projects 2027".to_owned(),
+    }));
+    assert!(screen_has(
+        &harness,
+        "Renamed Projects to Projects 2027 on Work's server."
+    ));
+
+    // The name it has, entered again, asks the server for nothing.
+    harness.sync_requests.clear();
+    harness.keys("R enter");
+    assert!(harness.state.new_folder.is_none());
+    assert!(asked(&harness).is_empty());
+    // And `esc` leaves it as it was.
+    harness.keys("R");
+    harness.type_text("x");
+    harness.keys("esc");
+    assert!(harness.state.new_folder.is_none());
+    assert!(asked(&harness).is_empty());
+}
+
+#[test]
+fn a_folder_on_this_mac_is_renamed_here_with_the_folders_inside_it() {
+    let (mut harness, _) = harness();
+    make_local(&mut harness, "Kept");
+    make_local(&mut harness, "Kept/Tax");
+    go_to(&mut harness, "Kept");
+    harness.keys("R");
+    let screen = harness.screen();
+    assert!(screen.contains("Rename Kept"), "{screen}");
+    assert!(screen.contains("On this Mac"), "{screen}");
+    harness.keys("ctrl-u");
+    harness.type_text("Papers");
+    harness.keys("enter");
+    assert!(asked(&harness).is_empty());
+    assert!(
+        status(&harness).contains("Renamed Kept to Papers, on this Mac."),
+        "{}",
+        status(&harness)
+    );
+    let names: Vec<String> = harness
+        .store
+        .folders()
+        .unwrap()
+        .into_iter()
+        .filter(|folder| folder.local)
+        .map(|folder| folder.name)
+        .collect();
+    assert_eq!(names, ["Papers", "Papers/Tax"]);
+    // A name that is taken is said, and nothing is renamed.
+    go_to(&mut harness, "Papers/Tax");
+    harness.keys("R ctrl-u");
+    harness.type_text("papers");
+    harness.keys("enter");
+    assert!(
+        status(&harness).contains("already a folder called papers on this Mac"),
+        "{}",
+        status(&harness)
+    );
+}
+
+#[test]
+fn a_folder_on_the_server_is_deleted_only_after_saying_where_its_mail_goes() {
+    let (mut harness, _) = with_projects();
+    // One with folders inside it is not asked about: why is said.
+    go_to(&mut harness, "Projects");
+    assert!(
+        harness
+            .state
+            .is_enabled(&harness.env, CommandId::FolderRemove)
+    );
+    harness.keys("_");
+    assert!(harness.state.new_folder.is_none());
+    assert!(
+        status(&harness).contains("Projects has folders inside it."),
+        "{}",
+        status(&harness)
+    );
+
+    // An empty one is asked about, and nothing is asked of the server
+    // until the answer.
+    go_to(&mut harness, "Projects/2026/May");
+    harness.keys("_");
+    assert_eq!(harness.state.context(), Context::NewFolder);
+    let screen = harness.screen();
+    assert!(screen.contains("Delete Projects/2026/May?"), "{screen}");
+    assert!(screen.contains("There is no mail in it."), "{screen}");
+    assert!(!screen.contains("Name:"), "{screen}");
+    assert!(status(&harness).contains("delete"), "{}", status(&harness));
+    assert!(asked(&harness).is_empty());
+    // Typing is not an answer, and `esc` keeps the folder.
+    harness.type_text("y");
+    assert!(asked(&harness).is_empty());
+    harness.keys("esc");
+    assert!(harness.state.new_folder.is_none());
+    assert!(asked(&harness).is_empty());
+
+    // One with mail in it says where the mail goes: this account has a
+    // trash folder.
+    let gone = folder(&harness, "Projects/2026");
+    harness.store.forget_folder(gone).unwrap();
+    let gone = folder(&harness, "Projects/2026/May");
+    harness.store.forget_folder(gone).unwrap();
+    harness.act(Action::Data(quill_tui::data::DataEvent::StoreChanged));
+    go_to(&mut harness, "Projects");
+    harness.keys("_");
+    let screen = harness.screen();
+    assert!(screen.contains("Delete Projects?"), "{screen}");
+    assert!(
+        screen.contains("The 2 messages in it are moved to Trash first"),
+        "{screen}"
+    );
+    harness.keys("enter");
+    assert_eq!(
+        asked(&harness),
+        [SyncRequest::DeleteFolder(folder(&harness, "Projects"))]
+    );
+    assert!(
+        status(&harness).contains("Asking the server to delete Projects"),
+        "{}",
+        status(&harness)
+    );
+    harness.act(Action::Sync(SyncEvent::FolderDeleted {
+        account: "Work".to_owned(),
+        name: "Projects".to_owned(),
+        mail: quill_core::types::FolderMail::Trashed,
+        messages: 2,
+    }));
+    assert!(screen_has(
+        &harness,
+        "Deleted Projects from Work's server. The mail that was in it is in the trash."
+    ));
+}
+
+#[test]
+fn what_becomes_of_a_deleted_folders_mail_goes_by_the_kind_of_account() {
+    use quill_tui::state::{FolderLeaving, LeavingMail};
+    let leaving = |messages, inside, mail| FolderLeaving {
+        folder: LocalFolderId(7),
+        account: LocalAccountId(1),
+        name: "Receipts".to_owned(),
+        messages,
+        inside,
+        busy: false,
+        mail,
+    };
+    let trash = || LeavingMail::Trash("Bin".to_owned());
+    assert!(leaving(3, 0, trash()).refusal().is_none());
+    assert!(
+        leaving(3, 0, trash())
+            .becomes()
+            .contains("The 3 messages in it are moved to Bin first")
+    );
+    assert!(
+        leaving(1, 0, LeavingMail::AllMail)
+            .becomes()
+            .contains("The 1 message in it stays in All Mail.")
+    );
+    assert!(
+        leaving(2, 0, LeavingMail::WithFolder)
+            .becomes()
+            .contains("moved into Deleted Items")
+    );
+    assert!(
+        leaving(0, 0, LeavingMail::Nowhere)
+            .becomes()
+            .contains("There is no mail in it.")
+    );
+    // With mail and nowhere for it to go, or folders inside, or changes
+    // still on their way, it is not asked about.
+    let refused = leaving(2, 0, LeavingMail::Nowhere).refusal().unwrap();
+    assert!(refused.contains("no trash folder"), "{refused}");
+    assert!(leaving(0, 1, trash()).refusal().unwrap().contains("inside"));
+    let mut busy = leaving(0, 0, trash());
+    busy.busy = true;
+    assert!(busy.refusal().unwrap().contains("on their way"));
+}
+
+#[test]
+fn in_the_app_renaming_and_deleting_a_folder_are_asked_in_sheets_of_their_own() {
+    let (mut harness, _) = with_projects();
+    harness.env.sheets = true;
+    go_to(&mut harness, "Projects 2");
+    harness.keys("R");
+    let form = harness.state.form(&harness.env).unwrap();
+    assert_eq!(form.step(), "rename_folder");
+    assert_eq!(form.title(), "Rename Projects 2");
+    match form.fields() {
+        [
+            FormField::Text { id, value, .. },
+            FormField::Static { help, .. },
+        ] => {
+            assert_eq!((id.as_str(), value.as_str()), ("name", "Projects 2"));
+            let help = help.as_deref().unwrap();
+            assert!(help.contains("renamed on the account's server"), "{help}");
+            assert!(help.contains("Projects/2026"), "{help}");
+        }
+        other => panic!("{other:?}"),
+    }
+    let titles: Vec<&str> = form.buttons().iter().map(|b| b.title.as_str()).collect();
+    assert_eq!(titles, ["Cancel", "Rename"]);
+    harness.act(Action::FormUsed(
+        FormUsed::new(
+            "rename_folder",
+            Some("confirm"),
+            &[("name", "Projects 3")],
+            &[],
+        )
+        .unwrap(),
+    ));
+    assert_eq!(
+        asked(&harness),
+        [SyncRequest::RenameFolder {
+            folder: folder(&harness, "Projects 2"),
+            name: "Projects 3".to_owned(),
+        }]
+    );
+
+    // Deleting: nothing to type, what happens said under the question,
+    // and no button that `return` presses.
+    harness.sync_requests.clear();
+    harness.keys("_");
+    let form = harness.state.form(&harness.env).unwrap();
+    assert_eq!(form.step(), "delete_folder");
+    assert_eq!(form.title(), "Delete Projects 2?");
+    assert!(form.fields().is_empty());
+    assert!(form.note().unwrap().contains("There is no mail in it."));
+    assert!(
+        form.buttons()
+            .iter()
+            .all(|button| { button.role != Some(quill_host::bridge::FormRole::Default) })
+    );
+    // A press meant for the question before is not this one's answer.
+    harness.act(Action::FormUsed(
+        FormUsed::new("rename_folder", Some("confirm"), &[("name", "x")], &[]).unwrap(),
+    ));
+    assert!(asked(&harness).is_empty());
+    harness.act(Action::FormUsed(
+        FormUsed::new("delete_folder", Some("confirm"), &[], &[]).unwrap(),
+    ));
+    assert_eq!(
+        asked(&harness),
+        [SyncRequest::DeleteFolder(folder(&harness, "Projects 2"))]
+    );
 }

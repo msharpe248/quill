@@ -22,7 +22,7 @@ The same program runs in a terminal of your own, over the same mailbox: `quill t
 
 **All your accounts, one inbox.** Gmail and Google Workspace, Microsoft 365 and Outlook.com, Exchange on your own servers, and any IMAP or POP3 server, side by side or together in a unified inbox. Google and Microsoft accounts sign in at the provider, in your browser; Quill never sees that password.
 
-**Your mail is on your Mac.** Quill keeps a copy of your mail on your own disk, so opening a message and searching years of them are quick, and work with no connection. What you do offline is carried out when you are back. Folders can live "On This Mac" alone, off the server altogether.
+**Your mail is on your Mac.** Quill keeps a copy of your mail on your own disk, so opening a message and searching years of them are quick, and work with no connection. What you do offline is carried out when you are back. Folders are made, renamed and deleted from Quill, one inside another, and can live "On This Mac" alone, off the server altogether.
 
 **Mail as text, or as it was sent.** Read in the terminal, where HTML mail is laid out as clean styled text, or flip to a web reading pane (`w`) that shows the message as its sender made it. Either way remote pictures stay unloaded until you ask, so nobody learns that you opened their mail. Drag over a message's words to copy them, or save the message as text, as a web page or as a `.eml` file any mail program opens.
 

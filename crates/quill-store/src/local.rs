@@ -40,6 +40,27 @@ const TRASHED_KEPT_SECONDS: i64 = 90 * 24 * 60 * 60;
 /// The longest name a folder made here may have, in characters.
 const LONGEST_FOLDER_NAME: usize = 60;
 
+/// Why a folder on this Mac cannot be called `name`, in words for the
+/// user. A `/` in a name puts the folder inside another, so there must be
+/// something on each side of one.
+pub(crate) fn name_problem(name: &str) -> Option<String> {
+    if name.is_empty() {
+        return Some("Give the folder a name.".to_owned());
+    }
+    if name.chars().any(char::is_control) {
+        return Some("A folder's name is one line of text.".to_owned());
+    }
+    if name.chars().count() > LONGEST_FOLDER_NAME {
+        return Some(format!(
+            "A folder's name can be {LONGEST_FOLDER_NAME} characters at most."
+        ));
+    }
+    if name.split('/').any(|part| part.trim().is_empty()) {
+        return Some("A folder's name needs something on each side of a /.".to_owned());
+    }
+    None
+}
+
 impl Store {
     /// Which of `ids` name a message this account already has, in any of
     /// its folders. A server that lists a message again must not make a
@@ -260,16 +281,8 @@ impl Store {
         name: &str,
     ) -> Result<std::result::Result<LocalFolderId, String>> {
         let name = name.trim();
-        if name.is_empty() {
-            return Ok(Err("Give the folder a name.".to_owned()));
-        }
-        if name.chars().any(char::is_control) {
-            return Ok(Err("A folder's name is one line of text.".to_owned()));
-        }
-        if name.chars().count() > LONGEST_FOLDER_NAME {
-            return Ok(Err(format!(
-                "A folder's name can be {LONGEST_FOLDER_NAME} characters at most."
-            )));
+        if let Some(problem) = name_problem(name) {
+            return Ok(Err(problem));
         }
         let taken: bool = self.conn.query_row(
             "SELECT EXISTS (SELECT 1 FROM folders

@@ -22,8 +22,8 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use quill_core::types::{
-    Flags, FolderId, FolderRole, LocalAccountId, LocalFolderId, LocalMessageId, Operation,
-    RemoteEvent, RemoteFolder, RemoteId, RemoteMessage,
+    Flags, FolderId, FolderMail, FolderRole, LocalAccountId, LocalFolderId, LocalMessageId,
+    Operation, RemoteEvent, RemoteFolder, RemoteId, RemoteMessage,
 };
 use quill_core::{Backend, CertificateProblem, Envelope, Error, Sender};
 use quill_store::{BlobStore, Outgoing, QueuedKind, QueuedOperation, Store};
@@ -152,6 +152,20 @@ pub enum SyncEvent {
     /// A folder that was asked for is on the account's server now, and in
     /// the store.
     FolderMade { account: String, name: String },
+    /// A folder has another name on the account's server now, and here.
+    FolderRenamed {
+        account: String,
+        from: String,
+        to: String,
+    },
+    /// A folder is gone from the account's server, and from here. `mail`
+    /// says what became of the `messages` that were in it.
+    FolderDeleted {
+        account: String,
+        name: String,
+        mail: FolderMail,
+        messages: usize,
+    },
     /// Something went wrong that the user should see.
     Problem { account: String, message: String },
     /// The rules did something by themselves: `said` is the line for the
@@ -196,6 +210,12 @@ pub enum SyncRequest {
         account: LocalAccountId,
         name: String,
     },
+    /// Give a server's folder another name. Answered by `FolderRenamed`,
+    /// or by a `Problem` saying why not.
+    RenameFolder { folder: LocalFolderId, name: String },
+    /// Delete a server's folder, its mail going to the trash first.
+    /// Answered by `FolderDeleted`, or by a `Problem` saying why not.
+    DeleteFolder(LocalFolderId),
 }
 
 /// The UI's end of the engine. Dropping it stops the engine.
@@ -451,6 +471,14 @@ async fn serve(engine: Arc<Engine>, mut queue: UnboundedReceiver<SyncRequest>) {
                 let engine = Arc::clone(&engine);
                 tokio::spawn(async move { engine.create_folder(account, name).await });
             }
+            SyncRequest::RenameFolder { folder, name } => {
+                let engine = Arc::clone(&engine);
+                tokio::spawn(async move { engine.rename_folder(folder, name).await });
+            }
+            SyncRequest::DeleteFolder(folder) => {
+                let engine = Arc::clone(&engine);
+                tokio::spawn(async move { engine.delete_folder(folder).await });
+            }
         }
     }
 }
@@ -499,6 +527,11 @@ struct Running {
     /// Until when nothing near the cursor is downloaded: its server could
     /// not be asked a moment ago, and is not tried again at every move.
     near_rests: Mutex<Option<tokio::time::Instant>>,
+    /// Held while the account's folders are gone through, and while one
+    /// of them is renamed or deleted: a pass that listed a folder under
+    /// its old name would otherwise take the renamed one for a stranger,
+    /// and the old one for deleted.
+    folders: tokio::sync::Mutex<()>,
 }
 
 impl Running {
@@ -666,6 +699,7 @@ impl Engine {
             queue_task: Mutex::new(None),
             retired: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             near_rests: Mutex::new(None),
+            folders: tokio::sync::Mutex::new(()),
         });
         // In the account's place from here, so that nothing asked of it
         // meanwhile is asked of the one it replaces.
@@ -869,6 +903,7 @@ impl Engine {
     /// server would not give, if one: that is trouble to tell of, and no
     /// reason to stop.
     async fn pass(&self, running: &Running) -> Result<(Pass, Option<Failure>), Failure> {
+        let _folders = running.folders.lock().await;
         let mut turn = Turn::new(&running.wake, self.options.turn);
         let outcome = self.pass_in_turn(&running.account, &mut turn).await;
         // A look asked for while the pass ran was taken from the loop, to
@@ -2065,6 +2100,200 @@ impl Engine {
                 format!("The folder {name} could not be made on the server: {reason}"),
             ),
         }
+    }
+
+    /// The account's folders, for a rename or a delete to have to
+    /// itself. A pass that is under way is hurried: its long work is left
+    /// for the pass after.
+    async fn folders_of<'a>(&self, running: &'a Running) -> tokio::sync::MutexGuard<'a, ()> {
+        if let Ok(held) = running.folders.try_lock() {
+            return held;
+        }
+        running.wake.notify_one();
+        running.folders.lock().await
+    }
+
+    /// The folder a rename or a delete is asked of, when it is one the
+    /// user may rename or delete on a server: not one made on this Mac,
+    /// which is the store's alone, and not one the server keeps for a
+    /// purpose. Says why not otherwise.
+    async fn users_folder(
+        &self,
+        folder: LocalFolderId,
+        doing: &str,
+    ) -> Option<(Arc<Running>, quill_store::FolderPlace)> {
+        let say = |message: String| {
+            self.emit(SyncEvent::Problem {
+                account: "Folders".to_owned(),
+                message,
+            });
+            None
+        };
+        let place = match self.db(move |store| store.folder_place(folder)).await {
+            Ok(Some(place)) => place,
+            Ok(None) => {
+                return say(format!(
+                    "The folder was not {doing}: it is not there any more."
+                ));
+            }
+            Err(reason) => return say(format!("The folder was not {doing}: {reason}")),
+        };
+        let name = &place.name;
+        if is_kept(&place.remote) {
+            return say(format!(
+                "{name} was not {doing}: it is on this Mac, and no server has it."
+            ));
+        }
+        if place.role != FolderRole::Other {
+            return say(format!(
+                "{name} was not {doing}: the server keeps that folder for a purpose of its own."
+            ));
+        }
+        let Some(running) = self.account(place.account) else {
+            return say(format!(
+                "{name} was not {doing}: its account is not being synced."
+            ));
+        };
+        Some((running, place))
+    }
+
+    /// Gives a server's folder another name, there and then here, with
+    /// the folders inside it. Every message keeps its row, and so what
+    /// was downloaded of it.
+    async fn rename_folder(&self, folder: LocalFolderId, name: String) {
+        let Some((running, place)) = self.users_folder(folder, "renamed").await else {
+            return;
+        };
+        let account = &running.account;
+        let was = place.name.clone();
+        let refuse = |reason: String| {
+            self.problem(
+                account,
+                format!("{was} could not be renamed {name}: {reason}"),
+            );
+        };
+        let _folders = self.folders_of(&running).await;
+        match self.db(move |store| store.folder_busy(folder)).await {
+            Ok(false) => {}
+            Ok(true) => {
+                return refuse(
+                    "changes to its mail are still on their way to the server. Try again in a \
+                     moment."
+                        .to_owned(),
+                );
+            }
+            Err(reason) => return refuse(reason),
+        }
+        let renamed = match account
+            .backend
+            .rename_folder(&FolderId(place.remote.clone()), &name)
+            .await
+        {
+            Ok(renamed) => renamed,
+            Err(refused) => return refuse(refused.to_string()),
+        };
+        let id = account.id;
+        let mut said = name.clone();
+        for change in renamed {
+            if change.from.0 == place.remote {
+                said.clone_from(&change.to.name);
+            }
+            let backend = Arc::clone(&account.backend);
+            let kept = self
+                .db(move |store| {
+                    let Some(local) = store.folder_known_as(id, &change.from.0)? else {
+                        return Ok(());
+                    };
+                    let messages: Vec<(LocalMessageId, RemoteId)> = store
+                        .folder_messages(local)?
+                        .into_iter()
+                        .filter_map(|(message, remote)| {
+                            Some((message, backend.message_in(&remote, &change.to.id)?))
+                        })
+                        .collect();
+                    store.folder_renamed(local, &change.to, &messages)
+                })
+                .await;
+            if let Err(reason) = kept {
+                // The server has the new name. The next pass finds the
+                // folder under it, and brings its mail in afresh.
+                self.problem(
+                    account,
+                    format!("{was} was renamed on the server, but not here yet: {reason}"),
+                );
+            }
+        }
+        self.emit(SyncEvent::Changed);
+        self.emit(SyncEvent::FolderRenamed {
+            account: account.name.clone(),
+            from: was.clone(),
+            to: said,
+        });
+        // The names of the folders inside it, where the server says them.
+        running.wake.notify_one();
+    }
+
+    /// Deletes a server's folder, there and then here. Its mail is not
+    /// deleted with it: the server moves it to the trash first, or keeps
+    /// it where it keeps all mail.
+    async fn delete_folder(&self, folder: LocalFolderId) {
+        let Some((running, place)) = self.users_folder(folder, "deleted").await else {
+            return;
+        };
+        let account = &running.account;
+        let name = place.name.clone();
+        let refuse = |reason: String| {
+            self.problem(account, format!("{name} could not be deleted: {reason}"));
+        };
+        let _folders = self.folders_of(&running).await;
+        let id = account.id;
+        let looked = self
+            .db(move |store| {
+                Ok((
+                    store.folder_busy(folder)?,
+                    store.folders_inside(folder)?,
+                    store.folder_for(id, FolderRole::Trash)?,
+                ))
+            })
+            .await;
+        let trash = match looked {
+            Ok((true, _, _)) => {
+                return refuse(
+                    "changes to its mail are still on their way to the server. Try again in a \
+                     moment."
+                        .to_owned(),
+                );
+            }
+            Ok((false, inside, _)) if inside > 0 => {
+                return refuse("it has folders inside it. Delete or move those first.".to_owned());
+            }
+            Ok((false, _, trash)) => trash,
+            Err(reason) => return refuse(reason),
+        };
+        let mail = match account
+            .backend
+            .delete_folder(&FolderId(place.remote.clone()), trash.as_ref())
+            .await
+        {
+            Ok(mail) => mail,
+            Err(refused) => return refuse(refused.to_string()),
+        };
+        if let Err(reason) = self.db(move |store| store.forget_folder(folder)).await {
+            // Gone from the server: the next pass takes it out here.
+            self.problem(
+                account,
+                format!("{name} was deleted on the server, but not here yet: {reason}"),
+            );
+        }
+        self.emit(SyncEvent::Changed);
+        self.emit(SyncEvent::FolderDeleted {
+            account: account.name.clone(),
+            name,
+            mail,
+            messages: place.messages,
+        });
+        // The trash has its mail now.
+        running.wake.notify_one();
     }
 
     /// Lets downloaded copies go, oldest first, until what is stored comes

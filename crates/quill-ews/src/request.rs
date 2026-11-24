@@ -151,6 +151,66 @@ pub(crate) fn find_folders(offset: usize, page: usize) -> Request {
     })
 }
 
+/// A folder as it stands, by its id: asked for the mark of its last
+/// change, which a change to it has to carry.
+pub(crate) fn get_folder(id: &str) -> Request {
+    envelope("GetFolder", |xml| {
+        xml.open("m:GetFolder", &[]);
+        xml.open("m:FolderShape", &[]);
+        xml.text("t:BaseShape", "IdOnly");
+        xml.close();
+        xml.open("m:FolderIds", &[]);
+        xml.empty("t:FolderId", &[("Id", id)]);
+    })
+}
+
+/// A new mail folder called `name`, inside `parent` or at the top of the
+/// mailbox.
+pub(crate) fn create_folder(parent: Option<&str>, name: &str) -> Request {
+    envelope("CreateFolder", |xml| {
+        xml.open("m:CreateFolder", &[]);
+        xml.open("m:ParentFolderId", &[]);
+        match parent {
+            Some(parent) => xml.empty("t:FolderId", &[("Id", parent)]),
+            None => xml.empty("t:DistinguishedFolderId", &[("Id", TOP_OF_MAILBOX)]),
+        };
+        xml.close();
+        xml.open("m:Folders", &[]);
+        xml.open("t:Folder", &[]);
+        xml.text("t:FolderClass", "IPF.Note");
+        xml.text("t:DisplayName", name);
+    })
+}
+
+/// Gives a folder another name. `change_key` is the mark of the folder's
+/// last change, when the server gave one.
+pub(crate) fn rename_folder(id: &str, change_key: Option<&str>, name: &str) -> Request {
+    envelope("UpdateFolder", |xml| {
+        xml.open("m:UpdateFolder", &[]);
+        xml.open("m:FolderChanges", &[]);
+        xml.open("t:FolderChange", &[]);
+        match change_key {
+            Some(key) => xml.empty("t:FolderId", &[("Id", id), ("ChangeKey", key)]),
+            None => xml.empty("t:FolderId", &[("Id", id)]),
+        };
+        xml.open("t:Updates", &[]);
+        xml.open("t:SetFolderField", &[]);
+        xml.empty("t:FieldURI", &[("FieldURI", "folder:DisplayName")]);
+        xml.open("t:Folder", &[]);
+        xml.text("t:DisplayName", name);
+    })
+}
+
+/// Deletes a folder by moving it into Deleted Items with what is in it:
+/// never for good.
+pub(crate) fn delete_folder(id: &str) -> Request {
+    envelope("DeleteFolder", |xml| {
+        xml.open("m:DeleteFolder", &[("DeleteType", "MoveToDeletedItems")]);
+        xml.open("m:FolderIds", &[]);
+        xml.empty("t:FolderId", &[("Id", id)]);
+    })
+}
+
 /// What changed in a folder since `state`, or all of it from the start.
 pub(crate) fn sync_items(folder: &str, state: Option<&str>, most: usize) -> Request {
     envelope("SyncFolderItems", |xml| {

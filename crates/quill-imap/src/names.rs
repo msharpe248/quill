@@ -102,14 +102,20 @@ pub(crate) fn encode_utf7(name: &str) -> String {
 /// in the server's writing, inside the place it keeps the user's folders.
 /// That place is the inbox on a server whose every other folder is listed
 /// inside it (see [`folders`]), and the top of the mailbox otherwise.
-pub(crate) fn new_folder(listed: &[Listed<'_>], name: &str) -> String {
+///
+/// `name` is as folders are shown, with `/` between a folder and one
+/// inside it, whatever the server writes there. A name that could not
+/// be read back as it was typed is refused, with the reason.
+pub(crate) fn new_folder(listed: &[Listed<'_>], name: &str) -> Result<String, String> {
     let others: Vec<&Listed<'_>> = listed
         .iter()
         .filter(|folder| !folder.raw.eq_ignore_ascii_case("INBOX"))
         .collect();
-    let inside = listed
+    let delimiter = listed
         .iter()
         .find_map(|folder| folder.delimiter)
+        .filter(|delimiter| !delimiter.is_empty());
+    let inside = delimiter
         .map(|delimiter| format!("INBOX{delimiter}"))
         .filter(|prefix| {
             !others.is_empty()
@@ -120,7 +126,27 @@ pub(crate) fn new_folder(listed: &[Listed<'_>], name: &str) -> String {
                         .is_some_and(|start| start.eq_ignore_ascii_case(prefix))
                 })
         });
-    format!("{}{}", inside.unwrap_or_default(), encode_utf7(name))
+    let parts: Vec<&str> = name.split('/').map(str::trim).collect();
+    if parts.iter().any(|part| part.is_empty()) {
+        return Err("a folder's name needs something on each side of a /".to_owned());
+    }
+    let path = match delimiter {
+        None if parts.len() > 1 => {
+            return Err("this server keeps no folders inside folders".to_owned());
+        }
+        None => encode_utf7(parts[0]),
+        Some(delimiter) => {
+            if delimiter != "/" && parts.iter().any(|part| part.contains(delimiter)) {
+                return Err(format!(
+                    "this server writes \"{delimiter}\" between a folder and one inside it, \
+                     so a name cannot have one"
+                ));
+            }
+            let parts: Vec<String> = parts.iter().map(|part| encode_utf7(part)).collect();
+            parts.join(delimiter)
+        }
+    };
+    Ok(format!("{}{path}", inside.unwrap_or_default()))
 }
 
 /// One shifted run: base64 with `,` for `/`, holding UTF-16BE.
@@ -358,18 +384,44 @@ mod tests {
             };
         // Beside the inbox, on most servers.
         let beside = listed(&["INBOX", "Sent", "Trash"], "/");
-        assert_eq!(new_folder(&beside, "Receipts"), "Receipts");
+        assert_eq!(new_folder(&beside, "Receipts").unwrap(), "Receipts");
         // Inside it, where every other folder is.
         let inside = listed(&["INBOX", "INBOX.Sent", "INBOX.Trash"], ".");
-        assert_eq!(new_folder(&inside, "Receipts"), "INBOX.Receipts");
-        assert_eq!(new_folder(&inside, "Reçus"), "INBOX.Re&AOc-us");
+        assert_eq!(new_folder(&inside, "Receipts").unwrap(), "INBOX.Receipts");
+        assert_eq!(new_folder(&inside, "Reçus").unwrap(), "INBOX.Re&AOc-us");
         // A mailbox with nothing but an inbox says nothing about where:
         // the top is as good a guess as any, and the server may refuse it.
         let alone = listed(&["INBOX"], ".");
-        assert_eq!(new_folder(&alone, "Receipts"), "Receipts");
+        assert_eq!(new_folder(&alone, "Receipts").unwrap(), "Receipts");
         // One folder outside the inbox is enough to say the top is used.
         let mixed = listed(&["INBOX", "INBOX.Sent", "Archive"], ".");
-        assert_eq!(new_folder(&mixed, "Receipts"), "Receipts");
+        assert_eq!(new_folder(&mixed, "Receipts").unwrap(), "Receipts");
+
+        // A / puts a folder inside another, whatever the server writes
+        // between the two, and each name is written the server's way.
+        assert_eq!(
+            new_folder(&beside, "Projects/2026").unwrap(),
+            "Projects/2026"
+        );
+        assert_eq!(
+            new_folder(&inside, "Projets / Reçus").unwrap(),
+            "INBOX.Projets.Re&AOc-us"
+        );
+        // A name that would be read back as two folders is refused, and
+        // so is one with nothing between its slashes.
+        let refused = new_folder(&inside, "v1.2").unwrap_err();
+        assert!(refused.contains("\".\""), "{refused}");
+        assert!(new_folder(&beside, "Projects//2026").is_err());
+        assert!(new_folder(&beside, "/Projects").is_err());
+        assert!(new_folder(&beside, "Projects/").is_err());
+        // A server with no levels has no folders inside folders.
+        let flat = vec![Listed {
+            raw: "INBOX",
+            delimiter: None,
+            attributes: &[],
+        }];
+        assert_eq!(new_folder(&flat, "Receipts").unwrap(), "Receipts");
+        assert!(new_folder(&flat, "Projects/2026").is_err());
     }
 
     #[test]

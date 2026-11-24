@@ -400,6 +400,7 @@ mod tests {
         moves: false,
         uidplus: false,
         idle: true,
+        gmail: false,
     };
     const LISTED: (&str, &str) = (
         "LIST \"\" *",

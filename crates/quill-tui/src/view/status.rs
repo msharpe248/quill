@@ -4,9 +4,9 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 
-use crate::command::{self, CommandId};
+use crate::command::{self, CommandId, Context};
 use crate::keymap::KeySeq;
-use crate::state::{Env, NoticeKind, State};
+use crate::state::{Env, FolderAsk, NoticeKind, State};
 use crate::text;
 
 const SYNCING: &str = "syncing… ";
@@ -59,6 +59,8 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
             .compose
             .as_ref()
             .is_some_and(|compose| compose.away.is_some());
+    // The question about a folder says what its answer does.
+    let about_folder: Vec<command::Hint>;
     let offered = if in_vim {
         command::hints_in_vim()
     } else if state.form_in_sheet() {
@@ -68,6 +70,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
         &[]
     } else if state.saving_as() {
         command::hints_saving_as()
+    } else if let (Context::NewFolder, Some(prompt)) = (state.context(), &state.new_folder) {
+        about_folder = command::hints_folder(match prompt.ask {
+            FolderAsk::New => "make it",
+            FolderAsk::Rename { .. } => "rename",
+            FolderAsk::Delete { .. } => "delete",
+        });
+        &about_folder
     } else {
         command::hints(state.context())
     };

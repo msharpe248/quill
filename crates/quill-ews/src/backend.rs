@@ -15,8 +15,8 @@ use base64::alphabet;
 use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
 use bytes::Bytes;
 use quill_core::types::{
-    Capabilities, FlagChange, Flags, FolderId, FolderRole, Operation, RemoteEvent, RemoteFolder,
-    RemoteId, SyncCursor, SyncDelta,
+    Capabilities, FlagChange, Flags, FolderId, FolderMail, FolderRenamed, FolderRole, Operation,
+    RemoteEvent, RemoteFolder, RemoteId, SyncCursor, SyncDelta,
 };
 use quill_core::{Backend, Credentials, Envelope, Error, Result, Sender};
 use tokio::sync::Mutex;
@@ -412,6 +412,19 @@ impl EwsBackend {
             })
             .await
             .map_err(|trouble| trouble.error(WRITING))
+    }
+
+    /// Makes a folder called `name` inside `parent`, or at the top of the
+    /// mailbox, and says what it is known by.
+    async fn make_folder(&self, parent: Option<&str>, name: &str) -> Result<String> {
+        const DOING: &str = "make the folder";
+        self.client
+            .call(&request::create_folder(parent, name), |messages| {
+                let answer = one(messages, DOING)?.done(DOING)?;
+                first_folder_id(answer).ok_or_else(|| incomplete(DOING))
+            })
+            .await
+            .map_err(|trouble| trouble.error(DOING))
     }
 
     async fn copy(&self, id: &RemoteId, to: &FolderId) -> Result<()> {
@@ -838,6 +851,153 @@ impl Backend for EwsBackend {
                 .map_err(|trouble| trouble.error(DOING))?;
         }
         Ok(())
+    }
+
+    /// A new folder at the top of the mailbox, beside the inbox, or
+    /// inside the folder its name says (`Projects/2026`), which is made
+    /// first if it is not there.
+    async fn create_folder(&self, name: &str) -> Result<RemoteFolder> {
+        let parts = quill_core::backend::folder_path(name)?;
+        let (last, parents) = match parts.split_last() {
+            Some(split) => split,
+            None => return Err(Error::Backend("a folder needs a name".to_owned())),
+        };
+        // The folder it goes inside: what it is known by, and its name in
+        // full as the server has it.
+        let mut parent: Option<(String, String)> = None;
+        if !parents.is_empty() {
+            let listed = self.list_folders().await?;
+            for part in parents {
+                let path = match &parent {
+                    Some((_, path)) => format!("{path}/{part}"),
+                    None => (*part).to_owned(),
+                };
+                let found = listed
+                    .iter()
+                    .find(|folder| folder.name.to_lowercase() == path.to_lowercase());
+                parent = Some(match found {
+                    Some(found) => (found.id.0.clone(), found.name.clone()),
+                    None => {
+                        let inside = parent.as_ref().map(|(id, _)| id.as_str());
+                        (self.make_folder(inside, part).await?, path)
+                    }
+                });
+            }
+        }
+        let inside = parent.as_ref().map(|(id, _)| id.as_str());
+        let id = self.make_folder(inside, last).await?;
+        Ok(RemoteFolder {
+            name: match &parent {
+                Some((_, path)) => format!("{path}/{last}"),
+                None => (*last).to_owned(),
+            },
+            id: FolderId(id),
+            role: FolderRole::Other,
+        })
+    }
+
+    /// Gives a folder another name where it is. Exchange knows a folder
+    /// by an id that a name does not change, so only the names shown are
+    /// other: the folder's, and those of the folders inside it.
+    async fn rename_folder(&self, folder: &FolderId, name: &str) -> Result<Vec<FolderRenamed>> {
+        const DOING: &str = "rename the folder";
+        let parts = quill_core::backend::folder_path(name)?;
+        let (last, parents) = match parts.split_last() {
+            Some(split) => split,
+            None => return Err(Error::Backend("a folder needs a name".to_owned())),
+        };
+        let listed = self.list_folders().await?;
+        let Some(current) = listed.iter().find(|listed| listed.id == *folder) else {
+            return Err(Error::NotFound(
+                "the folder is no longer in the mailbox".to_owned(),
+            ));
+        };
+        let within = current.name.rsplit_once('/').map(|(within, _)| within);
+        if within.unwrap_or_default().to_lowercase() != parents.join("/").to_lowercase() {
+            return Err(Error::Unsupported(
+                "on this kind of account a folder is renamed where it is: it cannot be moved \
+                 into another folder from here"
+                    .to_owned(),
+            ));
+        }
+        let renamed = match within {
+            Some(within) => format!("{within}/{last}"),
+            None => (*last).to_owned(),
+        };
+        if renamed == current.name {
+            return Ok(Vec::new());
+        }
+        if listed
+            .iter()
+            .any(|other| other.id != *folder && other.name.to_lowercase() == renamed.to_lowercase())
+        {
+            return Err(Error::Backend(format!(
+                "there is already a folder called {name}"
+            )));
+        }
+        // A change to a folder says which state of the folder it changes.
+        let change_key = self
+            .client
+            .call(&request::get_folder(&folder.0), |messages| {
+                let answer = one(messages, DOING)?.done(DOING)?;
+                Ok(answer
+                    .child(Ns::Messages, "Folders")
+                    .and_then(|folders| folders.children().first())
+                    .and_then(|folder| folder.child(Ns::Types, "FolderId"))
+                    .and_then(|id| id.attribute("ChangeKey"))
+                    .filter(|key| !key.is_empty() && !key.chars().any(char::is_control))
+                    .map(str::to_owned))
+            })
+            .await
+            .map_err(|trouble| trouble.error(DOING))?;
+        self.client
+            .call(
+                &request::rename_folder(&folder.0, change_key.as_deref(), last),
+                |messages| one(messages, DOING)?.done(DOING).map(drop),
+            )
+            .await
+            .map_err(|trouble| trouble.error(DOING))?;
+        let inside = format!("{}/", current.name);
+        Ok(listed
+            .iter()
+            .filter_map(|listed| {
+                let name = if listed.id == *folder {
+                    renamed.clone()
+                } else {
+                    format!("{renamed}/{}", listed.name.strip_prefix(&inside)?)
+                };
+                Some(FolderRenamed {
+                    from: listed.id.clone(),
+                    to: RemoteFolder {
+                        id: listed.id.clone(),
+                        name,
+                        role: listed.role,
+                    },
+                })
+            })
+            .collect())
+    }
+
+    /// Deletes a folder by moving it into Deleted Items, with what is in
+    /// it: nothing is deleted for good, and Deleted Items is where the
+    /// user finds it again. `trash` is not needed: Exchange knows where.
+    async fn delete_folder(
+        &self,
+        folder: &FolderId,
+        _trash: Option<&FolderId>,
+    ) -> Result<FolderMail> {
+        const DOING: &str = "delete the folder";
+        self.client
+            .call(&request::delete_folder(&folder.0), |messages| {
+                let message = one(messages, DOING)?;
+                // Gone already: a second asking is not a failure.
+                if message.kind() == Kind::Missing {
+                    return Ok(FolderMail::None);
+                }
+                message.done(DOING).map(|_| FolderMail::Trashed)
+            })
+            .await
+            .map_err(|trouble| trouble.error(DOING))
     }
 
     /// Saves a message into `folder`: a draft as a draft, anything else as

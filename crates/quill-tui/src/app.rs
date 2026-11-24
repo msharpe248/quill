@@ -800,6 +800,13 @@ impl Io<'_> {
                         ),
                     }));
                 }
+                (None, SyncRequest::RenameFolder { .. } | SyncRequest::DeleteFolder(_)) => {
+                    let _ = self.injected.send(Action::Sync(SyncEvent::Problem {
+                        account: "Folders".to_owned(),
+                        message: "The folder was not changed: there is no server to ask here."
+                            .to_owned(),
+                    }));
+                }
                 (
                     None,
                     SyncRequest::SyncNow

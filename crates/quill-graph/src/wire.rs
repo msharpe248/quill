@@ -26,6 +26,10 @@ pub(crate) const WELL_KNOWN: [(&str, FolderRole); 6] = [
     ("deleteditems", FolderRole::Trash),
 ];
 
+/// The name Graph knows the mailbox's Deleted Items by, whatever it is
+/// called in the user's language.
+pub(crate) const DELETED_ITEMS: &str = "deleteditems";
+
 /// One page of a list. A list that does not fit comes with a link to the
 /// rest; the last page of a delta comes with the link to start from next
 /// time.

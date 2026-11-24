@@ -13,7 +13,7 @@ Nothing here is a promise or a date.
 ## After that
 
 - More for rules, which now file, delete and mark mail, look at what a message says, catch up, and are tried before they are run ([the manual](manual.md#rules); the design is in [Quill Rules Spec.md](../Quill%20Rules%20Spec.md)): rules kept on the server (Sieve, Gmail's filters), rules for folders other than the inbox, and a form to change any rule without opening the file.
-- Renaming and removing a server's folders, and folders inside folders.
+- Moving a folder into another on Microsoft 365 and Exchange (a folder there is renamed where it is), and folders in the accounts pane that open and close.
 - Keys for making a pane wider or narrower.
 
 ## Known gaps
@@ -58,4 +58,4 @@ Quill was first laid out as eleven milestones, M0 to M10, in [the spec](../Quill
 | M9 | Writing mail in Vim or another editor |
 | M10 | Exchange on your own servers (EWS) |
 
-Built since, outside that plan: a web reading pane; a Settings window; themes, light and dark, and importing themes made for Ghostty; your own editor in the message's pane; changing and removing accounts; folders on this Mac; putting back what was deleted; keys, themes and fonts changed in Settings; panes whose edges are dragged. [DECISIONS.md](../DECISIONS.md) records each, with what was verified and what was not.
+Built since, outside that plan: a web reading pane; a Settings window; themes, light and dark, and importing themes made for Ghostty; your own editor in the message's pane; changing and removing accounts; folders on this Mac; folders inside folders, renamed and deleted; putting back what was deleted; keys, themes and fonts changed in Settings; panes whose edges are dragged. [DECISIONS.md](../DECISIONS.md) records each, with what was verified and what was not.

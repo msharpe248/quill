@@ -7,6 +7,7 @@ mod blobs;
 mod contacts;
 pub mod draft_file;
 mod drafts;
+mod folders;
 mod local;
 mod migrations;
 mod queue;
@@ -18,6 +19,7 @@ pub use agents::{AgentEntry, NewAgentEntry};
 pub use blobs::BlobStore;
 pub use contacts::Contact;
 pub use drafts::{DraftAttachment, DraftContent, DraftId, DraftRow, DraftState, Outgoing};
+pub use folders::FolderPlace;
 pub use local::{KEPT, LOCAL_FOLDER, is_kept, is_made_here};
 pub use queue::{OperationId, QueuedKind, QueuedOperation, is_placeholder};
 

@@ -119,15 +119,21 @@ pub fn render(frame: &mut Frame, area: Rect, state: &State, env: &Env) {
                 ])
             }
             // A folder that is only on this Mac sits a step further in,
-            // under the heading that says so.
+            // under the heading that says so, and a folder inside another
+            // a step further in than that one.
             SidebarEntry::Folder {
-                name,
+                label,
                 unread,
                 local,
+                depth,
                 ..
             } => counted_row(
                 cursor,
-                &format!("{}{name}", if *local { "    " } else { "  " }),
+                &format!(
+                    "{}{}{label}",
+                    if *local { "    " } else { "  " },
+                    "  ".repeat(usize::from(*depth))
+                ),
                 *unread,
                 label_width,
                 count_width,

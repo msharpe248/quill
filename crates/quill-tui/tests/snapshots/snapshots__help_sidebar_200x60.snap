@@ -37,7 +37,8 @@ expression: harness.screen()
 ┃                          ┃│                                       ┃   /, cmd-f                       Search                      ┃                                                                   │
 ┃                          ┃│                                       ┃   ctrl-r, cmd-r                  Check for New Mail          ┃                                                                   │
 ┃                          ┃│                                       ┃   +                              New folder…                 ┃                                                                   │
-┃                          ┃│                                       ┃   _                              Remove this empty folder f… ┃                                                                   │
+┃                          ┃│                                       ┃   R                              Rename this folder…         ┃                                                                   │
+┃                          ┃│                                       ┃   _                              Delete this folder…         ┃                                                                   │
 ┃                          ┃│                                       ┃   :, ctrl-k                      Command palette             ┃                                                                   │
 ┃                          ┃│                                       ┃   cmd-c                          Copy what is selected       ┃                                                                   │
 ┃                          ┃│                                       ┃   U                              Undo the last move, deleti… ┃                                                                   │
@@ -57,7 +58,6 @@ expression: harness.screen()
 ┃                          ┃│                                       ┃   Z l                            What Rules Did              ┃                                                                   │
 ┃                          ┃│                                       ┃   ?                              Help for this context       ┃                                                                   │
 ┃                          ┃│                                       ┃   K, f1                          Keyboard shortcuts          ┃                                                                   │
-┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┃                                                              ┃                                                                   │
 ┃                          ┃│                                       ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛                                                                   │
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━┛└────────────────────────────────────────────────────────────────────────────────────┘└────────────────────────────────────────────────────────────────────────────────────┘

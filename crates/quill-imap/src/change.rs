@@ -56,6 +56,12 @@ pub(crate) struct Extensions {
     /// `IDLE` (RFC 2177): the server says when a folder changes, to a
     /// connection that waits to be told.
     pub idle: bool,
+    /// `X-GM-EXT-1`: the server is Gmail's, where all mail is kept in one
+    /// place and a folder is a label on it, so that a message taken out
+    /// of a folder, or a folder deleted, leaves the mail in All Mail.
+    /// Nothing weaker is taken for it: an `\All` folder can be a view
+    /// over folders that hold the only copies.
+    pub gmail: bool,
 }
 
 impl Extensions {
@@ -71,6 +77,7 @@ impl Extensions {
             moves: false,
             uidplus: false,
             idle: false,
+            gmail: false,
         };
         Command::new("CAPABILITY")
             .run_with(session, |response| {
@@ -85,6 +92,7 @@ impl Extensions {
                     found.moves |= has("MOVE");
                     found.uidplus |= has("UIDPLUS");
                     found.idle |= has("IDLE");
+                    found.gmail |= has("X-GM-EXT-1");
                 }
             })
             .await?;
@@ -435,16 +443,19 @@ mod tests {
         moves: true,
         uidplus: true,
         idle: false,
+        gmail: false,
     };
     const UIDPLUS: Extensions = Extensions {
         moves: false,
         uidplus: true,
         idle: false,
+        gmail: false,
     };
     const NEITHER: Extensions = Extensions {
         moves: false,
         uidplus: false,
         idle: false,
+        gmail: false,
     };
 
     /// Selecting the inbox and finding message 5 in it, as every operation

@@ -18,8 +18,8 @@ use async_imap::imap_proto::{
 use async_trait::async_trait;
 use bytes::Bytes;
 use quill_core::types::{
-    Capabilities, FlagChange, Flags, FolderId, FolderRole, Headers, Operation, RemoteEvent,
-    RemoteFolder, RemoteId, RemoteMessage, SyncCursor, SyncDelta,
+    Capabilities, FlagChange, Flags, FolderId, FolderMail, FolderRenamed, FolderRole, Headers,
+    Operation, RemoteEvent, RemoteFolder, RemoteId, RemoteMessage, SyncCursor, SyncDelta,
 };
 use quill_core::{Backend, Credential, Credentials, Error, Result};
 use tokio::sync::Mutex;
@@ -387,6 +387,29 @@ impl Backend for ImapBackend {
         with_session!(self, |session| create_folder(session, name).await)
     }
 
+    async fn rename_folder(&self, folder: &FolderId, name: &str) -> Result<Vec<FolderRenamed>> {
+        with_session!(self, |session| rename_folder(session, folder, name).await)
+    }
+
+    /// A message's id says which folder it is in, so that the id alone
+    /// finds it: in a folder known by another name it is another id.
+    fn message_in(&self, message: &RemoteId, folder: &FolderId) -> Option<RemoteId> {
+        let mut message = MessageRef::parse(message).ok()?;
+        message.folder.clone_from(&folder.0);
+        Some(message.id())
+    }
+
+    async fn delete_folder(
+        &self,
+        folder: &FolderId,
+        trash: Option<&FolderId>,
+    ) -> Result<FolderMail> {
+        with_session!(self, |session, extensions| delete_folder(
+            session, extensions, folder, trash
+        )
+        .await)
+    }
+
     /// Watches the inbox with IDLE and sends `FolderChanged`, naming the
     /// inbox as `list_folders` does, whenever it is worth syncing: once as
     /// soon as the watch is in place, and after that each time the server
@@ -544,35 +567,11 @@ pub(crate) async fn create_folder<T: Wire>(
     session: &mut Session<T>,
     name: &str,
 ) -> Result<RemoteFolder> {
-    let mut found: Vec<(String, Option<String>)> = Vec::new();
-    let reply = Command::new("LIST")
-        .arg("\"\"")
-        .arg("*")
-        .run_with(session, |response| {
-            if let Response::MailboxData(MailboxDatum::List(listed)) = response {
-                found.push((
-                    names::unescape(&listed.name).into_owned(),
-                    listed
-                        .delimiter
-                        .as_deref()
-                        .map(|delimiter| names::unescape(delimiter).into_owned()),
-                ));
-            }
-        })
-        .await?;
-    reply.require("the server would not list its folders")?;
-    let listed: Vec<names::Listed<'_>> = found
-        .iter()
-        .map(|(raw, delimiter)| names::Listed {
-            raw,
-            delimiter: delimiter.as_deref(),
-            attributes: &[],
-        })
-        .collect();
-    let raw = names::new_folder(&listed, name);
+    let found = every_name(session).await?;
+    let raw = names::new_folder(&listed(&found), name).map_err(Error::Backend)?;
     if found
         .iter()
-        .any(|(existing, _)| existing.eq_ignore_ascii_case(&raw))
+        .any(|existing| existing.raw.eq_ignore_ascii_case(&raw))
     {
         return Err(Error::Backend(format!(
             "there is already a folder called {name}"
@@ -592,6 +591,214 @@ pub(crate) async fn create_folder<T: Wire>(
         name: name.to_owned(),
         role: FolderRole::Other,
     }))
+}
+
+/// A name the server lists, with what it says of it.
+struct Named {
+    raw: String,
+    delimiter: Option<String>,
+}
+
+/// Every name the server lists, whether or not it holds mail.
+async fn every_name<T: Wire>(session: &mut Session<T>) -> Result<Vec<Named>> {
+    let mut found: Vec<Named> = Vec::new();
+    let reply = Command::new("LIST")
+        .arg("\"\"")
+        .arg("*")
+        .run_with(session, |response| {
+            if let Response::MailboxData(MailboxDatum::List(listed)) = response {
+                found.push(Named {
+                    raw: names::unescape(&listed.name).into_owned(),
+                    delimiter: listed
+                        .delimiter
+                        .as_deref()
+                        .map(|delimiter| names::unescape(delimiter).into_owned()),
+                });
+            }
+        })
+        .await?;
+    reply.require("the server would not list its folders")?;
+    Ok(found)
+}
+
+fn listed(found: &[Named]) -> Vec<names::Listed<'_>> {
+    found
+        .iter()
+        .map(|name| names::Listed {
+            raw: &name.raw,
+            delimiter: name.delimiter.as_deref(),
+            attributes: &[],
+        })
+        .collect()
+}
+
+/// The names of the folders inside `raw`, among those listed.
+fn inside<'a>(found: &'a [Named], raw: &str) -> Vec<&'a Named> {
+    let Some(delimiter) = found
+        .iter()
+        .find(|name| name.raw == raw)
+        .and_then(|name| name.delimiter.as_deref())
+        .filter(|delimiter| !delimiter.is_empty())
+    else {
+        return Vec::new();
+    };
+    let within = format!("{raw}{delimiter}");
+    found
+        .iter()
+        .filter(|name| name.raw.len() > within.len() && name.raw.starts_with(&within))
+        .collect()
+}
+
+/// Gives a folder another name, and the folders inside it with it, as
+/// `RENAME` does. Says each as the server lists it afterwards.
+///
+/// The new name goes where a new folder would: see [`names::new_folder`].
+pub(crate) async fn rename_folder<T: Wire>(
+    session: &mut Session<T>,
+    folder: &FolderId,
+    name: &str,
+) -> Result<Vec<FolderRenamed>> {
+    let found = every_name(session).await?;
+    if folder.0.eq_ignore_ascii_case("INBOX") {
+        return Err(Error::Backend("the inbox cannot be renamed".to_owned()));
+    }
+    let Some(old) = found.iter().find(|existing| existing.raw == folder.0) else {
+        return Err(Error::NotFound(format!(
+            "{} is no longer on the server",
+            folder.0
+        )));
+    };
+    let raw = names::new_folder(&listed(&found), name).map_err(Error::Backend)?;
+    if raw == old.raw {
+        return Ok(Vec::new());
+    }
+    if found
+        .iter()
+        .any(|existing| existing.raw != old.raw && existing.raw.eq_ignore_ascii_case(&raw))
+    {
+        return Err(Error::Backend(format!(
+            "there is already a folder called {name}"
+        )));
+    }
+    // Every name that changes: the folder's, and those inside it.
+    let mut moved = vec![(old.raw.clone(), raw.clone())];
+    moved.extend(inside(&found, &old.raw).into_iter().map(|within| {
+        let rest = &within.raw[old.raw.len()..];
+        (within.raw.clone(), format!("{raw}{rest}"))
+    }));
+    let reply = Command::new("RENAME")
+        .mailbox(&old.raw)?
+        .mailbox(&raw)?
+        .run(session)
+        .await?;
+    reply.require(&format!("the server would not rename the folder to {name}"))?;
+    // Subscriptions go by name, and a server need not carry them over.
+    for (was, now) in &moved {
+        let _ = Command::new("UNSUBSCRIBE").mailbox(was)?.run(session).await;
+        let _ = Command::new("SUBSCRIBE").mailbox(now)?.run(session).await;
+    }
+    let now = list_folders(session).await?;
+    Ok(moved
+        .into_iter()
+        .filter_map(|(was, raw)| {
+            let to = now.iter().find(|folder| folder.id.0 == raw)?.clone();
+            Some(FolderRenamed {
+                from: FolderId(was),
+                to,
+            })
+        })
+        .collect())
+}
+
+/// Deletes a folder, once its mail is somewhere else: moved to `trash`,
+/// or, on Gmail, where all mail is kept in one place and a folder is a
+/// label on it, left there. A folder is never deleted with mail
+/// in it that is nowhere else, nor with folders inside it.
+///
+/// `Ok` for a folder that is already gone: a second asking is not a
+/// failure.
+pub(crate) async fn delete_folder<T: Wire>(
+    session: &mut Session<T>,
+    extensions: Extensions,
+    folder: &FolderId,
+    trash: Option<&FolderId>,
+) -> Result<FolderMail> {
+    let found = every_name(session).await?;
+    if folder.0.eq_ignore_ascii_case("INBOX") {
+        return Err(Error::Backend("the inbox cannot be deleted".to_owned()));
+    }
+    if !found.iter().any(|existing| existing.raw == folder.0) {
+        return Ok(FolderMail::None);
+    }
+    if !inside(&found, &folder.0).is_empty() {
+        return Err(Error::Backend(
+            "it has folders inside it: delete or move those first".to_owned(),
+        ));
+    }
+    open(session, &folder.0).await?;
+    let mail = if uid_search(session, "ALL").await?.is_empty() {
+        FolderMail::None
+    } else if extensions.gmail {
+        // A label on mail that is kept in All Mail: the label goes, and
+        // the mail is where it was.
+        FolderMail::Kept
+    } else {
+        let Some(trash) = trash.filter(|trash| trash.0 != folder.0) else {
+            return Err(Error::Backend(
+                "it has mail in it, and this account has no trash folder for the mail to go to"
+                    .to_owned(),
+            ));
+        };
+        if extensions.moves {
+            let reply = Command::new("UID MOVE")
+                .arg("1:*")
+                .mailbox(&trash.0)?
+                .run(session)
+                .await?;
+            reply.require("the server would not move its mail to the trash")?;
+        } else {
+            let reply = Command::new("UID COPY")
+                .arg("1:*")
+                .mailbox(&trash.0)?
+                .run(session)
+                .await?;
+            reply.require("the server would not copy its mail to the trash")?;
+            let reply = Command::new("UID STORE")
+                .arg("1:*")
+                .arg("+FLAGS.SILENT (\\Deleted)")
+                .run(session)
+                .await?;
+            reply.require("the server would not take its mail out of the folder")?;
+        }
+        FolderMail::Trashed
+    };
+    // Lets go of the folder, taking out what was copied to the trash: a
+    // server need not delete the folder a connection has open.
+    let reply = Command::new("CLOSE").run(session).await?;
+    reply.require("the server would not close the folder")?;
+    if mail == FolderMail::Trashed {
+        // Mail that came in meanwhile, or that would not go: the folder
+        // is not deleted over it.
+        open(session, &folder.0).await?;
+        let left = uid_search(session, "ALL").await?.len();
+        let reply = Command::new("CLOSE").run(session).await?;
+        reply.require("the server would not close the folder")?;
+        if left > 0 {
+            return Err(Error::Backend(format!(
+                "{left} of its messages are still in it; the rest are in the trash"
+            )));
+        }
+    }
+    let reply = Command::new("DELETE")
+        .mailbox(&folder.0)?
+        .run(session)
+        .await?;
+    reply.require("the server would not delete the folder")?;
+    let _ = Command::new("UNSUBSCRIBE")
+        .mailbox(&folder.0)?
+        .run(session)
+        .await;
+    Ok(mail)
 }
 
 /// Selects a folder and returns the UIDVALIDITY its UIDs belong to.
@@ -1608,5 +1815,97 @@ mod tests {
                 "{other}"
             );
         }
+    }
+
+    /// A mailbox with a label of the user's and a folder that shows all
+    /// mail, as Gmail lists them.
+    const LABELLED: (&str, &str) = (
+        "LIST \"\" *",
+        "* LIST (\\HasNoChildren) \"/\" INBOX\r\n\
+         * LIST (\\HasNoChildren) \"/\" Receipts\r\n\
+         * LIST (\\HasNoChildren \\Trash) \"/\" Trash\r\n\
+         * LIST (\\HasNoChildren \\All) \"/\" \"All Mail\"\r\n\
+         {tag} OK Listed\r\n",
+    );
+    const OPENED: (&str, &str) = (
+        "SELECT \"Receipts\"",
+        "* 2 EXISTS\r\n* OK [UIDVALIDITY 9] UIDs valid\r\n{tag} OK [READ-WRITE] Selected\r\n",
+    );
+    const TWO: (&str, &str) = ("UID SEARCH ALL", "* SEARCH 1 2\r\n{tag} OK Searched\r\n");
+    const NONE_LEFT: (&str, &str) = ("UID SEARCH ALL", "* SEARCH\r\n{tag} OK Searched\r\n");
+    const CLOSED: (&str, &str) = ("CLOSE", "{tag} OK Closed\r\n");
+    const DELETED: (&str, &str) = ("DELETE \"Receipts\"", "{tag} OK Deleted\r\n");
+    const UNSUBSCRIBED: (&str, &str) = ("UNSUBSCRIBE \"Receipts\"", "{tag} OK Done\r\n");
+
+    fn receipts() -> FolderId {
+        FolderId("Receipts".to_owned())
+    }
+
+    fn can(moves: bool, gmail: bool) -> Extensions {
+        Extensions {
+            moves,
+            uidplus: true,
+            idle: false,
+            gmail,
+        }
+    }
+
+    #[tokio::test]
+    async fn on_gmail_a_deleted_folder_leaves_its_mail_in_all_mail() {
+        // The label goes, and nothing is moved anywhere first.
+        let script = [LABELLED, OPENED, TWO, CLOSED, DELETED, UNSUBSCRIBED];
+        let (mut session, server) = scripted(&script).await;
+        let trash = FolderId("Trash".to_owned());
+        let mail = delete_folder(&mut session, can(true, true), &receipts(), Some(&trash)).await;
+        assert_eq!(mail.unwrap(), FolderMail::Kept);
+        drop(session);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_folder_that_shows_all_mail_does_not_make_a_server_gmail() {
+        // A server with an `\All` folder that does not say it is Gmail:
+        // the folder may hold the only copies, so they go to the trash.
+        let script = [
+            LABELLED,
+            OPENED,
+            TWO,
+            ("UID MOVE 1:* \"Trash\"", "{tag} OK Moved\r\n"),
+            CLOSED,
+            OPENED,
+            NONE_LEFT,
+            CLOSED,
+            DELETED,
+            UNSUBSCRIBED,
+        ];
+        let (mut session, server) = scripted(&script).await;
+        let trash = FolderId("Trash".to_owned());
+        let mail = delete_folder(&mut session, can(true, false), &receipts(), Some(&trash)).await;
+        assert_eq!(mail.unwrap(), FolderMail::Trashed);
+        drop(session);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_folder_that_still_has_mail_after_the_move_is_not_deleted() {
+        // Mail came in while its mail was on its way to the trash.
+        let script = [
+            LABELLED,
+            OPENED,
+            TWO,
+            ("UID MOVE 1:* \"Trash\"", "{tag} OK Moved\r\n"),
+            CLOSED,
+            OPENED,
+            ("UID SEARCH ALL", "* SEARCH 3\r\n{tag} OK Searched\r\n"),
+            CLOSED,
+        ];
+        let (mut session, server) = scripted(&script).await;
+        let trash = FolderId("Trash".to_owned());
+        let refused = delete_folder(&mut session, can(true, false), &receipts(), Some(&trash))
+            .await
+            .unwrap_err();
+        assert!(refused.to_string().contains("still in it"), "{refused}");
+        drop(session);
+        server.await.unwrap();
     }
 }

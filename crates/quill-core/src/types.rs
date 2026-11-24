@@ -132,6 +132,29 @@ pub struct RemoteFolder {
     pub role: FolderRole,
 }
 
+/// A folder that is known by another name on the server than it was: one
+/// that was renamed, or one inside it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderRenamed {
+    /// What it was known by.
+    pub from: FolderId,
+    /// The folder as the server has it now.
+    pub to: RemoteFolder,
+}
+
+/// What became of the mail in a folder that was deleted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FolderMail {
+    /// There was none.
+    None,
+    /// It was moved to the trash, this many messages, or went there with
+    /// its folder.
+    Trashed,
+    /// The server keeps all mail in one place and a folder is only a
+    /// label on it (Gmail): the mail is where it was, without the label.
+    Kept,
+}
+
 /// The parsed header summary of a message (what IMAP calls the envelope).
 ///
 /// Named `Headers` so that `Envelope` stays free for the SMTP envelope the

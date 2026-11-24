@@ -7,9 +7,22 @@ use tokio::sync::mpsc;
 
 use crate::Result;
 use crate::types::{
-    Capabilities, Flags, FolderId, Operation, RemoteEvent, RemoteFolder, RemoteId, SyncCursor,
-    SyncDelta,
+    Capabilities, Flags, FolderId, FolderMail, FolderRenamed, Operation, RemoteEvent, RemoteFolder,
+    RemoteId, SyncCursor, SyncDelta,
 };
+
+/// The names in a folder's name as it is shown, outermost first: a `/`
+/// puts a folder inside another (`Projects/2026`). Each must be a name:
+/// a name with nothing on one side of a `/` is refused.
+pub fn folder_path(name: &str) -> Result<Vec<&str>> {
+    let parts: Vec<&str> = name.split('/').map(str::trim).collect();
+    if parts.iter().any(|part| part.is_empty()) {
+        return Err(crate::Error::Backend(
+            "a folder's name needs something on each side of a /".to_owned(),
+        ));
+    }
+    Ok(parts)
+}
 
 /// Who a message is from and to on the wire. Not the same as its headers:
 /// `Bcc` recipients are here and nowhere in what is transmitted.
@@ -102,10 +115,49 @@ pub trait Backend: Send + Sync {
 
     /// Makes a folder called `name` on the server, beside the ones it has,
     /// and says what it is known by there.
+    ///
+    /// `name` is as folders are shown: a `/` in it puts the folder inside
+    /// another (`Projects/2026`), which is made too if it is not there.
     async fn create_folder(&self, name: &str) -> Result<RemoteFolder> {
         Err(crate::Error::Unsupported(format!(
             "a folder called {name} cannot be made on this kind of server from here"
         )))
+    }
+
+    /// Gives a folder another name, as folders are shown, and says every
+    /// folder that is known by another name for it: the folder, and those
+    /// inside it where their names say where they are.
+    ///
+    /// A name that is taken is refused, and nothing is changed.
+    async fn rename_folder(&self, folder: &FolderId, name: &str) -> Result<Vec<FolderRenamed>> {
+        let _ = folder;
+        Err(crate::Error::Unsupported(format!(
+            "a folder cannot be renamed {name} on this kind of server from here"
+        )))
+    }
+
+    /// What a message is known by once its folder is known as `folder`,
+    /// where a message's name says which folder it is in (IMAP). `None`
+    /// where it does not, and the message is known as it was.
+    fn message_in(&self, message: &RemoteId, folder: &FolderId) -> Option<RemoteId> {
+        let _ = (message, folder);
+        None
+    }
+
+    /// Deletes a folder, and says what became of the mail in it. Mail is
+    /// never deleted with its folder: it is moved to `trash` first, or
+    /// goes to the trash with the folder, or stays where the server keeps
+    /// all mail. A folder with mail in it and nowhere for the mail to go
+    /// is refused, and so is one with folders inside it.
+    async fn delete_folder(
+        &self,
+        folder: &FolderId,
+        trash: Option<&FolderId>,
+    ) -> Result<FolderMail> {
+        let _ = (folder, trash);
+        Err(crate::Error::Unsupported(
+            "a folder cannot be deleted on this kind of server from here".to_owned(),
+        ))
     }
 
     /// Saves a complete message into a folder, as a sent copy or a draft,

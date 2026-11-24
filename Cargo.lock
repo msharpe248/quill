@@ -2846,6 +2846,8 @@ dependencies = [
  "quill-core",
  "quill-mime",
  "quill-net",
+ "quill-store",
+ "quill-sync",
  "rcgen",
  "rustls",
  "rustls-platform-verifier",

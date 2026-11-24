@@ -12,8 +12,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use bytes::Bytes;
 use quill_core::types::{
-    Capabilities, Flags, FolderId, FolderRole, Operation, RemoteEvent, RemoteFolder, RemoteId,
-    SyncCursor, SyncDelta,
+    Capabilities, Flags, FolderId, FolderMail, FolderRenamed, FolderRole, Operation, RemoteEvent,
+    RemoteFolder, RemoteId, SyncCursor, SyncDelta,
 };
 use quill_core::{Backend, Envelope, Error, Result, Sender, TokenSource};
 use serde_json::json;
@@ -162,6 +162,24 @@ impl GraphBackend {
         Err(Error::Backend(
             "Microsoft Graph's list of folders does not end".to_owned(),
         ))
+    }
+
+    /// Makes a folder called `name` inside `parent`, or at the top of the
+    /// mailbox.
+    async fn make_folder(&self, parent: Option<&str>, name: &str) -> Result<wire::Folder> {
+        let url = match parent {
+            Some(parent) => self
+                .client
+                .url(&["me", "mailFolders", parent, "childFolders"], ""),
+            None => self.client.url(&["me", "mailFolders"], ""),
+        };
+        self.client
+            .send(&Request::post(
+                url,
+                serde_json::json!({ "displayName": name }),
+            ))
+            .await?
+            .json("make the folder")
     }
 
     /// A link out of the service's answer, as an address to ask next.
@@ -476,22 +494,143 @@ impl Backend for GraphBackend {
             .map(|message| RemoteId(message.id)))
     }
 
-    /// A new folder at the top of the mailbox, beside the inbox.
+    /// A new folder at the top of the mailbox, beside the inbox, or
+    /// inside the folder its name says (`Projects/2026`), which is made
+    /// first if it is not there.
     async fn create_folder(&self, name: &str) -> Result<RemoteFolder> {
-        let url = self.client.url(&["me", "mailFolders"], "");
-        let made: wire::Folder = self
-            .client
-            .send(&Request::post(
-                url,
-                serde_json::json!({ "displayName": name }),
-            ))
-            .await?
-            .json("make the folder")?;
+        let parts = quill_core::backend::folder_path(name)?;
+        let (last, parents) = match parts.split_last() {
+            Some(split) => split,
+            None => return Err(Error::Backend("a folder needs a name".to_owned())),
+        };
+        // The folder it goes inside: what it is known by, and its name in
+        // full as the service has it.
+        let mut parent: Option<(String, String)> = None;
+        if !parents.is_empty() {
+            let listed = self.list_folders().await?;
+            for part in parents {
+                let path = match &parent {
+                    Some((_, path)) => format!("{path}/{part}"),
+                    None => (*part).to_owned(),
+                };
+                let found = listed
+                    .iter()
+                    .find(|folder| folder.name.to_lowercase() == path.to_lowercase());
+                parent = Some(match found {
+                    Some(found) => (found.id.0.clone(), found.name.clone()),
+                    None => {
+                        let inside = parent.as_ref().map(|(id, _)| id.as_str());
+                        let made = self.make_folder(inside, part).await?;
+                        (made.id, path)
+                    }
+                });
+            }
+        }
+        let inside = parent.as_ref().map(|(id, _)| id.as_str());
+        let made = self.make_folder(inside, last).await?;
+        let own = made.display_name.unwrap_or_else(|| (*last).to_owned());
         Ok(RemoteFolder {
-            name: made.display_name.unwrap_or_else(|| name.to_owned()),
+            name: match &parent {
+                Some((_, path)) => format!("{path}/{own}"),
+                None => own,
+            },
             id: FolderId(made.id),
             role: FolderRole::Other,
         })
+    }
+
+    /// Gives a folder another name where it is. The service knows a
+    /// folder by an id that a name does not change, so only the names
+    /// shown are other: the folder's, and those of the folders inside it.
+    async fn rename_folder(&self, folder: &FolderId, name: &str) -> Result<Vec<FolderRenamed>> {
+        let parts = quill_core::backend::folder_path(name)?;
+        let (last, parents) = match parts.split_last() {
+            Some(split) => split,
+            None => return Err(Error::Backend("a folder needs a name".to_owned())),
+        };
+        let listed = self.list_folders().await?;
+        let Some(current) = listed.iter().find(|listed| listed.id == *folder) else {
+            return Err(Error::NotFound(
+                "the folder is no longer in the mailbox".to_owned(),
+            ));
+        };
+        let within = current.name.rsplit_once('/').map(|(within, _)| within);
+        if within.unwrap_or_default().to_lowercase() != parents.join("/").to_lowercase() {
+            return Err(Error::Unsupported(
+                "on this kind of account a folder is renamed where it is: it cannot be moved \
+                 into another folder from here"
+                    .to_owned(),
+            ));
+        }
+        let renamed = match within {
+            Some(within) => format!("{within}/{last}"),
+            None => (*last).to_owned(),
+        };
+        if renamed == current.name {
+            return Ok(Vec::new());
+        }
+        if listed
+            .iter()
+            .any(|other| other.id != *folder && other.name.to_lowercase() == renamed.to_lowercase())
+        {
+            return Err(Error::Backend(format!(
+                "there is already a folder called {name}"
+            )));
+        }
+        let url = self.client.url(&["me", "mailFolders", &folder.0], "");
+        self.client
+            .send(&Request::patch(
+                url,
+                serde_json::json!({ "displayName": last }),
+            ))
+            .await?
+            .done("rename the folder")?;
+        let inside = format!("{}/", current.name);
+        Ok(listed
+            .iter()
+            .filter_map(|listed| {
+                let name = if listed.id == *folder {
+                    renamed.clone()
+                } else {
+                    format!("{renamed}/{}", listed.name.strip_prefix(&inside)?)
+                };
+                Some(FolderRenamed {
+                    from: listed.id.clone(),
+                    to: RemoteFolder {
+                        id: listed.id.clone(),
+                        name,
+                        role: listed.role,
+                    },
+                })
+            })
+            .collect())
+    }
+
+    /// Deletes a folder by moving it into Deleted Items, with what is in
+    /// it: nothing is deleted for good, and the mailbox's own Deleted
+    /// Items is where the user finds it again. `trash` is not needed: the
+    /// service knows the folder by a name of its own.
+    async fn delete_folder(
+        &self,
+        folder: &FolderId,
+        _trash: Option<&FolderId>,
+    ) -> Result<FolderMail> {
+        let url = self
+            .client
+            .url(&["me", "mailFolders", &folder.0, "move"], "");
+        let reply = self
+            .client
+            .send(&Request::post(
+                url,
+                serde_json::json!({ "destinationId": wire::DELETED_ITEMS }),
+            ))
+            .await?;
+        // Gone already: a second asking is not a failure.
+        if reply.missing() {
+            return Ok(FolderMail::None);
+        }
+        reply.done("delete the folder")?;
+        Ok(FolderMail::Trashed)
     }
 
     /// Saves a draft into `folder`.

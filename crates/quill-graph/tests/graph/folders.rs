@@ -320,3 +320,209 @@ async fn a_folder_the_service_will_not_make_is_refused_in_its_words() {
     assert!(err.to_string().contains("already exists"), "{err}");
     assert_eq!(rig.check().await.len(), 1);
 }
+
+/// A small mailbox: the standard folders, and `Projects` with `Harbour`
+/// inside it, and `Receipts`.
+async fn small_mailbox(rig: &Rig) {
+    well_known(rig, &STANDARD).await;
+    rig.on("GET", "/me/mailFolders")
+        .respond_with(ok(json!({
+            "value": [
+                folder("folder-inbox", "Inbox", 0),
+                folder("folder-trash", "Deleted Items", 0),
+                folder("folder-projects", "Projects", 1),
+                folder("folder-receipts", "Receipts", 0),
+            ]
+        })))
+        .mount(&rig.server)
+        .await;
+    rig.on("GET", "/me/mailFolders/folder-projects/childFolders")
+        .respond_with(ok(json!({
+            "value": [folder("folder-harbour", "Harbour", 0)]
+        })))
+        .mount(&rig.server)
+        .await;
+}
+
+fn made(id: &str, name: &str) -> wiremock::ResponseTemplate {
+    wiremock::ResponseTemplate::new(201).set_body_json(folder(id, name, 0))
+}
+
+/// The requests that changed something, with what each one said.
+async fn changes(rig: &Rig) -> Vec<(String, Value)> {
+    rig.requests()
+        .await
+        .iter()
+        .filter(|request| request.method.as_str() != "GET")
+        .map(|request| {
+            (
+                format!("{} {}", request.method, request.url.path()),
+                serde_json::from_slice(&request.body).unwrap_or(Value::Null),
+            )
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_folder_is_made_inside_another_and_the_one_it_is_inside_too() {
+    let rig = Rig::start().await;
+    small_mailbox(&rig).await;
+    rig.on("POST", "/me/mailFolders/folder-projects/childFolders")
+        .respond_with(made("folder-year", "2026"))
+        .mount(&rig.server)
+        .await;
+    rig.on("POST", "/me/mailFolders")
+        .respond_with(made("folder-travel", "Travel"))
+        .mount(&rig.server)
+        .await;
+    rig.on("POST", "/me/mailFolders/folder-travel/childFolders")
+        .respond_with(made("folder-lisbon", "Lisbon"))
+        .mount(&rig.server)
+        .await;
+
+    // Inside one that is there, whatever capitals it was typed in.
+    let year = rig.graph.create_folder("projects / 2026").await.unwrap();
+    assert_eq!(
+        year,
+        listed("folder-year", "Projects/2026", FolderRole::Other)
+    );
+    // Inside one that is not: that one is made first.
+    let lisbon = rig.graph.create_folder("Travel/Lisbon").await.unwrap();
+    assert_eq!(
+        lisbon,
+        listed("folder-lisbon", "Travel/Lisbon", FolderRole::Other)
+    );
+    assert_eq!(
+        changes(&rig).await,
+        [
+            (
+                "POST /v1.0/me/mailFolders/folder-projects/childFolders".to_owned(),
+                json!({ "displayName": "2026" })
+            ),
+            (
+                "POST /v1.0/me/mailFolders".to_owned(),
+                json!({ "displayName": "Travel" })
+            ),
+            (
+                "POST /v1.0/me/mailFolders/folder-travel/childFolders".to_owned(),
+                json!({ "displayName": "Lisbon" })
+            ),
+        ]
+    );
+
+    // A name with nothing on one side of its slash asks the service for
+    // nothing.
+    assert!(rig.graph.create_folder("Travel/").await.is_err());
+    assert_eq!(changes(&rig).await.len(), 3);
+    rig.check().await;
+}
+
+#[tokio::test]
+async fn a_folder_is_renamed_where_it_is_and_the_folders_inside_it_are_named_after_it() {
+    let rig = Rig::start().await;
+    small_mailbox(&rig).await;
+    rig.on("PATCH", "/me/mailFolders/folder-projects")
+        .respond_with(ok(folder("folder-projects", "Work", 1)))
+        .mount(&rig.server)
+        .await;
+    let projects = FolderId("folder-projects".to_owned());
+
+    let renamed = rig.graph.rename_folder(&projects, "Work").await.unwrap();
+    let pairs: Vec<(&str, &str)> = renamed
+        .iter()
+        .map(|renamed| (renamed.from.0.as_str(), renamed.to.name.as_str()))
+        .collect();
+    assert_eq!(
+        pairs,
+        [
+            ("folder-projects", "Work"),
+            ("folder-harbour", "Work/Harbour")
+        ]
+    );
+    // The service knows them by what it knew them by.
+    assert!(renamed.iter().all(|renamed| renamed.from == renamed.to.id));
+    assert_eq!(
+        changes(&rig).await,
+        [(
+            "PATCH /v1.0/me/mailFolders/folder-projects".to_owned(),
+            json!({ "displayName": "Work" })
+        )]
+    );
+
+    // The name it has changes nothing; one that is taken, or that would
+    // put it inside another folder, is refused; and none of them asks the
+    // service to change anything.
+    assert_eq!(
+        rig.graph
+            .rename_folder(&projects, "Projects")
+            .await
+            .unwrap(),
+        []
+    );
+    let taken = rig.graph.rename_folder(&projects, "receipts").await;
+    assert!(taken.unwrap_err().to_string().contains("already a folder"));
+    let harbour = FolderId("folder-harbour".to_owned());
+    let moved = rig.graph.rename_folder(&harbour, "Receipts/Harbour").await;
+    assert!(matches!(moved, Err(Error::Unsupported(_))), "{moved:?}");
+    let gone = rig
+        .graph
+        .rename_folder(&FolderId("folder-nowhere".to_owned()), "Somewhere")
+        .await;
+    assert!(matches!(gone, Err(Error::NotFound(_))), "{gone:?}");
+    assert_eq!(changes(&rig).await.len(), 1);
+    rig.check().await;
+}
+
+#[tokio::test]
+async fn a_folder_is_deleted_by_moving_it_to_deleted_items() {
+    let rig = Rig::start().await;
+    rig.on("POST", "/me/mailFolders/folder-receipts/move")
+        .respond_with(made("folder-receipts-moved", "Receipts"))
+        .mount(&rig.server)
+        .await;
+    rig.on("POST", "/me/mailFolders/folder-gone/move")
+        .respond_with(refusal(
+            404,
+            "ErrorItemNotFound",
+            "The specified object was not found in the store.",
+        ))
+        .mount(&rig.server)
+        .await;
+    rig.on("POST", "/me/mailFolders/folder-kept/move")
+        .respond_with(refusal(
+            409,
+            "ErrorFolderExists",
+            "A folder with the specified name already exists.",
+        ))
+        .mount(&rig.server)
+        .await;
+    let delete = |id: &str| {
+        let id = FolderId(id.to_owned());
+        let graph = &rig.graph;
+        async move { graph.delete_folder(&id, None).await }
+    };
+
+    assert_eq!(
+        delete("folder-receipts").await.unwrap(),
+        quill_core::types::FolderMail::Trashed
+    );
+    // Gone already is what was wanted.
+    assert_eq!(
+        delete("folder-gone").await.unwrap(),
+        quill_core::types::FolderMail::None
+    );
+    // What the service will not do is said in its words.
+    let refused = delete("folder-kept").await.unwrap_err();
+    assert!(refused.to_string().contains("already exists"), "{refused}");
+    // Never a delete: only ever a move into Deleted Items.
+    let asked = changes(&rig).await;
+    assert_eq!(asked.len(), 3);
+    for (line, body) in asked {
+        assert!(
+            line.starts_with("POST ") && line.ends_with("/move"),
+            "{line}"
+        );
+        assert_eq!(body, json!({ "destinationId": "deleteditems" }));
+    }
+    rig.check().await;
+}

@@ -347,6 +347,79 @@ impl Backend for MemoryBackend {
         })
     }
 
+    /// Renames the folder and the folders inside it, unless the name is
+    /// taken.
+    async fn rename_folder(
+        &self,
+        folder: &FolderId,
+        name: &str,
+    ) -> Result<Vec<quill_core::types::FolderRenamed>> {
+        self.check()?;
+        let mut server = self.0.lock().unwrap();
+        if server.folders.contains_key(name) {
+            return Err(Error::Backend(format!(
+                "there is already a folder called {name}"
+            )));
+        }
+        let within = format!("{}/", folder.0);
+        let moving: Vec<String> = server
+            .folders
+            .keys()
+            .filter(|existing| **existing == folder.0 || existing.starts_with(&within))
+            .cloned()
+            .collect();
+        let mut renamed = Vec::new();
+        for was in moving {
+            let now = format!("{name}{}", &was[folder.0.len()..]);
+            let mail = server.folders.remove(&was).unwrap_or_default();
+            server.folders.insert(now.clone(), mail);
+            renamed.push(quill_core::types::FolderRenamed {
+                from: FolderId(was),
+                to: RemoteFolder {
+                    id: FolderId(now.clone()),
+                    name: now,
+                    role: FolderRole::Other,
+                },
+            });
+        }
+        Ok(renamed)
+    }
+
+    /// A message is known as it was, whatever its folder is called.
+    fn message_in(&self, message: &RemoteId, _folder: &FolderId) -> Option<RemoteId> {
+        Some(message.clone())
+    }
+
+    /// Deletes the folder once its mail is in the trash.
+    async fn delete_folder(
+        &self,
+        folder: &FolderId,
+        trash: Option<&FolderId>,
+    ) -> Result<quill_core::types::FolderMail> {
+        use quill_core::types::FolderMail;
+        self.check()?;
+        let mut server = self.0.lock().unwrap();
+        let Some(mail) = server.folders.get(&folder.0).cloned() else {
+            return Ok(FolderMail::None);
+        };
+        let became = match (mail.is_empty(), trash) {
+            (true, _) => FolderMail::None,
+            (false, Some(trash)) => {
+                server
+                    .folders
+                    .entry(trash.0.clone())
+                    .or_default()
+                    .extend(mail);
+                FolderMail::Trashed
+            }
+            (false, None) => {
+                return Err(Error::Backend("it has mail in it".to_owned()));
+            }
+        };
+        server.folders.remove(&folder.0);
+        Ok(became)
+    }
+
     /// Moves the message and renames it `<old id>-moved`, as a server that
     /// reports new ids does. With `forgets_new_ids` it moves and says
     /// nothing.
@@ -2906,4 +2979,146 @@ async fn a_message_kept_in_two_folders_is_downloaded_once() {
         assert!(rig.blobs.get(&hash).unwrap().is_some(), "{id:?}");
     }
     assert_eq!(rig.backend.with(|server| server.downloads), 4);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_folder_is_renamed_on_the_server_and_keeps_what_was_downloaded() {
+    let backend = MemoryBackend::new(100);
+    backend.add("INBOX", "1", "Stays", NOW_ISH);
+    backend.add("Projects", "2", "Plan", NOW_ISH);
+    backend.add("Projects/2026", "3", "Budget", NOW_ISH);
+    let mut rig = Rig::start(backend);
+    rig.pass().await;
+    let (plan, budget) = (rig.local("Plan"), rig.local("Budget"));
+    assert!(rig.store.body(plan).unwrap().is_some());
+    let downloads = rig.backend.with(|server| server.downloads);
+
+    rig.handle.send(SyncRequest::RenameFolder {
+        folder: rig.folder("Projects"),
+        name: "Work".to_owned(),
+    });
+    let events = rig
+        .until(|event| matches!(event, SyncEvent::FolderRenamed { .. }))
+        .await;
+    assert_eq!(
+        events.last(),
+        Some(&SyncEvent::FolderRenamed {
+            account: "Work".to_owned(),
+            from: "Projects".to_owned(),
+            to: "Work".to_owned(),
+        })
+    );
+    rig.pass().await;
+
+    // The server has it, and the folder inside it, under the new name.
+    assert_eq!(rig.server_subjects("Work"), ["Plan"]);
+    assert_eq!(rig.server_subjects("Work/2026"), ["Budget"]);
+    // Here they are the folders they were: the same messages, with what
+    // was downloaded of them, and nothing fetched again.
+    assert_eq!(rig.subjects("Work"), ["Plan"]);
+    assert_eq!(rig.subjects("Work/2026"), ["Budget"]);
+    assert_eq!((rig.local("Plan"), rig.local("Budget")), (plan, budget));
+    assert!(rig.store.body(plan).unwrap().is_some());
+    assert_eq!(rig.backend.with(|server| server.downloads), downloads);
+    let names: Vec<String> = rig
+        .store
+        .folders()
+        .unwrap()
+        .into_iter()
+        .map(|folder| folder.name)
+        .collect();
+    assert!(
+        !names.iter().any(|name| name.starts_with("Projects")),
+        "{names:?}"
+    );
+
+    // A name that is taken is said, and nothing is renamed.
+    rig.handle.send(SyncRequest::RenameFolder {
+        folder: rig.folder("Work"),
+        name: "Work/2026".to_owned(),
+    });
+    let events = rig
+        .until(|event| matches!(event, SyncEvent::Problem { .. }))
+        .await;
+    let Some(SyncEvent::Problem { message, .. }) = events.last() else {
+        unreachable!()
+    };
+    assert!(message.contains("already a folder"), "{message}");
+    assert_eq!(rig.subjects("Work"), ["Plan"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_folder_is_deleted_on_the_server_and_its_mail_is_in_the_trash() {
+    let backend = MemoryBackend::new(100);
+    backend.add("INBOX", "1", "Stays", NOW_ISH);
+    backend.add("Trash", "2", "Thrown away", NOW_ISH);
+    backend.add("Receipts", "3", "Invoice", NOW_ISH);
+    backend.add("Receipts", "4", "Ticket", NOW_ISH);
+    backend.add("Receipts/Old", "5", "Older", NOW_ISH);
+    let mut rig = Rig::start(backend);
+    rig.pass().await;
+
+    let problem = |events: Vec<SyncEvent>| match events.last() {
+        Some(SyncEvent::Problem { message, .. }) => message.clone(),
+        other => panic!("{other:?}"),
+    };
+    // Not with a folder inside it, and not a folder the server keeps for
+    // a purpose.
+    rig.handle
+        .send(SyncRequest::DeleteFolder(rig.folder("Receipts")));
+    let said = problem(
+        rig.until(|event| matches!(event, SyncEvent::Problem { .. }))
+            .await,
+    );
+    assert!(said.contains("folders inside it"), "{said}");
+    rig.handle
+        .send(SyncRequest::DeleteFolder(rig.folder("Trash")));
+    let said = problem(
+        rig.until(|event| matches!(event, SyncEvent::Problem { .. }))
+            .await,
+    );
+    assert!(said.contains("purpose of its own"), "{said}");
+    assert_eq!(rig.server_subjects("Receipts").len(), 2);
+
+    rig.handle
+        .send(SyncRequest::DeleteFolder(rig.folder("Receipts/Old")));
+    rig.until(|event| matches!(event, SyncEvent::FolderDeleted { .. }))
+        .await;
+    rig.pass().await;
+    rig.handle
+        .send(SyncRequest::DeleteFolder(rig.folder("Receipts")));
+    let events = rig
+        .until(|event| matches!(event, SyncEvent::FolderDeleted { .. }))
+        .await;
+    assert_eq!(
+        events.last(),
+        Some(&SyncEvent::FolderDeleted {
+            account: "Work".to_owned(),
+            name: "Receipts".to_owned(),
+            mail: quill_core::types::FolderMail::Trashed,
+            messages: 2,
+        })
+    );
+    rig.pass().await;
+
+    assert!(
+        !rig.backend
+            .with(|server| server.folders.contains_key("Receipts"))
+    );
+    let names: Vec<String> = rig
+        .store
+        .folders()
+        .unwrap()
+        .into_iter()
+        .map(|folder| folder.name)
+        .collect();
+    assert!(
+        !names.iter().any(|name| name.starts_with("Receipts")),
+        "{names:?}"
+    );
+    // Nothing was deleted with it: its mail is in the trash, here too.
+    let mut trashed = rig.subjects("Trash");
+    trashed.sort();
+    assert_eq!(trashed, ["Invoice", "Older", "Thrown away", "Ticket"]);
+    assert_eq!(rig.subjects("INBOX"), ["Stays"]);
 }

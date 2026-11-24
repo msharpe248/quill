@@ -215,7 +215,8 @@ Press `?` at any time for the keys that apply where you are, and `K` (or `f1`) f
 | `Z` `y` | Run the rule that is shown | `Z` `N` / `Z` `n` | A new rule; a new rule from this message |
 | `Z` `e` | Edit the rules | `Z` `l` | What rules did, and taking one back |
 | `P` | Put back: in a Trash folder, the messages chosen; anywhere else, the one deleted last | `C` | Copy to a folder |
-| `+` | Make a folder, on the server or on this Mac | `_` | In the accounts pane: take away an empty folder of this Mac's |
+| `+` | Make a folder, on the server or on this Mac | `_` | In the accounts pane: delete the folder (a server's: its mail goes to the Trash first; this Mac's: only when empty) |
+| `R` | In the accounts pane: rename the folder | | |
 | `W` | In the web pane: mail dark while Quill is dark, or as it was sent (in the app) | `ctrl-y` | Copy what is selected in the message, or with nothing selected the whole message as text |
 | `ctrl-s` | Save the message as a file: text, a web page, or the message itself | | |
 
@@ -268,10 +269,22 @@ A mail server keeps no record of where a message in its Trash came from. Quill k
 
 `+` (Mailbox > New Folder…) makes a folder for the account the accounts pane is on. It asks for a name and for where the folder is to be:
 
-- **On the server.** The folder is made on the account's mail server, beside its others, and every mail program that reads the account sees it. This is for IMAP accounts (Gmail among them) and Microsoft 365.
+- **On the server.** The folder is made on the account's mail server, beside its others, and every mail program that reads the account sees it. This is for IMAP accounts (Gmail among them), Microsoft 365 and Exchange.
 - **On this Mac.** The folder exists in Quill and nowhere else. Mail moved into it is downloaded whole first and only then taken off the server, so from then on it is on this Mac and nowhere else: not on the server, not on your phone, not in webmail. It takes no room in the mailbox the server gives you, and it is as safe as this Mac's disk and its backups are.
 
 In a terminal, `tab` goes between the two; in the app it is a choice in the sheet. An account with no folders on its server (POP3) can have folders on this Mac only.
+
+**A folder inside another.** A `/` in a name puts the folder inside another: `Projects/2026` is `2026` inside `Projects`, and `Projects` is made too if it is not there. It is typed as `/` whatever the server writes between the two. The accounts pane draws a folder under the one it is inside, a step further in, by its own name; wherever else a folder is named (the list's title, the folder picker, a rule) it has its whole name.
+
+**Renaming a folder** (`R` on it in the accounts pane, Mailbox > Rename this Folder…). The question has the name it has, to change. A folder of your own can be renamed, on a server or on this Mac; one the server keeps for a purpose (Sent, Trash and the like) cannot. The folders inside it are renamed with it, and its mail stays as it is here: nothing is downloaded again. On an IMAP account the new name may put the folder inside another (`Receipts` renamed `Archive/Receipts`); on Microsoft 365 and Exchange a folder is renamed where it is.
+
+**Deleting a folder** (`_` on it in the accounts pane, Mailbox > Delete this Folder…). No mail is deleted with a folder:
+
+- On most servers the mail in it is moved to the account's Trash first, and only then is the folder deleted. An account with no Trash folder has to have the folder emptied by you first.
+- On Gmail a folder is a label: the folder goes, and its mail stays in All Mail.
+- On Microsoft 365 and Exchange the folder is moved into Deleted Items with what is in it, and can be had back from there.
+
+Quill says which of these it will be, and how many messages, and asks before anything is done: `enter` to go ahead and `esc` to leave it; in the app's sheet no button answers to `return`. A folder with folders inside it is not deleted: delete or move those first. A folder on this Mac is taken away only when it is empty, as before.
 
 **A folder on this Mac is never shown like a server's.** It is listed under its account beneath a heading, "On This Mac", after the server's folders; the list's title, the palette and the folder picker call it "(on this Mac)"; and moving a message into one says "Moved to this Mac: it is taken off the server."
 
@@ -282,14 +295,14 @@ What works with them:
 - **Copying** (`C`, Message > Copy to a Folder): into a folder on this Mac it keeps a copy here and changes nothing on the server, which is the way to have a message in both places.
 - **Deleting** a message that is on this Mac deletes it from this Mac, for good, after the ten seconds `U` gives: it is not sent to the server's Trash, which never had it.
 - **Marks, search, replies and conversations** work as for any other message.
-- **Taking a folder away** (`_` on it in the accounts pane): only when it is empty.
+- **Taking a folder away** (`_` on it in the accounts pane): only when it is empty. **Renaming** it (`R`) renames the folders inside it too.
 
 Things to know:
 
 - **Gmail** keeps every message in All Mail whatever folder it is taken out of, so a message moved to this Mac from a Gmail folder is still in All Mail on Google's side.
 - **Removing the account** from Quill deletes its folders on this Mac with it. Quill counts the messages in them and says so before you answer. Taking an `[[account]]` out of the settings file by hand does the same at the next start, without asking.
 - **The mail store** is in `~/Library/Application Support/Quill`. With folders on this Mac it is no longer only a copy of what a server has: include it in your backups.
-- Making a folder on an Exchange server reached over EWS is not there yet, nor is renaming or deleting a server's folder.
+- Renaming and deleting folders has not met a real server yet: it is tested against a mail server on this Mac (IMAP) and against stand-ins (Microsoft 365, Exchange).
 
 ## HTML mail, and what it is allowed to do
 
@@ -999,7 +1012,8 @@ Keys are written as the help overlay shows them: `j`, `G`, `enter`, `space`, `ct
 | `message.save` | Save the message as a file: text, a web page, or the message itself |
 | `message.put_back` | In a Trash folder, put the messages chosen back where they were deleted from; anywhere else, the one deleted last |
 | `folder.create` | Make a folder for the account chosen: on its server, or on this Mac |
-| `folder.remove` | Take away the empty folder of this Mac's that the accounts pane is on |
+| `folder.rename` | Give the folder the accounts pane is on another name |
+| `folder.remove` | Delete the folder the accounts pane is on: a server's after its mail has gone to the Trash, this Mac's when it is empty |
 | `message.snooze` | Put the message aside until a time |
 | `select.toggle`, `select.range`, `select.all` | Select messages to act on together |
 | `message.compose` | Write a new message |

@@ -166,6 +166,14 @@ pub enum DataRequest {
     },
     /// Take away a folder made on this Mac, if it is empty.
     RemoveLocalFolder(LocalFolderId),
+    /// Give a folder made on this Mac another name.
+    RenameLocalFolder {
+        folder: LocalFolderId,
+        name: String,
+    },
+    /// Say what a server's folder holds, before the user is asked whether
+    /// to delete it. Answered by `FolderLeaving`; nothing is changed.
+    FolderLeaving(LocalFolderId),
     /// Write a message's attachments where a viewer can read them: all of
     /// them when they are to be looked at, so the viewer can step from one
     /// to the next, and otherwise the one at `part` alone.
@@ -297,6 +305,9 @@ pub enum FileUse {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DataEvent {
+    /// What a folder asked to be deleted holds, and where its mail would
+    /// go.
+    FolderLeaving(crate::state::FolderLeaving),
     SidebarLoaded {
         accounts: Vec<AccountRow>,
         folders: Vec<FolderRow>,
@@ -709,6 +720,23 @@ fn run(
                 ))]
             }
         }
+        DataRequest::RenameLocalFolder { folder, name } => {
+            match store.rename_local_folder(folder, &name)? {
+                Ok(was) => vec![
+                    DataEvent::StoreChanged,
+                    flash(&format!(
+                        "Renamed {} to {}, on this Mac.",
+                        crate::text::sanitize_line(&was),
+                        crate::text::sanitize_line(name.trim())
+                    )),
+                ],
+                Err(problem) => vec![flash(&problem)],
+            }
+        }
+        DataRequest::FolderLeaving(folder) => match folder_leaving(store, folder)? {
+            Some(leaving) => vec![DataEvent::FolderLeaving(leaving)],
+            None => vec![flash("That folder is not there any more.")],
+        },
         DataRequest::Many { ids, what } => many(store, &ids, what)?,
         DataRequest::WebPage {
             message,
@@ -1089,6 +1117,50 @@ pub(crate) fn deletion(store: &Store, id: LocalMessageId) -> quill_store::Result
 }
 
 /// What a folder is called, for saying where something went.
+/// What the store knows of a server's folder that is asked to be deleted:
+/// how much is in it, and where that would go. The account's kind says
+/// where: Microsoft's services move a folder into Deleted Items with its
+/// mail; Gmail keeps all mail in All Mail whatever folders it is shown
+/// in; any other server has the mail moved to its trash folder first.
+fn folder_leaving(
+    store: &Store,
+    folder: LocalFolderId,
+) -> quill_store::Result<Option<crate::state::FolderLeaving>> {
+    use crate::state::{FolderLeaving, LeavingMail};
+    let Some(place) = store.folder_place(folder)? else {
+        return Ok(None);
+    };
+    let kind = store
+        .accounts()?
+        .into_iter()
+        .find(|account| account.id == place.account)
+        .map(|account| account.kind)
+        .unwrap_or_default();
+    let all_mail = store
+        .folder_for(place.account, FolderRole::Archive)?
+        .is_some_and(|archive| quill_core::providers::google_folder(&archive.0).is_some());
+    let trash = store
+        .folders()?
+        .into_iter()
+        .find(|row| row.account == place.account && row.role == FolderRole::Trash && !row.local)
+        .map(|row| row.name);
+    let mail = match (kind.as_str(), all_mail, trash) {
+        ("graph" | "ews", _, _) => LeavingMail::WithFolder,
+        (_, true, _) => LeavingMail::AllMail,
+        (_, false, Some(trash)) => LeavingMail::Trash(trash),
+        (_, false, None) => LeavingMail::Nowhere,
+    };
+    Ok(Some(FolderLeaving {
+        folder,
+        account: place.account,
+        name: place.name,
+        messages: place.messages,
+        inside: store.folders_inside(folder)?,
+        busy: store.folder_busy(folder)?,
+        mail,
+    }))
+}
+
 fn folder_name(store: &Store, folder: LocalFolderId) -> quill_store::Result<String> {
     Ok(store
         .folders()?

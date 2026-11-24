@@ -21,8 +21,9 @@ use quill_host::bridge::{
 };
 
 use super::{
-    EVERY_ACCOUNT, Effects, Env, FolderPrompt, LetterPrompt, ON_THE_SERVER, ON_THIS_MAC,
-    RemovePrompt, RuleAction, RuleField, RulePrompt, State, UnsubscribePrompt, WhenFor, WhenPrompt,
+    EVERY_ACCOUNT, Effects, Env, FolderAsk, FolderPrompt, INSIDE_ANOTHER, LetterPrompt,
+    ON_THE_SERVER, ON_THIS_MAC, RemovePrompt, RuleAction, RuleField, RulePrompt, State,
+    UnsubscribePrompt, WhenFor, WhenPrompt,
 };
 use crate::command::{CommandId, Context};
 use crate::setup::{
@@ -234,6 +235,8 @@ impl CertificatePrompt {
 
 /// The step of the question about a new folder, and its fields.
 const NEW_FOLDER: &str = "new_folder";
+const RENAME_FOLDER: &str = "rename_folder";
+const DELETE_FOLDER: &str = "delete_folder";
 const FOLDER_NAME: &str = "name";
 const FOLDER_PLACE: &str = "place";
 const PLACE_SERVER: &str = "server";
@@ -243,9 +246,38 @@ impl FolderPrompt {
     /// The question as a host shows it: the name to type, where the
     /// folder is to be, and what that means for the mail put in it. With
     /// no choice of place there is none to make, and the place is said.
+    ///
+    /// Before a folder is deleted there is nothing to type: what is asked
+    /// is the title, what becomes of the folder and its mail is said
+    /// under it, and no button is the one `return` presses.
     pub fn form(&self) -> Option<FormShow> {
+        let step = match self.ask {
+            FolderAsk::New => NEW_FOLDER,
+            FolderAsk::Rename { .. } => RENAME_FOLDER,
+            FolderAsk::Delete { .. } => DELETE_FOLDER,
+        };
+        if !self.typed() {
+            return FormShow::new(FormShowParams {
+                step: step.to_owned(),
+                title: self.title(),
+                note: paragraphs(&[self.means()]),
+                error: None,
+                busy: None,
+                fields: Vec::new(),
+                buttons: vec![
+                    Press::Cancel.button(Some(FormRole::Cancel), true),
+                    FormButton {
+                        id: CONFIRM.to_owned(),
+                        title: self.answer().to_owned(),
+                        role: None,
+                        enabled: true,
+                    },
+                ],
+            });
+        }
+        let help = format!("{} {INSIDE_ANOTHER}", self.means());
         let mut fields = vec![typed(FOLDER_NAME, "Name:", &self.input, true, None)];
-        if self.either {
+        if self.either && self.ask == FolderAsk::New {
             fields.push(FormField::Choice {
                 id: FOLDER_PLACE.to_owned(),
                 label: "Where:".to_owned(),
@@ -261,17 +293,17 @@ impl FolderPrompt {
                     },
                 ],
                 focus: false,
-                help: Some(self.means().to_owned()),
+                help: Some(help),
             });
         } else {
             let mut place = shown(FOLDER_PLACE, "Where:", self.place().to_owned());
-            if let FormField::Static { help, .. } = &mut place {
-                *help = Some(self.means().to_owned());
+            if let FormField::Static { help: under, .. } = &mut place {
+                *under = Some(help);
             }
             fields.push(place);
         }
         FormShow::new(FormShowParams {
-            step: NEW_FOLDER.to_owned(),
+            step: step.to_owned(),
             title: headline(&self.title()),
             note: None,
             error: self.problem.as_deref().map(text::sanitize_line),
@@ -281,7 +313,7 @@ impl FolderPrompt {
                 Press::Cancel.button(Some(FormRole::Cancel), true),
                 FormButton {
                     id: CONFIRM.to_owned(),
-                    title: "Create".to_owned(),
+                    title: self.answer().to_owned(),
                     role: Some(FormRole::Default),
                     enabled: true,
                 },
@@ -291,8 +323,11 @@ impl FolderPrompt {
 
     /// Puts what the host's fields held into the question's own.
     fn fill(&mut self, used: &FormUsed) {
+        if !self.typed() {
+            return;
+        }
         put(&mut self.input, used.value(FOLDER_NAME));
-        if self.either {
+        if self.either && self.ask == FolderAsk::New {
             match used.value(FOLDER_PLACE) {
                 Some(PLACE_HERE) => self.here = true,
                 Some(PLACE_SERVER) => self.here = false,
